@@ -33,12 +33,21 @@ def _cross_down(prev_short: float, prev_long: float, cur_short: float, cur_long:
     return prev_short >= prev_long and cur_short < cur_long
 
 
-@router.post("/run")
-async def run_backtest(payload: BacktestRequest, db: Session = Depends(get_db)) -> dict[str, object]:
-    frame = await run_in_threadpool(fetch_stock, payload.symbol)
+def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session, reset_before_run: bool) -> dict[str, object]:
+    symbol = payload.symbol.upper()
+    deleted_rows = 0
+
+    if reset_before_run:
+        deleted_rows = db.query(BacktestTrade).filter(BacktestTrade.symbol == symbol).delete(synchronize_session=False)
 
     if "Close" not in frame.columns:
-        return {"symbol": payload.symbol.upper(), "trades": [], "summary": {"count": 0, "net_pnl": 0.0}}
+        return {
+            "symbol": symbol,
+            "reset": reset_before_run,
+            "deleted_rows": deleted_rows,
+            "trades": [],
+            "summary": {"count": 0, "wins": 0, "win_rate": 0.0, "net_pnl": 0.0},
+        }
 
     normalized = frame.copy()
     if "Date" not in normalized.columns:
@@ -56,6 +65,7 @@ async def run_backtest(payload: BacktestRequest, db: Session = Depends(get_db)) 
     open_trade: dict[str, object] | None = None
     trades: list[dict[str, object]] = []
 
+    # Day-by-day loop: iterate from the first valid day to the last day.
     for idx in range(min_start, len(normalized)):
         prev_short = short_values[idx - 1]
         prev_long = long_values[idx - 1]
@@ -97,25 +107,26 @@ async def run_backtest(payload: BacktestRequest, db: Session = Depends(get_db)) 
         return_pct = (price - buy_price) / buy_price
         bars_held = idx - int(open_trade["buy_index"])
 
-        trade_row = BacktestTrade(
-            symbol=payload.symbol.upper(),
-            quantity=payload.quantity,
-            buy_price=buy_price,
-            sell_price=price,
-            buy_time=open_trade["buy_time"],
-            sell_time=ts,
-            pnl=pnl,
-            return_pct=return_pct,
-            bars_held=bars_held,
-            buy_criteria=str(open_trade["buy_criteria"]),
-            sell_criteria=reason,
-            note=f"short={payload.short_window}, long={payload.long_window}",
+        db.add(
+            BacktestTrade(
+                symbol=symbol,
+                quantity=payload.quantity,
+                buy_price=buy_price,
+                sell_price=price,
+                buy_time=open_trade["buy_time"],
+                sell_time=ts,
+                pnl=pnl,
+                return_pct=return_pct,
+                bars_held=bars_held,
+                buy_criteria=str(open_trade["buy_criteria"]),
+                sell_criteria=reason,
+                note=f"short={payload.short_window}, long={payload.long_window}",
+            )
         )
-        db.add(trade_row)
 
         trades.append(
             {
-                "symbol": payload.symbol.upper(),
+                "symbol": symbol,
                 "buy_time": str(open_trade["buy_time"]),
                 "sell_time": str(ts),
                 "buy_price": buy_price,
@@ -130,7 +141,6 @@ async def run_backtest(payload: BacktestRequest, db: Session = Depends(get_db)) 
         )
         open_trade = None
 
-    # Force close the last open position at the last bar so every buy has a sell record.
     if open_trade is not None and len(normalized) > 0:
         last_price = float(closes[-1])
         last_time = normalized.iloc[-1]["Date"]
@@ -139,25 +149,26 @@ async def run_backtest(payload: BacktestRequest, db: Session = Depends(get_db)) 
         return_pct = (last_price - buy_price) / buy_price
         bars_held = (len(normalized) - 1) - int(open_trade["buy_index"])
 
-        trade_row = BacktestTrade(
-            symbol=payload.symbol.upper(),
-            quantity=payload.quantity,
-            buy_price=buy_price,
-            sell_price=last_price,
-            buy_time=open_trade["buy_time"],
-            sell_time=last_time,
-            pnl=pnl,
-            return_pct=return_pct,
-            bars_held=bars_held,
-            buy_criteria=str(open_trade["buy_criteria"]),
-            sell_criteria="end_of_data",
-            note=f"short={payload.short_window}, long={payload.long_window}",
+        db.add(
+            BacktestTrade(
+                symbol=symbol,
+                quantity=payload.quantity,
+                buy_price=buy_price,
+                sell_price=last_price,
+                buy_time=open_trade["buy_time"],
+                sell_time=last_time,
+                pnl=pnl,
+                return_pct=return_pct,
+                bars_held=bars_held,
+                buy_criteria=str(open_trade["buy_criteria"]),
+                sell_criteria="end_of_data",
+                note=f"short={payload.short_window}, long={payload.long_window}",
+            )
         )
-        db.add(trade_row)
 
         trades.append(
             {
-                "symbol": payload.symbol.upper(),
+                "symbol": symbol,
                 "buy_time": str(open_trade["buy_time"]),
                 "sell_time": str(last_time),
                 "buy_price": buy_price,
@@ -171,18 +182,14 @@ async def run_backtest(payload: BacktestRequest, db: Session = Depends(get_db)) 
             }
         )
 
-    try:
-        db.commit()
-    except SQLAlchemyError as exc:
-        db.rollback()
-        raise HTTPException(status_code=503, detail=f"database write failed: {exc}") from exc
-
     wins = sum(1 for item in trades if float(item["pnl"]) > 0)
     net_pnl = sum(float(item["pnl"]) for item in trades)
     win_rate = (wins / len(trades)) if trades else 0.0
 
     return {
-        "symbol": payload.symbol.upper(),
+        "symbol": symbol,
+        "reset": reset_before_run,
+        "deleted_rows": deleted_rows,
         "criteria": {
             "buy": "short_sma crosses above long_sma",
             "sell": "short_sma crosses below long_sma OR stop_loss OR take_profit",
@@ -199,6 +206,33 @@ async def run_backtest(payload: BacktestRequest, db: Session = Depends(get_db)) 
         },
         "trades": trades,
     }
+
+
+@router.post("/run")
+async def run_backtest(payload: BacktestRequest, db: Session = Depends(get_db)) -> dict[str, object]:
+    frame = await run_in_threadpool(fetch_stock, payload.symbol)
+    result = _execute_backtest(payload=payload, frame=frame, db=db, reset_before_run=False)
+
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail=f"database write failed: {exc}") from exc
+
+    return result
+
+
+@router.delete("/reset")
+def reset_backtest(symbol: str = Query(default="AAPL", min_length=1, max_length=16), db: Session = Depends(get_db)) -> dict[str, object]:
+    upper_symbol = symbol.upper()
+    try:
+        deleted = db.query(BacktestTrade).filter(BacktestTrade.symbol == upper_symbol).delete(synchronize_session=False)
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail=f"database reset failed: {exc}") from exc
+
+    return {"symbol": upper_symbol, "deleted_rows": deleted}
 
 
 @router.get("/trades")

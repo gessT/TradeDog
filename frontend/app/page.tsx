@@ -16,12 +16,14 @@ export default function Page() {
     trades,
     loading: backtestLoading,
     running: backtestRunning,
+    resetting: backtestResetting,
     error: backtestError,
     summary,
     params,
     setParams,
     loadTrades,
     run,
+    reset,
   } = useBacktest(symbol);
 
   return (
@@ -53,8 +55,25 @@ export default function Page() {
           <SignalPanel latest={rows.length ? rows[rows.length - 1] : null} />
         </div>
 
+        <div className="mt-6">
+          <BacktestTable
+            symbol={symbol}
+            trades={trades}
+            loading={backtestLoading}
+            running={backtestRunning}
+            resetting={backtestResetting}
+            params={params}
+            summary={summary}
+            error={backtestError}
+            onParamsChange={setParams}
+            onRun={run}
+            onReset={reset}
+            onReload={loadTrades}
+          />
+        </div>
+
         <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:p-6">
-          <details open>
+          <details>
             <summary className="cursor-pointer select-none text-lg font-semibold text-slate-100">
               Data History ({rows.length})
             </summary>
@@ -62,20 +81,6 @@ export default function Page() {
               <DataTable rows={rows} />
             </div>
           </details>
-        </div>
-
-        <div className="mt-6">
-          <BacktestTable
-            symbol={symbol}
-            trades={trades}
-            loading={backtestLoading}
-            running={backtestRunning}
-            params={params}
-            summary={summary}
-            onParamsChange={setParams}
-            onRun={run}
-            onReload={loadTrades}
-          />
         </div>
       </div>
     </main>

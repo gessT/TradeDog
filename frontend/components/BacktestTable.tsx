@@ -15,6 +15,7 @@ type BacktestTableProps = {
   trades: BacktestTradeRow[];
   loading: boolean;
   running: boolean;
+  resetting: boolean;
   params: BacktestParams;
   summary: {
     count: number;
@@ -22,8 +23,10 @@ type BacktestTableProps = {
     winRatePct: number;
     netPnl: number;
   } | null;
+  error: string;
   onParamsChange: (next: BacktestParams) => void;
   onRun: () => void;
+  onReset: () => void;
   onReload: () => void;
 };
 
@@ -52,10 +55,13 @@ export default function BacktestTable({
   trades,
   loading,
   running,
+  resetting,
   params,
   summary,
+  error,
   onParamsChange,
   onRun,
+  onReset,
   onReload,
 }: BacktestTableProps) {
   return (
@@ -132,10 +138,18 @@ export default function BacktestTable({
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           onClick={onRun}
-          disabled={running}
+          disabled={running || resetting}
           className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
         >
           {running ? "Running..." : "Run Backtest"}
+        </button>
+
+        <button
+          onClick={onReset}
+          disabled={resetting}
+          className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
+        >
+          {resetting ? "Resetting..." : "Reset DB"}
         </button>
 
         <button
@@ -146,6 +160,12 @@ export default function BacktestTable({
           {loading ? "Loading..." : "Reload DB Results"}
         </button>
       </div>
+
+      {error ? (
+        <div className="mt-3 rounded-lg border border-rose-700 bg-rose-950/40 px-3 py-2 text-xs text-rose-300">
+          {error}
+        </div>
+      ) : null}
 
       {summary ? (
         <div className="mt-3 rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-2 text-xs text-slate-300">

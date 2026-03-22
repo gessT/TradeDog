@@ -95,3 +95,17 @@ export async function getBacktestTrades(symbol: string): Promise<BacktestTradesR
 
   return (await response.json()) as BacktestTradesResponse;
 }
+
+
+export async function resetBacktest(symbol: string): Promise<{ symbol: string; deleted_rows: number }> {
+  const response = await fetch(`${API_BASE}/backtest/reset?symbol=${encodeURIComponent(symbol)}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+
+  return (await response.json()) as { symbol: string; deleted_rows: number };
+}

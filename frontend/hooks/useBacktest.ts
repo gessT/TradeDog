@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   getBacktestTrades,
+  resetBacktest,
   runBacktest,
   type BacktestRunRequest,
   type BacktestTradeRow,
@@ -22,6 +23,7 @@ export function useBacktest(symbol: string) {
   const [trades, setTrades] = useState<BacktestTradeRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [error, setError] = useState("");
   const [summary, setSummary] = useState<BacktestSummary | null>(null);
 
@@ -70,6 +72,21 @@ export function useBacktest(symbol: string) {
     }
   }, [loadTrades, params, symbol]);
 
+  const reset = useCallback(async () => {
+    setResetting(true);
+    setError("");
+    try {
+      await resetBacktest(symbol);
+      setSummary(null);
+      setTrades([]);
+      await loadTrades();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset backtest data");
+    } finally {
+      setResetting(false);
+    }
+  }, [loadTrades, symbol]);
+
   useEffect(() => {
     void loadTrades();
   }, [loadTrades]);
@@ -78,11 +95,13 @@ export function useBacktest(symbol: string) {
     trades,
     loading,
     running,
+    resetting,
     error,
     summary,
     params,
     setParams,
     loadTrades,
     run,
+    reset,
   };
 }
