@@ -31,8 +31,7 @@ export function useBacktest(symbol: string) {
     quantity: 1,
     short_window: 5,
     long_window: 20,
-    stop_loss_pct: 0.03,
-    take_profit_pct: 0.06,
+    start_date: "2020-01-01",
   });
 
   const loadTrades = useCallback(async () => {

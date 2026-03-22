@@ -5,8 +5,7 @@ type BacktestParams = {
   quantity: number;
   short_window: number;
   long_window: number;
-  stop_loss_pct: number;
-  take_profit_pct: number;
+  start_date: string;
 };
 
 
@@ -36,7 +35,10 @@ function fmtDate(raw: string): string {
   if (Number.isNaN(date.getTime())) {
     return raw;
   }
-  return date.toLocaleString();
+  const dd = String(date.getDate()).padStart(2, "0");
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const yyyy = date.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
 }
 
 
@@ -69,10 +71,10 @@ export default function BacktestTable({
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-slate-100">Backtest Database Results</h2>
-          <p className="text-xs text-slate-400">Input your criteria, run backtest, then read results from DB for {symbol}.</p>
+          <p className="text-xs text-slate-400">EMA5 × EMA20 crossover strategy on full historical data for {symbol}.</p>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           <label className="text-xs text-slate-300">
             Qty
             <input
@@ -86,7 +88,7 @@ export default function BacktestTable({
           </label>
 
           <label className="text-xs text-slate-300">
-            Short SMA
+            Short EMA
             <input
               type="number"
               min={2}
@@ -97,7 +99,7 @@ export default function BacktestTable({
           </label>
 
           <label className="text-xs text-slate-300">
-            Long SMA
+            Long EMA
             <input
               type="number"
               min={3}
@@ -108,27 +110,11 @@ export default function BacktestTable({
           </label>
 
           <label className="text-xs text-slate-300">
-            Stop Loss
+            Start Date
             <input
-              type="number"
-              min={0.001}
-              max={0.99}
-              step={0.001}
-              value={params.stop_loss_pct}
-              onChange={(event) => onParamsChange({ ...params, stop_loss_pct: Number(event.target.value) || 0.03 })}
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            />
-          </label>
-
-          <label className="text-xs text-slate-300">
-            Take Profit
-            <input
-              type="number"
-              min={0.001}
-              max={1.99}
-              step={0.001}
-              value={params.take_profit_pct}
-              onChange={(event) => onParamsChange({ ...params, take_profit_pct: Number(event.target.value) || 0.06 })}
+              type="date"
+              value={params.start_date}
+              onChange={(event) => onParamsChange({ ...params, start_date: event.target.value || "2020-01-01" })}
               className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
             />
           </label>

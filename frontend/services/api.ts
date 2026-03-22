@@ -10,8 +10,7 @@ export type BacktestRunRequest = {
   quantity: number;
   short_window: number;
   long_window: number;
-  stop_loss_pct: number;
-  take_profit_pct: number;
+  start_date: string;
 };
 
 

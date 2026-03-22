@@ -25,7 +25,7 @@ def _load_sample_stock() -> pd.DataFrame | None:
     for column in ("Open", "High", "Low", "Close", "Volume"):
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
 
-    return frame.dropna(subset=["Date"]).tail(50)
+    return frame.dropna(subset=["Date"])
 
 
 def _normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
@@ -44,7 +44,7 @@ def _normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
     keep_cols = [col for col in ["Date", "Open", "High", "Low", "Close", "Volume"] if col in normalized.columns]
     cleaned = normalized[keep_cols].dropna(subset=["Close"]) if "Close" in normalized.columns else normalized
-    return cleaned.tail(50)
+    return cleaned
 
 
 def _fetch_from_yfinance(symbol: str) -> pd.DataFrame | None:

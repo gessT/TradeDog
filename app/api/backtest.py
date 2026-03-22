@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.backtest_trade import BacktestTrade
 from app.services.data_collector import fetch_stock
-from app.utils.indicators import sma
+from app.utils.indicators import ema
 
 
 router = APIRouter(prefix="/backtest", tags=["backtest"])
@@ -21,8 +21,7 @@ class BacktestRequest(BaseModel):
     quantity: float = Field(default=1.0, gt=0)
     short_window: int = Field(default=5, ge=2, le=100)
     long_window: int = Field(default=20, ge=3, le=300)
-    stop_loss_pct: float = Field(default=0.03, gt=0, lt=1)
-    take_profit_pct: float = Field(default=0.06, gt=0, lt=2)
+    start_date: date | None = Field(default=None, description="Only use data from this date onward (YYYY-MM-DD)")
 
 
 def _cross_up(prev_short: float, prev_long: float, cur_short: float, cur_long: float) -> bool:
@@ -57,16 +56,24 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     normalized["Close"] = pd.to_numeric(normalized["Close"], errors="coerce")
     normalized = normalized.dropna(subset=["Date", "Close"]).reset_index(drop=True)
 
+    if payload.start_date is not None:
+        normalized = normalized[normalized["Date"] >= pd.Timestamp(payload.start_date)].reset_index(drop=True)
+
     closes = normalized["Close"].astype(float).tolist()
-    short_values = sma(closes, payload.short_window)
-    long_values = sma(closes, payload.long_window)
+    short_values = ema(closes, payload.short_window)
+    long_values = ema(closes, payload.long_window)
 
     min_start = max(payload.short_window, payload.long_window)
     open_trade: dict[str, object] | None = None
     trades: list[dict[str, object]] = []
 
+    max_trades = 50
+
     # Day-by-day loop: iterate from the first valid day to the last day.
     for idx in range(min_start, len(normalized)):
+        if len(trades) >= max_trades:
+            break
+
         prev_short = short_values[idx - 1]
         prev_long = long_values[idx - 1]
         cur_short = short_values[idx]
@@ -84,24 +91,15 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                     "buy_price": price,
                     "buy_time": ts,
                     "buy_index": idx,
-                    "buy_criteria": "sma_cross_up",
+                    "buy_criteria": "ema_cross_up",
                 }
             continue
 
-        buy_price = float(open_trade["buy_price"])
-        stop_price = buy_price * (1 - payload.stop_loss_pct)
-        take_price = buy_price * (1 + payload.take_profit_pct)
-
-        reason = ""
-        if price <= stop_price:
-            reason = "stop_loss"
-        elif price >= take_price:
-            reason = "take_profit"
-        elif _cross_down(float(prev_short), float(prev_long), float(cur_short), float(cur_long)):
-            reason = "sma_cross_down"
-
-        if not reason:
+        if not _cross_down(float(prev_short), float(prev_long), float(cur_short), float(cur_long)):
             continue
+
+        buy_price = float(open_trade["buy_price"])
+        reason = "ema_cross_down"
 
         pnl = (price - buy_price) * payload.quantity
         return_pct = (price - buy_price) / buy_price
@@ -120,7 +118,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                 bars_held=bars_held,
                 buy_criteria=str(open_trade["buy_criteria"]),
                 sell_criteria=reason,
-                note=f"short={payload.short_window}, long={payload.long_window}",
+                note=f"ema_short={payload.short_window}, ema_long={payload.long_window}",
             )
         )
 
@@ -162,7 +160,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                 bars_held=bars_held,
                 buy_criteria=str(open_trade["buy_criteria"]),
                 sell_criteria="end_of_data",
-                note=f"short={payload.short_window}, long={payload.long_window}",
+                note=f"ema_short={payload.short_window}, ema_long={payload.long_window}",
             )
         )
 
@@ -191,12 +189,10 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
         "reset": reset_before_run,
         "deleted_rows": deleted_rows,
         "criteria": {
-            "buy": "short_sma crosses above long_sma",
-            "sell": "short_sma crosses below long_sma OR stop_loss OR take_profit",
+            "buy": "EMA5 crosses above EMA20",
+            "sell": "EMA5 crosses below EMA20",
             "short_window": payload.short_window,
             "long_window": payload.long_window,
-            "stop_loss_pct": payload.stop_loss_pct,
-            "take_profit_pct": payload.take_profit_pct,
         },
         "summary": {
             "count": len(trades),
