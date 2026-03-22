@@ -11,6 +11,8 @@ export type BacktestRunRequest = {
   short_window: number;
   long_window: number;
   start_date: string;
+  buy_conditions: string[];
+  sell_conditions: string[];
 };
 
 
@@ -110,4 +112,17 @@ export async function resetBacktest(symbol: string): Promise<{ symbol: string; d
   }
 
   return (await response.json()) as { symbol: string; deleted_rows: number };
+}
+
+
+export type ConditionItem = { name: string; label: string };
+export type ConditionsResponse = { buy: ConditionItem[]; sell: ConditionItem[] };
+
+export async function getConditions(): Promise<ConditionsResponse> {
+  const response = await fetch(`${API_BASE}/backtest/conditions`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as ConditionsResponse;
 }

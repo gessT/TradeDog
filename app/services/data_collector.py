@@ -81,6 +81,12 @@ def _fetch_from_stooq(symbol: str) -> pd.DataFrame | None:
 def fetch_stock(symbol: str) -> pd.DataFrame:
     normalized_symbol = symbol.upper().strip()
 
+    # Prefer local sample data for AAPL (full history, not limited to 1 month)
+    if normalized_symbol == "AAPL":
+        sample = _load_sample_stock()
+        if sample is not None:
+            return sample
+
     yfinance_data = _fetch_from_yfinance(normalized_symbol)
     if yfinance_data is not None:
         return yfinance_data
@@ -88,9 +94,5 @@ def fetch_stock(symbol: str) -> pd.DataFrame:
     stooq_data = _fetch_from_stooq(normalized_symbol)
     if stooq_data is not None:
         return stooq_data
-
-    sample = _load_sample_stock()
-    if sample is not None and normalized_symbol == "AAPL":
-        return sample
 
     raise ValueError(f"No market data available for {normalized_symbol}")

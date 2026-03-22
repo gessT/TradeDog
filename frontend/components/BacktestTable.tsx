@@ -1,4 +1,8 @@
-import type { BacktestTradeRow } from "../services/api";
+"use client";
+
+import { useEffect, useState } from "react";
+import type { BacktestTradeRow, ConditionItem } from "../services/api";
+import { getConditions } from "../services/api";
 
 
 type BacktestParams = {
@@ -6,6 +10,8 @@ type BacktestParams = {
   short_window: number;
   long_window: number;
   start_date: string;
+  buy_conditions: string[];
+  sell_conditions: string[];
 };
 
 
@@ -66,84 +72,153 @@ export default function BacktestTable({
   onReset,
   onReload,
 }: BacktestTableProps) {
+  const [buyOptions, setBuyOptions] = useState<ConditionItem[]>([]);
+  const [sellOptions, setSellOptions] = useState<ConditionItem[]>([]);
+
+  useEffect(() => {
+    getConditions()
+      .then((data) => {
+        setBuyOptions(data.buy);
+        setSellOptions(data.sell);
+      })
+      .catch(() => {});
+  }, []);
+
+  function toggleBuyCondition(name: string) {
+    const current = params.buy_conditions;
+    const next = current.includes(name)
+      ? current.filter((c) => c !== name)
+      : [...current, name];
+    if (next.length === 0) return;
+    onParamsChange({ ...params, buy_conditions: next });
+  }
+
+  function toggleSellCondition(name: string) {
+    const current = params.sell_conditions;
+    const next = current.includes(name)
+      ? current.filter((c) => c !== name)
+      : [...current, name];
+    if (next.length === 0) return;
+    onParamsChange({ ...params, sell_conditions: next });
+  }
+
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:p-6">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-100">Backtest Database Results</h2>
-          <p className="text-xs text-slate-400">EMA5 × EMA20 crossover strategy on full historical data for {symbol}.</p>
-        </div>
+      <h2 className="text-lg font-semibold text-slate-100">Backtest — {symbol}</h2>
+      <p className="text-xs text-slate-400">Check conditions (AND logic), set params, then run. Database resets on each run.</p>
 
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-          <label className="text-xs text-slate-300">
-            Qty
-            <input
-              type="number"
-              min={0.01}
-              step={0.01}
-              value={params.quantity}
-              onChange={(event) => onParamsChange({ ...params, quantity: Number(event.target.value) || 1 })}
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            />
-          </label>
-
-          <label className="text-xs text-slate-300">
-            Short EMA
-            <input
-              type="number"
-              min={2}
-              value={params.short_window}
-              onChange={(event) => onParamsChange({ ...params, short_window: Number(event.target.value) || 2 })}
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            />
-          </label>
-
-          <label className="text-xs text-slate-300">
-            Long EMA
-            <input
-              type="number"
-              min={3}
-              value={params.long_window}
-              onChange={(event) => onParamsChange({ ...params, long_window: Number(event.target.value) || 3 })}
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            />
-          </label>
-
-          <label className="text-xs text-slate-300">
-            Start Date
-            <input
-              type="date"
-              value={params.start_date}
-              onChange={(event) => onParamsChange({ ...params, start_date: event.target.value || "2020-01-01" })}
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            />
-          </label>
+      {/* ── Buy conditions checkboxes ─────────── */}
+      <div className="mt-4 rounded-xl border border-emerald-800/50 bg-emerald-950/30 p-4">
+        <span className="mb-2 inline-block rounded bg-emerald-700/60 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-emerald-200">
+          Buy Conditions (all must be true)
+        </span>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {buyOptions.map((opt) => {
+            const active = params.buy_conditions.includes(opt.name);
+            return (
+              <label
+                key={opt.name}
+                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${
+                  active
+                    ? "border-emerald-500 bg-emerald-900/40 text-emerald-100"
+                    : "border-slate-700 bg-slate-900/30 text-slate-400 hover:border-slate-600"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={active}
+                  onChange={() => toggleBuyCondition(opt.name)}
+                  className="h-4 w-4 accent-emerald-500"
+                />
+                {opt.label}
+              </label>
+            );
+          })}
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      {/* ── Sell conditions checkboxes (hidden — under repair) ─────────── */}
+      {/* <div className="mt-3 rounded-xl border border-rose-800/50 bg-rose-950/30 p-4">
+        <span className="mb-2 inline-block rounded bg-rose-700/60 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-rose-200">
+          Sell Conditions (any triggers exit)
+        </span>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {sellOptions.map((opt) => {
+            const active = params.sell_conditions.includes(opt.name);
+            return (
+              <label
+                key={opt.name}
+                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${
+                  active
+                    ? "border-rose-500 bg-rose-900/40 text-rose-100"
+                    : "border-slate-700 bg-slate-900/30 text-slate-400 hover:border-slate-600"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={active}
+                  onChange={() => toggleSellCondition(opt.name)}
+                  className="h-4 w-4 accent-rose-500"
+                />
+                {opt.label}
+              </label>
+            );
+          })}
+        </div>
+      </div> */}
+
+      {/* ── Params row ─────────── */}
+      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+        <label className="text-xs text-slate-300">
+          Qty
+          <input
+            type="number"
+            min={0.01}
+            step={0.01}
+            value={params.quantity}
+            onChange={(e) => onParamsChange({ ...params, quantity: Number(e.target.value) || 1 })}
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+          />
+        </label>
+        <label className="text-xs text-slate-300">
+          Short SMA
+          <input
+            type="number"
+            min={2}
+            value={params.short_window}
+            onChange={(e) => onParamsChange({ ...params, short_window: Number(e.target.value) || 2 })}
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+          />
+        </label>
+        <label className="text-xs text-slate-300">
+          Long SMA
+          <input
+            type="number"
+            min={3}
+            value={params.long_window}
+            onChange={(e) => onParamsChange({ ...params, long_window: Number(e.target.value) || 3 })}
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+          />
+        </label>
+        <label className="text-xs text-slate-300">
+          Start Date
+          <input
+            type="date"
+            value={params.start_date}
+            onChange={(e) => onParamsChange({ ...params, start_date: e.target.value || "2020-01-01" })}
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+          />
+        </label>
+      </div>
+
+      {/* ── Action button ─────────── */}
+      <div className="mt-4">
         <button
           onClick={onRun}
-          disabled={running || resetting}
-          className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
+          disabled={running || params.buy_conditions.length === 0}
+          className="w-full rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto"
         >
-          {running ? "Running..." : "Run Backtest"}
-        </button>
-
-        <button
-          onClick={onReset}
-          disabled={resetting}
-          className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
-        >
-          {resetting ? "Resetting..." : "Reset DB"}
-        </button>
-
-        <button
-          onClick={onReload}
-          disabled={loading}
-          className="rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {loading ? "Loading..." : "Reload DB Results"}
+          {running ? "Running…" : "Run Backtest"}
         </button>
       </div>
 
@@ -179,8 +254,10 @@ export default function BacktestTable({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-900 bg-slate-900/40">
-              {trades.map((row) => (
-                <tr key={row.id} className="hover:bg-slate-800/40">
+              {[...trades]
+                .sort((a, b) => new Date(b.buy_time).getTime() - new Date(a.buy_time).getTime())
+                .map((row, idx) => (
+                <tr key={row.id ?? idx} className="hover:bg-slate-800/40">
                   <td className="px-3 py-2 text-slate-300">{fmtDate(row.buy_time)}</td>
                   <td className="px-3 py-2 text-slate-300">{fmtDate(row.sell_time)}</td>
                   <td className="px-3 py-2 text-right text-slate-100">{fmtMoney(row.buy_price)}</td>

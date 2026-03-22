@@ -43,6 +43,23 @@ export default function Page() {
           </div>
         ) : null}
 
+        <div className="mt-6">
+          <BacktestTable
+            symbol={symbol}
+            trades={trades}
+            loading={backtestLoading}
+            running={backtestRunning}
+            resetting={backtestResetting}
+            params={params}
+            summary={summary}
+            error={backtestError}
+            onParamsChange={setParams}
+            onRun={run}
+            onReset={reset}
+            onReload={loadTrades}
+          />
+        </div>
+
         <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:p-6">
           <details>
             <summary className="cursor-pointer select-none text-lg font-semibold text-slate-100">
@@ -71,23 +88,6 @@ export default function Page() {
 
         <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:p-6">
           <SignalPanel latest={rows.length ? rows[rows.length - 1] : null} />
-        </div>
-
-        <div className="mt-6">
-          <BacktestTable
-            symbol={symbol}
-            trades={trades}
-            loading={backtestLoading}
-            running={backtestRunning}
-            resetting={backtestResetting}
-            params={params}
-            summary={summary}
-            error={backtestError}
-            onParamsChange={setParams}
-            onRun={run}
-            onReset={reset}
-            onReload={loadTrades}
-          />
         </div>
 
       </div>

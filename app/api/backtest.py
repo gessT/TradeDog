@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.backtest_trade import BacktestTrade
 from app.services.data_collector import fetch_stock
-from app.strategies.sma_indicator import ema, sma5 as compute_sma5
+from app.strategies.sma_indicator import sma as compute_sma, sma5 as compute_sma5
+from app.strategies.conditions import get_buy_condition, get_sell_condition, CONDITION_MAP, SELL_PAIR
 
 
 router = APIRouter(prefix="/backtest", tags=["backtest"])
@@ -22,14 +23,8 @@ class BacktestRequest(BaseModel):
     short_window: int = Field(default=5, ge=2, le=100)
     long_window: int = Field(default=20, ge=3, le=300)
     start_date: date | None = Field(default=None, description="Only use data from this date onward (YYYY-MM-DD)")
-
-
-def _cross_up(prev_short: float, prev_long: float, cur_short: float, cur_long: float) -> bool:
-    return prev_short <= prev_long and cur_short > cur_long
-
-
-def _cross_down(prev_short: float, prev_long: float, cur_short: float, cur_long: float) -> bool:
-    return prev_short >= prev_long and cur_short < cur_long
+    buy_conditions: list[str] = Field(default=["sma_cross_up"], description="Buy condition names — ALL must be true (AND)")
+    sell_conditions: list[str] = Field(default=["close_below_sma10"], description="Sell condition names — ANY triggers exit (OR)")
 
 
 def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session, reset_before_run: bool) -> dict[str, object]:
@@ -60,9 +55,14 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
         normalized = normalized[normalized["Date"] >= pd.Timestamp(payload.start_date)].reset_index(drop=True)
 
     closes = normalized["Close"].astype(float).tolist()
-    short_values = ema(closes, payload.short_window)
-    long_values = ema(closes, payload.long_window)
+    short_values = compute_sma(closes, payload.short_window)
+    long_values = compute_sma(closes, payload.long_window)
     sma5_values = compute_sma5(closes)
+    sma10_values = compute_sma(closes, 10)
+
+    buy_fns = [get_buy_condition(name) for name in payload.buy_conditions] if payload.buy_conditions else [get_buy_condition("sma_cross_up")]
+    sell_names = payload.sell_conditions if payload.sell_conditions else ["close_below_sma10"]
+    sell_fns = [get_sell_condition(name) for name in sell_names]
 
     min_start = max(payload.short_window, payload.long_window)
     open_trade: dict[str, object] | None = None
@@ -85,23 +85,33 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
 
         price = float(closes[idx])
         ts = normalized.iloc[idx]["Date"]
+        cur_sma10 = float(sma10_values[idx]) if not pd.isna(sma10_values[idx]) else price
+
+        sell_ctx = {
+            "prev_short": float(prev_short),
+            "prev_long": float(prev_long),
+            "cur_short": float(cur_short),
+            "cur_long": float(cur_long),
+            "price": price,
+            "sma10": cur_sma10,
+        }
 
         if open_trade is None:
-            if _cross_up(float(prev_short), float(prev_long), float(cur_short), float(cur_long)):
+            if all(fn(float(prev_short), float(prev_long), float(cur_short), float(cur_long)) for fn in buy_fns):
                 open_trade = {
                     "buy_price": price,
                     "buy_time": ts,
                     "buy_index": idx,
-                    "buy_criteria": "ema_cross_up",
+                    "buy_criteria": " && ".join(payload.buy_conditions),
                     "buy_sma5": float(sma5_values[idx]) if not pd.isna(sma5_values[idx]) else None,
                 }
             continue
 
-        if not _cross_down(float(prev_short), float(prev_long), float(cur_short), float(cur_long)):
+        if not any(fn(sell_ctx) for fn in sell_fns):
             continue
 
         buy_price = float(open_trade["buy_price"])
-        reason = "ema_cross_down"
+        reason = " || ".join(sell_names)
 
         pnl = (price - buy_price) * payload.quantity
         return_pct = (price - buy_price) / buy_price
@@ -120,7 +130,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                 bars_held=bars_held,
                 buy_criteria=str(open_trade["buy_criteria"]),
                 sell_criteria=reason,
-                note=f"ema_short={payload.short_window}, ema_long={payload.long_window}",
+                note=f"sma_short={payload.short_window}, sma_long={payload.long_window}, buy={' && '.join(payload.buy_conditions)}, sell={' || '.join(sell_names)}",
             )
         )
 
@@ -164,7 +174,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                 bars_held=bars_held,
                 buy_criteria=str(open_trade["buy_criteria"]),
                 sell_criteria="end_of_data",
-                note=f"ema_short={payload.short_window}, ema_long={payload.long_window}",
+                note=f"sma_short={payload.short_window}, sma_long={payload.long_window}, buy={' && '.join(payload.buy_conditions)}, sell={' || '.join(sell_names)}",
             )
         )
 
@@ -195,8 +205,8 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
         "reset": reset_before_run,
         "deleted_rows": deleted_rows,
         "criteria": {
-            "buy": "EMA5 crosses above EMA20",
-            "sell": "EMA5 crosses below EMA20",
+            "buy": payload.buy_conditions,
+            "sell": sell_names,
             "short_window": payload.short_window,
             "long_window": payload.long_window,
         },
@@ -213,7 +223,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
 @router.post("/run")
 async def run_backtest(payload: BacktestRequest, db: Session = Depends(get_db)) -> dict[str, object]:
     frame = await run_in_threadpool(fetch_stock, payload.symbol)
-    result = _execute_backtest(payload=payload, frame=frame, db=db, reset_before_run=False)
+    result = _execute_backtest(payload=payload, frame=frame, db=db, reset_before_run=True)
 
     try:
         db.commit()
@@ -270,3 +280,17 @@ def list_backtest_trades(symbol: str | None = Query(default=None), db: Session =
             for row in rows
         ],
     }
+
+
+@router.get("/conditions")
+def list_conditions() -> dict[str, list[dict[str, str]]]:
+    """Return all available buy/sell conditions for the UI."""
+    buy_conditions = []
+    sell_conditions = []
+    for key, entry in CONDITION_MAP.items():
+        item = {"name": key, "label": entry["label"]}
+        if entry["type"] == "buy":
+            buy_conditions.append(item)
+        else:
+            sell_conditions.append(item)
+    return {"buy": buy_conditions, "sell": sell_conditions}

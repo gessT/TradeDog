@@ -74,7 +74,7 @@ export function useStock(initialSymbol: string) {
     const sma5 = sma(prices, 5);
     const sma10 = sma(prices, 10);
     const sma20 = sma(prices, 20);
-    const signals = detectSignals(sma5, sma10);
+    const signals = detectSignals(sma5, sma20);
 
     return points.map((item, index) => ({
       time: item.time,
