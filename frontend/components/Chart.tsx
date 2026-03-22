@@ -20,12 +20,7 @@ type ChartProps = {
 export default function Chart({ data }: ChartProps) {
   return (
     <div>
-      <div className="mb-4 flex items-end justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-100">Price + SMA Overlay</h2>
-          <p className="text-xs text-slate-400">Smooth line chart with SMA5, SMA10, SMA20</p>
-        </div>
-      </div>
+      <p className="mb-2 text-xs text-slate-400">Smooth line chart with SMA5, SMA10, SMA20</p>
 
       <div className="h-[360px] w-full">
         <ResponsiveContainer width="100%" height="100%">

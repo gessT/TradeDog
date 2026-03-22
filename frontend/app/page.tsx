@@ -44,7 +44,14 @@ export default function Page() {
         ) : null}
 
         <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-2xl shadow-black/30 md:p-6">
-          <Chart data={points} />
+          <details>
+            <summary className="cursor-pointer select-none text-lg font-semibold text-slate-100">
+              Price + SMA Overlay
+            </summary>
+            <div className="mt-4">
+              <Chart data={points} />
+            </div>
+          </details>
         </div>
 
         <div className="mt-6 grid gap-4 md:grid-cols-3">
