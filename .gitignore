@@ -1,0 +1,60 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python local config
+.env
+.env.*
+
+# Databases / runtime artifacts
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Frontend env files
+frontend/.env.local
+frontend/.env.*
+front/.env.local
+front/.env.*
+
+# Build outputs
+build/
+dist/
+
+# TypeScript
+*.tsbuildinfo
+
+# Temporary files
+*.tmp
+*.temp
+
+# Generated data exports
+apple_stock.json

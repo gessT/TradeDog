@@ -1,0 +1,96 @@
+import json
+import csv
+import io
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+import pandas as pd
+import yfinance as yf
+
+
+SAMPLE_DATA_PATH = Path(__file__).resolve().parents[2] / "apple_stock.json"
+
+
+def _load_sample_stock() -> pd.DataFrame | None:
+    if not SAMPLE_DATA_PATH.exists():
+        return None
+
+    payload = json.loads(SAMPLE_DATA_PATH.read_text(encoding="utf-8"))
+    frame = pd.DataFrame(payload.get("data", []))
+    if frame.empty:
+        return None
+
+    frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+    for column in ("Open", "High", "Low", "Close", "Volume"):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+
+    return frame.dropna(subset=["Date"]).tail(50)
+
+
+def _normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    normalized = frame.copy()
+    normalized.columns = [str(col) if not isinstance(col, tuple) else str(col[0]) for col in normalized.columns]
+
+    if "Date" not in normalized.columns and normalized.index.name:
+        normalized = normalized.reset_index()
+
+    if "Date" in normalized.columns:
+        normalized["Date"] = pd.to_datetime(normalized["Date"], errors="coerce")
+
+    for column in ("Open", "High", "Low", "Close", "Volume"):
+        if column in normalized.columns:
+            normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
+
+    keep_cols = [col for col in ["Date", "Open", "High", "Low", "Close", "Volume"] if col in normalized.columns]
+    cleaned = normalized[keep_cols].dropna(subset=["Close"]) if "Close" in normalized.columns else normalized
+    return cleaned.tail(50)
+
+
+def _fetch_from_yfinance(symbol: str) -> pd.DataFrame | None:
+    try:
+        data = yf.download(symbol, period="1mo", interval="1d", auto_adjust=False, progress=False)
+    except Exception:
+        return None
+
+    if data is None or data.empty:
+        return None
+
+    normalized = _normalize_frame(data)
+    return normalized if not normalized.empty else None
+
+
+def _fetch_from_stooq(symbol: str) -> pd.DataFrame | None:
+    ticker = f"{symbol.lower()}.us"
+    url = f"https://stooq.com/q/d/l/?s={urllib.parse.quote(ticker)}&i=d"
+
+    try:
+        raw = urllib.request.urlopen(url, timeout=15).read().decode("utf-8")
+    except Exception:
+        return None
+
+    rows = list(csv.DictReader(io.StringIO(raw)))
+    if not rows:
+        return None
+
+    frame = pd.DataFrame(rows)
+    normalized = _normalize_frame(frame)
+    return normalized if not normalized.empty else None
+
+
+def fetch_stock(symbol: str) -> pd.DataFrame:
+    normalized_symbol = symbol.upper().strip()
+
+    yfinance_data = _fetch_from_yfinance(normalized_symbol)
+    if yfinance_data is not None:
+        return yfinance_data
+
+    stooq_data = _fetch_from_stooq(normalized_symbol)
+    if stooq_data is not None:
+        return stooq_data
+
+    sample = _load_sample_stock()
+    if sample is not None and normalized_symbol == "AAPL":
+        return sample
+
+    raise ValueError(f"No market data available for {normalized_symbol}")

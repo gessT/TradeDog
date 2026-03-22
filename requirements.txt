@@ -1,0 +1,11 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.39
+pydantic-settings==2.8.1
+yfinance==0.2.55
+pandas==2.2.3
+numpy==2.2.4
+prometheus-client==0.22.1
+psycopg2-binary==2.9.10
+redis==5.2.1
+httpx==0.28.1
