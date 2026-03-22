@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,7 +9,10 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     api_v1_prefix: str = "/api/v1"
     debug: bool = False
-    database_url: str = "postgresql+psycopg2://user:pass@db/trading"
+    database_url: str = Field(
+        default="postgresql+psycopg2://user:pass@db/trading",
+        validation_alias=AliasChoices("DATABASE_URL", "DATABSE_URL"),
+    )
     allowed_origins: list[str] = Field(default_factory=lambda: ["*"])
     default_history_period: str = "6mo"
     sma_short_window: int = 20
@@ -27,6 +30,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
 

@@ -3,12 +3,12 @@ from fastapi import Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api import demo, signal, stock, webhook, ws
+from app.api import backtest, demo, signal, stock, webhook, ws
 from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.core.logger import configure_logging, render_metrics, track
 from app.db.database import Base, engine
-from app.models import signal as signal_model, stock as stock_model  # noqa: F401
+from app.models import backtest_trade as backtest_trade_model, signal as signal_model, stock as stock_model  # noqa: F401
 from app.services.redis_client import redis_service
 
 
@@ -55,6 +55,7 @@ app.include_router(health_router)
 app.include_router(webhook.router, prefix="/webhook")
 app.include_router(ws.router)
 app.include_router(demo.router)
+app.include_router(backtest.router)
 
 
 @app.get("/")

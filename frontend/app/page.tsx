@@ -1,15 +1,28 @@
 "use client";
 
 import Chart from "../components/Chart";
+import BacktestTable from "../components/BacktestTable";
 import DataTable from "../components/DataTable";
 import MetricCards from "../components/MetricCards";
 import Navbar from "../components/Navbar";
 import SignalPanel from "../components/SignalPanel";
+import { useBacktest } from "../hooks/useBacktest";
 import { useStock } from "../hooks/useStock";
 
 
 export default function Page() {
   const { symbol, setSymbol, points, rows, metrics, loading, error, refresh } = useStock("AAPL");
+  const {
+    trades,
+    loading: backtestLoading,
+    running: backtestRunning,
+    error: backtestError,
+    summary,
+    params,
+    setParams,
+    loadTrades,
+    run,
+  } = useBacktest(symbol);
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
@@ -19,6 +32,12 @@ export default function Page() {
         {error ? (
           <div className="mt-4 rounded-xl border border-rose-800 bg-rose-950/50 px-4 py-3 text-sm text-rose-200">
             {error}
+          </div>
+        ) : null}
+
+        {backtestError ? (
+          <div className="mt-4 rounded-xl border border-rose-800 bg-rose-950/50 px-4 py-3 text-sm text-rose-200">
+            {backtestError}
           </div>
         ) : null}
 
@@ -35,8 +54,28 @@ export default function Page() {
         </div>
 
         <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:p-6">
-          <h2 className="mb-4 text-lg font-semibold text-slate-100">Data History</h2>
-          <DataTable rows={rows} />
+          <details open>
+            <summary className="cursor-pointer select-none text-lg font-semibold text-slate-100">
+              Data History ({rows.length})
+            </summary>
+            <div className="mt-4">
+              <DataTable rows={rows} />
+            </div>
+          </details>
+        </div>
+
+        <div className="mt-6">
+          <BacktestTable
+            symbol={symbol}
+            trades={trades}
+            loading={backtestLoading}
+            running={backtestRunning}
+            params={params}
+            summary={summary}
+            onParamsChange={setParams}
+            onRun={run}
+            onReload={loadTrades}
+          />
         </div>
       </div>
     </main>

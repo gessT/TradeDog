@@ -5,6 +5,51 @@ export type DemoPoint = {
 };
 
 
+export type BacktestRunRequest = {
+  symbol: string;
+  quantity: number;
+  short_window: number;
+  long_window: number;
+  stop_loss_pct: number;
+  take_profit_pct: number;
+};
+
+
+export type BacktestTradeRow = {
+  id: number;
+  symbol: string;
+  quantity: number;
+  buy_price: number;
+  sell_price: number;
+  buy_time: string;
+  sell_time: string;
+  pnl: number;
+  return_pct: number;
+  bars_held: number;
+  buy_criteria: string;
+  sell_criteria: string;
+  note: string;
+  created_at: string | null;
+};
+
+
+export type BacktestTradesResponse = {
+  count: number;
+  items: BacktestTradeRow[];
+};
+
+
+export type BacktestRunResponse = {
+  symbol: string;
+  summary: {
+    count: number;
+    wins: number;
+    win_rate: number;
+    net_pnl: number;
+  };
+};
+
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
 
@@ -17,4 +62,36 @@ export async function getDemoSeries(symbol: string): Promise<DemoPoint[]> {
 
   const payload = (await response.json()) as DemoPoint[];
   return payload;
+}
+
+
+export async function runBacktest(payload: BacktestRunRequest): Promise<BacktestRunResponse> {
+  const response = await fetch(`${API_BASE}/backtest/run`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+
+  return (await response.json()) as BacktestRunResponse;
+}
+
+
+export async function getBacktestTrades(symbol: string): Promise<BacktestTradesResponse> {
+  const response = await fetch(`${API_BASE}/backtest/trades?symbol=${encodeURIComponent(symbol)}`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+
+  return (await response.json()) as BacktestTradesResponse;
 }
