@@ -29,6 +29,8 @@ export type BacktestTradeRow = {
   sell_criteria: string;
   note: string;
   created_at: string | null;
+  buy_sma5?: number | null;
+  sell_sma5?: number | null;
 };
 
 
@@ -40,6 +42,7 @@ export type BacktestTradesResponse = {
 
 export type BacktestRunResponse = {
   symbol: string;
+  trades: BacktestTradeRow[];
   summary: {
     count: number;
     wins: number;

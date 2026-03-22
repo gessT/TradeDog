@@ -63,7 +63,7 @@ export function useBacktest(symbol: string) {
         winRatePct: result.summary.win_rate * 100,
         netPnl: result.summary.net_pnl,
       });
-      await loadTrades();
+      setTrades(result.trades);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to run backtest");
     } finally {

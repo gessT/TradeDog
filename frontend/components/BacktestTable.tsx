@@ -161,7 +161,7 @@ export default function BacktestTable({
 
       <details className="mt-4 rounded-lg border border-slate-800 bg-slate-950/20" open>
         <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-slate-200">
-          Database History ({trades.length})
+          Back test result({trades.length})
         </summary>
 
         <div className="max-h-[380px] overflow-auto border-t border-slate-800">
@@ -185,6 +185,7 @@ export default function BacktestTable({
                   <td className="px-3 py-2 text-slate-300">{fmtDate(row.sell_time)}</td>
                   <td className="px-3 py-2 text-right text-slate-100">{fmtMoney(row.buy_price)}</td>
                   <td className="px-3 py-2 text-right text-slate-100">{fmtMoney(row.sell_price)}</td>
+
                   <td className="px-3 py-2 text-right text-slate-100">{row.quantity}</td>
                   <td className={`px-3 py-2 text-right font-medium ${row.pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                     {fmtMoney(row.pnl)}

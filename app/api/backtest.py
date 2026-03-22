@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.backtest_trade import BacktestTrade
 from app.services.data_collector import fetch_stock
-from app.utils.indicators import ema
+from app.strategies.sma_indicator import ema, sma5 as compute_sma5
 
 
 router = APIRouter(prefix="/backtest", tags=["backtest"])
@@ -62,6 +62,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     closes = normalized["Close"].astype(float).tolist()
     short_values = ema(closes, payload.short_window)
     long_values = ema(closes, payload.long_window)
+    sma5_values = compute_sma5(closes)
 
     min_start = max(payload.short_window, payload.long_window)
     open_trade: dict[str, object] | None = None
@@ -92,6 +93,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                     "buy_time": ts,
                     "buy_index": idx,
                     "buy_criteria": "ema_cross_up",
+                    "buy_sma5": float(sma5_values[idx]) if not pd.isna(sma5_values[idx]) else None,
                 }
             continue
 
@@ -135,6 +137,8 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                 "bars_held": bars_held,
                 "buy_criteria": open_trade["buy_criteria"],
                 "sell_criteria": reason,
+                "buy_sma5": open_trade["buy_sma5"],
+                "sell_sma5": float(sma5_values[idx]) if not pd.isna(sma5_values[idx]) else None,
             }
         )
         open_trade = None
@@ -177,6 +181,8 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                 "bars_held": bars_held,
                 "buy_criteria": open_trade["buy_criteria"],
                 "sell_criteria": "end_of_data",
+                "buy_sma5": open_trade["buy_sma5"],
+                "sell_sma5": float(sma5_values[-1]) if not pd.isna(sma5_values[-1]) else None,
             }
         )
 

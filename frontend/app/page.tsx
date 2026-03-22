@@ -43,6 +43,17 @@ export default function Page() {
           </div>
         ) : null}
 
+        <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:p-6">
+          <details>
+            <summary className="cursor-pointer select-none text-lg font-semibold text-slate-100">
+              Data History ({rows.length})
+            </summary>
+            <div className="mt-4">
+              <DataTable rows={[...rows].reverse()} />
+            </div>
+          </details>
+        </div>
+
         <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-2xl shadow-black/30 md:p-6">
           <details>
             <summary className="cursor-pointer select-none text-lg font-semibold text-slate-100">
@@ -79,16 +90,6 @@ export default function Page() {
           />
         </div>
 
-        <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:p-6">
-          <details>
-            <summary className="cursor-pointer select-none text-lg font-semibold text-slate-100">
-              Data History ({rows.length})
-            </summary>
-            <div className="mt-4">
-              <DataTable rows={rows} />
-            </div>
-          </details>
-        </div>
       </div>
     </main>
   );
