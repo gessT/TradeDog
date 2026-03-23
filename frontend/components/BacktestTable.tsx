@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { BacktestTradeRow, ConditionItem } from "../services/api";
-import { getConditions } from "../services/api";
+import { getConditions, getConditionPreferences } from "../services/api";
 
 
 type BacktestParams = {
@@ -38,6 +38,8 @@ type BacktestTableProps = {
   onRun: () => void;
   onReset: () => void;
   onReload: () => void;
+  onResetPreferences: () => void;
+  onPrefsLoaded: () => void;
 };
 
 
@@ -76,18 +78,41 @@ export default function BacktestTable({
   onRun,
   onReset,
   onReload,
+  onResetPreferences,
+  onPrefsLoaded,
 }: BacktestTableProps) {
   const [buyOptions, setBuyOptions] = useState<ConditionItem[]>([]);
   const [sellOptions, setSellOptions] = useState<ConditionItem[]>([]);
+  const prefsApplied = useRef(false);
 
   useEffect(() => {
-    getConditions()
-      .then((data) => {
-        setBuyOptions(data.buy);
-        setSellOptions(data.sell);
+    Promise.all([getConditions(), getConditionPreferences()])
+      .then(([conds, prefs]) => {
+        setBuyOptions(conds.buy);
+        setSellOptions(conds.sell);
+
+        // Apply saved preferences if any
+        if (prefs.checked.length > 0 && !prefsApplied.current) {
+          const buyNames = new Set(conds.buy.map((c) => c.name));
+          const sellNames = new Set(conds.sell.map((c) => c.name));
+          const savedBuy = prefs.checked.filter((n) => buyNames.has(n));
+          const savedSell = prefs.checked.filter((n) => sellNames.has(n));
+          if (savedBuy.length > 0 || savedSell.length > 0) {
+            onParamsChange({
+              ...params,
+              buy_conditions: savedBuy.length > 0 ? savedBuy : params.buy_conditions,
+              sell_conditions: savedSell.length > 0 ? savedSell : params.sell_conditions,
+            });
+          }
+        }
+        prefsApplied.current = true;
+        onPrefsLoaded();
       })
-      .catch((err) => console.error("Failed to load conditions:", err));
-  }, []);
+      .catch((err) => {
+        console.error("Failed to load conditions:", err);
+        onPrefsLoaded();
+      });
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggleBuyCondition(name: string) {
     const current = params.buy_conditions;
@@ -239,13 +264,20 @@ export default function BacktestTable({
       </div>
 
       {/* ── Action button ─────────── */}
-      <div className="mt-4">
+      <div className="mt-4 flex items-center gap-3">
         <button
           onClick={onRun}
           disabled={running || params.buy_conditions.length === 0}
-          className="w-full rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto"
+          className="rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {running ? "Running…" : "Run Backtest"}
+        </button>
+        <button
+          onClick={onResetPreferences}
+          className="rounded-lg border border-slate-600 bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:bg-slate-700 hover:text-slate-100"
+          title="Reset condition selections to defaults"
+        >
+          Reset Conditions
         </button>
       </div>
 

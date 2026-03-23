@@ -24,6 +24,8 @@ export default function Page() {
     loadTrades,
     run,
     reset,
+    resetPreferences,
+    markPrefsLoaded,
   } = useBacktest(symbol);
 
   return (
@@ -57,6 +59,8 @@ export default function Page() {
             onRun={run}
             onReset={reset}
             onReload={loadTrades}
+            onResetPreferences={resetPreferences}
+            onPrefsLoaded={markPrefsLoaded}
           />
         </div>
 

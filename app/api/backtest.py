@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.models.backtest_trade import BacktestTrade
+from app.models.condition_preference import ConditionPreference
 from app.services.data_collector import fetch_stock
 from app.strategies.sma_indicator import sma as compute_sma, sma5 as compute_sma5, halftrend as compute_halftrend
 from app.strategies.conditions import get_buy_condition, get_sell_condition, CONDITION_MAP, SELL_PAIR
@@ -104,6 +105,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "prev_long": float(prev_long),
             "cur_short": float(cur_short),
             "cur_long": float(cur_long),
+            "cur_sma10": float(sma10_values[idx]) if not pd.isna(sma10_values[idx]) else 0,
             "halftrend": cur_ht,
             "prev_halftrend": prev_ht,
             "price": price,
@@ -342,3 +344,35 @@ def list_conditions() -> dict[str, list[dict[str, str]]]:
         else:
             sell_conditions.append(item)
     return {"buy": buy_conditions, "sell": sell_conditions}
+
+
+# ── Condition preferences (persist checked state) ────────────────────
+
+class ConditionPrefsPayload(BaseModel):
+    checked: list[str] = Field(default_factory=list, description="List of condition names that are checked")
+
+
+@router.get("/conditions/preferences")
+def get_condition_preferences(db: Session = Depends(get_db)) -> dict[str, list[str]]:
+    """Return saved checked condition names."""
+    rows = db.query(ConditionPreference).filter(ConditionPreference.checked.is_(True)).all()
+    return {"checked": [r.name for r in rows]}
+
+
+@router.post("/conditions/preferences")
+def save_condition_preferences(payload: ConditionPrefsPayload, db: Session = Depends(get_db)) -> dict[str, str]:
+    """Save which conditions are currently checked (replaces previous state)."""
+    db.query(ConditionPreference).delete(synchronize_session=False)
+    for name in payload.checked:
+        if name in CONDITION_MAP:
+            db.add(ConditionPreference(name=name, checked=True))
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/conditions/preferences")
+def reset_condition_preferences(db: Session = Depends(get_db)) -> dict[str, str]:
+    """Reset condition preferences (delete all saved state)."""
+    db.query(ConditionPreference).delete(synchronize_session=False)
+    db.commit()
+    return {"status": "reset"}

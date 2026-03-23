@@ -139,3 +139,35 @@ export async function getConditions(): Promise<ConditionsResponse> {
   }
   return (await response.json()) as ConditionsResponse;
 }
+
+
+export async function getConditionPreferences(): Promise<{ checked: string[] }> {
+  const response = await fetch(`${API_BASE}/backtest/conditions/preferences`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as { checked: string[] };
+}
+
+
+export async function saveConditionPreferences(checked: string[]): Promise<void> {
+  const response = await fetch(`${API_BASE}/backtest/conditions/preferences`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ checked }),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+}
+
+
+export async function resetConditionPreferences(): Promise<void> {
+  const response = await fetch(`${API_BASE}/backtest/conditions/preferences`, { method: "DELETE" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+}
