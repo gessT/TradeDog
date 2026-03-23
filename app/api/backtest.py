@@ -66,6 +66,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     highs = normalized["High"].astype(float).tolist() if "High" in normalized.columns else closes
     lows = normalized["Low"].astype(float).tolist() if "Low" in normalized.columns else closes
     opens = normalized["Open"].astype(float).tolist() if "Open" in normalized.columns else closes
+    volumes = normalized["Volume"].astype(float).tolist() if "Volume" in normalized.columns else [0] * len(closes)
     candle_patterns = [detect_candle(opens[i], highs[i], lows[i], closes[i]) for i in range(len(closes))]
     short_values = compute_sma(closes, payload.short_window)
     long_values = compute_sma(closes, payload.long_window)
@@ -77,6 +78,14 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     # Weekly Supertrend: -1 = uptrend, 1 = downtrend
     date_list = normalized["Date"].tolist()
     wst_dirs = weekly_supertrend(date_list, opens, highs, lows, closes)
+
+    # Pre-compute volume boost: volume >= 2x the 20-day average
+    vol_boost = [False] * len(volumes)
+    for i in range(len(volumes)):
+        start = max(0, i - 20)
+        window = volumes[start:i]
+        avg = sum(window) / len(window) if window else 0
+        vol_boost[i] = (volumes[i] >= avg * 2) if avg > 0 else False
 
     buy_fns = [get_buy_condition(name) for name in payload.buy_conditions] if payload.buy_conditions else [get_buy_condition("sma_cross_up")]
     sell_names = payload.sell_conditions if payload.sell_conditions else ["close_below_sma10"]
@@ -120,6 +129,9 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "prev_close": float(closes[idx - 1]) if idx > 0 else 0,
             "prev_candle": candle_patterns[idx - 1] if idx > 0 else None,
             "weekly_trend_up": wst_dirs[idx] == -1 if idx < len(wst_dirs) else False,
+            "prev_day_boost": vol_boost[idx - 1] if idx > 0 else False,
+            "prev_day_high": float(highs[idx - 1]) if idx > 0 else 0,
+            "prev_day_low": float(lows[idx - 1]) if idx > 0 else 0,
         }
 
         cur_sma_sell = float(sma_sell_values[idx]) if not pd.isna(sma_sell_values[idx]) else price
@@ -140,6 +152,9 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "stop_loss_pct": payload.stop_loss_pct / 100,
             "hammer_close": float(open_trade.get("hammer_close", 0)) if open_trade else 0,
             "weekly_trend_up": wst_dirs[idx] == -1 if idx < len(wst_dirs) else False,
+            "prev_day_boost": vol_boost[idx - 1] if idx > 0 else False,
+            "prev_day_high": float(highs[idx - 1]) if idx > 0 else 0,
+            "prev_day_low": float(lows[idx - 1]) if idx > 0 else 0,
         }
 
         if open_trade is None:
