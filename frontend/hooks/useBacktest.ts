@@ -36,13 +36,16 @@ export function useBacktest(symbol: string) {
   const prefsLoaded = useRef(false);
 
   const [params, setParams] = useState<Omit<BacktestRunRequest, "symbol">>({
-    quantity: 1,
+    quantity: 100,
     investment: 0,
     short_window: 5,
     long_window: 20,
-    start_date: "",
+    start_date: "2022-01-01",
     buy_conditions: DEFAULT_BUY,
     sell_conditions: DEFAULT_SELL,
+    buy_logic: "OR",
+    sell_logic: "OR",
+    alignment_days: 3,
     take_profit_pct: 2,
     stop_loss_pct: 5,
   });
@@ -51,8 +54,8 @@ export function useBacktest(symbol: string) {
   useEffect(() => {
     if (!prefsLoaded.current) return;
     const all = [...params.buy_conditions, ...params.sell_conditions];
-    saveConditionPreferences(all).catch(() => {});
-  }, [params.buy_conditions, params.sell_conditions]);
+    saveConditionPreferences(all, params.buy_logic, params.sell_logic, params.alignment_days).catch(() => {});
+  }, [params.buy_conditions, params.sell_conditions, params.buy_logic, params.sell_logic, params.alignment_days]);
 
   const loadTrades = useCallback(async () => {
     setLoading(true);
@@ -119,6 +122,9 @@ export function useBacktest(symbol: string) {
         ...prev,
         buy_conditions: DEFAULT_BUY,
         sell_conditions: DEFAULT_SELL,
+        buy_logic: "OR",
+        sell_logic: "OR",
+        alignment_days: 3,
       }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reset condition preferences");

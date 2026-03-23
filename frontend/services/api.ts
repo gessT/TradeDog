@@ -19,6 +19,9 @@ export type BacktestRunRequest = {
   start_date: string;
   buy_conditions: string[];
   sell_conditions: string[];
+  buy_logic: "AND" | "OR";
+  sell_logic: "AND" | "OR";
+  alignment_days: number;
   take_profit_pct: number;
   stop_loss_pct: number;
 };
@@ -141,21 +144,23 @@ export async function getConditions(): Promise<ConditionsResponse> {
 }
 
 
-export async function getConditionPreferences(): Promise<{ checked: string[] }> {
+type ConditionPrefs = { checked: string[]; buy_logic: "AND" | "OR"; sell_logic: "AND" | "OR"; alignment_days: number };
+
+export async function getConditionPreferences(): Promise<ConditionPrefs> {
   const response = await fetch(`${API_BASE}/backtest/conditions/preferences`, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Request failed with ${response.status}`);
   }
-  return (await response.json()) as { checked: string[] };
+  return (await response.json()) as ConditionPrefs;
 }
 
 
-export async function saveConditionPreferences(checked: string[]): Promise<void> {
+export async function saveConditionPreferences(checked: string[], buy_logic: "AND" | "OR", sell_logic: "AND" | "OR", alignment_days: number): Promise<void> {
   const response = await fetch(`${API_BASE}/backtest/conditions/preferences`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ checked }),
+    body: JSON.stringify({ checked, buy_logic, sell_logic, alignment_days }),
   });
   if (!response.ok) {
     const detail = await response.text();

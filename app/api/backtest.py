@@ -9,11 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.models.backtest_trade import BacktestTrade
-from app.models.condition_preference import ConditionPreference
+from app.models.condition_preference import ConditionPreference, LogicPreference
 from app.services.data_collector import fetch_stock
 from app.strategies.sma_indicator import sma as compute_sma, sma5 as compute_sma5, halftrend as compute_halftrend
 from app.strategies.conditions import get_buy_condition, get_sell_condition, CONDITION_MAP, SELL_PAIR
-from app.utils.indicators import detect_candle
+from app.utils.indicators import detect_candle, weekly_supertrend
 
 
 router = APIRouter(prefix="/backtest", tags=["backtest"])
@@ -26,8 +26,11 @@ class BacktestRequest(BaseModel):
     short_window: int = Field(default=5, ge=2, le=100)
     long_window: int = Field(default=20, ge=3, le=300)
     start_date: date | None = Field(default=None, description="Only use data from this date onward (YYYY-MM-DD)")
-    buy_conditions: list[str] = Field(default=["sma_cross_up"], description="Buy condition names — ALL must be true (AND)")
-    sell_conditions: list[str] = Field(default=["close_below_sma10"], description="Sell condition names — ANY triggers exit (OR)")
+    buy_conditions: list[str] = Field(default=["sma_cross_up"], description="Buy condition names")
+    sell_conditions: list[str] = Field(default=["close_below_sma10"], description="Sell condition names")
+    buy_logic: str = Field(default="OR", pattern="^(AND|OR)$", description="AND = all buy conditions must be true, OR = any one triggers")
+    sell_logic: str = Field(default="OR", pattern="^(AND|OR)$", description="AND = all sell conditions must be true, OR = any one triggers")
+    alignment_days: int = Field(default=3, ge=1, le=30, description="Min consecutive days SMA5>SMA10>SMA20 must hold")
     take_profit_pct: float = Field(default=2.0, ge=0, le=100, description="Take profit percentage (e.g. 2.0 = 2%)")
     stop_loss_pct: float = Field(default=5.0, ge=0, le=100, description="Trailing stop loss percentage (e.g. 5.0 = 5%)")
 
@@ -70,9 +73,24 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     sma10_values = compute_sma(closes, 10)
     halftrend_values = compute_halftrend(highs, lows, closes)
 
+    # Weekly Supertrend: -1 = uptrend, 1 = downtrend
+    date_list = normalized["Date"].tolist()
+    wst_dirs = weekly_supertrend(date_list, opens, highs, lows, closes)
+
     buy_fns = [get_buy_condition(name) for name in payload.buy_conditions] if payload.buy_conditions else [get_buy_condition("sma_cross_up")]
     sell_names = payload.sell_conditions if payload.sell_conditions else ["close_below_sma10"]
     sell_fns = [get_sell_condition(name) for name in sell_names]
+
+    # Pre-compute alignment streak: consecutive days SMA5 > SMA10 > SMA20
+    alignment_streak = [0] * len(closes)
+    for i in range(1, len(closes)):
+        s5 = short_values[i] if not pd.isna(short_values[i]) else 0
+        s10 = sma10_values[i] if not pd.isna(sma10_values[i]) else 0
+        s20 = long_values[i] if not pd.isna(long_values[i]) else 0
+        if s5 > s10 > s20:
+            alignment_streak[i] = alignment_streak[i - 1] + 1
+        else:
+            alignment_streak[i] = 0
 
     min_start = max(payload.short_window, payload.long_window)
     open_trade: dict[str, object] | None = None
@@ -111,6 +129,9 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "price": price,
             "prev_close": float(closes[idx - 1]) if idx > 0 else 0,
             "prev_candle": candle_patterns[idx - 1] if idx > 0 else None,
+            "alignment_streak": alignment_streak[idx],
+            "alignment_days": payload.alignment_days,
+            "weekly_trend_up": wst_dirs[idx] == -1 if idx < len(wst_dirs) else False,
         }
 
         sell_ctx = {
@@ -127,17 +148,20 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "take_profit_pct": payload.take_profit_pct / 100,
             "stop_loss_pct": payload.stop_loss_pct / 100,
             "hammer_close": float(open_trade.get("hammer_close", 0)) if open_trade else 0,
+            "weekly_trend_up": wst_dirs[idx] == -1 if idx < len(wst_dirs) else False,
         }
 
         if open_trade is None:
-            if all(fn(buy_ctx) for fn in buy_fns):
+            buy_match = all(fn(buy_ctx) for fn in buy_fns) if payload.buy_logic == "AND" else any(fn(buy_ctx) for fn in buy_fns)
+            if buy_match:
+                buy_joiner = " && " if payload.buy_logic == "AND" else " || "
                 open_trade = {
                     "buy_price": price,
                     "highest_price": price,
                     "hammer_close": float(closes[idx - 1]) if idx > 0 and candle_patterns[idx - 1] == "Inverted Hammer" else 0,
                     "buy_time": ts,
                     "buy_index": idx,
-                    "buy_criteria": " && ".join(payload.buy_conditions),
+                    "buy_criteria": buy_joiner.join(payload.buy_conditions),
                     "buy_sma5": float(sma5_values[idx]) if not pd.isna(sma5_values[idx]) else None,
                 }
             continue
@@ -145,11 +169,12 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
         if price > open_trade["highest_price"]:
             open_trade["highest_price"] = price
 
-        if not any(fn(sell_ctx) for fn in sell_fns):
+        if not (all(fn(sell_ctx) for fn in sell_fns) if payload.sell_logic == "AND" else any(fn(sell_ctx) for fn in sell_fns)):
             continue
 
         buy_price = float(open_trade["buy_price"])
-        reason = " || ".join(sell_names)
+        sell_joiner = " && " if payload.sell_logic == "AND" else " || "
+        reason = sell_joiner.join(sell_names)
 
         qty = (payload.investment / buy_price) if payload.investment > 0 else payload.quantity
         pnl = (price - buy_price) * qty
@@ -170,7 +195,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                 bars_held=bars_held,
                 buy_criteria=str(open_trade["buy_criteria"]),
                 sell_criteria=reason,
-                note=f"sma_short={payload.short_window}, sma_long={payload.long_window}, buy={' && '.join(payload.buy_conditions)}, sell={' || '.join(sell_names)}",
+                note=f"buy_logic={payload.buy_logic}, sell_logic={payload.sell_logic}, buy={open_trade['buy_criteria']}, sell={reason}",
             )
         )
 
@@ -218,7 +243,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                 bars_held=bars_held,
                 buy_criteria=str(open_trade["buy_criteria"]),
                 sell_criteria="end_of_data",
-                note=f"sma_short={payload.short_window}, sma_long={payload.long_window}, buy={' && '.join(payload.buy_conditions)}, sell={' || '.join(sell_names)}",
+                note=f"buy_logic={payload.buy_logic}, sell_logic={payload.sell_logic}, buy={open_trade['buy_criteria']}, sell=end_of_data",
             )
         )
 
@@ -350,22 +375,40 @@ def list_conditions() -> dict[str, list[dict[str, str]]]:
 
 class ConditionPrefsPayload(BaseModel):
     checked: list[str] = Field(default_factory=list, description="List of condition names that are checked")
+    buy_logic: str = Field(default="OR", pattern="^(AND|OR)$")
+    sell_logic: str = Field(default="OR", pattern="^(AND|OR)$")
+    alignment_days: int = Field(default=3, ge=1, le=30)
 
 
 @router.get("/conditions/preferences")
-def get_condition_preferences(db: Session = Depends(get_db)) -> dict[str, list[str]]:
-    """Return saved checked condition names."""
+def get_condition_preferences(db: Session = Depends(get_db)) -> dict[str, object]:
+    """Return saved checked condition names and logic modes."""
     rows = db.query(ConditionPreference).filter(ConditionPreference.checked.is_(True)).all()
-    return {"checked": [r.name for r in rows]}
+    buy_row = db.query(LogicPreference).filter(LogicPreference.key == "buy_logic").first()
+    sell_row = db.query(LogicPreference).filter(LogicPreference.key == "sell_logic").first()
+    align_row = db.query(LogicPreference).filter(LogicPreference.key == "alignment_days").first()
+    return {
+        "checked": [r.name for r in rows],
+        "buy_logic": buy_row.value if buy_row else "OR",
+        "sell_logic": sell_row.value if sell_row else "OR",
+        "alignment_days": int(align_row.value) if align_row else 3,
+    }
 
 
 @router.post("/conditions/preferences")
 def save_condition_preferences(payload: ConditionPrefsPayload, db: Session = Depends(get_db)) -> dict[str, str]:
-    """Save which conditions are currently checked (replaces previous state)."""
+    """Save which conditions are currently checked and logic modes."""
     db.query(ConditionPreference).delete(synchronize_session=False)
     for name in payload.checked:
         if name in CONDITION_MAP:
             db.add(ConditionPreference(name=name, checked=True))
+    # Upsert logic preferences
+    for key, val in [("buy_logic", payload.buy_logic), ("sell_logic", payload.sell_logic), ("alignment_days", str(payload.alignment_days))]:
+        existing = db.query(LogicPreference).filter(LogicPreference.key == key).first()
+        if existing:
+            existing.value = val
+        else:
+            db.add(LogicPreference(key=key, value=val))
     db.commit()
     return {"status": "ok"}
 
@@ -374,5 +417,6 @@ def save_condition_preferences(payload: ConditionPrefsPayload, db: Session = Dep
 def reset_condition_preferences(db: Session = Depends(get_db)) -> dict[str, str]:
     """Reset condition preferences (delete all saved state)."""
     db.query(ConditionPreference).delete(synchronize_session=False)
+    db.query(LogicPreference).delete(synchronize_session=False)
     db.commit()
     return {"status": "reset"}

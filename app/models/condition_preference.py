@@ -9,3 +9,10 @@ class ConditionPreference(Base):
 
     name: Mapped[str] = mapped_column(String(64), primary_key=True)
     checked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class LogicPreference(Base):
+    __tablename__ = "logic_preferences"
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    value: Mapped[str] = mapped_column(String(8), default="OR")

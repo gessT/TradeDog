@@ -17,8 +17,10 @@ from __future__ import annotations
 # ctx keys: prev_short, prev_long, cur_short, cur_long, halftrend, prev_halftrend
 
 def sma_cross_up(ctx: dict) -> bool:
-    """BUY: SMA5 > SMA10 > SMA20 (bullish MA alignment / 均线多排)."""
-    return ctx["cur_short"] > ctx["cur_sma10"] > ctx["cur_long"]
+    """BUY: SMA5 > SMA10 > SMA20 held for N consecutive days (均线多排)."""
+    streak = ctx.get("alignment_streak", 0)
+    min_days = ctx.get("alignment_days", 3)
+    return streak >= min_days
 
 
 def halftrend_green(ctx: dict) -> bool:
@@ -29,6 +31,11 @@ def halftrend_green(ctx: dict) -> bool:
 def inverted_hammer_buy(ctx: dict) -> bool:
     """BUY: Previous candle was Inverted Hammer and today's close > yesterday's close."""
     return ctx.get("prev_candle") == "Inverted Hammer" and ctx["price"] > ctx.get("prev_close", 0)
+
+
+def weekly_trend_up_buy(ctx: dict) -> bool:
+    """BUY: Weekly Supertrend is in uptrend."""
+    return ctx.get("weekly_trend_up", False) is True
 
 
 # ── SELL conditions (context dict signature) ─────────────────────────
@@ -74,17 +81,24 @@ def close_below_hammer(ctx: dict) -> bool:
     return ctx["price"] < hammer_close * 0.97
 
 
+def weekly_trend_down_sell(ctx: dict) -> bool:
+    """SELL: Weekly Supertrend flipped to downtrend."""
+    return ctx.get("weekly_trend_up", True) is False
+
+
 # ── Registry ────────────────────────────────────────────────────────
 
 CONDITION_MAP = {
-    "sma_cross_up":      {"fn": sma_cross_up,      "label": "SMA5 > SMA10 > SMA20 (bullish alignment)",  "type": "buy"},
+    "sma_cross_up":      {"fn": sma_cross_up,      "label": "SMA5 > SMA10 > SMA20 held N days",  "type": "buy"},
     "halftrend_green":   {"fn": halftrend_green,    "label": "Half-trend flips green",    "type": "buy"},
     "inverted_hammer_buy": {"fn": inverted_hammer_buy, "label": "Inverted Hammer + next day up", "type": "buy"},
+    "weekly_trend_up":   {"fn": weekly_trend_up_buy, "label": "Weekly Supertrend UP",      "type": "buy"},
     "close_below_sma10": {"fn": close_below_sma10,  "label": "Close below SMA10",         "type": "sell"},
     "halftrend_red":     {"fn": halftrend_red,      "label": "Half-trend flips red",      "type": "sell"},
     "take_profit_2pct":  {"fn": take_profit_2pct,   "label": "Take profit (configurable %)",  "type": "sell"},
     "stop_loss_5pct":    {"fn": stop_loss_5pct,     "label": "Trailing stop loss (configurable %)", "type": "sell"},
     "close_below_hammer": {"fn": close_below_hammer, "label": "Close below 3% of Hammer day",       "type": "sell"},
+    "weekly_trend_down": {"fn": weekly_trend_down_sell, "label": "Weekly Supertrend DOWN",  "type": "sell"},
 }
 
 SELL_PAIR = {

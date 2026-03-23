@@ -13,6 +13,9 @@ type BacktestParams = {
   start_date: string;
   buy_conditions: string[];
   sell_conditions: string[];
+  buy_logic: "AND" | "OR";
+  sell_logic: "AND" | "OR";
+  alignment_days: number;
   take_profit_pct: number;
   stop_loss_pct: number;
 };
@@ -102,6 +105,9 @@ export default function BacktestTable({
               ...params,
               buy_conditions: savedBuy.length > 0 ? savedBuy : params.buy_conditions,
               sell_conditions: savedSell.length > 0 ? savedSell : params.sell_conditions,
+              buy_logic: prefs.buy_logic,
+              sell_logic: prefs.sell_logic,
+              alignment_days: prefs.alignment_days ?? 3,
             });
           }
         }
@@ -135,13 +141,40 @@ export default function BacktestTable({
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:p-6">
       <h2 className="text-lg font-semibold text-slate-100">Backtest — {symbol}</h2>
-      <p className="text-xs text-slate-400">Check conditions (AND logic), set params, then run. Database resets on each run.</p>
+      <p className="text-xs text-slate-400">Check conditions, pick AND/OR logic, set params, then run.</p>
 
       {/* ── Buy conditions checkboxes ─────────── */}
       <div className="mt-4 rounded-xl border border-emerald-800/50 bg-emerald-950/30 p-4">
-        <span className="mb-2 inline-block rounded bg-emerald-700/60 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-emerald-200">
-          Buy Conditions (all must be true)
-        </span>
+        <div className="mb-2 flex items-center gap-3">
+          <span className="inline-block rounded bg-emerald-700/60 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-emerald-200">
+            Buy Conditions
+          </span>
+          <div className="flex rounded-lg border border-emerald-700/50 overflow-hidden text-xs">
+            <button
+              onClick={() => onParamsChange({ ...params, buy_logic: "AND" })}
+              className={`px-2.5 py-1 font-semibold transition ${
+                params.buy_logic === "AND"
+                  ? "bg-emerald-600 text-white"
+                  : "bg-slate-800 text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              AND
+            </button>
+            <button
+              onClick={() => onParamsChange({ ...params, buy_logic: "OR" })}
+              className={`px-2.5 py-1 font-semibold transition ${
+                params.buy_logic === "OR"
+                  ? "bg-emerald-600 text-white"
+                  : "bg-slate-800 text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              OR
+            </button>
+          </div>
+          <span className="text-xs text-slate-500">
+            {params.buy_logic === "AND" ? "all must be true" : "any one triggers buy"}
+          </span>
+        </div>
         <div className="mt-2 flex flex-wrap gap-2">
           {buyOptions.map((opt) => {
             const active = params.buy_conditions.includes(opt.name);
@@ -169,9 +202,36 @@ export default function BacktestTable({
 
       {/* ── Sell conditions checkboxes ─────────── */}
       <div className="mt-3 rounded-xl border border-rose-800/50 bg-rose-950/30 p-4">
-        <span className="mb-2 inline-block rounded bg-rose-700/60 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-rose-200">
-          Sell Conditions (any triggers exit)
-        </span>
+        <div className="mb-2 flex items-center gap-3">
+          <span className="inline-block rounded bg-rose-700/60 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-rose-200">
+            Sell Conditions
+          </span>
+          <div className="flex rounded-lg border border-rose-700/50 overflow-hidden text-xs">
+            <button
+              onClick={() => onParamsChange({ ...params, sell_logic: "AND" })}
+              className={`px-2.5 py-1 font-semibold transition ${
+                params.sell_logic === "AND"
+                  ? "bg-rose-600 text-white"
+                  : "bg-slate-800 text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              AND
+            </button>
+            <button
+              onClick={() => onParamsChange({ ...params, sell_logic: "OR" })}
+              className={`px-2.5 py-1 font-semibold transition ${
+                params.sell_logic === "OR"
+                  ? "bg-rose-600 text-white"
+                  : "bg-slate-800 text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              OR
+            </button>
+          </div>
+          <span className="text-xs text-slate-500">
+            {params.sell_logic === "AND" ? "all must be true to sell" : "any one triggers exit"}
+          </span>
+        </div>
         <div className="mt-2 flex flex-wrap gap-2">
           {sellOptions.map((opt) => {
             const active = params.sell_conditions.includes(opt.name);
@@ -200,28 +260,22 @@ export default function BacktestTable({
       {/* ── Params row ─────────── */}
       <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-3">
         <label className="text-xs text-slate-300">
-          Invest (USD)
-          <input
-            type="number"
-            min={0}
-            step={100}
-            value={params.investment}
-            onChange={(e) => onParamsChange({ ...params, investment: Number(e.target.value) || 0 })}
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            placeholder="0 = use Qty"
-          />
-        </label>
-        <label className="text-xs text-slate-300">
-          Qty
-          <input
-            type="number"
-            min={0.01}
-            step={0.01}
-            value={params.quantity}
-            disabled={params.investment > 0}
-            onChange={(e) => onParamsChange({ ...params, quantity: Number(e.target.value) || 1 })}
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 disabled:opacity-40"
-          />
+          Qty (units)
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={params.quantity}
+              onChange={(e) => onParamsChange({ ...params, quantity: Number(e.target.value) || 100 })}
+              className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+            />
+            {trades.length > 0 && trades[0]?.buy_price ? (
+              <span className="whitespace-nowrap text-xs text-slate-400">
+                ≈ ${(params.quantity * trades[0].buy_price).toFixed(0)} USD
+              </span>
+            ) : null}
+          </div>
         </label>
         <label className="text-xs text-slate-300">
           Start Date
@@ -235,7 +289,7 @@ export default function BacktestTable({
         </label>
       </div>
 
-      {/* ── Take Profit & Stop Loss ─────────── */}
+      {/* ── Take Profit & Stop Loss & Alignment ─────────── */}
       <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
         <label className="text-xs text-slate-300">
           Take Profit %
@@ -259,6 +313,19 @@ export default function BacktestTable({
             value={params.stop_loss_pct}
             onChange={(e) => onParamsChange({ ...params, stop_loss_pct: Number(e.target.value) || 0 })}
             className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+          />
+        </label>
+        <label className="text-xs text-slate-300">
+          SMA Align Days
+          <input
+            type="number"
+            min={1}
+            max={30}
+            step={1}
+            value={params.alignment_days}
+            onChange={(e) => onParamsChange({ ...params, alignment_days: Number(e.target.value) || 3 })}
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+            title="Min consecutive days SMA5 > SMA10 > SMA20 must hold"
           />
         </label>
       </div>
