@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getDemoSeries, type DemoPoint } from "../services/api";
-import { detectPattern, detectSignals, sma } from "../utils/indicators";
+import { detectCandle, detectPattern, detectSignals, sma, type CandlePattern } from "../utils/indicators";
 
 
 export type DashboardRow = {
@@ -16,6 +16,7 @@ export type DashboardRow = {
   htTrend: number | null;
   pattern: "Bullish" | "Bearish" | "Sideway";
   signal: "BUY" | "SELL" | "NONE";
+  candle: CandlePattern | null;
 };
 
 
@@ -88,6 +89,18 @@ export function useStock(initialSymbol: string) {
       htTrend: item.ht_trend,
       pattern: detectPattern(item.price, sma20[index]),
       signal: signals[index],
+      candle: detectCandle({
+        open: item.open ?? item.price,
+        high: item.high ?? item.price,
+        low: item.low ?? item.price,
+        close: item.price,
+        ...(index > 0 ? {
+          prevOpen: points[index - 1].open ?? points[index - 1].price,
+          prevHigh: points[index - 1].high ?? points[index - 1].price,
+          prevLow: points[index - 1].low ?? points[index - 1].price,
+          prevClose: points[index - 1].price,
+        } : {}),
+      }),
     }));
   }, [points]);
 

@@ -5,7 +5,7 @@ import { useState } from "react";
 import type { DashboardRow } from "../hooks/useStock";
 
 
-type ColumnKey = "close" | "sma5" | "sma10" | "sma20" | "ht" | "pattern" | "signal";
+type ColumnKey = "close" | "sma5" | "sma10" | "sma20" | "ht" | "pattern" | "signal" | "candle";
 
 const ALL_COLUMNS: { key: ColumnKey; label: string; defaultVisible: boolean }[] = [
   { key: "close",   label: "Close",     defaultVisible: true },
@@ -13,6 +13,7 @@ const ALL_COLUMNS: { key: ColumnKey; label: string; defaultVisible: boolean }[] 
   { key: "sma10",   label: "SMA10",     defaultVisible: false },
   { key: "sma20",   label: "SMA20",     defaultVisible: false },
   { key: "ht",      label: "HalfTrend", defaultVisible: true },
+  { key: "candle",  label: "Candle",    defaultVisible: true },
   { key: "pattern", label: "Pattern",   defaultVisible: true },
   { key: "signal",  label: "Signal",    defaultVisible: true },
 ];
@@ -64,6 +65,7 @@ export default function DataTable({ rows }: DataTableProps) {
               {show("sma10")   && <th className="px-3 py-2 text-right">SMA10</th>}
               {show("sma20")   && <th className="px-3 py-2 text-right">SMA20</th>}
               {show("ht")      && <th className="px-3 py-2 text-right">HalfTrend</th>}
+              {show("candle")  && <th className="px-3 py-2 text-left">Candle</th>}
               {show("pattern") && <th className="px-3 py-2 text-left">Pattern</th>}
               {show("signal")  && <th className="px-3 py-2 text-left">Signal</th>}
             </tr>
@@ -78,6 +80,8 @@ export default function DataTable({ rows }: DataTableProps) {
                 : "";
               const selectedBg = selectedIndex === index ? "ring-1 ring-slate-400" : "";
               const htColor = row.htTrend === 0 ? "text-emerald-400" : row.htTrend === 1 ? "text-rose-400" : "text-slate-500";
+              const candleBias = row.candle?.bias;
+              const candleColor = candleBias === "bullish" ? "text-emerald-400" : candleBias === "bearish" ? "text-rose-400" : "text-slate-400";
               return (
               <tr
                 key={`${row.time}-${index}`}
@@ -90,6 +94,7 @@ export default function DataTable({ rows }: DataTableProps) {
                 {show("sma10")   && <td className="px-3 py-2 text-right text-slate-100">{row.sma10.toFixed(2)}</td>}
                 {show("sma20")   && <td className="px-3 py-2 text-right text-slate-100">{row.sma20.toFixed(2)}</td>}
                 {show("ht")      && <td className={`px-3 py-2 text-right font-medium ${htColor}`}>{row.ht != null ? row.ht.toFixed(2) : "\u2014"}</td>}
+                {show("candle")  && <td className={`px-3 py-2 font-medium ${candleColor}`}>{row.candle ? row.candle.name : "\u2014"}</td>}
                 {show("pattern") && <td className="px-3 py-2 text-slate-200">{row.pattern}</td>}
                 {show("signal")  && <td className="px-3 py-2 font-medium text-slate-100">{row.signal}</td>}
               </tr>

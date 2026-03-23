@@ -113,18 +113,23 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "halftrend": cur_ht,
             "prev_halftrend": prev_ht,
             "buy_price": float(open_trade["buy_price"]) if open_trade else 0,
+            "highest_price": float(open_trade["highest_price"]) if open_trade else 0,
         }
 
         if open_trade is None:
             if all(fn(buy_ctx) for fn in buy_fns):
                 open_trade = {
                     "buy_price": price,
+                    "highest_price": price,
                     "buy_time": ts,
                     "buy_index": idx,
                     "buy_criteria": " && ".join(payload.buy_conditions),
                     "buy_sma5": float(sma5_values[idx]) if not pd.isna(sma5_values[idx]) else None,
                 }
             continue
+
+        if price > open_trade["highest_price"]:
+            open_trade["highest_price"] = price
 
         if not any(fn(sell_ctx) for fn in sell_fns):
             continue

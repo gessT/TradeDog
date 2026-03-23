@@ -7,7 +7,7 @@ Buy condition signature (context dict):
 
 Sell condition signature (context dict):
     (ctx: dict) -> bool
-    ctx keys: prev_short, prev_long, cur_short, cur_long, price, sma10, halftrend, prev_halftrend
+    ctx keys: prev_short, prev_long, cur_short, cur_long, price, sma10, halftrend, prev_halftrend, buy_price, highest_price
 """
 
 from __future__ import annotations
@@ -51,6 +51,14 @@ def take_profit_2pct(ctx: dict) -> bool:
     return (ctx["price"] - buy_price) / buy_price >= 0.02
 
 
+def stop_loss_5pct(ctx: dict) -> bool:
+    """SELL: price dropped >= 5% from highest price during trade (trailing stop)."""
+    highest = ctx.get("highest_price", 0)
+    if highest <= 0:
+        return False
+    return (ctx["price"] - highest) / highest <= -0.05
+
+
 # ── Registry ────────────────────────────────────────────────────────
 
 CONDITION_MAP = {
@@ -59,6 +67,7 @@ CONDITION_MAP = {
     "close_below_sma10": {"fn": close_below_sma10,  "label": "Close below SMA10",         "type": "sell"},
     "halftrend_red":     {"fn": halftrend_red,      "label": "Half-trend flips red",      "type": "sell"},
     "take_profit_2pct":  {"fn": take_profit_2pct,   "label": "Take profit at 2%",         "type": "sell"},
+    "stop_loss_5pct":    {"fn": stop_loss_5pct,     "label": "Stop loss at -5%",          "type": "sell"},
 }
 
 SELL_PAIR = {
