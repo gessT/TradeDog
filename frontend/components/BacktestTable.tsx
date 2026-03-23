@@ -18,6 +18,7 @@ type BacktestParams = {
   alignment_days: number;
   take_profit_pct: number;
   stop_loss_pct: number;
+  sma_sell_period: number;
 };
 
 
@@ -108,6 +109,7 @@ export default function BacktestTable({
               buy_logic: prefs.buy_logic,
               sell_logic: prefs.sell_logic,
               alignment_days: prefs.alignment_days ?? 3,
+              sma_sell_period: prefs.sma_sell_period ?? 10,
             });
           }
         }
@@ -327,6 +329,22 @@ export default function BacktestTable({
             className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
             title="Min consecutive days SMA5 > SMA10 > SMA20 must hold"
           />
+        </label>
+        <label className="text-xs text-slate-300">
+          Close below SMA
+          <select
+            value={params.sma_sell_period}
+            onChange={(e) => onParamsChange({ ...params, sma_sell_period: Number(e.target.value) })}
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+            title="SMA period for the 'Close below SMA' sell condition"
+          >
+            <option value={5}>SMA 5</option>
+            <option value={10}>SMA 10</option>
+            <option value={20}>SMA 20</option>
+            <option value={50}>SMA 50</option>
+            <option value={100}>SMA 100</option>
+            <option value={200}>SMA 200</option>
+          </select>
         </label>
       </div>
 

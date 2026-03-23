@@ -33,6 +33,7 @@ class BacktestRequest(BaseModel):
     alignment_days: int = Field(default=3, ge=1, le=30, description="Min consecutive days SMA5>SMA10>SMA20 must hold")
     take_profit_pct: float = Field(default=2.0, ge=0, le=100, description="Take profit percentage (e.g. 2.0 = 2%)")
     stop_loss_pct: float = Field(default=5.0, ge=0, le=100, description="Trailing stop loss percentage (e.g. 5.0 = 5%)")
+    sma_sell_period: int = Field(default=10, ge=2, le=200, description="SMA period for 'Close below SMA' sell condition")
 
 
 def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session, reset_before_run: bool) -> dict[str, object]:
@@ -71,6 +72,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     long_values = compute_sma(closes, payload.long_window)
     sma5_values = compute_sma5(closes)
     sma10_values = compute_sma(closes, 10)
+    sma_sell_values = compute_sma(closes, payload.sma_sell_period) if payload.sma_sell_period != 10 else sma10_values
     halftrend_values = compute_halftrend(highs, lows, closes)
 
     # Weekly Supertrend: -1 = uptrend, 1 = downtrend
@@ -134,6 +136,8 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "weekly_trend_up": wst_dirs[idx] == -1 if idx < len(wst_dirs) else False,
         }
 
+        cur_sma_sell = float(sma_sell_values[idx]) if not pd.isna(sma_sell_values[idx]) else price
+
         sell_ctx = {
             "prev_short": float(prev_short),
             "prev_long": float(prev_long),
@@ -141,6 +145,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "cur_long": float(cur_long),
             "price": price,
             "sma10": cur_sma10,
+            "close_sma_value": cur_sma_sell,
             "halftrend": cur_ht,
             "prev_halftrend": prev_ht,
             "buy_price": float(open_trade["buy_price"]) if open_trade else 0,
@@ -378,6 +383,7 @@ class ConditionPrefsPayload(BaseModel):
     buy_logic: str = Field(default="OR", pattern="^(AND|OR)$")
     sell_logic: str = Field(default="OR", pattern="^(AND|OR)$")
     alignment_days: int = Field(default=3, ge=1, le=30)
+    sma_sell_period: int = Field(default=10, ge=2, le=200)
 
 
 @router.get("/conditions/preferences")
@@ -387,11 +393,13 @@ def get_condition_preferences(db: Session = Depends(get_db)) -> dict[str, object
     buy_row = db.query(LogicPreference).filter(LogicPreference.key == "buy_logic").first()
     sell_row = db.query(LogicPreference).filter(LogicPreference.key == "sell_logic").first()
     align_row = db.query(LogicPreference).filter(LogicPreference.key == "alignment_days").first()
+    sma_sell_row = db.query(LogicPreference).filter(LogicPreference.key == "sma_sell_period").first()
     return {
         "checked": [r.name for r in rows],
         "buy_logic": buy_row.value if buy_row else "OR",
         "sell_logic": sell_row.value if sell_row else "OR",
         "alignment_days": int(align_row.value) if align_row else 3,
+        "sma_sell_period": int(sma_sell_row.value) if sma_sell_row else 10,
     }
 
 
@@ -403,7 +411,7 @@ def save_condition_preferences(payload: ConditionPrefsPayload, db: Session = Dep
         if name in CONDITION_MAP:
             db.add(ConditionPreference(name=name, checked=True))
     # Upsert logic preferences
-    for key, val in [("buy_logic", payload.buy_logic), ("sell_logic", payload.sell_logic), ("alignment_days", str(payload.alignment_days))]:
+    for key, val in [("buy_logic", payload.buy_logic), ("sell_logic", payload.sell_logic), ("alignment_days", str(payload.alignment_days)), ("sma_sell_period", str(payload.sma_sell_period))]:
         existing = db.query(LogicPreference).filter(LogicPreference.key == key).first()
         if existing:
             existing.value = val

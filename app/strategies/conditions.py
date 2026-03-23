@@ -41,8 +41,9 @@ def weekly_trend_up_buy(ctx: dict) -> bool:
 # ── SELL conditions (context dict signature) ─────────────────────────
 
 def close_below_sma10(ctx: dict) -> bool:
-    """SELL: price closes below SMA10."""
-    return ctx["price"] < ctx["sma10"]
+    """SELL: price closes below SMA (configurable period)."""
+    sma_val = ctx.get("close_sma_value", ctx.get("sma10", 0))
+    return ctx["price"] < sma_val
 
 
 def sma_cross_down(ctx: dict) -> bool:
@@ -93,7 +94,7 @@ CONDITION_MAP = {
     "halftrend_green":   {"fn": halftrend_green,    "label": "Half-trend flips green",    "type": "buy"},
     "inverted_hammer_buy": {"fn": inverted_hammer_buy, "label": "Inverted Hammer + next day up", "type": "buy"},
     "weekly_trend_up":   {"fn": weekly_trend_up_buy, "label": "Weekly Supertrend UP",      "type": "buy"},
-    "close_below_sma10": {"fn": close_below_sma10,  "label": "Close below SMA10",         "type": "sell"},
+    "close_below_sma10": {"fn": close_below_sma10,  "label": "Close below SMA (configurable)", "type": "sell"},
     "halftrend_red":     {"fn": halftrend_red,      "label": "Half-trend flips red",      "type": "sell"},
     "take_profit_2pct":  {"fn": take_profit_2pct,   "label": "Take profit (configurable %)",  "type": "sell"},
     "stop_loss_5pct":    {"fn": stop_loss_5pct,     "label": "Trailing stop loss (configurable %)", "type": "sell"},

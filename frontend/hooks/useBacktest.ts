@@ -48,14 +48,15 @@ export function useBacktest(symbol: string) {
     alignment_days: 3,
     take_profit_pct: 2,
     stop_loss_pct: 5,
+    sma_sell_period: 10,
   });
 
   // Auto-save condition preferences when they change
   useEffect(() => {
     if (!prefsLoaded.current) return;
     const all = [...params.buy_conditions, ...params.sell_conditions];
-    saveConditionPreferences(all, params.buy_logic, params.sell_logic, params.alignment_days).catch(() => {});
-  }, [params.buy_conditions, params.sell_conditions, params.buy_logic, params.sell_logic, params.alignment_days]);
+    saveConditionPreferences(all, params.buy_logic, params.sell_logic, params.alignment_days, params.sma_sell_period).catch(() => {});
+  }, [params.buy_conditions, params.sell_conditions, params.buy_logic, params.sell_logic, params.alignment_days, params.sma_sell_period]);
 
   const loadTrades = useCallback(async () => {
     setLoading(true);
@@ -125,6 +126,7 @@ export function useBacktest(symbol: string) {
         buy_logic: "OR",
         sell_logic: "OR",
         alignment_days: 3,
+        sma_sell_period: 10,
       }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reset condition preferences");
