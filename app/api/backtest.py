@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.backtest_trade import BacktestTrade
 from app.services.data_collector import fetch_stock
-from app.strategies.sma_indicator import sma as compute_sma, sma5 as compute_sma5
+from app.strategies.sma_indicator import sma as compute_sma, sma5 as compute_sma5, halftrend as compute_halftrend
 from app.strategies.conditions import get_buy_condition, get_sell_condition, CONDITION_MAP, SELL_PAIR
 
 
@@ -55,10 +55,13 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
         normalized = normalized[normalized["Date"] >= pd.Timestamp(payload.start_date)].reset_index(drop=True)
 
     closes = normalized["Close"].astype(float).tolist()
+    highs = normalized["High"].astype(float).tolist() if "High" in normalized.columns else closes
+    lows = normalized["Low"].astype(float).tolist() if "Low" in normalized.columns else closes
     short_values = compute_sma(closes, payload.short_window)
     long_values = compute_sma(closes, payload.long_window)
     sma5_values = compute_sma5(closes)
     sma10_values = compute_sma(closes, 10)
+    halftrend_values = compute_halftrend(highs, lows, closes)
 
     buy_fns = [get_buy_condition(name) for name in payload.buy_conditions] if payload.buy_conditions else [get_buy_condition("sma_cross_up")]
     sell_names = payload.sell_conditions if payload.sell_conditions else ["close_below_sma10"]
@@ -87,6 +90,18 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
         ts = normalized.iloc[idx]["Date"]
         cur_sma10 = float(sma10_values[idx]) if not pd.isna(sma10_values[idx]) else price
 
+        cur_ht = halftrend_values[idx]
+        prev_ht = halftrend_values[idx - 1] if idx > 0 else cur_ht
+
+        buy_ctx = {
+            "prev_short": float(prev_short),
+            "prev_long": float(prev_long),
+            "cur_short": float(cur_short),
+            "cur_long": float(cur_long),
+            "halftrend": cur_ht,
+            "prev_halftrend": prev_ht,
+        }
+
         sell_ctx = {
             "prev_short": float(prev_short),
             "prev_long": float(prev_long),
@@ -94,10 +109,12 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "cur_long": float(cur_long),
             "price": price,
             "sma10": cur_sma10,
+            "halftrend": cur_ht,
+            "prev_halftrend": prev_ht,
         }
 
         if open_trade is None:
-            if all(fn(float(prev_short), float(prev_long), float(cur_short), float(cur_long)) for fn in buy_fns):
+            if all(fn(buy_ctx) for fn in buy_fns):
                 open_trade = {
                     "buy_price": price,
                     "buy_time": ts,

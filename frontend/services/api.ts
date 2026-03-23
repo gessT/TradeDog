@@ -1,7 +1,12 @@
 export type DemoPoint = {
   time: string;
   price: number;
+  open: number | null;
+  high: number | null;
+  low: number | null;
   ema: number;
+  ht: number | null;
+  ht_trend: number | null;
 };
 
 

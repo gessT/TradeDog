@@ -12,6 +12,8 @@ export type DashboardRow = {
   sma5: number;
   sma10: number;
   sma20: number;
+  ht: number | null;
+  htTrend: number | null;
   pattern: "Bullish" | "Bearish" | "Sideway";
   signal: "BUY" | "SELL" | "NONE";
 };
@@ -82,6 +84,8 @@ export function useStock(initialSymbol: string) {
       sma5: sma5[index],
       sma10: sma10[index],
       sma20: sma20[index],
+      ht: item.ht,
+      htTrend: item.ht_trend,
       pattern: detectPattern(item.price, sma20[index]),
       signal: signals[index],
     }));

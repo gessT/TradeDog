@@ -1,27 +1,29 @@
 """
 Trading conditions — simple building blocks you can mix & match.
 
-Buy condition signature:
-    (prev_short, prev_long, cur_short, cur_long) -> bool
+Buy condition signature (context dict):
+    (ctx: dict) -> bool
+    ctx keys: prev_short, prev_long, cur_short, cur_long, halftrend, prev_halftrend
 
 Sell condition signature (context dict):
     (ctx: dict) -> bool
-    ctx keys: prev_short, prev_long, cur_short, cur_long, price, sma10
+    ctx keys: prev_short, prev_long, cur_short, cur_long, price, sma10, halftrend, prev_halftrend
 """
 
 from __future__ import annotations
 
 
-# ── BUY conditions (crossover signature) ─────────────────────────────
+# ── BUY conditions (context dict signature) ──────────────────────────
+# ctx keys: prev_short, prev_long, cur_short, cur_long, halftrend, prev_halftrend
 
-def sma_cross_up(prev_short: float, prev_long: float, cur_short: float, cur_long: float) -> bool:
+def sma_cross_up(ctx: dict) -> bool:
     """BUY: short MA crosses ABOVE long MA (e.g. SMA5 × SMA20)."""
-    return prev_short <= prev_long and cur_short > cur_long
+    return ctx["prev_short"] <= ctx["prev_long"] and ctx["cur_short"] > ctx["cur_long"]
 
 
-def halftrend_green(prev_short: float, prev_long: float, cur_short: float, cur_long: float) -> bool:
-    """BUY: short MA is above long MA (trend is green / bullish)."""
-    return cur_short > cur_long
+def halftrend_green(ctx: dict) -> bool:
+    """BUY: HalfTrend just flipped to green (uptrend)."""
+    return ctx["halftrend"] == 0 and ctx["prev_halftrend"] == 1
 
 
 # ── SELL conditions (context dict signature) ─────────────────────────
@@ -37,18 +39,18 @@ def sma_cross_down(ctx: dict) -> bool:
 
 
 def halftrend_red(ctx: dict) -> bool:
-    """SELL: short MA is below long MA (trend is red / bearish)."""
-    return ctx["cur_short"] < ctx["cur_long"]
+    """SELL: HalfTrend just flipped to red (downtrend)."""
+    return ctx["halftrend"] == 1 and ctx["prev_halftrend"] == 0
 
 
 # ── Registry ────────────────────────────────────────────────────────
 
 CONDITION_MAP = {
     "sma_cross_up":      {"fn": sma_cross_up,      "label": "SMA5 crosses above SMA20",  "type": "buy"},
-    "halftrend_green":   {"fn": halftrend_green,    "label": "Half-trend turns green",    "type": "buy"},
+    "halftrend_green":   {"fn": halftrend_green,    "label": "Half-trend flips green",    "type": "buy"},
     "close_below_sma10": {"fn": close_below_sma10,  "label": "Close below SMA10",         "type": "sell"},
     "sma_cross_down":    {"fn": sma_cross_down,     "label": "SMA5 crosses below SMA20",  "type": "sell"},
-    "halftrend_red":     {"fn": halftrend_red,      "label": "Half-trend turns red",      "type": "sell"},
+    "halftrend_red":     {"fn": halftrend_red,      "label": "Half-trend flips red",      "type": "sell"},
 }
 
 SELL_PAIR = {
