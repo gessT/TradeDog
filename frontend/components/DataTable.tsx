@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import type { DashboardRow } from "../hooks/useStock";
 
@@ -28,6 +28,21 @@ export default function DataTable({ rows }: DataTableProps) {
   const [visibleCols, setVisibleCols] = useState<Set<ColumnKey>>(
     () => new Set(ALL_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key))
   );
+  const [candleFilter, setCandleFilter] = useState<string>("all");
+
+  const candleTypes = useMemo(() => {
+    const names = new Set<string>();
+    for (const row of rows) {
+      if (row.candle) names.add(row.candle.name);
+    }
+    return Array.from(names).sort();
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    if (candleFilter === "all") return rows;
+    if (candleFilter === "any") return rows.filter((r) => r.candle != null);
+    return rows.filter((r) => r.candle?.name === candleFilter);
+  }, [rows, candleFilter]);
 
   const toggle = (key: ColumnKey) => {
     setVisibleCols((prev) => {
@@ -42,7 +57,7 @@ export default function DataTable({ rows }: DataTableProps) {
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap gap-3 text-xs text-slate-300">
+      <div className="mb-3 flex flex-wrap items-center gap-3 text-xs text-slate-300">
         {ALL_COLUMNS.map((col) => (
           <label key={col.key} className="flex items-center gap-1 cursor-pointer select-none">
             <input
@@ -54,6 +69,23 @@ export default function DataTable({ rows }: DataTableProps) {
             {col.label}
           </label>
         ))}
+
+        <span className="mx-1 text-slate-600">|</span>
+
+        <label className="flex items-center gap-1.5">
+          <span className="text-slate-400">Candle:</span>
+          <select
+            value={candleFilter}
+            onChange={(e) => setCandleFilter(e.target.value)}
+            className="rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="all">All rows</option>
+            <option value="any">Any pattern</option>
+            {candleTypes.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        </label>
       </div>
       <div className="max-h-[360px] overflow-auto rounded-lg border border-slate-800">
         <table className="min-w-full divide-y divide-slate-800 text-sm">
@@ -71,7 +103,7 @@ export default function DataTable({ rows }: DataTableProps) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-900 bg-slate-900/40">
-            {rows.map((row, index) => {
+            {filteredRows.map((row, index) => {
               const signal = row.signal?.toLowerCase() ?? "";
               const signalBg = signal.includes("buy")
                 ? "bg-emerald-900/50"

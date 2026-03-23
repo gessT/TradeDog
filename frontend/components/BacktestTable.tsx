@@ -13,6 +13,8 @@ type BacktestParams = {
   start_date: string;
   buy_conditions: string[];
   sell_conditions: string[];
+  take_profit_pct: number;
+  stop_loss_pct: number;
 };
 
 
@@ -222,6 +224,34 @@ export default function BacktestTable({
             type="date"
             value={params.start_date}
             onChange={(e) => onParamsChange({ ...params, start_date: e.target.value || "2020-01-01" })}
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+          />
+        </label>
+      </div>
+
+      {/* ── Take Profit & Stop Loss ─────────── */}
+      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+        <label className="text-xs text-slate-300">
+          Take Profit %
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step={0.5}
+            value={params.take_profit_pct}
+            onChange={(e) => onParamsChange({ ...params, take_profit_pct: Number(e.target.value) || 0 })}
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+          />
+        </label>
+        <label className="text-xs text-slate-300">
+          Stop Loss %
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step={0.5}
+            value={params.stop_loss_pct}
+            onChange={(e) => onParamsChange({ ...params, stop_loss_pct: Number(e.target.value) || 0 })}
             className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
           />
         </label>

@@ -26,6 +26,11 @@ def halftrend_green(ctx: dict) -> bool:
     return ctx["halftrend"] == 0 and ctx["prev_halftrend"] == 1
 
 
+def inverted_hammer_buy(ctx: dict) -> bool:
+    """BUY: Previous candle was Inverted Hammer and today's close > yesterday's close."""
+    return ctx.get("prev_candle") == "Inverted Hammer" and ctx["price"] > ctx.get("prev_close", 0)
+
+
 # ── SELL conditions (context dict signature) ─────────────────────────
 
 def close_below_sma10(ctx: dict) -> bool:
@@ -44,19 +49,21 @@ def halftrend_red(ctx: dict) -> bool:
 
 
 def take_profit_2pct(ctx: dict) -> bool:
-    """SELL: price gained >= 2% from buy price."""
+    """SELL: price gained >= take_profit_pct from buy price."""
     buy_price = ctx.get("buy_price", 0)
     if buy_price <= 0:
         return False
-    return (ctx["price"] - buy_price) / buy_price >= 0.02
+    threshold = ctx.get("take_profit_pct", 0.02)
+    return (ctx["price"] - buy_price) / buy_price >= threshold
 
 
 def stop_loss_5pct(ctx: dict) -> bool:
-    """SELL: price dropped >= 5% from highest price during trade (trailing stop)."""
+    """SELL: price dropped >= stop_loss_pct from highest price during trade (trailing stop)."""
     highest = ctx.get("highest_price", 0)
     if highest <= 0:
         return False
-    return (ctx["price"] - highest) / highest <= -0.05
+    threshold = ctx.get("stop_loss_pct", 0.05)
+    return (ctx["price"] - highest) / highest <= -threshold
 
 
 # ── Registry ────────────────────────────────────────────────────────
@@ -64,10 +71,11 @@ def stop_loss_5pct(ctx: dict) -> bool:
 CONDITION_MAP = {
     "sma_cross_up":      {"fn": sma_cross_up,      "label": "SMA5 crosses above SMA20",  "type": "buy"},
     "halftrend_green":   {"fn": halftrend_green,    "label": "Half-trend flips green",    "type": "buy"},
+    "inverted_hammer_buy": {"fn": inverted_hammer_buy, "label": "Inverted Hammer + next day up", "type": "buy"},
     "close_below_sma10": {"fn": close_below_sma10,  "label": "Close below SMA10",         "type": "sell"},
     "halftrend_red":     {"fn": halftrend_red,      "label": "Half-trend flips red",      "type": "sell"},
-    "take_profit_2pct":  {"fn": take_profit_2pct,   "label": "Take profit at 2%",         "type": "sell"},
-    "stop_loss_5pct":    {"fn": stop_loss_5pct,     "label": "Stop loss at -5%",          "type": "sell"},
+    "take_profit_2pct":  {"fn": take_profit_2pct,   "label": "Take profit (configurable %)",  "type": "sell"},
+    "stop_loss_5pct":    {"fn": stop_loss_5pct,     "label": "Trailing stop loss (configurable %)", "type": "sell"},
 }
 
 SELL_PAIR = {

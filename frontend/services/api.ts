@@ -19,6 +19,8 @@ export type BacktestRunRequest = {
   start_date: string;
   buy_conditions: string[];
   sell_conditions: string[];
+  take_profit_pct: number;
+  stop_loss_pct: number;
 };
 
 

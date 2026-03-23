@@ -12,6 +12,7 @@ from app.models.backtest_trade import BacktestTrade
 from app.services.data_collector import fetch_stock
 from app.strategies.sma_indicator import sma as compute_sma, sma5 as compute_sma5, halftrend as compute_halftrend
 from app.strategies.conditions import get_buy_condition, get_sell_condition, CONDITION_MAP, SELL_PAIR
+from app.utils.indicators import detect_candle
 
 
 router = APIRouter(prefix="/backtest", tags=["backtest"])
@@ -26,6 +27,8 @@ class BacktestRequest(BaseModel):
     start_date: date | None = Field(default=None, description="Only use data from this date onward (YYYY-MM-DD)")
     buy_conditions: list[str] = Field(default=["sma_cross_up"], description="Buy condition names — ALL must be true (AND)")
     sell_conditions: list[str] = Field(default=["close_below_sma10"], description="Sell condition names — ANY triggers exit (OR)")
+    take_profit_pct: float = Field(default=2.0, ge=0, le=100, description="Take profit percentage (e.g. 2.0 = 2%)")
+    stop_loss_pct: float = Field(default=5.0, ge=0, le=100, description="Trailing stop loss percentage (e.g. 5.0 = 5%)")
 
 
 def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session, reset_before_run: bool) -> dict[str, object]:
@@ -58,6 +61,8 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     closes = normalized["Close"].astype(float).tolist()
     highs = normalized["High"].astype(float).tolist() if "High" in normalized.columns else closes
     lows = normalized["Low"].astype(float).tolist() if "Low" in normalized.columns else closes
+    opens = normalized["Open"].astype(float).tolist() if "Open" in normalized.columns else closes
+    candle_patterns = [detect_candle(opens[i], highs[i], lows[i], closes[i]) for i in range(len(closes))]
     short_values = compute_sma(closes, payload.short_window)
     long_values = compute_sma(closes, payload.long_window)
     sma5_values = compute_sma5(closes)
@@ -101,6 +106,9 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "cur_long": float(cur_long),
             "halftrend": cur_ht,
             "prev_halftrend": prev_ht,
+            "price": price,
+            "prev_close": float(closes[idx - 1]) if idx > 0 else 0,
+            "prev_candle": candle_patterns[idx - 1] if idx > 0 else None,
         }
 
         sell_ctx = {
@@ -114,6 +122,8 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "prev_halftrend": prev_ht,
             "buy_price": float(open_trade["buy_price"]) if open_trade else 0,
             "highest_price": float(open_trade["highest_price"]) if open_trade else 0,
+            "take_profit_pct": payload.take_profit_pct / 100,
+            "stop_loss_pct": payload.stop_loss_pct / 100,
         }
 
         if open_trade is None:
