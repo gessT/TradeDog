@@ -26,6 +26,7 @@ async def demo(symbol: str = Query(default="AAPL")) -> list[dict[str, float | st
     highs = frame["High"].astype(float).tolist() if "High" in frame.columns else closes
     lows = frame["Low"].astype(float).tolist() if "Low" in frame.columns else closes
     opens = frame["Open"].astype(float).tolist() if "Open" in frame.columns else closes
+    volumes = frame["Volume"].astype(float).tolist() if "Volume" in frame.columns else [0.0] * len(closes)
     ema_values = ema(closes, 10)
 
     ht_result = halftrend_full(highs, lows, closes)
@@ -47,6 +48,7 @@ async def demo(symbol: str = Query(default="AAPL")) -> list[dict[str, float | st
                 "ema": float(ema_values[index]) if index < len(ema_values) else float(row["Close"]),
                 "ht": ht_val,
                 "ht_trend": ht_trend,
+                "volume": int(volumes[index]) if index < len(volumes) else 0,
             }
         )
 

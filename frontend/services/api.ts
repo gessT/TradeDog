@@ -7,6 +7,7 @@ export type DemoPoint = {
   ema: number;
   ht: number | null;
   ht_trend: number | null;
+  volume: number;
 };
 
 

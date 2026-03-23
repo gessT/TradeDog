@@ -290,3 +290,37 @@ export function detectSignals(sma5: number[], sma10: number[]): Signal[] {
 
   return out;
 }
+
+
+/**
+ * Detect abnormal/boost volume days.
+ * A day is "boost" if volume >= threshold × rolling average volume.
+ * Returns ratio (volume / avgVolume) for each day.
+ */
+export type VolumeInfo = {
+  volume: number;
+  avgVolume: number;
+  ratio: number;
+  boost: boolean;
+};
+
+export function detectVolumeBoost(
+  volumes: number[],
+  lookback: number = 20,
+  threshold: number = 2.0,
+): VolumeInfo[] {
+  const out: VolumeInfo[] = [];
+  for (let i = 0; i < volumes.length; i++) {
+    const start = Math.max(0, i - lookback);
+    const window = volumes.slice(start, i);
+    const avg = window.length > 0 ? window.reduce((a, b) => a + b, 0) / window.length : 0;
+    const ratio = avg > 0 ? volumes[i] / avg : 0;
+    out.push({
+      volume: volumes[i],
+      avgVolume: Math.round(avg),
+      ratio: Math.round(ratio * 100) / 100,
+      boost: ratio >= threshold,
+    });
+  }
+  return out;
+}

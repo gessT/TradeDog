@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getDemoSeries, type DemoPoint } from "../services/api";
-import { detectCandle, detectPattern, detectSignals, sma, weeklySupertrend, type CandlePattern, type SupertrendResult } from "../utils/indicators";
+import { detectCandle, detectPattern, detectSignals, detectVolumeBoost, sma, weeklySupertrend, type CandlePattern, type SupertrendResult, type VolumeInfo } from "../utils/indicators";
 
 
 export type DashboardRow = {
@@ -18,6 +18,7 @@ export type DashboardRow = {
   signal: "BUY" | "SELL" | "NONE";
   candle: CandlePattern | null;
   wst: SupertrendResult | null;
+  vol: VolumeInfo;
 };
 
 
@@ -80,6 +81,9 @@ export function useStock(initialSymbol: string) {
     const sma20 = sma(prices, 20);
     const signals = detectSignals(sma5, sma20);
 
+    const volumes = points.map((item) => item.volume ?? 0);
+    const volInfo = detectVolumeBoost(volumes);
+
     const dailyBars = points.map((item) => ({
       time: item.time,
       open: item.open ?? item.price,
@@ -112,6 +116,7 @@ export function useStock(initialSymbol: string) {
         } : {}),
       }),
       wst: wstResults[index] ?? null,
+      vol: volInfo[index],
     }));
   }, [points]);
 

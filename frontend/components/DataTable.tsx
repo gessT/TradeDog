@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import type { DashboardRow } from "../hooks/useStock";
 
 
-type ColumnKey = "close" | "sma5" | "sma10" | "sma20" | "ht" | "pattern" | "signal" | "candle" | "wst";
+type ColumnKey = "close" | "sma5" | "sma10" | "sma20" | "ht" | "pattern" | "signal" | "candle" | "wst" | "volume";
 
 const ALL_COLUMNS: { key: ColumnKey; label: string; defaultVisible: boolean }[] = [
   { key: "close",   label: "Close",     defaultVisible: true },
@@ -15,6 +15,7 @@ const ALL_COLUMNS: { key: ColumnKey; label: string; defaultVisible: boolean }[] 
   { key: "ht",      label: "HalfTrend", defaultVisible: true },
   { key: "candle",  label: "Candle",    defaultVisible: true },
   { key: "wst",     label: "W.Supertrend", defaultVisible: true },
+  { key: "volume",  label: "Volume",    defaultVisible: true },
   { key: "pattern", label: "Pattern",   defaultVisible: true },
   { key: "signal",  label: "Signal",    defaultVisible: true },
 ];
@@ -100,6 +101,7 @@ export default function DataTable({ rows }: DataTableProps) {
               {show("ht")      && <th className="px-3 py-2 text-right">HalfTrend</th>}
               {show("candle")  && <th className="px-3 py-2 text-left">Candle</th>}
               {show("wst")     && <th className="px-3 py-2 text-left">W.Supertrend</th>}
+              {show("volume")  && <th className="px-3 py-2 text-right">Volume</th>}
               {show("pattern") && <th className="px-3 py-2 text-left">Pattern</th>}
               {show("signal")  && <th className="px-3 py-2 text-left">Signal</th>}
             </tr>
@@ -122,6 +124,22 @@ export default function DataTable({ rows }: DataTableProps) {
                 ? (row.wst?.flipUp ? "text-emerald-300 bg-emerald-900/40" : "text-rose-300 bg-rose-900/40")
                 : wstDir === -1 ? "text-emerald-400" : wstDir === 1 ? "text-rose-400" : "text-slate-500";
               const wstLabel = wstFlip ?? (wstDir === -1 ? "▲ Up" : wstDir === 1 ? "▼ Down" : "—");
+              const volBoost = row.vol?.boost;
+              const volRatio = row.vol?.ratio ?? 0;
+              const volEmoji = volRatio >= 5 ? "🚀" : volRatio >= 3 ? "🔥" : volRatio >= 2 ? "📈" : "";
+              const volColor = volRatio >= 5
+                ? "text-red-300 bg-red-900/40 font-bold"
+                : volRatio >= 3
+                ? "text-orange-300 bg-orange-900/30 font-semibold"
+                : volBoost
+                ? "text-yellow-300 bg-yellow-900/30 font-semibold"
+                : "text-slate-400";
+              const fmtVol = (v: number) => {
+                if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(1)}B`;
+                if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+                if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+                return String(v);
+              };
               return (
               <tr
                 key={`${row.time}-${index}`}
@@ -136,6 +154,7 @@ export default function DataTable({ rows }: DataTableProps) {
                 {show("ht")      && <td className={`px-3 py-2 text-right font-medium ${htColor}`}>{row.ht != null ? row.ht.toFixed(2) : "\u2014"}</td>}
                 {show("candle")  && <td className={`px-3 py-2 font-medium ${candleColor}`}>{row.candle ? row.candle.name : "\u2014"}</td>}
                 {show("wst")     && <td className={`px-3 py-2 font-medium ${wstColor}`}>{wstLabel}</td>}
+                {show("volume")  && <td className={`px-3 py-2 text-right ${volColor}`} title={`Vol: ${row.vol?.volume?.toLocaleString()} | Avg: ${row.vol?.avgVolume?.toLocaleString()} | Ratio: ${volRatio}x`}>{fmtVol(row.vol?.volume ?? 0)}{volEmoji ? ` ${volEmoji}${volRatio}x` : ""}</td>}
                 {show("pattern") && <td className="px-3 py-2 text-slate-200">{row.pattern}</td>}
                 {show("signal")  && <td className="px-3 py-2 font-medium text-slate-100">{row.signal}</td>}
               </tr>
