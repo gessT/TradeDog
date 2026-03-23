@@ -23,8 +23,8 @@ type BacktestSummary = {
   totalRoiPct: number;
 };
 
-const DEFAULT_BUY = ["sma_cross_up"];
-const DEFAULT_SELL = ["close_below_sma10", "halftrend_red", "take_profit_2pct"];
+const DEFAULT_BUY: string[] = [];
+const DEFAULT_SELL: string[] = [];
 
 export function useBacktest(symbol: string) {
   const [trades, setTrades] = useState<BacktestTradeRow[]>([]);
@@ -45,7 +45,6 @@ export function useBacktest(symbol: string) {
     sell_conditions: DEFAULT_SELL,
     buy_logic: "OR",
     sell_logic: "OR",
-    alignment_days: 3,
     take_profit_pct: 2,
     stop_loss_pct: 5,
     sma_sell_period: 10,
@@ -55,8 +54,8 @@ export function useBacktest(symbol: string) {
   useEffect(() => {
     if (!prefsLoaded.current) return;
     const all = [...params.buy_conditions, ...params.sell_conditions];
-    saveConditionPreferences(all, params.buy_logic, params.sell_logic, params.alignment_days, params.sma_sell_period).catch(() => {});
-  }, [params.buy_conditions, params.sell_conditions, params.buy_logic, params.sell_logic, params.alignment_days, params.sma_sell_period]);
+    saveConditionPreferences(all, params.buy_logic, params.sell_logic, params.sma_sell_period).catch(() => {});
+  }, [params.buy_conditions, params.sell_conditions, params.buy_logic, params.sell_logic, params.sma_sell_period]);
 
   const loadTrades = useCallback(async () => {
     setLoading(true);
@@ -125,7 +124,6 @@ export function useBacktest(symbol: string) {
         sell_conditions: DEFAULT_SELL,
         buy_logic: "OR",
         sell_logic: "OR",
-        alignment_days: 3,
         sma_sell_period: 10,
       }));
     } catch (err) {

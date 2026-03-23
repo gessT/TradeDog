@@ -15,7 +15,6 @@ type BacktestParams = {
   sell_conditions: string[];
   buy_logic: "AND" | "OR";
   sell_logic: "AND" | "OR";
-  alignment_days: number;
   take_profit_pct: number;
   stop_loss_pct: number;
   sma_sell_period: number;
@@ -108,7 +107,6 @@ export default function BacktestTable({
               sell_conditions: savedSell.length > 0 ? savedSell : params.sell_conditions,
               buy_logic: prefs.buy_logic,
               sell_logic: prefs.sell_logic,
-              alignment_days: prefs.alignment_days ?? 3,
               sma_sell_period: prefs.sma_sell_period ?? 10,
             });
           }
@@ -293,21 +291,6 @@ export default function BacktestTable({
 
       {/* ── Conditional config inputs (show only when related condition is ticked) ─────────── */}
       <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
-        {params.buy_conditions.includes("sma_cross_up") && (
-          <label className="text-xs text-slate-300">
-            SMA Align Days
-            <input
-              type="number"
-              min={1}
-              max={30}
-              step={1}
-              value={params.alignment_days}
-              onChange={(e) => onParamsChange({ ...params, alignment_days: Number(e.target.value) || 3 })}
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-              title="Min consecutive days SMA5 > SMA10 > SMA20 must hold"
-            />
-          </label>
-        )}
         {params.sell_conditions.includes("take_profit_2pct") && (
           <label className="text-xs text-slate-300">
             Take Profit %

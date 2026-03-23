@@ -30,7 +30,6 @@ class BacktestRequest(BaseModel):
     sell_conditions: list[str] = Field(default=["close_below_sma10"], description="Sell condition names")
     buy_logic: str = Field(default="OR", pattern="^(AND|OR)$", description="AND = all buy conditions must be true, OR = any one triggers")
     sell_logic: str = Field(default="OR", pattern="^(AND|OR)$", description="AND = all sell conditions must be true, OR = any one triggers")
-    alignment_days: int = Field(default=3, ge=1, le=30, description="Min consecutive days SMA5>SMA10>SMA20 must hold")
     take_profit_pct: float = Field(default=2.0, ge=0, le=100, description="Take profit percentage (e.g. 2.0 = 2%)")
     stop_loss_pct: float = Field(default=5.0, ge=0, le=100, description="Trailing stop loss percentage (e.g. 5.0 = 5%)")
     sma_sell_period: int = Field(default=10, ge=2, le=200, description="SMA period for 'Close below SMA' sell condition")
@@ -83,17 +82,6 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     sell_names = payload.sell_conditions if payload.sell_conditions else ["close_below_sma10"]
     sell_fns = [get_sell_condition(name) for name in sell_names]
 
-    # Pre-compute alignment streak: consecutive days SMA5 > SMA10 > SMA20
-    alignment_streak = [0] * len(closes)
-    for i in range(1, len(closes)):
-        s5 = short_values[i] if not pd.isna(short_values[i]) else 0
-        s10 = sma10_values[i] if not pd.isna(sma10_values[i]) else 0
-        s20 = long_values[i] if not pd.isna(long_values[i]) else 0
-        if s5 > s10 > s20:
-            alignment_streak[i] = alignment_streak[i - 1] + 1
-        else:
-            alignment_streak[i] = 0
-
     min_start = max(payload.short_window, payload.long_window)
     open_trade: dict[str, object] | None = None
     trades: list[dict[str, object]] = []
@@ -131,8 +119,6 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "price": price,
             "prev_close": float(closes[idx - 1]) if idx > 0 else 0,
             "prev_candle": candle_patterns[idx - 1] if idx > 0 else None,
-            "alignment_streak": alignment_streak[idx],
-            "alignment_days": payload.alignment_days,
             "weekly_trend_up": wst_dirs[idx] == -1 if idx < len(wst_dirs) else False,
         }
 
@@ -382,7 +368,6 @@ class ConditionPrefsPayload(BaseModel):
     checked: list[str] = Field(default_factory=list, description="List of condition names that are checked")
     buy_logic: str = Field(default="OR", pattern="^(AND|OR)$")
     sell_logic: str = Field(default="OR", pattern="^(AND|OR)$")
-    alignment_days: int = Field(default=3, ge=1, le=30)
     sma_sell_period: int = Field(default=10, ge=2, le=200)
 
 
@@ -392,13 +377,11 @@ def get_condition_preferences(db: Session = Depends(get_db)) -> dict[str, object
     rows = db.query(ConditionPreference).filter(ConditionPreference.checked.is_(True)).all()
     buy_row = db.query(LogicPreference).filter(LogicPreference.key == "buy_logic").first()
     sell_row = db.query(LogicPreference).filter(LogicPreference.key == "sell_logic").first()
-    align_row = db.query(LogicPreference).filter(LogicPreference.key == "alignment_days").first()
     sma_sell_row = db.query(LogicPreference).filter(LogicPreference.key == "sma_sell_period").first()
     return {
         "checked": [r.name for r in rows],
         "buy_logic": buy_row.value if buy_row else "OR",
         "sell_logic": sell_row.value if sell_row else "OR",
-        "alignment_days": int(align_row.value) if align_row else 3,
         "sma_sell_period": int(sma_sell_row.value) if sma_sell_row else 10,
     }
 
@@ -411,7 +394,7 @@ def save_condition_preferences(payload: ConditionPrefsPayload, db: Session = Dep
         if name in CONDITION_MAP:
             db.add(ConditionPreference(name=name, checked=True))
     # Upsert logic preferences
-    for key, val in [("buy_logic", payload.buy_logic), ("sell_logic", payload.sell_logic), ("alignment_days", str(payload.alignment_days)), ("sma_sell_period", str(payload.sma_sell_period))]:
+    for key, val in [("buy_logic", payload.buy_logic), ("sell_logic", payload.sell_logic), ("sma_sell_period", str(payload.sma_sell_period))]:
         existing = db.query(LogicPreference).filter(LogicPreference.key == key).first()
         if existing:
             existing.value = val

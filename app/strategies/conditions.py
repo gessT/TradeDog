@@ -17,10 +17,8 @@ from __future__ import annotations
 # ctx keys: prev_short, prev_long, cur_short, cur_long, halftrend, prev_halftrend
 
 def sma_cross_up(ctx: dict) -> bool:
-    """BUY: SMA5 > SMA10 > SMA20 held for N consecutive days (均线多排)."""
-    streak = ctx.get("alignment_streak", 0)
-    min_days = ctx.get("alignment_days", 3)
-    return streak >= min_days
+    """BUY: SMA5 > SMA10 > SMA20 (均线多排)."""
+    return ctx.get("cur_short", 0) > ctx.get("cur_sma10", 0) > ctx.get("cur_long", 0)
 
 
 def halftrend_green(ctx: dict) -> bool:
