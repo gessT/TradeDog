@@ -112,6 +112,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "sma10": cur_sma10,
             "halftrend": cur_ht,
             "prev_halftrend": prev_ht,
+            "buy_price": float(open_trade["buy_price"]) if open_trade else 0,
         }
 
         if open_trade is None:

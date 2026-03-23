@@ -84,7 +84,7 @@ export default function BacktestTable({
         setBuyOptions(data.buy);
         setSellOptions(data.sell);
       })
-      .catch(() => {});
+      .catch((err) => console.error("Failed to load conditions:", err));
   }, []);
 
   function toggleBuyCondition(name: string) {
@@ -168,7 +168,7 @@ export default function BacktestTable({
             );
           })}
         </div>
-      </div>}
+      </div>
 
       {/* ── Params row ─────────── */}
       <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-5">

@@ -1,5 +1,5 @@
 """
-Trading conditions — simple building blocks you can mix & match.
+Trading conditions -- simple building blocks you can mix & match.
 
 Buy condition signature (context dict):
     (ctx: dict) -> bool
@@ -43,18 +43,26 @@ def halftrend_red(ctx: dict) -> bool:
     return ctx["halftrend"] == 1 and ctx["prev_halftrend"] == 0
 
 
+def take_profit_2pct(ctx: dict) -> bool:
+    """SELL: price gained >= 2% from buy price."""
+    buy_price = ctx.get("buy_price", 0)
+    if buy_price <= 0:
+        return False
+    return (ctx["price"] - buy_price) / buy_price >= 0.02
+
+
 # ── Registry ────────────────────────────────────────────────────────
 
 CONDITION_MAP = {
     "sma_cross_up":      {"fn": sma_cross_up,      "label": "SMA5 crosses above SMA20",  "type": "buy"},
     "halftrend_green":   {"fn": halftrend_green,    "label": "Half-trend flips green",    "type": "buy"},
     "close_below_sma10": {"fn": close_below_sma10,  "label": "Close below SMA10",         "type": "sell"},
-    "sma_cross_down":    {"fn": sma_cross_down,     "label": "SMA5 crosses below SMA20",  "type": "sell"},
     "halftrend_red":     {"fn": halftrend_red,      "label": "Half-trend flips red",      "type": "sell"},
+    "take_profit_2pct":  {"fn": take_profit_2pct,   "label": "Take profit at 2%",         "type": "sell"},
 }
 
 SELL_PAIR = {
-    "sma_cross_up":    "sma_cross_down",
+    "sma_cross_up":    "close_below_sma10",
     "halftrend_green": "halftrend_red",
 }
 
@@ -73,3 +81,4 @@ def get_sell_condition(name: str):
     if entry is None:
         raise ValueError(f"Unknown condition: {name}")
     return entry["fn"]
+

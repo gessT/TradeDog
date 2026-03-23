@@ -36,7 +36,7 @@ export function useBacktest(symbol: string) {
     long_window: 20,
     start_date: "2020-01-01",
     buy_conditions: ["sma_cross_up"],
-    sell_conditions: ["close_below_sma10", "halftrend_red"],
+    sell_conditions: ["close_below_sma10", "halftrend_red", "take_profit_2pct"],
   });
 
   const loadTrades = useCallback(async () => {
