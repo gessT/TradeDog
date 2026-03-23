@@ -140,8 +140,8 @@ export default function BacktestTable({
         </div>
       </div>
 
-      {/* ── Sell conditions checkboxes (hidden — under repair) ─────────── */}
-      {/* <div className="mt-3 rounded-xl border border-rose-800/50 bg-rose-950/30 p-4">
+      {/* ── Sell conditions checkboxes ─────────── */}
+      <div className="mt-3 rounded-xl border border-rose-800/50 bg-rose-950/30 p-4">
         <span className="mb-2 inline-block rounded bg-rose-700/60 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-rose-200">
           Sell Conditions (any triggers exit)
         </span>
@@ -168,7 +168,7 @@ export default function BacktestTable({
             );
           })}
         </div>
-      </div> */}
+      </div>}
 
       {/* ── Params row ─────────── */}
       <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-5">
