@@ -6,9 +6,25 @@ html,
 body {
   margin: 0;
   padding: 0;
-  background: radial-gradient(circle at top, #11172d 0%, #070b14 40%, #05070f 100%);
+  background: #05070f;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* Slim scrollbars for dashboard panels */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
 }

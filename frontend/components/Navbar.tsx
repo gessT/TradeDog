@@ -128,11 +128,8 @@ const SECTORS: { label: string; stocks: StockEntry[] }[] = [
 
 export default function Navbar({ symbol, loading, onSymbolChange, onRefresh }: NavbarProps) {
   return (
-    <header className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:flex-row md:items-center md:justify-between md:p-6">
-      <div>
-        <p className="text-xs uppercase tracking-[0.16em] text-sky-400">Trading Monitor</p>
-        <h1 className="mt-1 text-2xl font-semibold text-slate-100 md:text-3xl">Market Dashboard</h1>
-      </div>
+    <header className="sticky top-0 z-50 flex items-center justify-between border-b border-slate-800/60 bg-slate-950/95 backdrop-blur px-4 py-2 md:px-6">
+      <h1 className="text-base font-semibold text-slate-100">📊 Market Dashboard</h1>
 
       <div className="flex flex-wrap items-center gap-2">
         <select

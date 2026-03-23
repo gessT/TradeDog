@@ -8,10 +8,10 @@ type MetricCardsProps = {
 
 function Card({ title, value, hint }: { title: string; value: string; hint: string }) {
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-      <p className="text-xs uppercase tracking-[0.14em] text-slate-400">{title}</p>
-      <p className="mt-2 text-2xl font-semibold text-slate-100">{value}</p>
-      <p className="mt-2 text-xs text-slate-400">{hint}</p>
+    <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+      <p className="text-[10px] uppercase tracking-widest text-slate-500">{title}</p>
+      <p className="mt-1 text-xl font-bold text-slate-100">{value}</p>
+      <p className="mt-1 text-[10px] text-slate-500">{hint}</p>
     </section>
   );
 }

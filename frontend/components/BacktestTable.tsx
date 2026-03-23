@@ -141,9 +141,9 @@ export default function BacktestTable({
   }
 
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:p-6">
-      <h2 className="text-lg font-semibold text-slate-100">Backtest — {symbol}</h2>
-      <p className="text-xs text-slate-400">Check conditions, pick AND/OR logic, set params, then run.</p>
+    <section>
+      <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Backtest — {symbol}</h2>
+      <p className="mt-0.5 text-[10px] text-slate-500">Conditions → Params → Run</p>
 
       {/* ── Buy conditions checkboxes ─────────── */}
       <div className="mt-4 rounded-xl border border-emerald-800/50 bg-emerald-950/30 p-4">
@@ -291,61 +291,69 @@ export default function BacktestTable({
         </label>
       </div>
 
-      {/* ── Take Profit & Stop Loss & Alignment ─────────── */}
-      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-        <label className="text-xs text-slate-300">
-          Take Profit %
-          <input
-            type="number"
-            min={0}
-            max={100}
-            step={0.5}
-            value={params.take_profit_pct}
-            onChange={(e) => onParamsChange({ ...params, take_profit_pct: Number(e.target.value) || 0 })}
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-          />
-        </label>
-        <label className="text-xs text-slate-300">
-          Stop Loss %
-          <input
-            type="number"
-            min={0}
-            max={100}
-            step={0.5}
-            value={params.stop_loss_pct}
-            onChange={(e) => onParamsChange({ ...params, stop_loss_pct: Number(e.target.value) || 0 })}
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-          />
-        </label>
-        <label className="text-xs text-slate-300">
-          SMA Align Days
-          <input
-            type="number"
-            min={1}
-            max={30}
-            step={1}
-            value={params.alignment_days}
-            onChange={(e) => onParamsChange({ ...params, alignment_days: Number(e.target.value) || 3 })}
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            title="Min consecutive days SMA5 > SMA10 > SMA20 must hold"
-          />
-        </label>
-        <label className="text-xs text-slate-300">
-          Close below SMA
-          <select
-            value={params.sma_sell_period}
-            onChange={(e) => onParamsChange({ ...params, sma_sell_period: Number(e.target.value) })}
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            title="SMA period for the 'Close below SMA' sell condition"
-          >
-            <option value={5}>SMA 5</option>
-            <option value={10}>SMA 10</option>
-            <option value={20}>SMA 20</option>
-            <option value={50}>SMA 50</option>
-            <option value={100}>SMA 100</option>
-            <option value={200}>SMA 200</option>
-          </select>
-        </label>
+      {/* ── Conditional config inputs (show only when related condition is ticked) ─────────── */}
+      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
+        {params.buy_conditions.includes("sma_cross_up") && (
+          <label className="text-xs text-slate-300">
+            SMA Align Days
+            <input
+              type="number"
+              min={1}
+              max={30}
+              step={1}
+              value={params.alignment_days}
+              onChange={(e) => onParamsChange({ ...params, alignment_days: Number(e.target.value) || 3 })}
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+              title="Min consecutive days SMA5 > SMA10 > SMA20 must hold"
+            />
+          </label>
+        )}
+        {params.sell_conditions.includes("take_profit_2pct") && (
+          <label className="text-xs text-slate-300">
+            Take Profit %
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={0.5}
+              value={params.take_profit_pct}
+              onChange={(e) => onParamsChange({ ...params, take_profit_pct: Number(e.target.value) || 0 })}
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+            />
+          </label>
+        )}
+        {params.sell_conditions.includes("stop_loss_5pct") && (
+          <label className="text-xs text-slate-300">
+            Stop Loss %
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={0.5}
+              value={params.stop_loss_pct}
+              onChange={(e) => onParamsChange({ ...params, stop_loss_pct: Number(e.target.value) || 0 })}
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+            />
+          </label>
+        )}
+        {params.sell_conditions.includes("close_below_sma10") && (
+          <label className="text-xs text-slate-300">
+            Close below SMA
+            <select
+              value={params.sma_sell_period}
+              onChange={(e) => onParamsChange({ ...params, sma_sell_period: Number(e.target.value) })}
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+              title="SMA period for the 'Close below SMA' sell condition"
+            >
+              <option value={5}>SMA 5</option>
+              <option value={10}>SMA 10</option>
+              <option value={20}>SMA 20</option>
+              <option value={50}>SMA 50</option>
+              <option value={100}>SMA 100</option>
+              <option value={200}>SMA 200</option>
+            </select>
+          </label>
+        )}
       </div>
 
       {/* ── Action button ─────────── */}
