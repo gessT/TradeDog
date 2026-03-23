@@ -20,6 +20,7 @@ router = APIRouter(prefix="/backtest", tags=["backtest"])
 class BacktestRequest(BaseModel):
     symbol: str = Field(default="AAPL", min_length=1, max_length=16)
     quantity: float = Field(default=1.0, gt=0)
+    investment: float = Field(default=0.0, ge=0, description="USD amount per trade. If > 0, overrides quantity with investment/buy_price")
     short_window: int = Field(default=5, ge=2, le=100)
     long_window: int = Field(default=20, ge=3, le=300)
     start_date: date | None = Field(default=None, description="Only use data from this date onward (YYYY-MM-DD)")
@@ -130,14 +131,16 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
         buy_price = float(open_trade["buy_price"])
         reason = " || ".join(sell_names)
 
-        pnl = (price - buy_price) * payload.quantity
+        qty = (payload.investment / buy_price) if payload.investment > 0 else payload.quantity
+        pnl = (price - buy_price) * qty
         return_pct = (price - buy_price) / buy_price
+        roi_dollar = pnl
         bars_held = idx - int(open_trade["buy_index"])
 
         db.add(
             BacktestTrade(
                 symbol=symbol,
-                quantity=payload.quantity,
+                quantity=qty,
                 buy_price=buy_price,
                 sell_price=price,
                 buy_time=open_trade["buy_time"],
@@ -160,7 +163,9 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                 "sell_price": price,
                 "pnl": pnl,
                 "return_pct": return_pct,
-                "quantity": payload.quantity,
+                "quantity": qty,
+                "investment": payload.investment if payload.investment > 0 else buy_price * qty,
+                "roi_dollar": roi_dollar,
                 "bars_held": bars_held,
                 "buy_criteria": open_trade["buy_criteria"],
                 "sell_criteria": reason,
@@ -174,14 +179,16 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
         last_price = float(closes[-1])
         last_time = normalized.iloc[-1]["Date"]
         buy_price = float(open_trade["buy_price"])
-        pnl = (last_price - buy_price) * payload.quantity
+        qty = (payload.investment / buy_price) if payload.investment > 0 else payload.quantity
+        pnl = (last_price - buy_price) * qty
         return_pct = (last_price - buy_price) / buy_price
+        roi_dollar = pnl
         bars_held = (len(normalized) - 1) - int(open_trade["buy_index"])
 
         db.add(
             BacktestTrade(
                 symbol=symbol,
-                quantity=payload.quantity,
+                quantity=qty,
                 buy_price=buy_price,
                 sell_price=last_price,
                 buy_time=open_trade["buy_time"],
@@ -204,7 +211,9 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                 "sell_price": last_price,
                 "pnl": pnl,
                 "return_pct": return_pct,
-                "quantity": payload.quantity,
+                "quantity": qty,
+                "investment": payload.investment if payload.investment > 0 else buy_price * qty,
+                "roi_dollar": roi_dollar,
                 "bars_held": bars_held,
                 "buy_criteria": open_trade["buy_criteria"],
                 "sell_criteria": "end_of_data",
@@ -215,6 +224,8 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
 
     wins = sum(1 for item in trades if float(item["pnl"]) > 0)
     net_pnl = sum(float(item["pnl"]) for item in trades)
+    total_invested = sum(float(item["investment"]) for item in trades)
+    total_roi_pct = (net_pnl / total_invested * 100) if total_invested > 0 else 0.0
     win_rate = (wins / len(trades)) if trades else 0.0
 
     return {
@@ -232,6 +243,8 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "wins": wins,
             "win_rate": win_rate,
             "net_pnl": net_pnl,
+            "total_invested": total_invested,
+            "total_roi_pct": total_roi_pct,
         },
         "trades": trades,
     }

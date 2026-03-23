@@ -13,6 +13,7 @@ export type DemoPoint = {
 export type BacktestRunRequest = {
   symbol: string;
   quantity: number;
+  investment: number;
   short_window: number;
   long_window: number;
   start_date: string;
@@ -25,12 +26,14 @@ export type BacktestTradeRow = {
   id: number;
   symbol: string;
   quantity: number;
+  investment: number;
   buy_price: number;
   sell_price: number;
   buy_time: string;
   sell_time: string;
   pnl: number;
   return_pct: number;
+  roi_dollar: number;
   bars_held: number;
   buy_criteria: string;
   sell_criteria: string;
@@ -55,6 +58,8 @@ export type BacktestRunResponse = {
     wins: number;
     win_rate: number;
     net_pnl: number;
+    total_invested: number;
+    total_roi_pct: number;
   };
 };
 

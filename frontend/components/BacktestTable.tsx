@@ -7,6 +7,7 @@ import { getConditions } from "../services/api";
 
 type BacktestParams = {
   quantity: number;
+  investment: number;
   short_window: number;
   long_window: number;
   start_date: string;
@@ -27,6 +28,8 @@ type BacktestTableProps = {
     wins: number;
     winRatePct: number;
     netPnl: number;
+    totalInvested: number;
+    totalRoiPct: number;
   } | null;
   error: string;
   onParamsChange: (next: BacktestParams) => void;
@@ -168,7 +171,19 @@ export default function BacktestTable({
       </div> */}
 
       {/* ── Params row ─────────── */}
-      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-5">
+        <label className="text-xs text-slate-300">
+          Invest (USD)
+          <input
+            type="number"
+            min={0}
+            step={100}
+            value={params.investment}
+            onChange={(e) => onParamsChange({ ...params, investment: Number(e.target.value) || 0 })}
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+            placeholder="0 = use Qty"
+          />
+        </label>
         <label className="text-xs text-slate-300">
           Qty
           <input
@@ -176,8 +191,9 @@ export default function BacktestTable({
             min={0.01}
             step={0.01}
             value={params.quantity}
+            disabled={params.investment > 0}
             onChange={(e) => onParamsChange({ ...params, quantity: Number(e.target.value) || 1 })}
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 disabled:opacity-40"
           />
         </label>
         <label className="text-xs text-slate-300">
@@ -230,7 +246,8 @@ export default function BacktestTable({
 
       {summary ? (
         <div className="mt-3 rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-2 text-xs text-slate-300">
-          Trades: {summary.count} | Wins: {summary.wins} | Win Rate: {summary.winRatePct.toFixed(2)}% | Net PnL: {summary.netPnl.toFixed(2)}
+          Trades: {summary.count} | Wins: {summary.wins} | Win Rate: {summary.winRatePct.toFixed(2)}% | Net PnL: ${summary.netPnl.toFixed(2)}
+          {summary.totalInvested > 0 ? ` | Total Invested: $${summary.totalInvested.toFixed(2)} | ROI: ${summary.totalRoiPct.toFixed(2)}%` : ""}
         </div>
       ) : null}
 
@@ -248,8 +265,8 @@ export default function BacktestTable({
                 <th className="px-3 py-2 text-right">Buy</th>
                 <th className="px-3 py-2 text-right">Sell</th>
                 <th className="px-3 py-2 text-right">Qty</th>
-                <th className="px-3 py-2 text-right">PnL</th>
-                <th className="px-3 py-2 text-right">Return</th>
+                <th className="px-3 py-2 text-right">PnL ($)</th>
+                <th className="px-3 py-2 text-right">ROI %</th>
                 <th className="px-3 py-2 text-left">Sell Criteria</th>
               </tr>
             </thead>
@@ -262,10 +279,9 @@ export default function BacktestTable({
                   <td className="px-3 py-2 text-slate-300">{fmtDate(row.sell_time)}</td>
                   <td className="px-3 py-2 text-right text-slate-100">{fmtMoney(row.buy_price)}</td>
                   <td className="px-3 py-2 text-right text-slate-100">{fmtMoney(row.sell_price)}</td>
-
-                  <td className="px-3 py-2 text-right text-slate-100">{row.quantity}</td>
+                  <td className="px-3 py-2 text-right text-slate-100">{row.quantity.toFixed(2)}</td>
                   <td className={`px-3 py-2 text-right font-medium ${row.pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                    {fmtMoney(row.pnl)}
+                    ${fmtMoney(row.pnl)}
                   </td>
                   <td className={`px-3 py-2 text-right ${row.return_pct >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                     {fmtPct(row.return_pct)}

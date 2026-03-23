@@ -16,6 +16,8 @@ type BacktestSummary = {
   wins: number;
   winRatePct: number;
   netPnl: number;
+  totalInvested: number;
+  totalRoiPct: number;
 };
 
 
@@ -29,6 +31,7 @@ export function useBacktest(symbol: string) {
 
   const [params, setParams] = useState<Omit<BacktestRunRequest, "symbol">>({
     quantity: 1,
+    investment: 0,
     short_window: 5,
     long_window: 20,
     start_date: "2020-01-01",
@@ -64,6 +67,8 @@ export function useBacktest(symbol: string) {
         wins: result.summary.wins,
         winRatePct: result.summary.win_rate * 100,
         netPnl: result.summary.net_pnl,
+        totalInvested: result.summary.total_invested,
+        totalRoiPct: result.summary.total_roi_pct,
       });
       setTrades(result.trades);
     } catch (err) {
