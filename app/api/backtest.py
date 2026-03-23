@@ -77,7 +77,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     open_trade: dict[str, object] | None = None
     trades: list[dict[str, object]] = []
 
-    max_trades = 50
+    max_trades = 120
 
     # Day-by-day loop: iterate from the first valid day to the last day.
     for idx in range(min_start, len(normalized)):
@@ -124,6 +124,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "highest_price": float(open_trade["highest_price"]) if open_trade else 0,
             "take_profit_pct": payload.take_profit_pct / 100,
             "stop_loss_pct": payload.stop_loss_pct / 100,
+            "hammer_close": float(open_trade.get("hammer_close", 0)) if open_trade else 0,
         }
 
         if open_trade is None:
@@ -131,6 +132,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                 open_trade = {
                     "buy_price": price,
                     "highest_price": price,
+                    "hammer_close": float(closes[idx - 1]) if idx > 0 and candle_patterns[idx - 1] == "Inverted Hammer" else 0,
                     "buy_time": ts,
                     "buy_index": idx,
                     "buy_criteria": " && ".join(payload.buy_conditions),

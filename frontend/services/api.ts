@@ -82,12 +82,13 @@ export async function getDemoSeries(symbol: string): Promise<DemoPoint[]> {
 
 
 export async function runBacktest(payload: BacktestRunRequest): Promise<BacktestRunResponse> {
+  const body = { ...payload, start_date: payload.start_date || null };
   const response = await fetch(`${API_BASE}/backtest/run`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {

@@ -173,7 +173,7 @@ export default function BacktestTable({
       </div>
 
       {/* ── Params row ─────────── */}
-      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-5">
+      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-3">
         <label className="text-xs text-slate-300">
           Invest (USD)
           <input
@@ -199,32 +199,13 @@ export default function BacktestTable({
           />
         </label>
         <label className="text-xs text-slate-300">
-          Short SMA
-          <input
-            type="number"
-            min={2}
-            value={params.short_window}
-            onChange={(e) => onParamsChange({ ...params, short_window: Number(e.target.value) || 2 })}
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-          />
-        </label>
-        <label className="text-xs text-slate-300">
-          Long SMA
-          <input
-            type="number"
-            min={3}
-            value={params.long_window}
-            onChange={(e) => onParamsChange({ ...params, long_window: Number(e.target.value) || 3 })}
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-          />
-        </label>
-        <label className="text-xs text-slate-300">
           Start Date
           <input
             type="date"
             value={params.start_date}
-            onChange={(e) => onParamsChange({ ...params, start_date: e.target.value || "2020-01-01" })}
+            onChange={(e) => onParamsChange({ ...params, start_date: e.target.value })}
             className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+            placeholder="All data"
           />
         </label>
       </div>

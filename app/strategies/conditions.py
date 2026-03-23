@@ -66,6 +66,14 @@ def stop_loss_5pct(ctx: dict) -> bool:
     return (ctx["price"] - highest) / highest <= -threshold
 
 
+def close_below_hammer(ctx: dict) -> bool:
+    """SELL: price closes below 3% of the Inverted Hammer day's close."""
+    hammer_close = ctx.get("hammer_close", 0)
+    if hammer_close <= 0:
+        return False
+    return ctx["price"] < hammer_close * 0.97
+
+
 # ── Registry ────────────────────────────────────────────────────────
 
 CONDITION_MAP = {
@@ -76,6 +84,7 @@ CONDITION_MAP = {
     "halftrend_red":     {"fn": halftrend_red,      "label": "Half-trend flips red",      "type": "sell"},
     "take_profit_2pct":  {"fn": take_profit_2pct,   "label": "Take profit (configurable %)",  "type": "sell"},
     "stop_loss_5pct":    {"fn": stop_loss_5pct,     "label": "Trailing stop loss (configurable %)", "type": "sell"},
+    "close_below_hammer": {"fn": close_below_hammer, "label": "Close below 3% of Hammer day",       "type": "sell"},
 }
 
 SELL_PAIR = {

@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import type { DashboardRow } from "../hooks/useStock";
 
 
-type ColumnKey = "close" | "sma5" | "sma10" | "sma20" | "ht" | "pattern" | "signal" | "candle";
+type ColumnKey = "close" | "sma5" | "sma10" | "sma20" | "ht" | "pattern" | "signal" | "candle" | "wst";
 
 const ALL_COLUMNS: { key: ColumnKey; label: string; defaultVisible: boolean }[] = [
   { key: "close",   label: "Close",     defaultVisible: true },
@@ -14,6 +14,7 @@ const ALL_COLUMNS: { key: ColumnKey; label: string; defaultVisible: boolean }[] 
   { key: "sma20",   label: "SMA20",     defaultVisible: false },
   { key: "ht",      label: "HalfTrend", defaultVisible: true },
   { key: "candle",  label: "Candle",    defaultVisible: true },
+  { key: "wst",     label: "W.Supertrend", defaultVisible: true },
   { key: "pattern", label: "Pattern",   defaultVisible: true },
   { key: "signal",  label: "Signal",    defaultVisible: true },
 ];
@@ -98,6 +99,7 @@ export default function DataTable({ rows }: DataTableProps) {
               {show("sma20")   && <th className="px-3 py-2 text-right">SMA20</th>}
               {show("ht")      && <th className="px-3 py-2 text-right">HalfTrend</th>}
               {show("candle")  && <th className="px-3 py-2 text-left">Candle</th>}
+              {show("wst")     && <th className="px-3 py-2 text-left">W.Supertrend</th>}
               {show("pattern") && <th className="px-3 py-2 text-left">Pattern</th>}
               {show("signal")  && <th className="px-3 py-2 text-left">Signal</th>}
             </tr>
@@ -114,6 +116,12 @@ export default function DataTable({ rows }: DataTableProps) {
               const htColor = row.htTrend === 0 ? "text-emerald-400" : row.htTrend === 1 ? "text-rose-400" : "text-slate-500";
               const candleBias = row.candle?.bias;
               const candleColor = candleBias === "bullish" ? "text-emerald-400" : candleBias === "bearish" ? "text-rose-400" : "text-slate-400";
+              const wstDir = row.wst?.dir;
+              const wstFlip = row.wst?.flipUp ? "🟢 Flip Up" : row.wst?.flipDown ? "🔴 Flip Down" : null;
+              const wstColor = wstFlip
+                ? (row.wst?.flipUp ? "text-emerald-300 bg-emerald-900/40" : "text-rose-300 bg-rose-900/40")
+                : wstDir === -1 ? "text-emerald-400" : wstDir === 1 ? "text-rose-400" : "text-slate-500";
+              const wstLabel = wstFlip ?? (wstDir === -1 ? "▲ Up" : wstDir === 1 ? "▼ Down" : "—");
               return (
               <tr
                 key={`${row.time}-${index}`}
@@ -127,6 +135,7 @@ export default function DataTable({ rows }: DataTableProps) {
                 {show("sma20")   && <td className="px-3 py-2 text-right text-slate-100">{row.sma20.toFixed(2)}</td>}
                 {show("ht")      && <td className={`px-3 py-2 text-right font-medium ${htColor}`}>{row.ht != null ? row.ht.toFixed(2) : "\u2014"}</td>}
                 {show("candle")  && <td className={`px-3 py-2 font-medium ${candleColor}`}>{row.candle ? row.candle.name : "\u2014"}</td>}
+                {show("wst")     && <td className={`px-3 py-2 font-medium ${wstColor}`}>{wstLabel}</td>}
                 {show("pattern") && <td className="px-3 py-2 text-slate-200">{row.pattern}</td>}
                 {show("signal")  && <td className="px-3 py-2 font-medium text-slate-100">{row.signal}</td>}
               </tr>

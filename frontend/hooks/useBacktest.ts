@@ -34,7 +34,7 @@ export function useBacktest(symbol: string) {
     investment: 0,
     short_window: 5,
     long_window: 20,
-    start_date: "2020-01-01",
+    start_date: "",
     buy_conditions: ["sma_cross_up"],
     sell_conditions: ["close_below_sma10", "halftrend_red", "take_profit_2pct"],
     take_profit_pct: 2,
