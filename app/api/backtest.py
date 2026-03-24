@@ -11,7 +11,7 @@ from app.db.database import get_db
 from app.models.backtest_trade import BacktestTrade
 from app.models.condition_preference import ConditionPreference, LogicPreference
 from app.services.data_collector import fetch_stock
-from app.strategies.sma_indicator import sma as compute_sma, sma5 as compute_sma5, halftrend as compute_halftrend
+from app.strategies.sma_indicator import sma as compute_sma, sma5 as compute_sma5, halftrend_full as compute_halftrend_full
 from app.strategies.conditions import get_buy_condition, get_sell_condition, CONDITION_MAP, SELL_PAIR
 from app.utils.indicators import detect_candle, weekly_supertrend
 
@@ -73,7 +73,9 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     sma5_values = compute_sma5(closes)
     sma10_values = compute_sma(closes, 10)
     sma_sell_values = compute_sma(closes, payload.sma_sell_period) if payload.sma_sell_period != 10 else sma10_values
-    halftrend_values = compute_halftrend(highs, lows, closes)
+    ht_result = compute_halftrend_full(highs, lows, closes)
+    halftrend_values = ht_result["trend"]
+    halftrend_line = ht_result["ht"]
 
     # Weekly Supertrend: -1 = uptrend, 1 = downtrend
     date_list = normalized["Date"].tolist()
@@ -129,6 +131,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "prev_close": float(closes[idx - 1]) if idx > 0 else 0,
             "prev_candle": candle_patterns[idx - 1] if idx > 0 else None,
             "weekly_trend_up": wst_dirs[idx] == -1 if idx < len(wst_dirs) else False,
+            "prev_weekly_trend_up": wst_dirs[idx - 1] == -1 if idx > 0 and idx - 1 < len(wst_dirs) else False,
             "prev_day_boost": vol_boost[idx - 1] if idx > 0 else False,
             "prev_day_high": float(highs[idx - 1]) if idx > 0 else 0,
             "prev_day_low": float(lows[idx - 1]) if idx > 0 else 0,
@@ -146,6 +149,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "close_sma_value": cur_sma_sell,
             "halftrend": cur_ht,
             "prev_halftrend": prev_ht,
+            "halftrend_value": float(halftrend_line[idx]) if idx < len(halftrend_line) else 0,
             "buy_price": float(open_trade["buy_price"]) if open_trade else 0,
             "highest_price": float(open_trade["highest_price"]) if open_trade else 0,
             "take_profit_pct": payload.take_profit_pct / 100,
@@ -468,7 +472,8 @@ async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
     short_values = compute_sma(closes, payload.short_window)
     long_values = compute_sma(closes, payload.long_window)
     sma10_values = compute_sma(closes, 10)
-    halftrend_values = compute_halftrend(highs, lows, closes)
+    ht_result2 = compute_halftrend_full(highs, lows, closes)
+    halftrend_values = ht_result2["trend"]
 
     date_list = normalized["Date"].tolist()
     wst_dirs = weekly_supertrend(date_list, opens, highs, lows, closes)
@@ -509,6 +514,7 @@ async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
             "prev_close": float(closes[idx - 1]) if idx > 0 else 0,
             "prev_candle": candle_patterns[idx - 1] if idx > 0 else None,
             "weekly_trend_up": wst_dirs[idx] == -1 if idx < len(wst_dirs) else False,
+            "prev_weekly_trend_up": wst_dirs[idx - 1] == -1 if idx > 0 and idx - 1 < len(wst_dirs) else False,
             "prev_day_boost": vol_boost[idx - 1] if idx > 0 else False,
             "prev_day_high": float(highs[idx - 1]) if idx > 0 else 0,
             "prev_day_low": float(lows[idx - 1]) if idx > 0 else 0,

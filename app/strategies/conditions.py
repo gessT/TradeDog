@@ -32,8 +32,8 @@ def inverted_hammer_buy(ctx: dict) -> bool:
 
 
 def weekly_trend_up_buy(ctx: dict) -> bool:
-    """BUY: Weekly Supertrend is in uptrend."""
-    return ctx.get("weekly_trend_up", False) is True
+    """BUY: Weekly Supertrend just flipped to uptrend (first green day)."""
+    return ctx.get("weekly_trend_up", False) is True and ctx.get("prev_weekly_trend_up", True) is False
 
 
 def volume_boost_buy(ctx: dict) -> bool:
@@ -113,13 +113,21 @@ def cut_loss_3pct(ctx: dict) -> bool:
     return (ctx["price"] - buy_price) / buy_price <= -0.03
 
 
+def close_below_halftrend(ctx: dict) -> bool:
+    """SELL: price closes below the HalfTrend line value."""
+    ht_val = ctx.get("halftrend_value", 0)
+    if ht_val <= 0:
+        return False
+    return ctx["price"] < ht_val
+
+
 # ── Registry ────────────────────────────────────────────────────────
 
 CONDITION_MAP = {
     "sma_cross_up":      {"fn": sma_cross_up,      "label": "SMA5 > SMA10 > SMA20 held N days",  "type": "buy"},
     "halftrend_green":   {"fn": halftrend_green,    "label": "Half-trend flips green",    "type": "buy"},
     "inverted_hammer_buy": {"fn": inverted_hammer_buy, "label": "Inverted Hammer + next day up", "type": "buy"},
-    "weekly_trend_up":   {"fn": weekly_trend_up_buy, "label": "Weekly Supertrend UP",      "type": "buy"},
+    "weekly_trend_up":   {"fn": weekly_trend_up_buy, "label": "Weekly Supertrend flips UP",      "type": "buy"},
     "volume_boost_buy":   {"fn": volume_boost_buy,   "label": "Boost day next-day breakout (close > high)", "type": "buy"},
     "close_below_sma10": {"fn": close_below_sma10,  "label": "Close below SMA (configurable)", "type": "sell"},
     "halftrend_red":     {"fn": halftrend_red,      "label": "Half-trend flips red",      "type": "sell"},
@@ -129,6 +137,7 @@ CONDITION_MAP = {
     "weekly_trend_down": {"fn": weekly_trend_down_sell, "label": "Weekly Supertrend DOWN",  "type": "sell"},
     "cut_loss_3pct":     {"fn": cut_loss_3pct,     "label": "Cut loss at buy price −3%",       "type": "sell"},
     "volume_boost_sell": {"fn": volume_boost_sell, "label": "Boost day next-day breakdown (close < low)", "type": "sell"},
+    "close_below_halftrend": {"fn": close_below_halftrend, "label": "Close below HalfTrend value", "type": "sell"},
 }
 
 SELL_PAIR = {

@@ -163,7 +163,25 @@ export default function BacktestTable({
 
   return (
     <section>
-      <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Backtest — {symbol}</h2>
+      <div className="flex items-center gap-3">
+        <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Backtest — {symbol}</h2>
+        <select
+          value={params.start_date}
+          onChange={(e) => onParamsChange({ ...params, start_date: e.target.value })}
+          className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+        >
+          <option value="">All data</option>
+          <option value="2026-01-01">2026</option>
+          <option value="2025-01-01">2025</option>
+          <option value="2024-01-01">2024</option>
+          <option value="2023-01-01">2023</option>
+          <option value="2022-01-01">2022</option>
+          <option value="2021-01-01">2021</option>
+          <option value="2020-01-01">2020</option>
+          <option value="2019-01-01">2019</option>
+          <option value="2018-01-01">2018</option>
+        </select>
+      </div>
       <p className="mt-0.5 text-[10px] text-slate-500">Conditions → Params → Run</p>
 
       {/* ── Buy conditions checkboxes ─────────── */}
@@ -346,25 +364,6 @@ export default function BacktestTable({
               </span>
             ) : null}
           </div>
-        </label>
-        <label className="text-xs text-slate-300">
-          Start Date
-          <select
-            value={params.start_date}
-            onChange={(e) => onParamsChange({ ...params, start_date: e.target.value })}
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-          >
-            <option value="">All data</option>
-            <option value="2026-01-01">2026</option>
-            <option value="2025-01-01">2025</option>
-            <option value="2024-01-01">2024</option>
-            <option value="2023-01-01">2023</option>
-            <option value="2022-01-01">2022</option>
-            <option value="2021-01-01">2021</option>
-            <option value="2020-01-01">2020</option>
-            <option value="2019-01-01">2019</option>
-            <option value="2018-01-01">2018</option>
-          </select>
         </label>
       </div>
 
