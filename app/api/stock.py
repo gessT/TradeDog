@@ -209,7 +209,80 @@ async def near_ath(top: int = 10) -> dict:
     }
 
 
-@router.get("/{symbol}")
+# ── Unusual / Special Volume Scanner ────────────────────────────────
+
+def _scan_volume(code: str, name: str, avg_days: int = 20) -> dict | None:
+    """Compare today's volume to the N-day average. Return result or None."""
+    try:
+        ticker = yf.Ticker(code)
+        hist = ticker.history(period="3mo", auto_adjust=False)
+        if hist is None or hist.empty or len(hist) < avg_days + 1:
+            return None
+
+        cols = hist.columns
+        if isinstance(cols[0], tuple):
+            hist.columns = [c[0] if isinstance(c, tuple) else str(c) for c in cols]
+
+        if "Volume" not in hist.columns or "Close" not in hist.columns:
+            return None
+
+        vol_series = pd.to_numeric(hist["Volume"], errors="coerce").dropna()
+        close_series = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+        if len(vol_series) < avg_days + 1:
+            return None
+
+        today_vol = float(vol_series.iloc[-1])
+        avg_vol = float(vol_series.iloc[-(avg_days + 1):-1].mean())
+        if avg_vol <= 0:
+            return None
+
+        vol_ratio = today_vol / avg_vol
+        current_price = float(close_series.iloc[-1])
+        prev_close = float(close_series.iloc[-2]) if len(close_series) >= 2 else current_price
+        change_pct = ((current_price - prev_close) / prev_close * 100) if prev_close > 0 else 0.0
+
+        return {
+            "symbol": code,
+            "name": name,
+            "current_price": round(current_price, 4),
+            "change_pct": round(change_pct, 2),
+            "today_volume": int(today_vol),
+            "avg_volume": int(avg_vol),
+            "vol_ratio": round(vol_ratio, 2),
+        }
+    except Exception as exc:
+        logger.debug("Volume scan failed for %s: %s", code, exc)
+        return None
+
+
+@router.get("/top-volume")
+async def top_volume(top: int = 10) -> dict:
+    """Return top N Bursa Malaysia stocks with highest volume ratio (today vs 20-day avg)."""
+    import concurrent.futures
+
+    top = min(max(top, 1), 50)
+
+    def _scan_all() -> list[dict]:
+        results: list[dict] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {
+                pool.submit(_scan_volume, code, name): code
+                for code, name in BURSA_STOCKS.items()
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                res = fut.result()
+                if res is not None and res["vol_ratio"] >= 0.5:
+                    results.append(res)
+        results.sort(key=lambda x: x["vol_ratio"], reverse=True)
+        return results[:top]
+
+    stocks = await run_in_threadpool(_scan_all)
+
+    return {
+        "count": len(stocks),
+        "scanned": len(BURSA_STOCKS),
+        "stocks": stocks,
+    }
 async def get_stock(symbol: str) -> dict[str, object]:
     try:
         data = await run_in_threadpool(fetch_stock, symbol)

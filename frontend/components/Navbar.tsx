@@ -141,6 +141,9 @@ const MY_SECTORS: SectorGroup[] = [
   {
     label: "🔥 Popular",
     stocks: [
+      { symbol: "5248.KL", name: "Bermaz Auto (BAUTO)" },
+      { symbol: "5099.KL", name: "JPG" },
+      { symbol: "5012.KL", name: "Ta Ann (TAANN)" },
       { symbol: "1155.KL", name: "Maybank" },
       { symbol: "1295.KL", name: "Public Bank" },
       { symbol: "6888.KL", name: "CIMB" },
@@ -245,7 +248,7 @@ const COUNTRY_SECTORS: Record<Country, SectorGroup[]> = {
 
 const COUNTRY_DEFAULT_SYMBOL: Record<Country, string> = {
   US: "AAPL",
-  MY: "1155.KL",
+  MY: "5248.KL",
 };
 
 

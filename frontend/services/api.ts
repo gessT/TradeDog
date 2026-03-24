@@ -229,3 +229,31 @@ export async function fetchNearATH(top: number = 10): Promise<NearATHResponse> {
   }
   return (await response.json()) as NearATHResponse;
 }
+
+
+// ── Top Volume Scanner ──────────────────────────────────────────────
+
+export type TopVolumeStock = {
+  symbol: string;
+  name: string;
+  current_price: number;
+  change_pct: number;
+  today_volume: number;
+  avg_volume: number;
+  vol_ratio: number;
+};
+
+export type TopVolumeResponse = {
+  count: number;
+  scanned: number;
+  stocks: TopVolumeStock[];
+};
+
+export async function fetchTopVolume(top: number = 10): Promise<TopVolumeResponse> {
+  const response = await fetch(`${API_BASE}/stock/top-volume?top=${top}`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as TopVolumeResponse;
+}

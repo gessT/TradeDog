@@ -7,10 +7,27 @@ body {
   margin: 0;
   padding: 0;
   background: #05070f;
+  color: #ffffff;
+  font-size: 105%;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* Override muted text colors to be brighter/white */
+@layer utilities {
+  .text-slate-500 { color: #94a3b8 !important; }
+  .text-slate-400 { color: #cbd5e1 !important; }
+  .text-slate-300 { color: #e2e8f0 !important; }
+  .text-slate-200 { color: #f1f5f9 !important; }
+  .text-slate-100 { color: #ffffff !important; }
+  .text-slate-600 { color: #94a3b8 !important; }
+}
+
+/* Give all card borders a visible cyan/blue tint */
+.border-slate-800 {
+  border-color: #1e3a5f !important;
 }
 
 /* Slim scrollbars for dashboard panels */

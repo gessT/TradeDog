@@ -1,18 +1,18 @@
 "use client";
 
-import Chart from "../components/Chart";
 import BacktestTable from "../components/BacktestTable";
 import DataTable from "../components/DataTable";
 import MetricCards from "../components/MetricCards";
 import Navbar from "../components/Navbar";
 import NearATH from "../components/NearATH";
 import SignalPanel from "../components/SignalPanel";
+import TopVolume from "../components/TopVolume";
 import { useBacktest } from "../hooks/useBacktest";
 import { useStock } from "../hooks/useStock";
 
 
 export default function Page() {
-  const { symbol, setSymbol, points, rows, metrics, loading, error, refresh } = useStock("1155.KL");
+  const { symbol, setSymbol, rows, metrics, loading, error, refresh } = useStock("5248.KL");
   const {
     trades,
     loading: backtestLoading,
@@ -50,7 +50,7 @@ export default function Page() {
       <div className="flex flex-1 overflow-hidden">
 
         {/* ── LEFT: Metrics + Chart (narrow) ─────────── */}
-        <aside className="w-full md:w-[320px] lg:w-[340px] flex-shrink-0 overflow-y-auto border-r border-slate-800/60 bg-slate-900/40 p-4 space-y-3">
+        <aside className="w-full md:w-1/3 flex-shrink-0 overflow-y-auto border-r border-slate-800/60 bg-slate-900/40 p-4 space-y-3">
           {/* Metric cards */}
           <div className="grid gap-2 grid-cols-2">
             <MetricCards metrics={metrics} />
@@ -94,26 +94,20 @@ export default function Page() {
             <NearATH onSelectSymbol={(sym) => { setSymbol(sym); refresh(); }} />
           </div>
 
+          {/* Special Volume Today */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+            <TopVolume onSelectSymbol={(sym) => { setSymbol(sym); refresh(); }} />
+          </div>
+
           {/* Signal */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
             <SignalPanel latest={rows.length ? rows[rows.length - 1] : null} />
           </div>
 
-          {/* Chart - collapsed by default */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-            <details>
-              <summary className="cursor-pointer select-none text-sm font-semibold text-slate-200">
-                Price + SMA Overlay
-              </summary>
-              <div className="mt-3">
-                <Chart data={points} />
-              </div>
-            </details>
-          </div>
         </aside>
 
         {/* ── RIGHT: Backtest + Data History (wide) ─────────── */}
-        <section className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+        <section className="w-full md:w-2/3 overflow-y-auto p-4 md:p-6 space-y-4">
 
           {/* Backtest controls + results */}
           <BacktestTable

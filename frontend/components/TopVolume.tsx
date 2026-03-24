@@ -1,14 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { fetchNearATH, NearATHStock } from "../services/api";
+import { fetchTopVolume, TopVolumeStock } from "../services/api";
+
+function fmtVol(v: number): string {
+  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + "M";
+  if (v >= 1_000) return (v / 1_000).toFixed(0) + "K";
+  return String(v);
+}
 
 interface Props {
   onSelectSymbol?: (symbol: string) => void;
 }
 
-export default function NearATH({ onSelectSymbol }: Props) {
-  const [stocks, setStocks] = useState<NearATHStock[]>([]);
+export default function TopVolume({ onSelectSymbol }: Props) {
+  const [stocks, setStocks] = useState<TopVolumeStock[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scanned, setScanned] = useState(0);
@@ -17,7 +23,7 @@ export default function NearATH({ onSelectSymbol }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchNearATH(10);
+      const res = await fetchTopVolume(10);
       setStocks(res.stocks);
       setScanned(res.scanned);
     } catch (e: unknown) {
@@ -35,7 +41,7 @@ export default function NearATH({ onSelectSymbol }: Props) {
     <details className="group">
       <summary className="flex items-center justify-between cursor-pointer select-none list-none">
         <p className="text-[10px] uppercase tracking-widest text-slate-500">
-          🇲🇾 Near All-Time High
+          📊 Special Volume Today
         </p>
         <button
           onClick={(e) => { e.preventDefault(); load(); }}
@@ -60,8 +66,9 @@ export default function NearATH({ onSelectSymbol }: Props) {
         {stocks.length > 0 && (
           <div className="space-y-0.5">
             {stocks.map((s, idx) => {
-              const isAtATH = s.pct_from_ath <= 1;
-              const isNear = s.pct_from_ath <= 5;
+              const isHot = s.vol_ratio >= 3;
+              const isWarm = s.vol_ratio >= 1.5;
+              const up = s.change_pct >= 0;
               return (
                 <button
                   key={s.symbol}
@@ -79,20 +86,23 @@ export default function NearATH({ onSelectSymbol }: Props) {
                       </div>
                     </div>
                     <div className="text-right flex-shrink-0 ml-2">
-                      <p className="text-[11px] font-mono text-slate-200 leading-tight">
-                        RM{s.current_price.toFixed(2)}
-                      </p>
+                      <div className="flex items-center gap-1 justify-end">
+                        <p className="text-[11px] font-mono text-slate-200 leading-tight">
+                          RM{s.current_price.toFixed(2)}
+                        </p>
+                        <span className={`text-[9px] font-bold ${up ? "text-emerald-400" : "text-rose-400"}`}>
+                          {up ? "+" : ""}{s.change_pct.toFixed(1)}%
+                        </span>
+                      </div>
                       <p
                         className={`text-[9px] font-bold leading-tight ${
-                          isAtATH
-                            ? "text-emerald-400"
-                            : isNear
-                            ? "text-amber-400"
-                            : "text-slate-500"
+                          isHot ? "text-orange-400" : isWarm ? "text-amber-400" : "text-slate-500"
                         }`}
                       >
-                        {isAtATH ? "🔥 " : ""}
-                        {s.pct_from_ath.toFixed(1)}% from ATH
+                        {isHot ? "🔥 " : ""}{s.vol_ratio.toFixed(1)}x avg
+                        <span className="text-slate-600 font-normal ml-1">
+                          ({fmtVol(s.today_volume)})
+                        </span>
                       </p>
                     </div>
                   </div>
@@ -104,7 +114,7 @@ export default function NearATH({ onSelectSymbol }: Props) {
 
         {!loading && stocks.length > 0 && (
           <p className="text-[8px] text-slate-600 mt-1 text-center">
-            Scanned {scanned} Bursa Malaysia stocks
+            Scanned {scanned} stocks · vs 20-day avg volume
           </p>
         )}
       </div>
