@@ -177,3 +177,28 @@ export async function resetConditionPreferences(): Promise<void> {
     throw new Error(detail || `Request failed with ${response.status}`);
   }
 }
+
+
+export type BuySignal = { date: string; price: number; wst: string; ht: string };
+export type BuySignalsResponse = { symbol: string; count: number; signals: BuySignal[] };
+
+export async function getBuySignals(params: {
+  symbol: string;
+  short_window: number;
+  long_window: number;
+  start_date: string;
+  buy_conditions: string[];
+  buy_logic: "AND" | "OR";
+}): Promise<BuySignalsResponse> {
+  const body = { ...params, start_date: params.start_date || null };
+  const response = await fetch(`${API_BASE}/backtest/signals`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as BuySignalsResponse;
+}

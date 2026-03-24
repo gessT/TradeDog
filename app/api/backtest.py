@@ -426,3 +426,108 @@ def reset_condition_preferences(db: Session = Depends(get_db)) -> dict[str, str]
     db.query(LogicPreference).delete(synchronize_session=False)
     db.commit()
     return {"status": "reset"}
+
+
+# ── Buy signals preview (read-only, no DB writes) ────────────────────
+
+class SignalsRequest(BaseModel):
+    symbol: str = Field(default="AAPL", min_length=1, max_length=16)
+    short_window: int = Field(default=5, ge=2, le=100)
+    long_window: int = Field(default=20, ge=3, le=300)
+    start_date: date | None = Field(default=None)
+    buy_conditions: list[str] = Field(default=["sma_cross_up"])
+    buy_logic: str = Field(default="OR", pattern="^(AND|OR)$")
+
+
+@router.post("/signals")
+async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
+    """Scan data and return all dates where buy conditions fire (no trades executed)."""
+    frame = await run_in_threadpool(fetch_stock, payload.symbol)
+
+    if "Close" not in frame.columns:
+        return {"symbol": payload.symbol.upper(), "signals": []}
+
+    normalized = frame.copy()
+    if "Date" not in normalized.columns:
+        normalized = normalized.reset_index().rename(columns={"index": "Date"})
+
+    normalized["Date"] = pd.to_datetime(normalized["Date"], errors="coerce")
+    normalized["Close"] = pd.to_numeric(normalized["Close"], errors="coerce")
+    normalized = normalized.dropna(subset=["Date", "Close"]).reset_index(drop=True)
+
+    if payload.start_date is not None:
+        normalized = normalized[normalized["Date"] >= pd.Timestamp(payload.start_date)].reset_index(drop=True)
+
+    closes = normalized["Close"].astype(float).tolist()
+    highs = normalized["High"].astype(float).tolist() if "High" in normalized.columns else closes
+    lows = normalized["Low"].astype(float).tolist() if "Low" in normalized.columns else closes
+    opens = normalized["Open"].astype(float).tolist() if "Open" in normalized.columns else closes
+    volumes = normalized["Volume"].astype(float).tolist() if "Volume" in normalized.columns else [0] * len(closes)
+    candle_patterns = [detect_candle(opens[i], highs[i], lows[i], closes[i]) for i in range(len(closes))]
+
+    short_values = compute_sma(closes, payload.short_window)
+    long_values = compute_sma(closes, payload.long_window)
+    sma10_values = compute_sma(closes, 10)
+    halftrend_values = compute_halftrend(highs, lows, closes)
+
+    date_list = normalized["Date"].tolist()
+    wst_dirs = weekly_supertrend(date_list, opens, highs, lows, closes)
+
+    vol_boost = [False] * len(volumes)
+    for i in range(len(volumes)):
+        start = max(0, i - 20)
+        window = volumes[start:i]
+        avg = sum(window) / len(window) if window else 0
+        vol_boost[i] = (volumes[i] >= avg * 2) if avg > 0 else False
+
+    buy_fns = [get_buy_condition(name) for name in payload.buy_conditions]
+    min_start = max(payload.short_window, payload.long_window)
+    signals: list[dict[str, object]] = []
+
+    for idx in range(min_start, len(normalized)):
+        prev_short = short_values[idx - 1]
+        prev_long = long_values[idx - 1]
+        cur_short = short_values[idx]
+        cur_long = long_values[idx]
+
+        if pd.isna(prev_short) or pd.isna(prev_long) or pd.isna(cur_short) or pd.isna(cur_long):
+            continue
+
+        price = float(closes[idx])
+        cur_ht = halftrend_values[idx]
+        prev_ht = halftrend_values[idx - 1] if idx > 0 else cur_ht
+
+        buy_ctx = {
+            "prev_short": float(prev_short),
+            "prev_long": float(prev_long),
+            "cur_short": float(cur_short),
+            "cur_long": float(cur_long),
+            "cur_sma10": float(sma10_values[idx]) if not pd.isna(sma10_values[idx]) else 0,
+            "halftrend": cur_ht,
+            "prev_halftrend": prev_ht,
+            "price": price,
+            "prev_close": float(closes[idx - 1]) if idx > 0 else 0,
+            "prev_candle": candle_patterns[idx - 1] if idx > 0 else None,
+            "weekly_trend_up": wst_dirs[idx] == -1 if idx < len(wst_dirs) else False,
+            "prev_day_boost": vol_boost[idx - 1] if idx > 0 else False,
+            "prev_day_high": float(highs[idx - 1]) if idx > 0 else 0,
+            "prev_day_low": float(lows[idx - 1]) if idx > 0 else 0,
+        }
+
+        buy_match = all(fn(buy_ctx) for fn in buy_fns) if payload.buy_logic == "AND" else any(fn(buy_ctx) for fn in buy_fns)
+        if buy_match:
+            ts = normalized.iloc[idx]["Date"]
+            cur_dir = wst_dirs[idx] if idx < len(wst_dirs) else 1
+            prev_dir = wst_dirs[idx - 1] if idx > 0 and idx - 1 < len(wst_dirs) else cur_dir
+            flip_up = prev_dir == 1 and cur_dir == -1
+            flip_down = prev_dir == -1 and cur_dir == 1
+            wst_label = "FLIP_UP" if flip_up else "FLIP_DOWN" if flip_down else ("UP" if cur_dir == -1 else "DOWN")
+            ht_label = "Green" if cur_ht == 0 else "Red" if cur_ht == 1 else "—"
+            signals.append({
+                "date": str(ts)[:10],
+                "price": round(price, 4),
+                "wst": wst_label,
+                "ht": ht_label,
+            })
+
+    return {"symbol": payload.symbol.upper(), "count": len(signals), "signals": signals}

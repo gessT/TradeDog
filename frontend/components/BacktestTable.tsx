@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { BacktestTradeRow, ConditionItem } from "../services/api";
-import { getConditions, getConditionPreferences } from "../services/api";
+import type { BacktestTradeRow, ConditionItem, BuySignal } from "../services/api";
+import { getConditions, getConditionPreferences, getBuySignals } from "../services/api";
 
 
 type BacktestParams = {
@@ -87,6 +87,8 @@ export default function BacktestTable({
   const [buyOptions, setBuyOptions] = useState<ConditionItem[]>([]);
   const [sellOptions, setSellOptions] = useState<ConditionItem[]>([]);
   const prefsApplied = useRef(false);
+  const [buySignals, setBuySignals] = useState<BuySignal[]>([]);
+  const [signalsLoading, setSignalsLoading] = useState(false);
 
   useEffect(() => {
     Promise.all([getConditions(), getConditionPreferences()])
@@ -136,6 +138,27 @@ export default function BacktestTable({
       : [...current, name];
     if (next.length === 0) return;
     onParamsChange({ ...params, sell_conditions: next });
+  }
+
+  async function previewSignals() {
+    if (params.buy_conditions.length === 0) return;
+    setSignalsLoading(true);
+    setBuySignals([]);
+    try {
+      const res = await getBuySignals({
+        symbol,
+        short_window: params.short_window,
+        long_window: params.long_window,
+        start_date: params.start_date,
+        buy_conditions: params.buy_conditions,
+        buy_logic: params.buy_logic,
+      });
+      setBuySignals(res.signals);
+    } catch {
+      setBuySignals([]);
+    } finally {
+      setSignalsLoading(false);
+    }
   }
 
   return (
@@ -199,6 +222,53 @@ export default function BacktestTable({
           })}
         </div>
       </div>
+
+      {/* ── Preview buy signals ─────────── */}
+      <div className="mt-2 flex items-center gap-3">
+        <button
+          onClick={previewSignals}
+          disabled={signalsLoading || params.buy_conditions.length === 0}
+          className="rounded-lg border border-emerald-700/50 bg-emerald-950/40 px-4 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-900/50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {signalsLoading ? "Scanning…" : `Preview Buy Signals`}
+        </button>
+        {buySignals.length > 0 && (
+          <span className="text-xs text-slate-400">{buySignals.length} signal{buySignals.length !== 1 ? "s" : ""} found</span>
+        )}
+      </div>
+
+      {buySignals.length > 0 && (
+        <div className="mt-2 max-h-[200px] overflow-auto rounded-lg border border-emerald-800/40 bg-emerald-950/20">
+          <table className="min-w-full divide-y divide-emerald-900/40 text-xs">
+            <thead className="sticky top-0 bg-emerald-950/60 text-emerald-300">
+              <tr>
+                <th className="px-3 py-1.5 text-left">#</th>
+                <th className="px-3 py-1.5 text-left">Date</th>
+                <th className="px-3 py-1.5 text-right">Price</th>
+                <th className="px-3 py-1.5 text-left">W.ST</th>
+                <th className="px-3 py-1.5 text-left">HalfTrend</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-emerald-900/20">
+              {[...buySignals].sort((a, b) => b.date.localeCompare(a.date)).map((s, i) => (
+                <tr key={`${s.date}-${i}`} className="hover:bg-emerald-900/20">
+                  <td className="px-3 py-1.5 text-slate-500">{i + 1}</td>
+                  <td className="px-3 py-1.5 text-slate-200">{s.date}</td>
+                  <td className="px-3 py-1.5 text-right text-slate-100 font-medium">${s.price.toFixed(2)}</td>
+                  <td className={`px-3 py-1.5 font-medium ${
+                    s.wst === "FLIP_UP" ? "text-emerald-300 bg-emerald-900/40"
+                    : s.wst === "FLIP_DOWN" ? "text-rose-300 bg-rose-900/40"
+                    : s.wst === "UP" ? "text-emerald-400" : "text-rose-400"
+                  }`}>
+                    {s.wst === "FLIP_UP" ? "🟢 Flip Up" : s.wst === "FLIP_DOWN" ? "🔴 Flip Down" : s.wst === "UP" ? "▲ Up" : "▼ Down"}
+                  </td>
+                  <td className={`px-3 py-1.5 font-medium ${s.ht === "Green" ? "text-emerald-400" : s.ht === "Red" ? "text-rose-400" : "text-slate-500"}`}>{s.ht}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* ── Sell conditions checkboxes ─────────── */}
       <div className="mt-3 rounded-xl border border-rose-800/50 bg-rose-950/30 p-4">
@@ -372,12 +442,55 @@ export default function BacktestTable({
         </div>
       ) : null}
 
-      {summary ? (
-        <div className="mt-3 rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-2 text-xs text-slate-300">
-          Trades: {summary.count} | Wins: {summary.wins} | Win Rate: {summary.winRatePct.toFixed(2)}% | Net PnL: ${summary.netPnl.toFixed(2)}
-          {summary.totalInvested > 0 ? ` | Total Invested: $${summary.totalInvested.toFixed(2)} | ROI: ${summary.totalRoiPct.toFixed(2)}%` : ""}
+      {/* ── Trade entry/exit cards ─────────── */}
+      {trades.length > 0 && (
+        <div className="mt-4 space-y-2">
+          <p className="text-[10px] uppercase tracking-widest text-slate-500">Trade Signals — {params.start_date ? `from ${params.start_date.slice(0, 4)}` : "All data"}</p>
+          <div className="grid gap-2 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+            {[...trades]
+              .sort((a, b) => new Date(a.buy_time).getTime() - new Date(b.buy_time).getTime())
+              .map((t, i) => (
+              <div
+                key={t.id ?? i}
+                className={`rounded-xl border p-3 ${
+                  t.pnl >= 0
+                    ? "border-emerald-800/50 bg-emerald-950/20"
+                    : "border-rose-800/50 bg-rose-950/20"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] uppercase tracking-widest text-slate-500">#{i + 1}</span>
+                  <span className={`text-xs font-bold ${t.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                    {t.pnl >= 0 ? "WIN" : "LOSS"} {fmtPct(t.return_pct)}
+                  </span>
+                </div>
+                <div className="flex gap-3 text-xs">
+                  <div className="flex-1">
+                    <p className="text-[10px] text-emerald-400/70 uppercase">Buy</p>
+                    <p className="text-sm font-bold text-slate-100">${fmtMoney(t.buy_price)}</p>
+                    <p className="text-slate-400">{fmtDate(t.buy_time)}</p>
+                  </div>
+                  <div className="flex items-center text-slate-600">→</div>
+                  <div className="flex-1">
+                    <p className="text-[10px] text-rose-400/70 uppercase">Sell</p>
+                    <p className="text-sm font-bold text-slate-100">${fmtMoney(t.sell_price)}</p>
+                    <p className="text-slate-400">{fmtDate(t.sell_time)}</p>
+                  </div>
+                </div>
+                <div className="mt-2 flex items-center justify-between border-t border-slate-800/50 pt-2">
+                  <span className="text-[10px] text-slate-500">Qty: {t.quantity}</span>
+                  <span className={`text-xs font-semibold ${t.pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                    PnL ${fmtMoney(t.pnl)}
+                  </span>
+                </div>
+                {t.sell_criteria && (
+                  <p className="mt-1 text-[10px] text-slate-500">Exit: {t.sell_criteria}</p>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
-      ) : null}
+      )}
 
       <details className="mt-4 rounded-lg border border-slate-800 bg-slate-950/20" open>
         <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-slate-200">

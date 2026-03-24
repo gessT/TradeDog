@@ -55,6 +55,39 @@ export default function Page() {
             <MetricCards metrics={metrics} />
           </div>
 
+          {/* Backtest summary cards */}
+          {summary && (
+            <div>
+              <p className="mb-2 text-[10px] uppercase tracking-widest text-slate-500">Backtest Summary</p>
+              <div className="grid gap-2 grid-cols-2">
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+                  <p className="text-[10px] uppercase tracking-widest text-slate-500">Trades</p>
+                  <p className="mt-1 text-xl font-bold text-slate-100">{summary.count}</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+                  <p className="text-[10px] uppercase tracking-widest text-slate-500">Wins</p>
+                  <p className="mt-1 text-xl font-bold text-emerald-400">{summary.wins}<span className="ml-1 text-xs font-normal text-slate-400">/ {summary.count}</span></p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+                  <p className="text-[10px] uppercase tracking-widest text-slate-500">Win Rate</p>
+                  <p className={`mt-1 text-xl font-bold ${summary.winRatePct >= 50 ? "text-emerald-400" : "text-rose-400"}`}>{summary.winRatePct.toFixed(1)}%</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+                  <p className="text-[10px] uppercase tracking-widest text-slate-500">Net PnL</p>
+                  <p className={`mt-1 text-xl font-bold ${summary.netPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>${summary.netPnl.toFixed(2)}</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+                  <p className="text-[10px] uppercase tracking-widest text-slate-500">Invested</p>
+                  <p className="mt-1 text-xl font-bold text-slate-100">${summary.totalInvested.toFixed(0)}</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+                  <p className="text-[10px] uppercase tracking-widest text-slate-500">ROI</p>
+                  <p className={`mt-1 text-xl font-bold ${summary.totalRoiPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{summary.totalRoiPct.toFixed(2)}%</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Signal */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
             <SignalPanel latest={rows.length ? rows[rows.length - 1] : null} />
