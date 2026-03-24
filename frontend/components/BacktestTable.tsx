@@ -163,7 +163,7 @@ export default function BacktestTable({
 
   return (
     <section>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Backtest — {symbol}</h2>
         <select
           value={params.start_date}
@@ -181,6 +181,31 @@ export default function BacktestTable({
           <option value="2019-01-01">2019</option>
           <option value="2018-01-01">2018</option>
         </select>
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] text-slate-500">Qty</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={params.quantity}
+            onChange={(e) => onParamsChange({ ...params, quantity: Number(e.target.value) || 100 })}
+            className="w-20 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+          />
+        </div>
+        <button
+          onClick={onRun}
+          disabled={running || params.buy_conditions.length === 0}
+          className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {running ? "Running…" : "Run Backtest"}
+        </button>
+        <button
+          onClick={onResetPreferences}
+          className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-700 hover:text-slate-100"
+          title="Reset condition selections to defaults"
+        >
+          Reset
+        </button>
       </div>
       <p className="mt-0.5 text-[10px] text-slate-500">Conditions → Params → Run</p>
 
@@ -345,28 +370,6 @@ export default function BacktestTable({
         </div>
       </div>
 
-      {/* ── Params row ─────────── */}
-      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-3">
-        <label className="text-xs text-slate-300">
-          Qty (units)
-          <div className="mt-1 flex items-center gap-2">
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={params.quantity}
-              onChange={(e) => onParamsChange({ ...params, quantity: Number(e.target.value) || 100 })}
-              className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            />
-            {trades.length > 0 && trades[0]?.buy_price ? (
-              <span className="whitespace-nowrap text-xs text-slate-400">
-                ≈ ${(params.quantity * trades[0].buy_price).toFixed(0)} USD
-              </span>
-            ) : null}
-          </div>
-        </label>
-      </div>
-
       {/* ── Conditional config inputs (show only when related condition is ticked) ─────────── */}
       <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
         {params.sell_conditions.includes("take_profit_2pct") && (
@@ -417,79 +420,11 @@ export default function BacktestTable({
         )}
       </div>
 
-      {/* ── Action button ─────────── */}
-      <div className="mt-4 flex items-center gap-3">
-        <button
-          onClick={onRun}
-          disabled={running || params.buy_conditions.length === 0}
-          className="rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {running ? "Running…" : "Run Backtest"}
-        </button>
-        <button
-          onClick={onResetPreferences}
-          className="rounded-lg border border-slate-600 bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:bg-slate-700 hover:text-slate-100"
-          title="Reset condition selections to defaults"
-        >
-          Reset Conditions
-        </button>
-      </div>
-
       {error ? (
         <div className="mt-3 rounded-lg border border-rose-700 bg-rose-950/40 px-3 py-2 text-xs text-rose-300">
           {error}
         </div>
       ) : null}
-
-      {/* ── Trade entry/exit cards ─────────── */}
-      {trades.length > 0 && (
-        <div className="mt-4 space-y-2">
-          <p className="text-[10px] uppercase tracking-widest text-slate-500">Trade Signals — {params.start_date ? `from ${params.start_date.slice(0, 4)}` : "All data"}</p>
-          <div className="grid gap-2 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-            {[...trades]
-              .sort((a, b) => new Date(a.buy_time).getTime() - new Date(b.buy_time).getTime())
-              .map((t, i) => (
-              <div
-                key={t.id ?? i}
-                className={`rounded-xl border p-3 ${
-                  t.pnl >= 0
-                    ? "border-emerald-800/50 bg-emerald-950/20"
-                    : "border-rose-800/50 bg-rose-950/20"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] uppercase tracking-widest text-slate-500">#{i + 1}</span>
-                  <span className={`text-xs font-bold ${t.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                    {t.pnl >= 0 ? "WIN" : "LOSS"} {fmtPct(t.return_pct)}
-                  </span>
-                </div>
-                <div className="flex gap-3 text-xs">
-                  <div className="flex-1">
-                    <p className="text-[10px] text-emerald-400/70 uppercase">Buy</p>
-                    <p className="text-sm font-bold text-slate-100">${fmtMoney(t.buy_price)}</p>
-                    <p className="text-slate-400">{fmtDate(t.buy_time)}</p>
-                  </div>
-                  <div className="flex items-center text-slate-600">→</div>
-                  <div className="flex-1">
-                    <p className="text-[10px] text-rose-400/70 uppercase">Sell</p>
-                    <p className="text-sm font-bold text-slate-100">${fmtMoney(t.sell_price)}</p>
-                    <p className="text-slate-400">{fmtDate(t.sell_time)}</p>
-                  </div>
-                </div>
-                <div className="mt-2 flex items-center justify-between border-t border-slate-800/50 pt-2">
-                  <span className="text-[10px] text-slate-500">Qty: {t.quantity}</span>
-                  <span className={`text-xs font-semibold ${t.pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                    PnL ${fmtMoney(t.pnl)}
-                  </span>
-                </div>
-                {t.sell_criteria && (
-                  <p className="mt-1 text-[10px] text-slate-500">Exit: {t.sell_criteria}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       <details className="mt-4 rounded-lg border border-slate-800 bg-slate-950/20" open>
         <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-slate-200">
