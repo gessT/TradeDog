@@ -1,18 +1,74 @@
 from datetime import datetime, timezone
+import logging
 
 from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 import pandas as pd
+import yfinance as yf
 
 from app.core.config import get_settings
 from app.services.data_collector import fetch_stock
 from app.services.redis_client import redis_service
 from app.utils.indicators import ema
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 settings = get_settings()
 SMOOTHING_WINDOW = 20
+
+# ── Major Bursa Malaysia (KLCI + popular) stocks ─────────────────────
+BURSA_STOCKS: dict[str, str] = {
+    "1155.KL": "Maybank",
+    "1295.KL": "Public Bank",
+    "6888.KL": "CIMB",
+    "5347.KL": "Tenaga",
+    "3182.KL": "Genting Bhd",
+    "4715.KL": "Genting Malaysia",
+    "1082.KL": "Hong Leong",
+    "5183.KL": "Petronas Chem",
+    "5681.KL": "Petronas Dagangan",
+    "4863.KL": "TM (Telekom)",
+    "6012.KL": "Maxis",
+    "6947.KL": "DiGi/CelcomDigi",
+    "1023.KL": "CIMB Group",
+    "5296.KL": "Petronas Gas",
+    "4065.KL": "PPB Group",
+    "2445.KL": "KLK",
+    "5225.KL": "IHH Healthcare",
+    "4197.KL": "Sime Darby",
+    "4677.KL": "YTL Corp",
+    "6742.KL": "YTL Power",
+    "5285.KL": "SD Plantation",
+    "1961.KL": "IOI Corp",
+    "3816.KL": "MISC",
+    "5819.KL": "Hong Leong Bank",
+    "1066.KL": "RHB Bank",
+    "8869.KL": "Press Metal",
+    "7084.KL": "QL Resources",
+    "5168.KL": "Hartalega",
+    "7113.KL": "Top Glove",
+    "7153.KL": "Kossan Rubber",
+    "6399.KL": "Atlas Corp",
+    "5218.KL": "Sapura Energy",
+    "6033.KL": "Petronas Gas",
+    "4707.KL": "Nestle MY",
+    "3476.KL": "AEON Co",
+    "5235.KL": "KLCC Stapled",
+    "2828.KL": "Sam Eng",
+    "7052.KL": "Padini",
+    "5014.KL": "MPI",
+    "0166.KL": "Inari Amertron",
+    "5264.KL": "Vitrox",
+    "7033.KL": "MRDIY",
+    "5398.KL": "Gamuda",
+    "1015.KL": "AMMB",
+    "7164.KL": "MBM Resources",
+    "6888.KL": "CIMB",
+    "3867.KL": "Axiata",
+    "5168.KL": "Hartalega",
+    "1562.KL": "Berjaya Corp",
+}
 
 
 def _normalize_column_name(column: object) -> str:
@@ -80,6 +136,79 @@ def _serialize_rows(frame: pd.DataFrame) -> list[dict[str, object]]:
     return rows
 
 
+# ── Near All-Time High Scanner ──────────────────────────────────────
+
+def _scan_single_stock(code: str, name: str) -> dict | None:
+    """Fetch max history for one stock and return ATH info, or None on failure."""
+    try:
+        ticker = yf.Ticker(code)
+        hist = ticker.history(period="max", auto_adjust=False)
+        if hist is None or hist.empty or len(hist) < 20:
+            return None
+
+        # Normalize columns
+        cols = hist.columns
+        if isinstance(cols[0], tuple):
+            hist.columns = [c[0] if isinstance(c, tuple) else str(c) for c in cols]
+
+        if "Close" not in hist.columns or "High" not in hist.columns:
+            return None
+
+        close_series = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+        high_series = pd.to_numeric(hist["High"], errors="coerce").dropna()
+        if close_series.empty or high_series.empty:
+            return None
+
+        ath = float(high_series.max())
+        current = float(close_series.iloc[-1])
+        if ath <= 0:
+            return None
+
+        pct_from_ath = ((ath - current) / ath) * 100.0
+
+        return {
+            "symbol": code,
+            "name": name,
+            "current_price": round(current, 4),
+            "ath_price": round(ath, 4),
+            "pct_from_ath": round(pct_from_ath, 2),
+            "data_points": len(hist),
+        }
+    except Exception as exc:
+        logger.debug("ATH scan failed for %s: %s", code, exc)
+        return None
+
+
+@router.get("/near-ath")
+async def near_ath(top: int = 10) -> dict:
+    """Return top N Bursa Malaysia stocks nearest to their All-Time High."""
+    import concurrent.futures
+
+    top = min(max(top, 1), 50)
+
+    def _scan_all() -> list[dict]:
+        results: list[dict] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {
+                pool.submit(_scan_single_stock, code, name): code
+                for code, name in BURSA_STOCKS.items()
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                res = fut.result()
+                if res is not None:
+                    results.append(res)
+        results.sort(key=lambda x: x["pct_from_ath"])
+        return results[:top]
+
+    stocks = await run_in_threadpool(_scan_all)
+
+    return {
+        "count": len(stocks),
+        "scanned": len(BURSA_STOCKS),
+        "stocks": stocks,
+    }
+
+
 @router.get("/{symbol}")
 async def get_stock(symbol: str) -> dict[str, object]:
     try:
@@ -117,3 +246,5 @@ async def get_stock(symbol: str) -> dict[str, object]:
         },
         "data": rows,
     }
+
+

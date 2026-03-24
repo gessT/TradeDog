@@ -5,6 +5,7 @@ import BacktestTable from "../components/BacktestTable";
 import DataTable from "../components/DataTable";
 import MetricCards from "../components/MetricCards";
 import Navbar from "../components/Navbar";
+import NearATH from "../components/NearATH";
 import SignalPanel from "../components/SignalPanel";
 import { useBacktest } from "../hooks/useBacktest";
 import { useStock } from "../hooks/useStock";
@@ -87,6 +88,11 @@ export default function Page() {
               </div>
             </div>
           )}
+
+          {/* Near ATH Board */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+            <NearATH onSelectSymbol={(sym) => { setSymbol(sym); refresh(); }} />
+          </div>
 
           {/* Signal */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">

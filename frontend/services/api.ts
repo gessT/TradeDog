@@ -202,3 +202,30 @@ export async function getBuySignals(params: {
   }
   return (await response.json()) as BuySignalsResponse;
 }
+
+
+// ── Near ATH Scanner ────────────────────────────────────────────────
+
+export type NearATHStock = {
+  symbol: string;
+  name: string;
+  current_price: number;
+  ath_price: number;
+  pct_from_ath: number;
+  data_points: number;
+};
+
+export type NearATHResponse = {
+  count: number;
+  scanned: number;
+  stocks: NearATHStock[];
+};
+
+export async function fetchNearATH(top: number = 10): Promise<NearATHResponse> {
+  const response = await fetch(`${API_BASE}/stock/near-ath?top=${top}`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as NearATHResponse;
+}
