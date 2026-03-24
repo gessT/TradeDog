@@ -54,7 +54,7 @@ def _fetch_from_yfinance(symbol: str, retries: int = 3) -> pd.DataFrame | None:
     for attempt in range(retries):
         try:
             ticker = yf.Ticker(symbol)
-            data = ticker.history(period="1y", auto_adjust=False)
+            data = ticker.history(period="5y", auto_adjust=False)
         except Exception:
             if attempt < retries - 1:
                 time.sleep(2 ** attempt)

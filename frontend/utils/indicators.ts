@@ -183,14 +183,14 @@ function computeSupertrend(bars: OHLCBar[], period = 10, multiplier = 3.0): Supe
     }
   }
 
-  // ATR (RMA / Wilder's smoothing)
+  // ATR via RMA (Pine ta.rma / Wilder smoothing)
+  // Pine: alpha = 1/length; sum := alpha*src + (1-alpha)*nz(sum[1])
+  // Bar 0: nz(prev) = 0 → atr = alpha * tr
   const atr: number[] = new Array(len).fill(0);
-  // seed with SMA for first `period` bars
-  let atrSum = 0;
-  for (let i = 0; i < Math.min(period, len); i++) atrSum += tr[i];
-  if (len >= period) atr[period - 1] = atrSum / period;
-  for (let i = period; i < len; i++) {
-    atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period;
+  const alpha = 1.0 / period;
+  for (let i = 0; i < len; i++) {
+    const prev = i > 0 ? atr[i - 1] : 0;
+    atr[i] = alpha * tr[i] + (1 - alpha) * prev;
   }
 
   // Supertrend (ta.supertrend convention: dir = -1 uptrend, dir = 1 downtrend)

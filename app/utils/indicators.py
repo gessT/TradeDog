@@ -64,6 +64,10 @@ def weekly_supertrend(
 ) -> list[int]:
     """Compute weekly Supertrend and map back to daily bars.
 
+    Matches Pine Script:
+        [st, dir] = ta.supertrend(factor, atrPeriod)
+        request.security(syminfo.tickerid, "W", ..., lookahead=barmerge.lookahead_on)
+
     Returns a list of direction values per daily bar:
       -1 = uptrend, 1 = downtrend  (Pine convention)
     """
@@ -111,17 +115,19 @@ def weekly_supertrend(
         lc = abs(w_low[i] - w_close[i - 1])
         tr[i] = max(hl, hc, lc)
 
-    # ── ATR (Wilder / RMA) ──
+    # ── ATR via RMA (Pine ta.rma / Wilder smoothing) ──
+    # Pine: alpha = 1/length; sum := alpha*src + (1-alpha)*nz(sum[1])
+    # Bar 0: nz(prev) = 0 → atr = alpha * tr
     atr = [0.0] * wn
-    if wn >= period:
-        atr[period - 1] = sum(tr[:period]) / period
-        for i in range(period, wn):
-            atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
+    alpha = 1.0 / period
+    for i in range(wn):
+        prev = atr[i - 1] if i > 0 else 0.0
+        atr[i] = alpha * tr[i] + (1 - alpha) * prev
 
-    # ── Supertrend ──
+    # ── Supertrend (matches Pine ta.supertrend) ──
     up = [0.0] * wn
     dn = [0.0] * wn
-    d = [-1] * wn  # -1 = uptrend
+    direction = [-1] * wn  # -1 = uptrend, 1 = downtrend
 
     for i in range(wn):
         src = (w_high[i] + w_low[i]) / 2
@@ -131,17 +137,17 @@ def weekly_supertrend(
         if i == 0:
             up[i] = basic_up
             dn[i] = basic_dn
-            d[i] = -1
+            direction[i] = -1
         else:
             up[i] = max(basic_up, up[i - 1]) if w_close[i - 1] > up[i - 1] else basic_up
             dn[i] = min(basic_dn, dn[i - 1]) if w_close[i - 1] < dn[i - 1] else basic_dn
 
-            if d[i - 1] == 1 and w_close[i] > dn[i - 1]:
-                d[i] = -1
-            elif d[i - 1] == -1 and w_close[i] < up[i - 1]:
-                d[i] = 1
+            if direction[i - 1] == 1 and w_close[i] > dn[i - 1]:
+                direction[i] = -1
+            elif direction[i - 1] == -1 and w_close[i] < up[i - 1]:
+                direction[i] = 1
             else:
-                d[i] = d[i - 1]
+                direction[i] = direction[i - 1]
 
-    # Map weekly dir back to daily
-    return [d[week_index[i]] for i in range(n)]
+    # Map weekly direction back to daily bars (lookahead=on: current week value)
+    return [direction[week_index[i]] for i in range(n)]

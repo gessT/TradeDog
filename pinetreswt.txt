@@ -1,0 +1,191 @@
+//@version=5
+strategy("Stock Up[Gess]-Day", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//                                        INPUT PARAMETERS
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+// HalfTrend Configuration
+amplitude = input.int(title="Amplitude", defval=5)
+channelDeviation = input.int(title="Channel Deviation", defval=2)
+priceGapThreshold = input.float(10.0, title="Price Gap to HalfTrend ($)")
+showArrows = input.bool(title="Show Arrows", defval=true)
+
+// Supertrend Configuration
+atrPeriod = input.int(10, title="Supertrend ATR Period")
+factor = input.float(3.0, title="Supertrend Factor")
+
+// Trailing Stop Configuration
+trailAmount = input.float(10.0, "Trailing Stop ($)", step=0.1)
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//                                        STATE VARIABLES
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+// HalfTrend State Variables
+var int trend = 0
+var int nextTrend = 0
+var float maxLowPrice = na
+var float minHighPrice = na
+var float up = 0.0
+var float down = 0.0
+
+// Trading State Variables
+var int buyCount = 0
+
+// Trailing Stop State Variables
+var float highestSinceEntry = na
+var float lowestSinceEntry = na
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//                                        HALFTREND CALCULATION
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+// Initialize variables on first bar
+if barstate.isfirst
+    maxLowPrice := nz(low[1], low)
+    minHighPrice := nz(high[1], high)
+
+// Calculate ATR and deviation
+atr2 = ta.atr(100) / 2
+dev = channelDeviation * atr2
+
+// Calculate highest and lowest prices
+highPrice = high[math.abs(ta.highestbars(amplitude))]
+lowPrice = low[math.abs(ta.lowestbars(amplitude))]
+highma = ta.sma(high, amplitude)
+lowma = ta.sma(low, amplitude)
+
+// Store previous trend for comparison
+prevTrend = trend
+
+// HalfTrend Logic - Upward Trend Detection
+if nextTrend == 1
+    maxLowPrice := math.max(lowPrice, maxLowPrice)
+    if highma < maxLowPrice and close < nz(low[1], low)
+        trend := 1
+        nextTrend := 0
+        minHighPrice := highPrice
+
+// HalfTrend Logic - Downward Trend Detection
+else
+    minHighPrice := math.min(highPrice, minHighPrice)
+    if lowma > minHighPrice and close > nz(high[1], high)
+        trend := 0
+        nextTrend := 1
+        maxLowPrice := lowPrice
+
+// Calculate HalfTrend Lines and Arrow Positions
+float atrHigh = 0.0
+float atrLow = 0.0
+float arrowUp = na
+float arrowDown = na
+
+// Uptrend Calculations
+if trend == 0
+    if not na(trend[1]) and trend[1] != 0
+        up := na(down[1]) ? down : down[1]
+        arrowUp := up - atr2
+    else
+        up := na(up[1]) ? maxLowPrice : math.max(maxLowPrice, up[1])
+    atrHigh := up + dev
+    atrLow := up - dev
+
+// Downtrend Calculations
+else
+    if not na(trend[1]) and trend[1] != 1
+        down := na(up[1]) ? up : up[1]
+        arrowDown := down + atr2
+    else
+        down := na(down[1]) ? minHighPrice : math.min(minHighPrice, down[1])
+    atrHigh := down + dev
+    atrLow := down - dev
+
+// Final HalfTrend Value and Color
+ht = trend == 0 ? up : down
+var color buyColor = color.blue
+var color sellColor = color.red
+htColor = trend == 0 ? buyColor : sellColor
+
+// Plot HalfTrend Line
+plot(ht, title="HalfTrend", linewidth=2, color=htColor)
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//                                        SIGNAL GENERATION
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+// Mini Trend Signals (HalfTrend)
+miniBuySignal = trend == 0 and prevTrend == 1
+miniSellSignal = trend == 1 and prevTrend == 0
+
+// HalfTrend Alert Conditions
+alertcondition(miniBuySignal, title="HalfTrend Turned Bullish", message="🔵 HalfTrend turned UP. Possible long entry.")
+alertcondition(miniSellSignal, title="HalfTrend Turned Bearish", message="🔴 HalfTrend turned DOWN. Consider closing long.")
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//                                        SUPERTREND CALCULATION
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+// Supertrend Function
+f_supertrend(_factor, _period) =>
+    [st, dir] = ta.supertrend(_factor, _period)
+    [st, dir]
+
+// Get Supertrend from higher timeframe (28 minutes)
+[st30, dir30] = request.security(syminfo.tickerid, "W", f_supertrend(factor, atrPeriod), lookahead=barmerge.lookahead_on)
+
+// Detect Big Trend Flips
+bigTrendFlipUp = dir30[1] == 1 and dir30 == -1
+bigTrendFlipDown = dir30[1] == -1 and dir30 == 1
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//                                        ENTRY AND EXIT LOGIC
+// ═══════════════════════════════════════════════════════════════════════════════════════════════// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+var float entryPrice = na
+
+// Reset Buy Count and Entry Price on Big Trend Flip Down
+if bigTrendFlipDown
+    buyCount := 0
+    entryPrice := na
+
+// Entry Condition: Big Trend Up and Mini Trend Up
+if bigTrendFlipUp and trend == 0 and buyCount < 2
+    strategy.entry("Buy", strategy.long)
+    buyCount += 1
+
+// Store entry price after entry
+if strategy.position_size > 0 and na(entryPrice)
+    entryPrice := strategy.position_avg_price
+
+// Exit logic (only HalfTrend down)
+halfTrendDown = miniSellSignal
+
+if halfTrendDown
+    strategy.close("Buy")
+    entryPrice := na
+
+// After close, allow next buy if conditions met and within max 2 buys
+if trend == 0 and miniBuySignal and dir30 < 1 and buyCount < 2
+    strategy.entry("Buy", strategy.long)
+    buyCount += 1
+
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//                                        VISUAL ELEMENTS
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+// Background Color Based on Big Supertrend Direction
+bgcolor(dir30 < 0 ? color.new(color.green, 85) : color.new(color.red, 85), title="Big Supertrend Background")
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//                                        ALERT CONDITIONS
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+// Big Trend Alerts
+alertcondition(bigTrendFlipUp, title="Big Trend Up", message="Big Supertrend turned UP - new session.")
+alertcondition(bigTrendFlipDown, title="Big Trend Down", message="Big Supertrend turned DOWN - exit signal.")
+
+// Mini Trend Alerts
+alertcondition(miniBuySignal, title="Mini Trend Up", message="HalfTrend flipped UP - possible entry.")
+alertcondition(miniSellSignal, title="Mini Trend Down", message="HalfTrend flipped DOWN - possible exit.")
