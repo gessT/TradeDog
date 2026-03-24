@@ -19,8 +19,7 @@ async def demo(symbol: str = Query(default="AAPL")) -> list[dict[str, float | st
     if "Date" in frame.columns:
         frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
         frame = frame.dropna(subset=["Date"])
-        cutoff = pd.Timestamp("2025-01-01")
-        frame = frame[frame["Date"] >= cutoff].reset_index(drop=True)
+        frame = frame.reset_index(drop=True)
 
     closes = frame["Close"].astype(float).tolist()
     highs = frame["High"].astype(float).tolist() if "High" in frame.columns else closes

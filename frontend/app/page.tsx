@@ -11,7 +11,7 @@ import { useStock } from "../hooks/useStock";
 
 
 export default function Page() {
-  const { symbol, setSymbol, points, rows, metrics, loading, error, refresh } = useStock("AAPL");
+  const { symbol, setSymbol, points, rows, metrics, loading, error, refresh } = useStock("1155.KL");
   const {
     trades,
     loading: backtestLoading,

@@ -1,6 +1,7 @@
 import json
 import csv
 import io
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -37,6 +38,8 @@ def _normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
     if "Date" in normalized.columns:
         normalized["Date"] = pd.to_datetime(normalized["Date"], errors="coerce")
+        if hasattr(normalized["Date"].dt, "tz") and normalized["Date"].dt.tz is not None:
+            normalized["Date"] = normalized["Date"].dt.tz_localize(None)
 
     for column in ("Open", "High", "Low", "Close", "Volume"):
         if column in normalized.columns:
@@ -47,20 +50,34 @@ def _normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return cleaned
 
 
-def _fetch_from_yfinance(symbol: str) -> pd.DataFrame | None:
-    try:
-        data = yf.download(symbol, period="1mo", interval="1d", auto_adjust=False, progress=False)
-    except Exception:
-        return None
+def _fetch_from_yfinance(symbol: str, retries: int = 3) -> pd.DataFrame | None:
+    for attempt in range(retries):
+        try:
+            ticker = yf.Ticker(symbol)
+            data = ticker.history(period="1y", auto_adjust=False)
+        except Exception:
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            return None
 
-    if data is None or data.empty:
-        return None
+        if data is not None and not data.empty:
+            normalized = _normalize_frame(data)
+            return normalized if not normalized.empty else None
 
-    normalized = _normalize_frame(data)
-    return normalized if not normalized.empty else None
+        if attempt < retries - 1:
+            time.sleep(2 ** attempt)
+
+    return None
+
+
+def _is_us_symbol(symbol: str) -> bool:
+    return "." not in symbol
 
 
 def _fetch_from_stooq(symbol: str) -> pd.DataFrame | None:
+    if not _is_us_symbol(symbol):
+        return None
     ticker = f"{symbol.lower()}.us"
     url = f"https://stooq.com/q/d/l/?s={urllib.parse.quote(ticker)}&i=d"
 
