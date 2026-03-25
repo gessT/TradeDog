@@ -45,6 +45,16 @@ def inverted_hammer_buy(ctx: dict) -> bool:
     return ctx["price"] > pattern_high
 
 
+def uptrend_buy(ctx: dict) -> bool:
+    """BUY: Stock is in uptrend — price > EMA20, EMA20 rising, short SMA > long SMA."""
+    price = ctx.get("price", 0)
+    cur_ema20 = ctx.get("cur_ema20", 0)
+    prev_ema20 = ctx.get("prev_ema20", 0)
+    if cur_ema20 <= 0 or prev_ema20 <= 0:
+        return False
+    return price > cur_ema20 and cur_ema20 > prev_ema20 and ctx.get("cur_short", 0) > ctx.get("cur_long", 0)
+
+
 def weekly_trend_up_buy(ctx: dict) -> bool:
     """BUY: Weekly Supertrend is in uptrend."""
     return ctx.get("weekly_trend_up", False) is True
@@ -253,6 +263,7 @@ def volume_anchor_exit(ctx: dict) -> bool:
 CONDITION_MAP = {
     "halftrend_green":       {"fn": halftrend_green,       "label": "Half-trend flips green",               "type": "buy"},
     "weekly_trend_up":       {"fn": weekly_trend_up_buy,   "label": "Weekly Supertrend is UP",           "type": "buy"},
+    "uptrend":               {"fn": uptrend_buy,           "label": "Uptrend (EMA20 rising + SMA)",       "type": "buy"},
     "close_below_low_ema5":  {"fn": close_below_low_ema5,  "label": "Close below lowest & EMA5",            "type": "sell"},
     "take_profit":           {"fn": take_profit_pct,       "label": "Take Profit %",                        "type": "sell"},
     "stop_loss":             {"fn": stop_loss_pct,         "label": "Stop Loss %",                          "type": "sell"},

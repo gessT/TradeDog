@@ -199,7 +199,7 @@ export async function resetConditionPreferences(): Promise<void> {
 }
 
 
-export type BuySignal = { date: string; price: number; wst: string; ht: string };
+export type BuySignal = { date: string; price: number; wst: string; ht: string; rvol: number };
 export type BuySignalsResponse = { symbol: string; count: number; signals: BuySignal[] };
 
 export async function getBuySignals(params: {

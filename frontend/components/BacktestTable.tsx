@@ -284,6 +284,7 @@ export default function BacktestTable({
                 <th className="px-3 py-1.5 text-right">Price</th>
                 <th className="px-3 py-1.5 text-left">W.ST</th>
                 <th className="px-3 py-1.5 text-left">HalfTrend</th>
+                <th className="px-3 py-1.5 text-right">RVOL</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-emerald-900/20">
@@ -300,6 +301,7 @@ export default function BacktestTable({
                     {s.wst === "FLIP_UP" ? "🟢 Flip Up" : s.wst === "FLIP_DOWN" ? "🔴 Flip Down" : s.wst === "UP" ? "▲ Up" : "▼ Down"}
                   </td>
                   <td className={`px-3 py-1.5 font-medium ${s.ht === "Green" ? "text-emerald-400" : s.ht === "Red" ? "text-rose-400" : "text-slate-500"}`}>{s.ht}</td>
+                  <td className={`px-3 py-1.5 text-right font-medium ${s.rvol >= 3 ? "text-amber-300 bg-amber-900/30" : s.rvol >= 2 ? "text-amber-400" : "text-slate-400"}`}>{s.rvol.toFixed(1)}x</td>
                 </tr>
               ))}
             </tbody>

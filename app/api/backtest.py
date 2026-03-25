@@ -236,6 +236,8 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "prev_vol_ratio": vol_ratio[idx - 1] if idx > 0 else 0.0,
             "weekly_trend_up": wst_dirs[idx] == -1 if idx < len(wst_dirs) else False,
             "prev_weekly_trend_up": wst_dirs[idx - 1] == -1 if idx > 0 and idx - 1 < len(wst_dirs) else False,
+            "cur_ema20": float(ema20_values[idx]) if idx < len(ema20_values) and not pd.isna(ema20_values[idx]) else 0,
+            "prev_ema20": float(ema20_values[idx - 1]) if idx > 0 and idx - 1 < len(ema20_values) and not pd.isna(ema20_values[idx - 1]) else 0,
             "prev_day_boost": vol_boost[idx - 1] if idx > 0 else False,
             "prev_day_high": float(highs[idx - 1]) if idx > 0 else 0,
             "prev_day_low": float(lows[idx - 1]) if idx > 0 else 0,
@@ -651,6 +653,7 @@ async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
 
     atr_values2 = compute_atr(highs, lows, closes, 14)
     atr_sma_values2 = compute_sma(atr_values2, 20)
+    ema20_values2 = compute_ema(closes, 20)
 
     buy_fns = [get_buy_condition(name) for name in payload.buy_conditions]
     min_start = max(payload.short_window, payload.long_window)
@@ -690,6 +693,8 @@ async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
             "prev_day_low": float(lows[idx - 1]) if idx > 0 else 0,
             "prev_day_vol": float(volumes[idx - 1]) if idx > 0 else 0,
             "prev_prev_day_vol": float(volumes[idx - 2]) if idx > 1 else 0,
+            "cur_ema20": float(ema20_values2[idx]) if idx < len(ema20_values2) and not pd.isna(ema20_values2[idx]) else 0,
+            "prev_ema20": float(ema20_values2[idx - 1]) if idx > 0 and idx - 1 < len(ema20_values2) and not pd.isna(ema20_values2[idx - 1]) else 0,
             "cur_atr": float(atr_values2[idx]) if idx < len(atr_values2) and not pd.isna(atr_values2[idx]) else 0,
             "cur_atr_sma": float(atr_sma_values2[idx]) if idx < len(atr_sma_values2) and not pd.isna(atr_sma_values2[idx]) else 0,
             "prev_atr": float(atr_values2[idx - 1]) if idx > 0 and not pd.isna(atr_values2[idx - 1]) else 0,
@@ -710,6 +715,7 @@ async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
                 "price": round(price, 4),
                 "wst": wst_label,
                 "ht": ht_label,
+                "rvol": round(vol_ratio[idx], 2),
             })
 
     return {"symbol": payload.symbol.upper(), "count": len(signals), "signals": signals}
