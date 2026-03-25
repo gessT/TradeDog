@@ -157,7 +157,7 @@ export default function Page() {
             <span className="text-[10px] text-slate-600 ml-auto">Click a trade row to navigate</span>
           </div>
           <div className="flex-1 min-h-0">
-            <TVChart ref={chartRef} data={rawPoints} trades={trades} buySignals={buySignals} />
+            <TVChart ref={chartRef} data={rawPoints} trades={trades} buySignals={buySignals} buyConditions={params.buy_conditions} />
           </div>
         </section>
 

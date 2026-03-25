@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
-import { createChart, CandlestickSeries, HistogramSeries, createSeriesMarkers, type IChartApi, type ISeriesApi, type CandlestickData, type UTCTimestamp, type SeriesMarker } from "lightweight-charts";
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers, type IChartApi, type ISeriesApi, type CandlestickData, type UTCTimestamp, type SeriesMarker } from "lightweight-charts";
 import type { DemoPoint, BacktestTradeRow, BuySignal } from "../services/api";
+import { weeklySupertrend } from "../utils/indicators";
 
 export type TVChartHandle = {
   goToDate: (dateStr: string) => void;
@@ -12,9 +13,10 @@ type TVChartProps = {
   data: DemoPoint[];
   trades: BacktestTradeRow[];
   buySignals?: BuySignal[];
+  buyConditions?: string[];
 };
 
-const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data, trades, buySignals = [] }, ref) {
+const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data, trades, buySignals = [], buyConditions = [] }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -153,6 +155,67 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data,
     candleSeries.setData(candleData);
     volumeSeries.setData(volumeData);
 
+    // ── HalfTrend line overlay ──
+    if (buyConditions.includes("halftrend_green")) {
+      const htLineData: { time: UTCTimestamp; value: number; color: string }[] = [];
+      for (const point of sorted) {
+        if (point.ht == null) continue;
+        const d = new Date(point.time);
+        const ts = Math.floor(d.getTime() / 1000) as UTCTimestamp;
+        if (!seenTs.has(ts as number)) continue;
+        htLineData.push({
+          time: ts,
+          value: point.ht,
+          color: point.ht_trend === 0 ? "#22c55e" : "#ef4444",
+        });
+      }
+      if (htLineData.length > 0) {
+        const htSeries = chart.addSeries(LineSeries, {
+          lineWidth: 2,
+          priceScaleId: "right",
+          lastValueVisible: false,
+          priceLineVisible: false,
+        });
+        htSeries.setData(htLineData);
+      }
+    }
+
+    // ── Weekly Supertrend line overlay ──
+    if (buyConditions.includes("weekly_trend_up")) {
+      const ohlcBars = sorted
+        .filter((p) => p.open != null && p.high != null && p.low != null)
+        .map((p) => ({
+          time: p.time,
+          open: p.open!,
+          high: p.high!,
+          low: p.low!,
+          close: p.price,
+        }));
+      if (ohlcBars.length > 0) {
+        const wstResults = weeklySupertrend(ohlcBars);
+        const wstData: { time: UTCTimestamp; value: number; color: string }[] = [];
+        for (let i = 0; i < ohlcBars.length; i++) {
+          const ts = Math.floor(new Date(ohlcBars[i].time).getTime() / 1000) as UTCTimestamp;
+          if (!seenTs.has(ts as number)) continue;
+          wstData.push({
+            time: ts,
+            value: wstResults[i].value,
+            color: wstResults[i].dir === -1 ? "#38bdf8" : "#f97316",
+          });
+        }
+        if (wstData.length > 0) {
+          const wstSeries = chart.addSeries(LineSeries, {
+            lineWidth: 2,
+            lineStyle: 2,
+            priceScaleId: "right",
+            lastValueVisible: false,
+            priceLineVisible: false,
+          });
+          wstSeries.setData(wstData);
+        }
+      }
+    }
+
     // Add buy/sell markers from trades
     if (trades.length > 0) {
       const markers: SeriesMarker<UTCTimestamp>[] = [];
@@ -224,7 +287,7 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data,
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, trades, buySignals]);
+  }, [data, trades, buySignals, buyConditions]);
 
   return (
     <div ref={containerRef} className="w-full h-full" />
