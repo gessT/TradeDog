@@ -170,7 +170,13 @@ export async function getConditions(): Promise<ConditionsResponse> {
 }
 
 
-type ConditionPrefs = { checked: string[]; buy_logic: "AND" | "OR"; sell_logic: "AND" | "OR"; sma_sell_period: number };
+type ConditionPrefs = {
+  checked: string[];
+  buy_logic: "AND" | "OR";
+  sell_logic: "AND" | "OR";
+  sma_sell_period: number;
+  take_profit_pct: number;
+};
 
 export async function getConditionPreferences(): Promise<ConditionPrefs> {
   const response = await fetch(`${API_BASE}/backtest/conditions/preferences`, { cache: "no-store" });
@@ -182,11 +188,17 @@ export async function getConditionPreferences(): Promise<ConditionPrefs> {
 }
 
 
-export async function saveConditionPreferences(checked: string[], buy_logic: "AND" | "OR", sell_logic: "AND" | "OR", sma_sell_period: number): Promise<void> {
+export async function saveConditionPreferences(
+  checked: string[],
+  buy_logic: "AND" | "OR",
+  sell_logic: "AND" | "OR",
+  sma_sell_period: number,
+  take_profit_pct: number,
+): Promise<void> {
   const response = await fetch(`${API_BASE}/backtest/conditions/preferences`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ checked, buy_logic, sell_logic, sma_sell_period }),
+    body: JSON.stringify({ checked, buy_logic, sell_logic, sma_sell_period, take_profit_pct }),
   });
   if (!response.ok) {
     const detail = await response.text();

@@ -556,6 +556,7 @@ class ConditionPrefsPayload(BaseModel):
     buy_logic: str = Field(default="OR", pattern="^(AND|OR)$")
     sell_logic: str = Field(default="OR", pattern="^(AND|OR)$")
     sma_sell_period: int = Field(default=10, ge=2, le=200)
+    take_profit_pct: float = Field(default=2.0, ge=0, le=100)
 
 
 @router.get("/conditions/preferences")
@@ -565,11 +566,13 @@ def get_condition_preferences(db: Session = Depends(get_db)) -> dict[str, object
     buy_row = db.query(LogicPreference).filter(LogicPreference.key == "buy_logic").first()
     sell_row = db.query(LogicPreference).filter(LogicPreference.key == "sell_logic").first()
     sma_sell_row = db.query(LogicPreference).filter(LogicPreference.key == "sma_sell_period").first()
+    take_profit_row = db.query(LogicPreference).filter(LogicPreference.key == "take_profit_pct").first()
     return {
         "checked": [r.name for r in rows],
         "buy_logic": buy_row.value if buy_row else "OR",
         "sell_logic": sell_row.value if sell_row else "OR",
         "sma_sell_period": int(sma_sell_row.value) if sma_sell_row else 10,
+        "take_profit_pct": float(take_profit_row.value) if take_profit_row else 2.0,
     }
 
 
@@ -581,7 +584,12 @@ def save_condition_preferences(payload: ConditionPrefsPayload, db: Session = Dep
         if name in CONDITION_MAP:
             db.add(ConditionPreference(name=name, checked=True))
     # Upsert logic preferences
-    for key, val in [("buy_logic", payload.buy_logic), ("sell_logic", payload.sell_logic), ("sma_sell_period", str(payload.sma_sell_period))]:
+    for key, val in [
+        ("buy_logic", payload.buy_logic),
+        ("sell_logic", payload.sell_logic),
+        ("sma_sell_period", str(payload.sma_sell_period)),
+        ("take_profit_pct", str(payload.take_profit_pct)),
+    ]:
         existing = db.query(LogicPreference).filter(LogicPreference.key == key).first()
         if existing:
             existing.value = val

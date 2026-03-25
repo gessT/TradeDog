@@ -59,8 +59,21 @@ export function useBacktest(symbol: string, period: string) {
   useEffect(() => {
     if (!prefsLoaded.current) return;
     const all = [...params.buy_conditions, ...params.sell_conditions];
-    saveConditionPreferences(all, params.buy_logic, params.sell_logic, params.sma_sell_period).catch(() => {});
-  }, [params.buy_conditions, params.sell_conditions, params.buy_logic, params.sell_logic, params.sma_sell_period]);
+    saveConditionPreferences(
+      all,
+      params.buy_logic,
+      params.sell_logic,
+      params.sma_sell_period,
+      params.take_profit_pct,
+    ).catch(() => {});
+  }, [
+    params.buy_conditions,
+    params.sell_conditions,
+    params.buy_logic,
+    params.sell_logic,
+    params.sma_sell_period,
+    params.take_profit_pct,
+  ]);
 
   const loadTrades = useCallback(async () => {
     setLoading(true);
@@ -130,6 +143,7 @@ export function useBacktest(symbol: string, period: string) {
         buy_logic: "OR",
         sell_logic: "OR",
         sma_sell_period: 10,
+        take_profit_pct: 2,
       }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reset condition preferences");

@@ -116,21 +116,20 @@ export default function BacktestTable({
         setSellOptions(conds.sell);
 
         // Apply saved preferences if any
-        if (prefs.checked.length > 0 && !prefsApplied.current) {
+        if (!prefsApplied.current) {
           const buyNames = new Set(conds.buy.map((c) => c.name));
           const sellNames = new Set(conds.sell.map((c) => c.name));
           const savedBuy = prefs.checked.filter((n) => buyNames.has(n));
           const savedSell = prefs.checked.filter((n) => sellNames.has(n));
-          if (savedBuy.length > 0 || savedSell.length > 0) {
-            onParamsChange({
-              ...params,
-              buy_conditions: savedBuy.length > 0 ? savedBuy : params.buy_conditions,
-              sell_conditions: savedSell.length > 0 ? savedSell : params.sell_conditions,
-              buy_logic: prefs.buy_logic,
-              sell_logic: prefs.sell_logic,
-              sma_sell_period: prefs.sma_sell_period ?? 10,
-            });
-          }
+          onParamsChange({
+            ...params,
+            buy_conditions: savedBuy.length > 0 ? savedBuy : params.buy_conditions,
+            sell_conditions: savedSell.length > 0 ? savedSell : params.sell_conditions,
+            buy_logic: prefs.buy_logic,
+            sell_logic: prefs.sell_logic,
+            sma_sell_period: prefs.sma_sell_period ?? 10,
+            take_profit_pct: prefs.take_profit_pct ?? 2,
+          });
         }
         prefsApplied.current = true;
         onPrefsLoaded();
@@ -368,7 +367,7 @@ export default function BacktestTable({
 
       {/* ── Conditional config inputs (show only when related condition is ticked) ─────────── */}
       <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
-        {params.sell_conditions.includes("take_profit_2pct") && (
+        {(params.sell_conditions.includes("take_profit") || params.sell_conditions.includes("take_profit_2pct")) && (
           <label className="text-xs text-slate-300">
             Take Profit %
             <input
@@ -382,7 +381,7 @@ export default function BacktestTable({
             />
           </label>
         )}
-        {params.sell_conditions.includes("stop_loss_5pct") && (
+        {(params.sell_conditions.includes("stop_loss") || params.sell_conditions.includes("stop_loss_5pct")) && (
           <label className="text-xs text-slate-300">
             Stop Loss %
             <input
