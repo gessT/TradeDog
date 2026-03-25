@@ -109,22 +109,36 @@ export default function BacktestTable({
   const [signalsLoading, setSignalsLoading] = useState(false);
   const [selectedTradeIdx, setSelectedTradeIdx] = useState<number | null>(null);
 
+  // Reset preferences flag when symbol changes so preferences reload for new stock
   useEffect(() => {
-    Promise.all([getConditions(), getConditionPreferences()])
+    prefsApplied.current = false;
+  }, [symbol]);
+
+  useEffect(() => {
+    // Load all conditions and preferences in parallel
+    Promise.all([getConditions(), getConditionPreferences(symbol)])
       .then(([conds, prefs]) => {
+        console.log("Loaded conditions:", conds);
+        console.log("Loaded preferences:", prefs);
+        
+        // Always display all conditions
         setBuyOptions(conds.buy);
         setSellOptions(conds.sell);
 
-        // Apply saved preferences if any
-        if (!prefsApplied.current) {
+        // Filter saved conditions into buy and sell based on which ones are in conds
+        if (!prefsApplied.current && prefs.checked.length > 0) {
           const buyNames = new Set(conds.buy.map((c) => c.name));
           const sellNames = new Set(conds.sell.map((c) => c.name));
           const savedBuy = prefs.checked.filter((n) => buyNames.has(n));
           const savedSell = prefs.checked.filter((n) => sellNames.has(n));
+
+          console.log("Saved buy conditions:", savedBuy);
+          console.log("Saved sell conditions:", savedSell);
+
           onParamsChange({
             ...params,
-            buy_conditions: savedBuy.length > 0 ? savedBuy : params.buy_conditions,
-            sell_conditions: savedSell.length > 0 ? savedSell : params.sell_conditions,
+            buy_conditions: savedBuy,
+            sell_conditions: savedSell,
             buy_logic: prefs.buy_logic,
             sell_logic: prefs.sell_logic,
             sma_sell_period: prefs.sma_sell_period ?? 10,
@@ -135,17 +149,31 @@ export default function BacktestTable({
         onPrefsLoaded();
       })
       .catch((err) => {
-        console.error("Failed to load conditions:", err);
-        onPrefsLoaded();
+        console.error("Failed to load conditions/preferences:", err);
+        // Fallback: try loading conditions only
+        getConditions()
+          .then((conds) => {
+            console.log("Fallback: loaded conditions:", conds);
+            setBuyOptions(conds.buy);
+            setSellOptions(conds.sell);
+          })
+          .catch((err2) => {
+            console.error("Failed even with fallback:", err2);
+          })
+          .finally(() => {
+            if (!prefsApplied.current) {
+              prefsApplied.current = true;
+              onPrefsLoaded();
+            }
+          });
       });
-  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [symbol]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggleBuyCondition(name: string) {
     const current = params.buy_conditions;
     const next = current.includes(name)
       ? current.filter((c) => c !== name)
       : [...current, name];
-    if (next.length === 0) return;
     onParamsChange({ ...params, buy_conditions: next });
   }
 
@@ -154,7 +182,6 @@ export default function BacktestTable({
     const next = current.includes(name)
       ? current.filter((c) => c !== name)
       : [...current, name];
-    if (next.length === 0) return;
     onParamsChange({ ...params, sell_conditions: next });
   }
 

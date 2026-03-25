@@ -57,16 +57,29 @@ export function useBacktest(symbol: string, period: string) {
 
   // Auto-save condition preferences when they change
   useEffect(() => {
-    if (!prefsLoaded.current) return;
+    if (!prefsLoaded.current) {
+      console.log("Preferences not yet loaded, skipping save");
+      return;
+    }
     const all = [...params.buy_conditions, ...params.sell_conditions];
+    console.log("Auto-saving preferences for", symbol, ":", { all, buy_logic: params.buy_logic, sell_logic: params.sell_logic });
+    
     saveConditionPreferences(
+      symbol,
       all,
       params.buy_logic,
       params.sell_logic,
       params.sma_sell_period,
       params.take_profit_pct,
-    ).catch(() => {});
+    )
+      .then(() => {
+        console.log("✓ Preferences saved successfully for", symbol);
+      })
+      .catch((err) => {
+        console.error("✗ Failed to save preferences:", err);
+      });
   }, [
+    symbol,
     params.buy_conditions,
     params.sell_conditions,
     params.buy_logic,
@@ -135,7 +148,7 @@ export function useBacktest(symbol: string, period: string) {
 
   const resetPreferences = useCallback(async () => {
     try {
-      await resetConditionPreferences();
+      await resetConditionPreferences(symbol);
       setParams((prev) => ({
         ...prev,
         buy_conditions: DEFAULT_BUY,
@@ -148,7 +161,7 @@ export function useBacktest(symbol: string, period: string) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reset condition preferences");
     }
-  }, []);
+  }, [symbol]);
 
   useEffect(() => {
     void loadTrades();

@@ -560,50 +560,105 @@ class ConditionPrefsPayload(BaseModel):
 
 
 @router.get("/conditions/preferences")
-def get_condition_preferences(db: Session = Depends(get_db)) -> dict[str, object]:
-    """Return saved checked condition names and logic modes."""
-    rows = db.query(ConditionPreference).filter(ConditionPreference.checked.is_(True)).all()
-    buy_row = db.query(LogicPreference).filter(LogicPreference.key == "buy_logic").first()
-    sell_row = db.query(LogicPreference).filter(LogicPreference.key == "sell_logic").first()
-    sma_sell_row = db.query(LogicPreference).filter(LogicPreference.key == "sma_sell_period").first()
-    take_profit_row = db.query(LogicPreference).filter(LogicPreference.key == "take_profit_pct").first()
-    return {
-        "checked": [r.name for r in rows],
+def get_condition_preferences(symbol: str = Query("AAPL"), db: Session = Depends(get_db)) -> dict[str, object]:
+    """Return saved checked condition names and logic modes for a specific stock."""
+    symbol_upper = symbol.upper()
+    print(f"[LOAD PREFERENCES] Loading for symbol: {symbol_upper}")
+    
+    rows = db.query(ConditionPreference).filter(
+        ConditionPreference.symbol == symbol_upper,
+        ConditionPreference.checked.is_(True)
+    ).all()
+    
+    checked_list = [r.name for r in rows]
+    print(f"  Found {len(checked_list)} checked conditions: {checked_list}")
+    
+    buy_row = db.query(LogicPreference).filter(
+        LogicPreference.symbol == symbol_upper,
+        LogicPreference.key == "buy_logic"
+    ).first()
+    sell_row = db.query(LogicPreference).filter(
+        LogicPreference.symbol == symbol_upper,
+        LogicPreference.key == "sell_logic"
+    ).first()
+    sma_sell_row = db.query(LogicPreference).filter(
+        LogicPreference.symbol == symbol_upper,
+        LogicPreference.key == "sma_sell_period"
+    ).first()
+    take_profit_row = db.query(LogicPreference).filter(
+        LogicPreference.symbol == symbol_upper,
+        LogicPreference.key == "take_profit_pct"
+    ).first()
+    
+    result = {
+        "checked": checked_list,
         "buy_logic": buy_row.value if buy_row else "OR",
         "sell_logic": sell_row.value if sell_row else "OR",
         "sma_sell_period": int(sma_sell_row.value) if sma_sell_row else 10,
         "take_profit_pct": float(take_profit_row.value) if take_profit_row else 2.0,
     }
+    print(f"[LOAD PREFERENCES] Returning: {result}")
+    return result
 
 
 @router.post("/conditions/preferences")
-def save_condition_preferences(payload: ConditionPrefsPayload, db: Session = Depends(get_db)) -> dict[str, str]:
-    """Save which conditions are currently checked and logic modes."""
-    db.query(ConditionPreference).delete(synchronize_session=False)
+def save_condition_preferences(
+    payload: ConditionPrefsPayload,
+    symbol: str = Query("AAPL"),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    """Save which conditions are currently checked and logic modes for a specific stock."""
+    symbol_upper = symbol.upper()
+    print(f"[SAVE PREFERENCES] Symbol: {symbol_upper}, Checked: {payload.checked}")
+    
+    # Delete old preferences for this stock
+    db.query(ConditionPreference).filter(ConditionPreference.symbol == symbol_upper).delete(synchronize_session=False)
+    
+    # Add new condition preferences for this stock
+    added_count = 0
     for name in payload.checked:
         if name in CONDITION_MAP:
-            db.add(ConditionPreference(name=name, checked=True))
-    # Upsert logic preferences
+            db.add(ConditionPreference(symbol=symbol_upper, name=name, checked=True))
+            added_count += 1
+            print(f"  ✓ Added condition: {name}")
+        else:
+            print(f"  ✗ Condition not in map: {name}")
+    
+    # Upsert logic preferences for this stock
     for key, val in [
         ("buy_logic", payload.buy_logic),
         ("sell_logic", payload.sell_logic),
         ("sma_sell_period", str(payload.sma_sell_period)),
         ("take_profit_pct", str(payload.take_profit_pct)),
     ]:
-        existing = db.query(LogicPreference).filter(LogicPreference.key == key).first()
+        existing = db.query(LogicPreference).filter(
+            LogicPreference.symbol == symbol_upper,
+            LogicPreference.key == key
+        ).first()
         if existing:
             existing.value = val
         else:
-            db.add(LogicPreference(key=key, value=val))
+            db.add(LogicPreference(symbol=symbol_upper, key=key, value=val))
+    
     db.commit()
+    print(f"[SAVE PREFERENCES] Saved {added_count} conditions for {symbol_upper}")
+    
+    # Verify data was saved
+    verify = db.query(ConditionPreference).filter(
+        ConditionPreference.symbol == symbol_upper,
+        ConditionPreference.checked.is_(True)
+    ).all()
+    print(f"[SAVE PREFERENCES] VERIFY: Found {len(verify)} conditions in DB for {symbol_upper}: {[v.name for v in verify]}")
+    
     return {"status": "ok"}
 
 
 @router.delete("/conditions/preferences")
-def reset_condition_preferences(db: Session = Depends(get_db)) -> dict[str, str]:
-    """Reset condition preferences (delete all saved state)."""
-    db.query(ConditionPreference).delete(synchronize_session=False)
-    db.query(LogicPreference).delete(synchronize_session=False)
+def reset_condition_preferences(symbol: str = Query("AAPL"), db: Session = Depends(get_db)) -> dict[str, str]:
+    """Reset condition preferences for a specific stock."""
+    symbol_upper = symbol.upper()
+    db.query(ConditionPreference).filter(ConditionPreference.symbol == symbol_upper).delete(synchronize_session=False)
+    db.query(LogicPreference).filter(LogicPreference.symbol == symbol_upper).delete(synchronize_session=False)
     db.commit()
     return {"status": "reset"}
 
