@@ -55,6 +55,8 @@ type BacktestTableProps = {
   onReload: () => void;
   onResetPreferences: () => void;
   onPrefsLoaded: () => void;
+  onTradeClick?: (dateStr: string) => void;
+  onSignalsChange?: (signals: BuySignal[]) => void;
 };
 
 
@@ -95,6 +97,8 @@ export default function BacktestTable({
   onReload,
   onResetPreferences,
   onPrefsLoaded,
+  onTradeClick,
+  onSignalsChange,
 }: BacktestTableProps) {
   const [buyOptions, setBuyOptions] = useState<ConditionItem[]>([]);
   const [sellOptions, setSellOptions] = useState<ConditionItem[]>([]);
@@ -166,8 +170,10 @@ export default function BacktestTable({
         buy_logic: params.buy_logic,
       });
       setBuySignals(res.signals);
+      onSignalsChange?.(res.signals);
     } catch {
       setBuySignals([]);
+      onSignalsChange?.([]);
     } finally {
       setSignalsLoading(false);
     }
@@ -279,9 +285,9 @@ export default function BacktestTable({
             </thead>
             <tbody className="divide-y divide-emerald-900/20">
               {[...buySignals].sort((a, b) => b.date.localeCompare(a.date)).map((s, i) => (
-                <tr key={`${s.date}-${i}`} className="hover:bg-emerald-900/20">
+                <tr key={`${s.date}-${i}`} className="hover:bg-emerald-900/20 cursor-pointer" onClick={() => onTradeClick?.(s.date)}>
                   <td className="px-3 py-1.5 text-slate-500">{i + 1}</td>
-                  <td className="px-3 py-1.5 text-slate-200">{s.date}</td>
+                  <td className="px-3 py-1.5 text-slate-200">{fmtDate(s.date)}</td>
                   <td className="px-3 py-1.5 text-right text-slate-100 font-medium">${s.price.toFixed(2)}</td>
                   <td className={`px-3 py-1.5 font-medium ${
                     s.wst === "FLIP_UP" ? "text-emerald-300 bg-emerald-900/40"
@@ -511,7 +517,7 @@ export default function BacktestTable({
               {[...trades]
                 .sort((a, b) => new Date(b.buy_time).getTime() - new Date(a.buy_time).getTime())
                 .map((row, idx) => (
-                <tr key={row.id ?? idx} className="hover:bg-slate-800/40">
+                <tr key={row.id ?? idx} className="hover:bg-slate-800/40 cursor-pointer" onClick={() => onTradeClick?.(row.buy_time)}>
                   <td className="px-3 py-2 text-slate-300">{fmtDate(row.buy_time)}</td>
                   <td className="px-3 py-2 text-slate-300">{fmtDate(row.sell_time)}</td>
                   <td className="px-3 py-2 text-right text-slate-100">{fmtMoney(row.buy_price)}</td>

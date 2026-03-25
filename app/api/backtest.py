@@ -13,7 +13,7 @@ from app.models.condition_preference import ConditionPreference, LogicPreference
 from app.services.data_collector import fetch_stock
 from app.strategies.sma_indicator import sma as compute_sma, sma5 as compute_sma5, halftrend_full as compute_halftrend_full
 from app.strategies.conditions import get_buy_condition, get_sell_condition, CONDITION_MAP, SELL_PAIR
-from app.utils.indicators import atr as compute_atr, detect_candle, weekly_supertrend, \
+from app.utils.indicators import atr as compute_atr, ema as compute_ema, detect_candle, weekly_supertrend, \
     pivot_low, pivot_high, hourly_supertrend, liquidity_sweep, market_structure_shift
 
 
@@ -61,8 +61,8 @@ class BacktestRequest(BaseModel):
     short_window: int = Field(default=5, ge=2, le=100)
     long_window: int = Field(default=20, ge=3, le=300)
     period: str = Field(default="5y", description="Data period for yfinance (1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, max)")
-    buy_conditions: list[str] = Field(default=["sma_cross_up"], description="Buy condition names")
-    sell_conditions: list[str] = Field(default=["close_below_sma10"], description="Sell condition names")
+    buy_conditions: list[str] = Field(default=["halftrend_green"], description="Buy condition names")
+    sell_conditions: list[str] = Field(default=["close_below_low_ema5"], description="Sell condition names")
     buy_logic: str = Field(default="OR", pattern="^(AND|OR)$", description="AND = all buy conditions must be true, OR = any one triggers")
     sell_logic: str = Field(default="OR", pattern="^(AND|OR)$", description="AND = all sell conditions must be true, OR = any one triggers")
     take_profit_pct: float = Field(default=2.0, ge=0, le=100, description="Take profit percentage (e.g. 2.0 = 2%)")
@@ -115,6 +115,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     short_values = compute_sma(closes, payload.short_window)
     long_values = compute_sma(closes, payload.long_window)
     sma5_values = compute_sma5(closes)
+    ema5_values = compute_ema(closes, 5)
     sma10_values = compute_sma(closes, 10)
     sma_sell_values = compute_sma(closes, payload.sma_sell_period) if payload.sma_sell_period != 10 else sma10_values
     ht_result = compute_halftrend_full(highs, lows, closes)
@@ -127,7 +128,6 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
 
     # ── Left-side trading indicators (pre-computed) ──────────────────
     # EMA20 for pullback entry
-    from app.strategies.sma_indicator import ema as compute_ema
     ema20_values = compute_ema(closes, payload.ema20_period)
 
     # HTF (hourly approx) Supertrend for trend filter
@@ -181,8 +181,8 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     atr_values = compute_atr(highs, lows, closes, 14)
     atr_sma_values = compute_sma(atr_values, 20)
 
-    buy_fns = [get_buy_condition(name) for name in payload.buy_conditions] if payload.buy_conditions else [get_buy_condition("sma_cross_up")]
-    sell_names = payload.sell_conditions if payload.sell_conditions else ["close_below_sma10"]
+    buy_fns = [get_buy_condition(name) for name in payload.buy_conditions] if payload.buy_conditions else [get_buy_condition("halftrend_green")]
+    sell_names = payload.sell_conditions if payload.sell_conditions else ["close_below_low_ema5"]
     sell_fns = [get_sell_condition(name) for name in sell_names]
 
     min_start = max(payload.short_window, payload.long_window)
@@ -259,6 +259,8 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "halftrend_value": float(halftrend_line[idx]) if idx < len(halftrend_line) else 0,
             "buy_price": float(open_trade["buy_price"]) if open_trade else 0,
             "highest_price": float(open_trade["highest_price"]) if open_trade else 0,
+            "lowest_price": float(open_trade["lowest_price"]) if open_trade else 0,
+            "ema5": float(ema5_values[idx]) if idx < len(ema5_values) else price,
             "take_profit_pct": payload.take_profit_pct / 100,
             "stop_loss_pct": payload.stop_loss_pct / 100,
             "hammer_close": float(open_trade.get("hammer_close", 0)) if open_trade else 0,
@@ -289,6 +291,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                 open_trade = {
                     "buy_price": price,
                     "highest_price": price,
+                    "lowest_price": price,
                     "hammer_close": float(closes[idx - 1]) if idx > 0 and candle_patterns[idx - 1] == "Inverted Hammer" else 0,
                     "boost_day_low": float(lows[idx - 1]) if idx > 0 else 0,
                     "entry_sweep_low": sweep_low_arr[idx],
@@ -301,6 +304,8 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
 
         if price > open_trade["highest_price"]:
             open_trade["highest_price"] = price
+        if price < open_trade["lowest_price"]:
+            open_trade["lowest_price"] = price
 
         if not (all(fn(sell_ctx) for fn in sell_fns) if payload.sell_logic == "AND" else any(fn(sell_ctx) for fn in sell_fns)):
             continue
@@ -562,7 +567,7 @@ class SignalsRequest(BaseModel):
     short_window: int = Field(default=5, ge=2, le=100)
     long_window: int = Field(default=20, ge=3, le=300)
     period: str = Field(default="5y", description="Data period for yfinance")
-    buy_conditions: list[str] = Field(default=["sma_cross_up"])
+    buy_conditions: list[str] = Field(default=["halftrend_green"])
     buy_logic: str = Field(default="OR", pattern="^(AND|OR)$")
 
 

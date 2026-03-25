@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef, useState } from "react";
 import BacktestTable from "../components/BacktestTable";
 import DataTable from "../components/DataTable";
 import MetricCards from "../components/MetricCards";
@@ -7,12 +8,14 @@ import Navbar from "../components/Navbar";
 import NearATH from "../components/NearATH";
 import SignalPanel from "../components/SignalPanel";
 import TopVolume from "../components/TopVolume";
+import TVChart, { type TVChartHandle } from "../components/TVChart";
+import type { BuySignal } from "../services/api";
 import { useBacktest } from "../hooks/useBacktest";
 import { useStock } from "../hooks/useStock";
 
 
 export default function Page() {
-  const { symbol, setSymbol, period, setPeriod, rows, metrics, loading, error, refresh } = useStock("5248.KL");
+  const { symbol, setSymbol, period, setPeriod, rows, rawPoints, metrics, loading, error, refresh } = useStock("5248.KL");
   const {
     trades,
     loading: backtestLoading,
@@ -28,6 +31,13 @@ export default function Page() {
     resetPreferences,
     markPrefsLoaded,
   } = useBacktest(symbol, period);
+
+  const chartRef = useRef<TVChartHandle>(null);
+  const [buySignals, setBuySignals] = useState<BuySignal[]>([]);
+
+  function handleTradeClick(dateStr: string) {
+    chartRef.current?.goToDate(dateStr);
+  }
 
   return (
     <main className="h-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col">
@@ -46,11 +56,11 @@ export default function Page() {
         </div>
       )}
 
-      {/* ── Main split layout ─────────── */}
+      {/* ── Main 3-column layout ─────────── */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* ── LEFT: Metrics + Chart (narrow) ─────────── */}
-        <aside className="w-full md:w-1/3 flex-shrink-0 overflow-y-auto border-r border-slate-800/60 bg-slate-900/40 p-4 space-y-3">
+        {/* ── COL 1: Metrics + Panels (1/5) ─────────── */}
+        <aside className="w-full md:w-1/5 flex-shrink-0 overflow-y-auto border-r border-slate-800/60 bg-slate-900/40 p-4 space-y-3">
           {/* Metric cards */}
           <div className="grid gap-2 grid-cols-2">
             <MetricCards metrics={metrics} />
@@ -103,13 +113,10 @@ export default function Page() {
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
             <SignalPanel latest={rows.length ? rows[rows.length - 1] : null} />
           </div>
-
         </aside>
 
-        {/* ── RIGHT: Backtest + Data History (wide) ─────────── */}
-        <section className="w-full md:w-2/3 overflow-y-auto p-4 md:p-6 space-y-4">
-
-          {/* Backtest controls + results */}
+        {/* ── COL 2: Backtest Controls + Results (2/5) ─────────── */}
+        <section className="w-full md:w-2/5 overflow-y-auto border-r border-slate-800/60 p-4 space-y-4">
           <BacktestTable
             symbol={symbol}
             trades={trades}
@@ -125,11 +132,13 @@ export default function Page() {
             onReload={loadTrades}
             onResetPreferences={resetPreferences}
             onPrefsLoaded={markPrefsLoaded}
+            onTradeClick={handleTradeClick}
+            onSignalsChange={setBuySignals}
           />
 
           {/* Data History Table */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-            <details open>
+            <details>
               <summary className="cursor-pointer select-none text-sm font-semibold text-slate-200">
                 Data History ({rows.length})
               </summary>
@@ -139,6 +148,19 @@ export default function Page() {
             </details>
           </div>
         </section>
+
+        {/* ── COL 3: TradingView-style Chart (2/5) ─────────── */}
+        <section className="hidden md:flex md:w-2/5 flex-col overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-800/60">
+            <span className="text-sm font-bold text-slate-200">{symbol}</span>
+            <span className="text-xs text-slate-500">Candlestick</span>
+            <span className="text-[10px] text-slate-600 ml-auto">Click a trade row to navigate</span>
+          </div>
+          <div className="flex-1 min-h-0">
+            <TVChart ref={chartRef} data={rawPoints} trades={trades} buySignals={buySignals} />
+          </div>
+        </section>
+
       </div>
     </main>
   );

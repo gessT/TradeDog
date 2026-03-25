@@ -104,12 +104,24 @@ def left_side_buy(ctx: dict) -> bool:
     return True
 
 
+# ── SELL conditions ──────────────────────────────────────────────────
+
+def close_below_low_ema5(ctx: dict) -> bool:
+    """SELL: Price closes below both the trade's lowest point and EMA5."""
+    price = ctx.get("price", 0)
+    lowest = ctx.get("lowest_price", 0)
+    ema5 = ctx.get("ema5", 0)
+    if lowest <= 0 or ema5 <= 0:
+        return False
+    return price < lowest and price < ema5
+
+
 # ── Registry ────────────────────────────────────────────────────────
 
 CONDITION_MAP = {
-    "sma_cross_up":      {"fn": sma_cross_up,      "label": "SMA5 > SMA10 > SMA20 held N days",  "type": "buy"},
-    "halftrend_green":   {"fn": halftrend_green,    "label": "Half-trend flips green",    "type": "buy"},
-    "weekly_trend_up":   {"fn": weekly_trend_up_buy, "label": "Weekly Supertrend flips UP",      "type": "buy"},
+    "halftrend_green":       {"fn": halftrend_green,       "label": "Half-trend flips green",               "type": "buy"},
+    "weekly_trend_up":       {"fn": weekly_trend_up_buy,   "label": "Weekly Supertrend flips UP",           "type": "buy"},
+    "close_below_low_ema5":  {"fn": close_below_low_ema5,  "label": "Close below lowest & EMA5",            "type": "sell"},
 }
 
 SELL_PAIR = {}

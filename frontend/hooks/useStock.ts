@@ -154,6 +154,7 @@ export function useStock(initialSymbol: string) {
     period,
     setPeriod,
     points: chartData,
+    rawPoints: points,
     rows,
     metrics,
     loading,
