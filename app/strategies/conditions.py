@@ -109,11 +109,7 @@ def left_side_buy(ctx: dict) -> bool:
 CONDITION_MAP = {
     "sma_cross_up":      {"fn": sma_cross_up,      "label": "SMA5 > SMA10 > SMA20 held N days",  "type": "buy"},
     "halftrend_green":   {"fn": halftrend_green,    "label": "Half-trend flips green",    "type": "buy"},
-    "inverted_hammer_buy": {"fn": inverted_hammer_buy, "label": "Candle reversal + vol 1.3x prev day → breakout (Hammer/IH, close > high)", "type": "buy"},
     "weekly_trend_up":   {"fn": weekly_trend_up_buy, "label": "Weekly Supertrend flips UP",      "type": "buy"},
-    "volume_boost_buy":   {"fn": volume_boost_buy,   "label": "Vol 1.3x prev day → breakout (close > high)", "type": "buy"},
-    "atr_breakout_buy":   {"fn": atr_breakout_buy,   "label": "ATR crosses above SMA (safe volatility expansion)", "type": "buy"},
-    "left_side_buy":     {"fn": left_side_buy,     "label": "Left-side: Sweep + MSS + HalfTrend + pullback (gold)", "type": "buy"},
 }
 
 SELL_PAIR = {}
