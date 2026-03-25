@@ -35,6 +35,7 @@ type BacktestParams = {
 
 type BacktestTableProps = {
   symbol: string;
+  stockName?: string;
   trades: BacktestTradeRow[];
   loading: boolean;
   running: boolean;
@@ -84,6 +85,7 @@ function fmtPct(value: number): string {
 
 export default function BacktestTable({
   symbol,
+  stockName,
   trades,
   loading,
   running,
@@ -105,6 +107,7 @@ export default function BacktestTable({
   const prefsApplied = useRef(false);
   const [buySignals, setBuySignals] = useState<BuySignal[]>([]);
   const [signalsLoading, setSignalsLoading] = useState(false);
+  const [selectedTradeIdx, setSelectedTradeIdx] = useState<number | null>(null);
 
   useEffect(() => {
     Promise.all([getConditions(), getConditionPreferences()])
@@ -182,7 +185,7 @@ export default function BacktestTable({
   return (
     <section>
       <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Backtest — {symbol}</h2>
+        <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Backtest — {symbol}{stockName ? ` (${stockName})` : ""}</h2>
         <button
           onClick={onRun}
           disabled={running || params.buy_conditions.length === 0}
@@ -517,7 +520,13 @@ export default function BacktestTable({
               {[...trades]
                 .sort((a, b) => new Date(b.buy_time).getTime() - new Date(a.buy_time).getTime())
                 .map((row, idx) => (
-                <tr key={row.id ?? idx} className="hover:bg-slate-800/40 cursor-pointer" onClick={() => onTradeClick?.(row.buy_time)}>
+                <tr key={row.id ?? idx}
+                  className={`cursor-pointer transition ${
+                    selectedTradeIdx === idx
+                      ? "bg-indigo-900/50 ring-1 ring-indigo-400"
+                      : "hover:bg-slate-800/40"
+                  }`}
+                  onClick={() => { setSelectedTradeIdx(idx); onTradeClick?.(row.buy_time); }}>
                   <td className="px-3 py-2 text-slate-300">{fmtDate(row.buy_time)}</td>
                   <td className="px-3 py-2 text-slate-300">{fmtDate(row.sell_time)}</td>
                   <td className="px-3 py-2 text-right text-slate-100">{fmtMoney(row.buy_price)}</td>

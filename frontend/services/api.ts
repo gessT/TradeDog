@@ -85,15 +85,24 @@ export type BacktestRunResponse = {
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
 
-export async function getDemoSeries(symbol: string, period: string = "5y"): Promise<DemoPoint[]> {
+export type DemoResponse = {
+  data: DemoPoint[];
+  stock_name: string;
+};
+
+export async function getDemoSeries(symbol: string, period: string = "5y"): Promise<DemoResponse> {
   const response = await fetch(`${API_BASE}/demo?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}`, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Request failed with ${response.status}`);
   }
 
-  const payload = (await response.json()) as DemoPoint[];
-  return payload;
+  const payload = await response.json();
+  // Support both old (array) and new (object) response shapes
+  if (Array.isArray(payload)) {
+    return { data: payload as DemoPoint[], stock_name: symbol };
+  }
+  return payload as DemoResponse;
 }
 
 

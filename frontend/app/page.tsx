@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import BacktestTable from "../components/BacktestTable";
 import DataTable from "../components/DataTable";
 import MetricCards from "../components/MetricCards";
@@ -15,7 +15,7 @@ import { useStock } from "../hooks/useStock";
 
 
 export default function Page() {
-  const { symbol, setSymbol, period, setPeriod, rows, rawPoints, metrics, loading, error, refresh } = useStock("5248.KL");
+  const { symbol, setSymbol, period, setPeriod, stockName, rows, rawPoints, metrics, loading, error, refresh } = useStock("5248.KL");
   const {
     trades,
     loading: backtestLoading,
@@ -34,6 +34,15 @@ export default function Page() {
 
   const chartRef = useRef<TVChartHandle>(null);
   const [buySignals, setBuySignals] = useState<BuySignal[]>([]);
+
+  // Auto-run backtest when symbol changes (e.g. clicking TopVolume / NearATH)
+  const prevSymbolRef = useRef(symbol);
+  useEffect(() => {
+    if (prevSymbolRef.current !== symbol) {
+      prevSymbolRef.current = symbol;
+      run();
+    }
+  }, [symbol, run]);
 
   function handleTradeClick(dateStr: string) {
     chartRef.current?.goToDate(dateStr);
@@ -101,12 +110,12 @@ export default function Page() {
 
           {/* Near ATH Board */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-            <NearATH onSelectSymbol={(sym) => { setSymbol(sym); refresh(); }} />
+            <NearATH onSelectSymbol={setSymbol} />
           </div>
 
           {/* Special Volume Today */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-            <TopVolume onSelectSymbol={(sym) => { setSymbol(sym); refresh(); }} />
+            <TopVolume onSelectSymbol={setSymbol} />
           </div>
 
           {/* Signal */}
@@ -119,6 +128,7 @@ export default function Page() {
         <section className="w-full md:w-2/5 overflow-y-auto border-r border-slate-800/60 p-4 space-y-4">
           <BacktestTable
             symbol={symbol}
+            stockName={stockName}
             trades={trades}
             loading={backtestLoading}
             running={backtestRunning}

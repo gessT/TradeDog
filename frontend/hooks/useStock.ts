@@ -51,6 +51,7 @@ export function useStock(initialSymbol: string) {
   const [symbol, setSymbol] = useState(initialSymbol);
   const [period, setPeriod] = useState("5y");
   const [points, setPoints] = useState<DemoPoint[]>([]);
+  const [stockName, setStockName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -58,8 +59,9 @@ export function useStock(initialSymbol: string) {
     setLoading(true);
     setError("");
     try {
-      const data = await getDemoSeries(symbol, period);
-      setPoints(data);
+      const res = await getDemoSeries(symbol, period);
+      setPoints(res.data);
+      setStockName(res.stock_name);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch data");
     } finally {
@@ -153,6 +155,7 @@ export function useStock(initialSymbol: string) {
     setSymbol,
     period,
     setPeriod,
+    stockName,
     points: chartData,
     rawPoints: points,
     rows,
