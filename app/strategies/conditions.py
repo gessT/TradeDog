@@ -238,6 +238,16 @@ def rsi_overbought_sell(ctx: dict) -> bool:
     return rsi_val >= threshold
 
 
+def volume_anchor_exit(ctx: dict) -> bool:
+    """SELL: Volume Anchor Exit — after buying, the first day with vol >= 2x
+    20-day average becomes the 'anchor'. If a later close > anchor close,
+    that day replaces the anchor. Sell when close < anchor's low."""
+    anchor_low = ctx.get("vol_anchor_low", 0)
+    if anchor_low <= 0:
+        return False
+    return ctx.get("price", 0) < anchor_low
+
+
 # ── Registry ────────────────────────────────────────────────────────
 
 CONDITION_MAP = {
@@ -256,6 +266,7 @@ CONDITION_MAP = {
     "break_even":            {"fn": break_even_stop,       "label": "Break-even Protection",                  "type": "sell"},
     "time_stop":             {"fn": time_stop,             "label": "Time Stop (dead money)",                 "type": "sell"},
     "rsi_overbought":        {"fn": rsi_overbought_sell,   "label": "RSI Overbought Exit",                   "type": "sell"},
+    "volume_anchor_exit":     {"fn": volume_anchor_exit,    "label": "Volume Anchor Exit (2x vol)",           "type": "sell"},
 }
 
 SELL_PAIR = {}

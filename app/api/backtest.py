@@ -302,6 +302,9 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "time_stop_min_return": payload.time_stop_min_return / 100,
             "rsi": float(rsi_values[idx]) if idx < len(rsi_values) and not pd.isna(rsi_values[idx]) else 50,
             "rsi_overbought": payload.rsi_overbought,
+            # Volume anchor exit keys
+            "vol_anchor_close": float(open_trade.get("vol_anchor_close", 0)) if open_trade else 0,
+            "vol_anchor_low": float(open_trade.get("vol_anchor_low", 0)) if open_trade else 0,
         }
 
         if open_trade is None:
@@ -316,6 +319,8 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                     "boost_day_low": float(lows[idx - 1]) if idx > 0 else 0,
                     "entry_sweep_low": sweep_low_arr[idx],
                     "entry_atr": float(atr_values[idx]) if idx < len(atr_values) and not pd.isna(atr_values[idx]) else 0,
+                    "vol_anchor_close": 0.0,
+                    "vol_anchor_low": 0.0,
                     "buy_time": ts,
                     "buy_index": idx,
                     "buy_criteria": buy_joiner.join(payload.buy_conditions),
@@ -327,6 +332,17 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             open_trade["highest_price"] = price
         if price < open_trade["lowest_price"]:
             open_trade["lowest_price"] = price
+
+        # ── Volume anchor tracking (3x relative volume) ──
+        anchor_close = open_trade["vol_anchor_close"]
+        if anchor_close == 0:
+            if vol_ratio[idx] >= 3.0:
+                open_trade["vol_anchor_close"] = float(closes[idx])
+                open_trade["vol_anchor_low"] = float(lows[idx])
+        else:
+            if float(closes[idx]) > anchor_close:
+                open_trade["vol_anchor_close"] = float(closes[idx])
+                open_trade["vol_anchor_low"] = float(lows[idx])
 
         if not (all(fn(sell_ctx) for fn in sell_fns) if payload.sell_logic == "AND" else any(fn(sell_ctx) for fn in sell_fns)):
             continue
