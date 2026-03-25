@@ -13,10 +13,45 @@ from app.models.condition_preference import ConditionPreference, LogicPreference
 from app.services.data_collector import fetch_stock
 from app.strategies.sma_indicator import sma as compute_sma, sma5 as compute_sma5, halftrend_full as compute_halftrend_full
 from app.strategies.conditions import get_buy_condition, get_sell_condition, CONDITION_MAP, SELL_PAIR
-from app.utils.indicators import detect_candle, weekly_supertrend
+from app.utils.indicators import atr as compute_atr, detect_candle, weekly_supertrend, \
+    pivot_low, pivot_high, hourly_supertrend, liquidity_sweep, market_structure_shift
 
 
 router = APIRouter(prefix="/backtest", tags=["backtest"])
+
+
+def _left_pullback_ok(
+    closes: list[float],
+    lows: list[float],
+    ema20_values: list[float],
+    atr_values: list[float],
+    sweep_low_arr: list[float],
+    idx: int,
+    buffer_mult: float,
+) -> bool:
+    """Check if price is pulling back to EMA20 or structure zone."""
+    import math as _math
+    price = closes[idx]
+    low_val = lows[idx]
+    ema20 = ema20_values[idx] if idx < len(ema20_values) else None
+    atr_val = atr_values[idx] if idx < len(atr_values) else 0
+    if ema20 is None or _math.isnan(ema20):
+        return False
+    if _math.isnan(atr_val):
+        atr_val = 0
+
+    # Pullback to EMA20 zone
+    upper = ema20 + buffer_mult * atr_val
+    lower = ema20 - buffer_mult * atr_val
+    if low_val <= upper and price >= lower:
+        return True
+
+    # Pullback to structure zone (sweep low area)
+    sl = sweep_low_arr[idx]
+    if sl > 0 and low_val <= sl + atr_val and price >= sl - atr_val * 0.5:
+        return True
+
+    return False
 
 
 class BacktestRequest(BaseModel):
@@ -33,6 +68,18 @@ class BacktestRequest(BaseModel):
     take_profit_pct: float = Field(default=2.0, ge=0, le=100, description="Take profit percentage (e.g. 2.0 = 2%)")
     stop_loss_pct: float = Field(default=5.0, ge=0, le=100, description="Trailing stop loss percentage (e.g. 5.0 = 5%)")
     sma_sell_period: int = Field(default=10, ge=2, le=200, description="SMA period for 'Close below SMA' sell condition")
+    # Left-side trading parameters
+    swing_lookback: int = Field(default=10, ge=3, le=30, description="Pivot lookback for swing detection")
+    sweep_valid_bars: int = Field(default=8, ge=1, le=20, description="How many bars a liquidity sweep stays active")
+    mss_valid_bars: int = Field(default=10, ge=1, le=30, description="How many bars a MSS signal stays active")
+    ema20_period: int = Field(default=20, ge=5, le=100, description="EMA period for pullback entry")
+    pullback_atr_buffer: float = Field(default=0.5, ge=0, le=3.0, description="Pullback buffer in ATR multiples")
+    atr_sl_mult: float = Field(default=0.5, ge=0, le=3.0, description="Stop-loss ATR buffer multiplier")
+    left_tp1_rr: float = Field(default=2.0, ge=0.5, le=10.0, description="TP1 risk-reward ratio")
+    left_tp2_rr: float = Field(default=4.0, ge=1.0, le=20.0, description="TP2 risk-reward ratio")
+    trail_atr_mult: float = Field(default=2.0, ge=0.5, le=5.0, description="Trailing stop ATR multiplier")
+    st_factor: float = Field(default=3.0, ge=0.5, le=10.0, description="HTF Supertrend factor")
+    st_atr_period: int = Field(default=10, ge=1, le=50, description="HTF Supertrend ATR period")
 
 
 def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session, reset_before_run: bool) -> dict[str, object]:
@@ -78,6 +125,48 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     date_list = normalized["Date"].tolist()
     wst_dirs = weekly_supertrend(date_list, opens, highs, lows, closes)
 
+    # ── Left-side trading indicators (pre-computed) ──────────────────
+    # EMA20 for pullback entry
+    from app.strategies.sma_indicator import ema as compute_ema
+    ema20_values = compute_ema(closes, payload.ema20_period)
+
+    # HTF (hourly approx) Supertrend for trend filter
+    htf_dirs = hourly_supertrend(date_list, opens, highs, lows, closes,
+                                  period=payload.st_atr_period, multiplier=payload.st_factor)
+
+    # Pivot lows & highs for sweep/MSS detection
+    piv_lows = pivot_low(lows, payload.swing_lookback)
+    piv_highs = pivot_high(highs, payload.swing_lookback)
+
+    # Liquidity sweep detection
+    sweep_data = liquidity_sweep(highs, lows, closes, piv_lows,
+                                  valid_bars=payload.sweep_valid_bars)
+
+    # Market structure shift
+    mss_signals = market_structure_shift(highs, lows, closes, piv_highs, piv_lows)
+
+    # Build "active" arrays for sweep and MSS (with validity window)
+    sweep_active_arr = [False] * len(closes)
+    sweep_low_arr = [0.0] * len(closes)
+    last_sweep_bar = -999
+    last_sweep_low = 0.0
+    for i in range(len(closes)):
+        if sweep_data[i] is not None:
+            last_sweep_bar = sweep_data[i]["sweep_bar"]
+            last_sweep_low = sweep_data[i]["sweep_low"]
+        if (i - last_sweep_bar) <= payload.sweep_valid_bars and last_sweep_low > 0:
+            sweep_active_arr[i] = True
+            sweep_low_arr[i] = last_sweep_low
+        else:
+            sweep_active_arr[i] = False
+
+    mss_active_arr = [False] * len(closes)
+    last_mss_bar = -999
+    for i in range(len(closes)):
+        if mss_signals[i]:
+            last_mss_bar = i
+        mss_active_arr[i] = (i - last_mss_bar) <= payload.mss_valid_bars
+
     # Pre-compute volume boost: volume >= 2x the 20-day average
     vol_boost = [False] * len(volumes)
     vol_ratio = [0.0] * len(volumes)
@@ -87,6 +176,10 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
         avg = sum(window) / len(window) if window else 0
         vol_boost[i] = (volumes[i] >= avg * 2) if avg > 0 else False
         vol_ratio[i] = (volumes[i] / avg) if avg > 0 else 0.0
+
+    # ATR (14-period) + ATR SMA (20-period) for volatility expansion detection
+    atr_values = compute_atr(highs, lows, closes, 14)
+    atr_sma_values = compute_sma(atr_values, 20)
 
     buy_fns = [get_buy_condition(name) for name in payload.buy_conditions] if payload.buy_conditions else [get_buy_condition("sma_cross_up")]
     sell_names = payload.sell_conditions if payload.sell_conditions else ["close_below_sma10"]
@@ -139,6 +232,16 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "prev_day_low": float(lows[idx - 1]) if idx > 0 else 0,
             "prev_day_vol": float(volumes[idx - 1]) if idx > 0 else 0,
             "prev_prev_day_vol": float(volumes[idx - 2]) if idx > 1 else 0,
+            "cur_atr": float(atr_values[idx]) if idx < len(atr_values) and not pd.isna(atr_values[idx]) else 0,
+            "cur_atr_sma": float(atr_sma_values[idx]) if idx < len(atr_sma_values) and not pd.isna(atr_sma_values[idx]) else 0,
+            "prev_atr": float(atr_values[idx - 1]) if idx > 0 and not pd.isna(atr_values[idx - 1]) else 0,
+            "prev_atr_sma": float(atr_sma_values[idx - 1]) if idx > 0 and idx - 1 < len(atr_sma_values) and not pd.isna(atr_sma_values[idx - 1]) else 0,
+            # Left-side trading keys
+            "htf_trend_up": htf_dirs[idx] == -1 if idx < len(htf_dirs) else False,
+            "sweep_active": sweep_active_arr[idx],
+            "sweep_low": sweep_low_arr[idx],
+            "mss_active": mss_active_arr[idx],
+            "pullback_ok": _left_pullback_ok(closes, lows, ema20_values, atr_values, sweep_low_arr, idx, payload.pullback_atr_buffer),
         }
 
         cur_sma_sell = float(sma_sell_values[idx]) if not pd.isna(sma_sell_values[idx]) else price
@@ -170,6 +273,13 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "prev_vol_ratio": vol_ratio[idx - 1] if idx > 0 else 0.0,
             "prev_day_vol": float(volumes[idx - 1]) if idx > 0 else 0,
             "prev_prev_day_vol": float(volumes[idx - 2]) if idx > 1 else 0,
+            # Left-side trading keys (sell)
+            "entry_sweep_low": float(open_trade.get("entry_sweep_low", 0)) if open_trade else 0,
+            "atr_sl_mult": payload.atr_sl_mult,
+            "left_tp1_rr": payload.left_tp1_rr,
+            "left_tp2_rr": payload.left_tp2_rr,
+            "trail_atr_mult": payload.trail_atr_mult,
+            "cur_atr": float(atr_values[idx]) if idx < len(atr_values) and not pd.isna(atr_values[idx]) else 0,
         }
 
         if open_trade is None:
@@ -181,6 +291,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                     "highest_price": price,
                     "hammer_close": float(closes[idx - 1]) if idx > 0 and candle_patterns[idx - 1] == "Inverted Hammer" else 0,
                     "boost_day_low": float(lows[idx - 1]) if idx > 0 else 0,
+                    "entry_sweep_low": sweep_low_arr[idx],
                     "buy_time": ts,
                     "buy_index": idx,
                     "buy_criteria": buy_joiner.join(payload.buy_conditions),
@@ -496,6 +607,9 @@ async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
         vol_boost[i] = (volumes[i] >= avg * 2) if avg > 0 else False
         vol_ratio[i] = (volumes[i] / avg) if avg > 0 else 0.0
 
+    atr_values2 = compute_atr(highs, lows, closes, 14)
+    atr_sma_values2 = compute_sma(atr_values2, 20)
+
     buy_fns = [get_buy_condition(name) for name in payload.buy_conditions]
     min_start = max(payload.short_window, payload.long_window)
     signals: list[dict[str, object]] = []
@@ -534,6 +648,10 @@ async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
             "prev_day_low": float(lows[idx - 1]) if idx > 0 else 0,
             "prev_day_vol": float(volumes[idx - 1]) if idx > 0 else 0,
             "prev_prev_day_vol": float(volumes[idx - 2]) if idx > 1 else 0,
+            "cur_atr": float(atr_values2[idx]) if idx < len(atr_values2) and not pd.isna(atr_values2[idx]) else 0,
+            "cur_atr_sma": float(atr_sma_values2[idx]) if idx < len(atr_sma_values2) and not pd.isna(atr_sma_values2[idx]) else 0,
+            "prev_atr": float(atr_values2[idx - 1]) if idx > 0 and not pd.isna(atr_values2[idx - 1]) else 0,
+            "prev_atr_sma": float(atr_sma_values2[idx - 1]) if idx > 0 and idx - 1 < len(atr_sma_values2) and not pd.isna(atr_sma_values2[idx - 1]) else 0,
         }
 
         buy_match = all(fn(buy_ctx) for fn in buy_fns) if payload.buy_logic == "AND" else any(fn(buy_ctx) for fn in buy_fns)

@@ -18,6 +18,18 @@ type BacktestParams = {
   take_profit_pct: number;
   stop_loss_pct: number;
   sma_sell_period: number;
+  // Left-side trading
+  swing_lookback?: number;
+  sweep_valid_bars?: number;
+  mss_valid_bars?: number;
+  ema20_period?: number;
+  pullback_atr_buffer?: number;
+  atr_sl_mult?: number;
+  left_tp1_rr?: number;
+  left_tp2_rr?: number;
+  trail_atr_mult?: number;
+  st_factor?: number;
+  st_atr_period?: number;
 };
 
 
@@ -392,6 +404,83 @@ export default function BacktestTable({
           </label>
         )}
       </div>
+
+      {/* ── Left-side trading config (show when left_side conditions are ticked) ─────────── */}
+      {(params.buy_conditions.includes("left_side_buy") || params.sell_conditions.some(c => c.startsWith("left_side_"))) && (
+        <div className="mt-3 rounded-xl border border-amber-800/50 bg-amber-950/30 p-4">
+          <span className="inline-block rounded bg-amber-700/60 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-amber-200 mb-3">
+            Left-Side Trading Params
+          </span>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            <label className="text-xs text-slate-300">
+              Swing Lookback
+              <input type="number" min={3} max={30} value={params.swing_lookback ?? 10}
+                onChange={(e) => onParamsChange({ ...params, swing_lookback: Number(e.target.value) || 10 })}
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100" />
+            </label>
+            <label className="text-xs text-slate-300">
+              Sweep Valid Bars
+              <input type="number" min={1} max={20} value={params.sweep_valid_bars ?? 8}
+                onChange={(e) => onParamsChange({ ...params, sweep_valid_bars: Number(e.target.value) || 8 })}
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100" />
+            </label>
+            <label className="text-xs text-slate-300">
+              MSS Valid Bars
+              <input type="number" min={1} max={30} value={params.mss_valid_bars ?? 10}
+                onChange={(e) => onParamsChange({ ...params, mss_valid_bars: Number(e.target.value) || 10 })}
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100" />
+            </label>
+            <label className="text-xs text-slate-300">
+              EMA20 Period
+              <input type="number" min={5} max={100} value={params.ema20_period ?? 20}
+                onChange={(e) => onParamsChange({ ...params, ema20_period: Number(e.target.value) || 20 })}
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100" />
+            </label>
+            <label className="text-xs text-slate-300">
+              Pullback ATR Buffer
+              <input type="number" min={0} max={3} step={0.1} value={params.pullback_atr_buffer ?? 0.5}
+                onChange={(e) => onParamsChange({ ...params, pullback_atr_buffer: Number(e.target.value) || 0.5 })}
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100" />
+            </label>
+            <label className="text-xs text-slate-300">
+              SL ATR Multiplier
+              <input type="number" min={0} max={3} step={0.1} value={params.atr_sl_mult ?? 0.5}
+                onChange={(e) => onParamsChange({ ...params, atr_sl_mult: Number(e.target.value) || 0.5 })}
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100" />
+            </label>
+            <label className="text-xs text-slate-300">
+              TP1 R:R
+              <input type="number" min={0.5} max={10} step={0.5} value={params.left_tp1_rr ?? 2.0}
+                onChange={(e) => onParamsChange({ ...params, left_tp1_rr: Number(e.target.value) || 2.0 })}
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100" />
+            </label>
+            <label className="text-xs text-slate-300">
+              TP2 R:R
+              <input type="number" min={1} max={20} step={0.5} value={params.left_tp2_rr ?? 4.0}
+                onChange={(e) => onParamsChange({ ...params, left_tp2_rr: Number(e.target.value) || 4.0 })}
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100" />
+            </label>
+            <label className="text-xs text-slate-300">
+              Trail ATR Mult
+              <input type="number" min={0.5} max={5} step={0.1} value={params.trail_atr_mult ?? 2.0}
+                onChange={(e) => onParamsChange({ ...params, trail_atr_mult: Number(e.target.value) || 2.0 })}
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100" />
+            </label>
+            <label className="text-xs text-slate-300">
+              ST Factor
+              <input type="number" min={0.5} max={10} step={0.1} value={params.st_factor ?? 3.0}
+                onChange={(e) => onParamsChange({ ...params, st_factor: Number(e.target.value) || 3.0 })}
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100" />
+            </label>
+            <label className="text-xs text-slate-300">
+              ST ATR Period
+              <input type="number" min={1} max={50} value={params.st_atr_period ?? 10}
+                onChange={(e) => onParamsChange({ ...params, st_atr_period: Number(e.target.value) || 10 })}
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100" />
+            </label>
+          </div>
+        </div>
+      )}
 
       {error ? (
         <div className="mt-3 rounded-lg border border-rose-700 bg-rose-950/40 px-3 py-2 text-xs text-rose-300">

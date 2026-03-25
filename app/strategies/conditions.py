@@ -45,23 +45,6 @@ def inverted_hammer_buy(ctx: dict) -> bool:
     return ctx["price"] > pattern_high
 
 
-def candle_bearish_sell(ctx: dict) -> bool:
-    """SELL: Previous candle was a bearish reversal pattern (Hanging Man/Shooting Star)
-    with volume >= 1.3x the day before it, and today's close < pattern day's LOW.
-    """
-    pattern = ctx.get("prev_candle")
-    if pattern not in ("Hanging Man", "Shooting Star"):
-        return False
-    prev_vol = ctx.get("prev_day_vol", 0)
-    prev_prev_vol = ctx.get("prev_prev_day_vol", 0)
-    if prev_prev_vol > 0 and prev_vol < prev_prev_vol * 1.3:
-        return False
-    pattern_low = ctx.get("prev_candle_low", 0)
-    if pattern_low <= 0:
-        return False
-    return ctx["price"] < pattern_low
-
-
 def weekly_trend_up_buy(ctx: dict) -> bool:
     """BUY: Weekly Supertrend just flipped to uptrend (first green day)."""
     return ctx.get("weekly_trend_up", False) is True and ctx.get("prev_weekly_trend_up", True) is False
@@ -79,89 +62,46 @@ def volume_boost_buy(ctx: dict) -> bool:
     return ctx["price"] > prev_high
 
 
-def volume_boost_sell(ctx: dict) -> bool:
-    """SELL: Yesterday's volume >= 1.3x the day before it, and today's close < yesterday's low."""
-    prev_vol = ctx.get("prev_day_vol", 0)
-    prev_prev_vol = ctx.get("prev_prev_day_vol", 0)
-    if prev_prev_vol <= 0 or prev_vol < prev_prev_vol * 1.3:
+def atr_breakout_buy(ctx: dict) -> bool:
+    """BUY: ATR just crossed above its own SMA (volatility expansion from low).
+    Safe entry — volatility was low and is now expanding."""
+    cur_atr = ctx.get("cur_atr", 0)
+    cur_atr_sma = ctx.get("cur_atr_sma", 0)
+    prev_atr = ctx.get("prev_atr", 0)
+    prev_atr_sma = ctx.get("prev_atr_sma", 0)
+    if cur_atr_sma <= 0 or prev_atr_sma <= 0:
         return False
-    prev_low = ctx.get("prev_day_low", 0)
-    if prev_low <= 0:
+    return prev_atr <= prev_atr_sma and cur_atr > cur_atr_sma
+
+
+# ── LEFT-SIDE TRADING conditions ─────────────────────────────────────
+
+def left_side_buy(ctx: dict) -> bool:
+    """BUY: Left-side trading (假突破+反转).
+
+    All of these must be true:
+    1. Higher-timeframe trend is UP (Supertrend or EMA200)
+    2. Liquidity sweep detected within recent bars
+    3. Market Structure Shift (Higher Low or BOS) confirmed
+    4. HalfTrend is bullish (trend == 0)
+    5. Price is pulling back near EMA20 or structure zone
+    """
+    # 1. Trend filter
+    if not ctx.get("htf_trend_up", False):
         return False
-    return ctx["price"] < prev_low
-
-
-# ── SELL conditions (context dict signature) ─────────────────────────
-
-def close_below_sma10(ctx: dict) -> bool:
-    """SELL: price closes below SMA (configurable period)."""
-    sma_val = ctx.get("close_sma_value", ctx.get("sma10", 0))
-    return ctx["price"] < sma_val
-
-
-def sma_cross_down(ctx: dict) -> bool:
-    """SELL: short MA crosses BELOW long MA (e.g. SMA5 × SMA20)."""
-    return ctx["prev_short"] >= ctx["prev_long"] and ctx["cur_short"] < ctx["cur_long"]
-
-
-def halftrend_red(ctx: dict) -> bool:
-    """SELL: HalfTrend just flipped to red (downtrend)."""
-    return ctx["halftrend"] == 1 and ctx["prev_halftrend"] == 0
-
-
-def take_profit_2pct(ctx: dict) -> bool:
-    """SELL: price gained >= take_profit_pct from buy price."""
-    buy_price = ctx.get("buy_price", 0)
-    if buy_price <= 0:
+    # 2. Sweep active
+    if not ctx.get("sweep_active", False):
         return False
-    threshold = ctx.get("take_profit_pct", 0.02)
-    return (ctx["price"] - buy_price) / buy_price >= threshold
-
-
-def stop_loss_5pct(ctx: dict) -> bool:
-    """SELL: price dropped >= stop_loss_pct from highest price during trade (trailing stop)."""
-    highest = ctx.get("highest_price", 0)
-    if highest <= 0:
+    # 3. MSS active
+    if not ctx.get("mss_active", False):
         return False
-    threshold = ctx.get("stop_loss_pct", 0.05)
-    return (ctx["price"] - highest) / highest <= -threshold
-
-
-def close_below_hammer(ctx: dict) -> bool:
-    """SELL: price closes below 3% of the Inverted Hammer day's close."""
-    hammer_close = ctx.get("hammer_close", 0)
-    if hammer_close <= 0:
+    # 4. HalfTrend confirmation
+    if ctx.get("halftrend", 1) != 0:
         return False
-    return ctx["price"] < hammer_close * 0.97
-
-
-def weekly_trend_down_sell(ctx: dict) -> bool:
-    """SELL: Weekly Supertrend flipped to downtrend."""
-    return ctx.get("weekly_trend_up", True) is False
-
-
-def cut_loss_3pct(ctx: dict) -> bool:
-    """SELL: price dropped >= 3% from buy price (fixed stop loss)."""
-    buy_price = ctx.get("buy_price", 0)
-    if buy_price <= 0:
+    # 5. Pullback to EMA20 or structure zone
+    if not ctx.get("pullback_ok", False):
         return False
-    return (ctx["price"] - buy_price) / buy_price <= -0.03
-
-
-def close_below_halftrend(ctx: dict) -> bool:
-    """SELL: price closes below the HalfTrend line value."""
-    ht_val = ctx.get("halftrend_value", 0)
-    if ht_val <= 0:
-        return False
-    return ctx["price"] < ht_val
-
-
-def cut_loss_boost_low(ctx: dict) -> bool:
-    """SELL: price closes below the boost volume day's lowest price (stored at buy time)."""
-    low = ctx.get("boost_day_low", 0)
-    if low <= 0:
-        return False
-    return ctx["price"] < low
+    return True
 
 
 # ── Registry ────────────────────────────────────────────────────────
@@ -172,23 +112,11 @@ CONDITION_MAP = {
     "inverted_hammer_buy": {"fn": inverted_hammer_buy, "label": "Candle reversal + vol 1.3x prev day → breakout (Hammer/IH, close > high)", "type": "buy"},
     "weekly_trend_up":   {"fn": weekly_trend_up_buy, "label": "Weekly Supertrend flips UP",      "type": "buy"},
     "volume_boost_buy":   {"fn": volume_boost_buy,   "label": "Vol 1.3x prev day → breakout (close > high)", "type": "buy"},
-    "close_below_sma10": {"fn": close_below_sma10,  "label": "Close below SMA (configurable)", "type": "sell"},
-    "halftrend_red":     {"fn": halftrend_red,      "label": "Half-trend flips red",      "type": "sell"},
-    "take_profit_2pct":  {"fn": take_profit_2pct,   "label": "Take profit (configurable %)",  "type": "sell"},
-    "stop_loss_5pct":    {"fn": stop_loss_5pct,     "label": "Trailing stop loss (configurable %)", "type": "sell"},
-    "close_below_hammer": {"fn": close_below_hammer, "label": "Close below 3% of Hammer day",       "type": "sell"},
-    "weekly_trend_down": {"fn": weekly_trend_down_sell, "label": "Weekly Supertrend DOWN",  "type": "sell"},
-    "cut_loss_3pct":     {"fn": cut_loss_3pct,     "label": "Cut loss at buy price −3%",       "type": "sell"},
-    "volume_boost_sell": {"fn": volume_boost_sell, "label": "Vol 1.3x prev day → breakdown (close < low)", "type": "sell"},
-    "close_below_halftrend": {"fn": close_below_halftrend, "label": "Close below HalfTrend value", "type": "sell"},
-    "candle_bearish_sell": {"fn": candle_bearish_sell, "label": "Bearish candle + vol 1.3x prev day → breakdown (HM/SS, close < low)", "type": "sell"},
-    "cut_loss_boost_low": {"fn": cut_loss_boost_low, "label": "Cut loss at boost vol day's lowest price", "type": "sell"},
+    "atr_breakout_buy":   {"fn": atr_breakout_buy,   "label": "ATR crosses above SMA (safe volatility expansion)", "type": "buy"},
+    "left_side_buy":     {"fn": left_side_buy,     "label": "Left-side: Sweep + MSS + HalfTrend + pullback (gold)", "type": "buy"},
 }
 
-SELL_PAIR = {
-    "sma_cross_up":    "close_below_sma10",
-    "halftrend_green": "halftrend_red",
-}
+SELL_PAIR = {}
 
 
 def get_buy_condition(name: str):

@@ -25,6 +25,18 @@ export type BacktestRunRequest = {
   take_profit_pct: number;
   stop_loss_pct: number;
   sma_sell_period: number;
+  // Left-side trading parameters
+  swing_lookback?: number;
+  sweep_valid_bars?: number;
+  mss_valid_bars?: number;
+  ema20_period?: number;
+  pullback_atr_buffer?: number;
+  atr_sl_mult?: number;
+  left_tp1_rr?: number;
+  left_tp2_rr?: number;
+  trail_atr_mult?: number;
+  st_factor?: number;
+  st_atr_period?: number;
 };
 
 
