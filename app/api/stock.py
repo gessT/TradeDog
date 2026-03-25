@@ -1,12 +1,16 @@
 from datetime import datetime, timezone
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 import pandas as pd
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 import yfinance as yf
 
 from app.core.config import get_settings
+from app.db.database import get_db
+from app.models.stock import StockPreference
 from app.services.data_collector import fetch_stock
 from app.services.redis_client import redis_service
 from app.utils.indicators import ema
@@ -16,6 +20,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 settings = get_settings()
 SMOOTHING_WINDOW = 20
+
+
+class StockConfigurationPayload(BaseModel):
+    symbol: str = Field(default="5248.KL", min_length=1, max_length=16)
+    period: str = Field(default="5y", min_length=1, max_length=16)
+
+
+def _get_stock_pref_value(db: Session, key: str) -> str | None:
+    row = db.query(StockPreference).filter(StockPreference.key == key).first()
+    return row.value if row else None
+
+
+def _upsert_stock_pref(db: Session, key: str, value: str) -> None:
+    row = db.query(StockPreference).filter(StockPreference.key == key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(StockPreference(key=key, value=value))
 
 # ── Major Bursa Malaysia (KLCI + popular) stocks ─────────────────────
 BURSA_STOCKS: dict[str, str] = {
@@ -68,6 +90,24 @@ BURSA_STOCKS: dict[str, str] = {
     "5248.KL": "Bermaz Auto",
     "5012.KL": "Ta Ann",
 }
+
+
+@router.get("/configuration")
+def get_stock_configuration(db: Session = Depends(get_db)) -> dict[str, str]:
+    """Return persisted selected stock configuration for the dashboard."""
+    return {
+        "symbol": _get_stock_pref_value(db, "selected_symbol") or "5248.KL",
+        "period": _get_stock_pref_value(db, "selected_period") or "5y",
+    }
+
+
+@router.post("/configuration")
+def save_stock_configuration(payload: StockConfigurationPayload, db: Session = Depends(get_db)) -> dict[str, str]:
+    """Save selected stock configuration for the dashboard."""
+    _upsert_stock_pref(db, "selected_symbol", payload.symbol.upper())
+    _upsert_stock_pref(db, "selected_period", payload.period)
+    db.commit()
+    return {"status": "ok"}
 
 
 def _normalize_column_name(column: object) -> str:

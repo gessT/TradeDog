@@ -90,6 +90,11 @@ export type DemoResponse = {
   stock_name: string;
 };
 
+export type StockConfiguration = {
+  symbol: string;
+  period: string;
+};
+
 export async function getDemoSeries(symbol: string, period: string = "5y"): Promise<DemoResponse> {
   const response = await fetch(`${API_BASE}/demo?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}`, { cache: "no-store" });
   if (!response.ok) {
@@ -275,4 +280,25 @@ export async function fetchTopVolume(top: number = 10): Promise<TopVolumeRespons
     throw new Error(detail || `Request failed with ${response.status}`);
   }
   return (await response.json()) as TopVolumeResponse;
+}
+
+export async function getStockConfiguration(): Promise<StockConfiguration> {
+  const response = await fetch(`${API_BASE}/stock/configuration`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as StockConfiguration;
+}
+
+export async function saveStockConfiguration(symbol: string, period: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/stock/configuration`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol, period }),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
 }

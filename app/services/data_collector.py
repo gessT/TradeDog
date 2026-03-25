@@ -26,7 +26,7 @@ def _load_sample_stock() -> pd.DataFrame | None:
     for column in ("Open", "High", "Low", "Close", "Volume"):
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
 
-    return frame.dropna(subset=["Date"])
+    return frame.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
 
 
 def _normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:

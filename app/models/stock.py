@@ -15,3 +15,10 @@ class StockSnapshot(Base):
     currency: Mapped[str] = mapped_column(String(12), default="USD")
     exchange: Mapped[str] = mapped_column(String(32), default="UNKNOWN")
     collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class StockPreference(Base):
+    __tablename__ = "stock_preferences"
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    value: Mapped[str] = mapped_column(String(64))

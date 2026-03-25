@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { getDemoSeries, type DemoPoint } from "../services/api";
+import { getDemoSeries, getStockConfiguration, saveStockConfiguration, type DemoPoint } from "../services/api";
 import { detectCandle, detectPattern, detectSignals, detectVolumeBoost, sma, weeklySupertrend, type CandlePattern, type SupertrendResult, type VolumeInfo } from "../utils/indicators";
 
 
@@ -50,10 +50,31 @@ function shortTimeLabel(raw: string): string {
 export function useStock(initialSymbol: string) {
   const [symbol, setSymbol] = useState(initialSymbol);
   const [period, setPeriod] = useState("5y");
+  const [configLoaded, setConfigLoaded] = useState(false);
   const [points, setPoints] = useState<DemoPoint[]>([]);
   const [stockName, setStockName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    const loadConfiguration = async () => {
+      try {
+        const config = await getStockConfiguration();
+        if (config.symbol) {
+          setSymbol(config.symbol);
+        }
+        if (config.period) {
+          setPeriod(config.period);
+        }
+      } catch {
+        // Keep local defaults if configuration has not been saved yet.
+      } finally {
+        setConfigLoaded(true);
+      }
+    };
+
+    void loadConfiguration();
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -70,8 +91,21 @@ export function useStock(initialSymbol: string) {
   }, [symbol, period]);
 
   useEffect(() => {
+    if (!configLoaded) {
+      return;
+    }
     void refresh();
-  }, [refresh]);
+  }, [configLoaded, refresh]);
+
+  useEffect(() => {
+    if (!configLoaded) {
+      return;
+    }
+
+    void saveStockConfiguration(symbol, period).catch(() => {
+      // Do not block the dashboard if saving preferences fails.
+    });
+  }, [configLoaded, symbol, period]);
 
   const rows = useMemo<DashboardRow[]>(() => {
     if (!points.length) {
