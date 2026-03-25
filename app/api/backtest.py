@@ -13,7 +13,7 @@ from app.models.condition_preference import ConditionPreference, LogicPreference
 from app.services.data_collector import fetch_stock
 from app.strategies.sma_indicator import sma as compute_sma, sma5 as compute_sma5, halftrend_full as compute_halftrend_full
 from app.strategies.conditions import get_buy_condition, get_sell_condition, CONDITION_MAP, SELL_PAIR
-from app.utils.indicators import atr as compute_atr, ema as compute_ema, detect_candle, weekly_supertrend, \
+from app.utils.indicators import atr as compute_atr, ema as compute_ema, rsi as compute_rsi, detect_candle, weekly_supertrend, \
     pivot_low, pivot_high, hourly_supertrend, liquidity_sweep, market_structure_shift
 
 
@@ -80,6 +80,14 @@ class BacktestRequest(BaseModel):
     trail_atr_mult: float = Field(default=2.0, ge=0.5, le=5.0, description="Trailing stop ATR multiplier")
     st_factor: float = Field(default=3.0, ge=0.5, le=10.0, description="HTF Supertrend factor")
     st_atr_period: int = Field(default=10, ge=1, le=50, description="HTF Supertrend ATR period")
+    # ── Pro sell parameters ──
+    atr_stop_mult: float = Field(default=1.5, ge=0.5, le=5.0, description="ATR multiplier for ATR stop loss")
+    atr_tp_rr: float = Field(default=2.0, ge=0.5, le=10.0, description="Risk-reward ratio for ATR take profit")
+    chandelier_mult: float = Field(default=3.0, ge=1.0, le=10.0, description="ATR multiplier for Chandelier exit")
+    break_even_trigger_pct: float = Field(default=2.0, ge=0.5, le=20.0, description="% gain before break-even stop activates")
+    time_stop_bars: int = Field(default=20, ge=5, le=100, description="Max bars held before time stop triggers")
+    time_stop_min_return: float = Field(default=1.0, ge=0, le=20.0, description="Min return % to avoid time stop")
+    rsi_overbought: float = Field(default=75.0, ge=50, le=95, description="RSI overbought threshold for exit")
 
 
 def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session, reset_before_run: bool) -> dict[str, object]:
@@ -180,6 +188,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     # ATR (14-period) + ATR SMA (20-period) for volatility expansion detection
     atr_values = compute_atr(highs, lows, closes, 14)
     atr_sma_values = compute_sma(atr_values, 20)
+    rsi_values = compute_rsi(closes, 14)
 
     buy_fns = [get_buy_condition(name) for name in payload.buy_conditions] if payload.buy_conditions else [get_buy_condition("halftrend_green")]
     sell_names = payload.sell_conditions if payload.sell_conditions else ["close_below_low_ema5"]
@@ -282,6 +291,17 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "left_tp2_rr": payload.left_tp2_rr,
             "trail_atr_mult": payload.trail_atr_mult,
             "cur_atr": float(atr_values[idx]) if idx < len(atr_values) and not pd.isna(atr_values[idx]) else 0,
+            # Pro sell keys
+            "entry_atr": float(open_trade.get("entry_atr", 0)) if open_trade else 0,
+            "atr_stop_mult": payload.atr_stop_mult,
+            "atr_tp_rr": payload.atr_tp_rr,
+            "chandelier_mult": payload.chandelier_mult,
+            "break_even_trigger_pct": payload.break_even_trigger_pct / 100,
+            "bars_held": idx - int(open_trade["buy_index"]) if open_trade else 0,
+            "time_stop_bars": payload.time_stop_bars,
+            "time_stop_min_return": payload.time_stop_min_return / 100,
+            "rsi": float(rsi_values[idx]) if idx < len(rsi_values) and not pd.isna(rsi_values[idx]) else 50,
+            "rsi_overbought": payload.rsi_overbought,
         }
 
         if open_trade is None:
@@ -295,6 +315,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                     "hammer_close": float(closes[idx - 1]) if idx > 0 and candle_patterns[idx - 1] == "Inverted Hammer" else 0,
                     "boost_day_low": float(lows[idx - 1]) if idx > 0 else 0,
                     "entry_sweep_low": sweep_low_arr[idx],
+                    "entry_atr": float(atr_values[idx]) if idx < len(atr_values) and not pd.isna(atr_values[idx]) else 0,
                     "buy_time": ts,
                     "buy_index": idx,
                     "buy_criteria": buy_joiner.join(payload.buy_conditions),
