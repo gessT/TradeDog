@@ -17,7 +17,7 @@ export type BacktestRunRequest = {
   investment: number;
   short_window: number;
   long_window: number;
-  start_date: string;
+  period: string;
   buy_conditions: string[];
   sell_conditions: string[];
   buy_logic: "AND" | "OR";
@@ -73,8 +73,8 @@ export type BacktestRunResponse = {
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
 
-export async function getDemoSeries(symbol: string): Promise<DemoPoint[]> {
-  const response = await fetch(`${API_BASE}/demo?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+export async function getDemoSeries(symbol: string, period: string = "5y"): Promise<DemoPoint[]> {
+  const response = await fetch(`${API_BASE}/demo?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}`, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Request failed with ${response.status}`);
@@ -86,13 +86,12 @@ export async function getDemoSeries(symbol: string): Promise<DemoPoint[]> {
 
 
 export async function runBacktest(payload: BacktestRunRequest): Promise<BacktestRunResponse> {
-  const body = { ...payload, start_date: payload.start_date || null };
   const response = await fetch(`${API_BASE}/backtest/run`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
@@ -186,15 +185,14 @@ export async function getBuySignals(params: {
   symbol: string;
   short_window: number;
   long_window: number;
-  start_date: string;
+  period: string;
   buy_conditions: string[];
   buy_logic: "AND" | "OR";
 }): Promise<BuySignalsResponse> {
-  const body = { ...params, start_date: params.start_date || null };
   const response = await fetch(`${API_BASE}/backtest/signals`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(params),
   });
   if (!response.ok) {
     const detail = await response.text();

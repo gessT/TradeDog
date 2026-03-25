@@ -12,7 +12,7 @@ import { useStock } from "../hooks/useStock";
 
 
 export default function Page() {
-  const { symbol, setSymbol, rows, metrics, loading, error, refresh } = useStock("5248.KL");
+  const { symbol, setSymbol, period, setPeriod, rows, metrics, loading, error, refresh } = useStock("5248.KL");
   const {
     trades,
     loading: backtestLoading,
@@ -27,12 +27,12 @@ export default function Page() {
     reset,
     resetPreferences,
     markPrefsLoaded,
-  } = useBacktest(symbol);
+  } = useBacktest(symbol, period);
 
   return (
     <main className="h-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col">
       {/* ── Top navbar (sticky) ─────────── */}
-      <Navbar symbol={symbol} onSymbolChange={setSymbol} onRefresh={refresh} loading={loading} />
+      <Navbar symbol={symbol} period={period} onSymbolChange={setSymbol} onPeriodChange={setPeriod} onRefresh={refresh} loading={loading} />
 
       {/* ── Error banners ─────────── */}
       {(error || backtestError) && (

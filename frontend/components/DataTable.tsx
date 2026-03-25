@@ -25,22 +25,21 @@ type DataTableProps = {
 };
 
 
-const YEAR_OPTIONS = [
-  { value: "1y", label: "1 Year" },
-  { value: "2y", label: "2 Years" },
-  { value: "3y", label: "3 Years" },
-  { value: "5y", label: "5 Years" },
-  { value: "all", label: "All" },
-];
-
-
 export default function DataTable({ rows }: DataTableProps) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [visibleCols, setVisibleCols] = useState<Set<ColumnKey>>(
     () => new Set(ALL_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key))
   );
   const [candleFilter, setCandleFilter] = useState<string>("all");
-  const [yearFilter, setYearFilter] = useState<string>("1y");
+
+  function fmtDate(raw: string): string {
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  }
 
   const candleTypes = useMemo(() => {
     const names = new Set<string>();
@@ -50,20 +49,11 @@ export default function DataTable({ rows }: DataTableProps) {
     return Array.from(names).sort();
   }, [rows]);
 
-  const yearFilteredRows = useMemo(() => {
-    if (yearFilter === "all") return rows;
-    const years = parseInt(yearFilter, 10);
-    const cutoff = new Date();
-    cutoff.setFullYear(cutoff.getFullYear() - years);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
-    return rows.filter((r) => r.time.slice(0, 10) >= cutoffStr);
-  }, [rows, yearFilter]);
-
   const filteredRows = useMemo(() => {
-    if (candleFilter === "all") return yearFilteredRows;
-    if (candleFilter === "any") return yearFilteredRows.filter((r) => r.candle != null);
-    return yearFilteredRows.filter((r) => r.candle?.name === candleFilter);
-  }, [yearFilteredRows, candleFilter]);
+    if (candleFilter === "all") return rows;
+    if (candleFilter === "any") return rows.filter((r) => r.candle != null);
+    return rows.filter((r) => r.candle?.name === candleFilter);
+  }, [rows, candleFilter]);
 
   const toggle = (key: ColumnKey) => {
     setVisibleCols((prev) => {
@@ -104,19 +94,6 @@ export default function DataTable({ rows }: DataTableProps) {
             <option value="any">Any pattern</option>
             {candleTypes.map((name) => (
               <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-        </label>
-
-        <label className="flex items-center gap-1.5">
-          <span className="text-slate-400">Period:</span>
-          <select
-            value={yearFilter}
-            onChange={(e) => setYearFilter(e.target.value)}
-            className="rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            {YEAR_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
         </label>
@@ -178,7 +155,7 @@ export default function DataTable({ rows }: DataTableProps) {
                 onClick={() => setSelectedIndex(selectedIndex === index ? null : index)}
                 className={`cursor-pointer ${signalBg} ${selectedBg} ${!signalBg && selectedIndex !== index ? "hover:bg-slate-800/40" : ""}`}
               >
-                <td className="px-3 py-2 text-slate-300">{row.time}</td>
+                <td className="px-3 py-2 text-slate-300">{fmtDate(row.time)}</td>
                 {show("close")   && <td className="px-3 py-2 text-right text-slate-100">{row.price.toFixed(2)}</td>}
                 {show("sma5")    && <td className="px-3 py-2 text-right text-slate-100">{row.sma5.toFixed(2)}</td>}
                 {show("sma10")   && <td className="px-3 py-2 text-right text-slate-100">{row.sma10.toFixed(2)}</td>}

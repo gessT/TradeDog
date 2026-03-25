@@ -27,8 +27,39 @@ def halftrend_green(ctx: dict) -> bool:
 
 
 def inverted_hammer_buy(ctx: dict) -> bool:
-    """BUY: Previous candle was Inverted Hammer and today's close > yesterday's close."""
-    return ctx.get("prev_candle") == "Inverted Hammer" and ctx["price"] > ctx.get("prev_close", 0)
+    """BUY: Previous candle was a bullish reversal pattern (Hammer/Inverted Hammer)
+    with volume >= 1.3x the day before it, and today's close > pattern day's HIGH.
+    """
+    pattern = ctx.get("prev_candle")
+    if pattern not in ("Hammer", "Inverted Hammer"):
+        return False
+    # Require volume >= 1.3x compared to the day before the pattern
+    prev_vol = ctx.get("prev_day_vol", 0)
+    prev_prev_vol = ctx.get("prev_prev_day_vol", 0)
+    if prev_prev_vol > 0 and prev_vol < prev_prev_vol * 1.3:
+        return False
+    # Confirmation: today's close breaks above pattern day high
+    pattern_high = ctx.get("prev_candle_high", 0)
+    if pattern_high <= 0:
+        return False
+    return ctx["price"] > pattern_high
+
+
+def candle_bearish_sell(ctx: dict) -> bool:
+    """SELL: Previous candle was a bearish reversal pattern (Hanging Man/Shooting Star)
+    with volume >= 1.3x the day before it, and today's close < pattern day's LOW.
+    """
+    pattern = ctx.get("prev_candle")
+    if pattern not in ("Hanging Man", "Shooting Star"):
+        return False
+    prev_vol = ctx.get("prev_day_vol", 0)
+    prev_prev_vol = ctx.get("prev_prev_day_vol", 0)
+    if prev_prev_vol > 0 and prev_vol < prev_prev_vol * 1.3:
+        return False
+    pattern_low = ctx.get("prev_candle_low", 0)
+    if pattern_low <= 0:
+        return False
+    return ctx["price"] < pattern_low
 
 
 def weekly_trend_up_buy(ctx: dict) -> bool:
@@ -37,8 +68,10 @@ def weekly_trend_up_buy(ctx: dict) -> bool:
 
 
 def volume_boost_buy(ctx: dict) -> bool:
-    """BUY: Yesterday was a boost volume day and today's close > yesterday's high."""
-    if not ctx.get("prev_day_boost", False):
+    """BUY: Yesterday's volume >= 1.3x the day before it, and today's close > yesterday's high."""
+    prev_vol = ctx.get("prev_day_vol", 0)
+    prev_prev_vol = ctx.get("prev_prev_day_vol", 0)
+    if prev_prev_vol <= 0 or prev_vol < prev_prev_vol * 1.3:
         return False
     prev_high = ctx.get("prev_day_high", 0)
     if prev_high <= 0:
@@ -47,8 +80,10 @@ def volume_boost_buy(ctx: dict) -> bool:
 
 
 def volume_boost_sell(ctx: dict) -> bool:
-    """SELL: Yesterday was a boost volume day and today's close < yesterday's low."""
-    if not ctx.get("prev_day_boost", False):
+    """SELL: Yesterday's volume >= 1.3x the day before it, and today's close < yesterday's low."""
+    prev_vol = ctx.get("prev_day_vol", 0)
+    prev_prev_vol = ctx.get("prev_prev_day_vol", 0)
+    if prev_prev_vol <= 0 or prev_vol < prev_prev_vol * 1.3:
         return False
     prev_low = ctx.get("prev_day_low", 0)
     if prev_low <= 0:
@@ -121,14 +156,22 @@ def close_below_halftrend(ctx: dict) -> bool:
     return ctx["price"] < ht_val
 
 
+def cut_loss_boost_low(ctx: dict) -> bool:
+    """SELL: price closes below the boost volume day's lowest price (stored at buy time)."""
+    low = ctx.get("boost_day_low", 0)
+    if low <= 0:
+        return False
+    return ctx["price"] < low
+
+
 # ── Registry ────────────────────────────────────────────────────────
 
 CONDITION_MAP = {
     "sma_cross_up":      {"fn": sma_cross_up,      "label": "SMA5 > SMA10 > SMA20 held N days",  "type": "buy"},
     "halftrend_green":   {"fn": halftrend_green,    "label": "Half-trend flips green",    "type": "buy"},
-    "inverted_hammer_buy": {"fn": inverted_hammer_buy, "label": "Inverted Hammer + next day up", "type": "buy"},
+    "inverted_hammer_buy": {"fn": inverted_hammer_buy, "label": "Candle reversal + vol 1.3x prev day → breakout (Hammer/IH, close > high)", "type": "buy"},
     "weekly_trend_up":   {"fn": weekly_trend_up_buy, "label": "Weekly Supertrend flips UP",      "type": "buy"},
-    "volume_boost_buy":   {"fn": volume_boost_buy,   "label": "Boost day next-day breakout (close > high)", "type": "buy"},
+    "volume_boost_buy":   {"fn": volume_boost_buy,   "label": "Vol 1.3x prev day → breakout (close > high)", "type": "buy"},
     "close_below_sma10": {"fn": close_below_sma10,  "label": "Close below SMA (configurable)", "type": "sell"},
     "halftrend_red":     {"fn": halftrend_red,      "label": "Half-trend flips red",      "type": "sell"},
     "take_profit_2pct":  {"fn": take_profit_2pct,   "label": "Take profit (configurable %)",  "type": "sell"},
@@ -136,8 +179,10 @@ CONDITION_MAP = {
     "close_below_hammer": {"fn": close_below_hammer, "label": "Close below 3% of Hammer day",       "type": "sell"},
     "weekly_trend_down": {"fn": weekly_trend_down_sell, "label": "Weekly Supertrend DOWN",  "type": "sell"},
     "cut_loss_3pct":     {"fn": cut_loss_3pct,     "label": "Cut loss at buy price −3%",       "type": "sell"},
-    "volume_boost_sell": {"fn": volume_boost_sell, "label": "Boost day next-day breakdown (close < low)", "type": "sell"},
+    "volume_boost_sell": {"fn": volume_boost_sell, "label": "Vol 1.3x prev day → breakdown (close < low)", "type": "sell"},
     "close_below_halftrend": {"fn": close_below_halftrend, "label": "Close below HalfTrend value", "type": "sell"},
+    "candle_bearish_sell": {"fn": candle_bearish_sell, "label": "Bearish candle + vol 1.3x prev day → breakdown (HM/SS, close < low)", "type": "sell"},
+    "cut_loss_boost_low": {"fn": cut_loss_boost_low, "label": "Cut loss at boost vol day's lowest price", "type": "sell"},
 }
 
 SELL_PAIR = {

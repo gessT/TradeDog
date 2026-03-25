@@ -28,7 +28,11 @@ def rsi(values: list[float], window: int = 14) -> list[float]:
 
 
 def detect_candle(open_: float, high: float, low: float, close: float) -> str | None:
-    """Detect single-candle pattern. Returns pattern name or None."""
+    """Detect single-candle pattern. Returns pattern name or None.
+
+    Bullish (bottom reversal):  Hammer, Inverted Hammer
+    Bearish (top reversal):     Hanging Man, Shooting Star
+    """
     body = abs(close - open_)
     rng = high - low
     if rng == 0:
@@ -37,14 +41,15 @@ def detect_candle(open_: float, high: float, low: float, close: float) -> str | 
     upper_shadow = high - max(open_, close)
     lower_shadow = min(open_, close) - low
     body_ratio = body / rng
+    is_bullish = close >= open_
 
-    # Inverted Hammer: small body near bottom, long upper shadow
-    if upper_shadow >= body * 2 and lower_shadow < body * 0.5 and body_ratio < 0.35:
-        return "Inverted Hammer" if close >= open_ else "Shooting Star"
-
-    # Hammer: small body near top, long lower shadow
+    # Long lower shadow, small body near top → Hammer (bullish) or Hanging Man (bearish context)
     if lower_shadow >= body * 2 and upper_shadow < body * 0.5 and body_ratio < 0.35:
-        return "Hammer"
+        return "Hammer" if is_bullish else "Hanging Man"
+
+    # Long upper shadow, small body near bottom → Inverted Hammer (bullish) or Shooting Star (bearish context)
+    if upper_shadow >= body * 2 and lower_shadow < body * 0.5 and body_ratio < 0.35:
+        return "Inverted Hammer" if is_bullish else "Shooting Star"
 
     # Doji
     if body_ratio < 0.05:

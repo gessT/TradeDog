@@ -50,11 +50,11 @@ def _normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return cleaned
 
 
-def _fetch_from_yfinance(symbol: str, retries: int = 3) -> pd.DataFrame | None:
+def _fetch_from_yfinance(symbol: str, period: str = "5y", retries: int = 3) -> pd.DataFrame | None:
     for attempt in range(retries):
         try:
             ticker = yf.Ticker(symbol)
-            data = ticker.history(period="5y", auto_adjust=False)
+            data = ticker.history(period=period, auto_adjust=False)
         except Exception:
             if attempt < retries - 1:
                 time.sleep(2 ** attempt)
@@ -95,8 +95,13 @@ def _fetch_from_stooq(symbol: str) -> pd.DataFrame | None:
     return normalized if not normalized.empty else None
 
 
-def fetch_stock(symbol: str) -> pd.DataFrame:
+VALID_PERIODS = {"1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"}
+
+
+def fetch_stock(symbol: str, period: str = "5y") -> pd.DataFrame:
     normalized_symbol = symbol.upper().strip()
+    if period not in VALID_PERIODS:
+        period = "5y"
 
     # Prefer local sample data for AAPL (full history, not limited to 1 month)
     if normalized_symbol == "AAPL":
@@ -104,7 +109,7 @@ def fetch_stock(symbol: str) -> pd.DataFrame:
         if sample is not None:
             return sample
 
-    yfinance_data = _fetch_from_yfinance(normalized_symbol)
+    yfinance_data = _fetch_from_yfinance(normalized_symbol, period=period)
     if yfinance_data is not None:
         return yfinance_data
 

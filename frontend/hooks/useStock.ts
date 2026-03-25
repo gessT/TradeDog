@@ -49,6 +49,7 @@ function shortTimeLabel(raw: string): string {
 
 export function useStock(initialSymbol: string) {
   const [symbol, setSymbol] = useState(initialSymbol);
+  const [period, setPeriod] = useState("5y");
   const [points, setPoints] = useState<DemoPoint[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -57,14 +58,14 @@ export function useStock(initialSymbol: string) {
     setLoading(true);
     setError("");
     try {
-      const data = await getDemoSeries(symbol);
+      const data = await getDemoSeries(symbol, period);
       setPoints(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch data");
     } finally {
       setLoading(false);
     }
-  }, [symbol]);
+  }, [symbol, period]);
 
   useEffect(() => {
     void refresh();
@@ -150,6 +151,8 @@ export function useStock(initialSymbol: string) {
   return {
     symbol,
     setSymbol,
+    period,
+    setPeriod,
     points: chartData,
     rows,
     metrics,

@@ -26,7 +26,7 @@ type BacktestSummary = {
 const DEFAULT_BUY: string[] = [];
 const DEFAULT_SELL: string[] = [];
 
-export function useBacktest(symbol: string) {
+export function useBacktest(symbol: string, period: string) {
   const [trades, setTrades] = useState<BacktestTradeRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
@@ -40,7 +40,7 @@ export function useBacktest(symbol: string) {
     investment: 0,
     short_window: 5,
     long_window: 20,
-    start_date: "2022-01-01",
+    period: "5y",
     buy_conditions: DEFAULT_BUY,
     sell_conditions: DEFAULT_SELL,
     buy_logic: "OR",
@@ -49,6 +49,11 @@ export function useBacktest(symbol: string) {
     stop_loss_pct: 5,
     sma_sell_period: 10,
   });
+
+  // Keep params.period in sync with the Navbar period
+  useEffect(() => {
+    setParams((prev) => ({ ...prev, period }));
+  }, [period]);
 
   // Auto-save condition preferences when they change
   useEffect(() => {

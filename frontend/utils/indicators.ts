@@ -68,13 +68,15 @@ export function detectCandle(c: CandleInput): CandlePattern | null {
   }
 
   // Hammer: small body at top, long lower shadow
+  // Bullish context → Hammer; Bearish context → Hanging Man
   if (lowerShadow >= body * 2 && upperShadow < body * 0.5 && bodyRatio < 0.35) {
-    return { name: isBullish ? "Hammer" : "Hammer", bias: "bullish" };
+    return { name: isBullish ? "Hammer" : "Hanging Man", bias: isBullish ? "bullish" : "bearish" };
   }
 
   // Inverted Hammer / Shooting Star: small body at bottom, long upper shadow
+  // Bullish context → Inverted Hammer; Bearish context → Shooting Star
   if (upperShadow >= body * 2 && lowerShadow < body * 0.5 && bodyRatio < 0.35) {
-    return { name: isBearish ? "Shooting Star" : "Inverted Hammer", bias: "bearish" };
+    return { name: isBullish ? "Inverted Hammer" : "Shooting Star", bias: isBullish ? "bullish" : "bearish" };
   }
 
   // Marubozu: almost no shadows

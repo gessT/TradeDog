@@ -10,7 +10,7 @@ type BacktestParams = {
   investment: number;
   short_window: number;
   long_window: number;
-  start_date: string;
+  period: string;
   buy_conditions: string[];
   sell_conditions: string[];
   buy_logic: "AND" | "OR";
@@ -149,7 +149,7 @@ export default function BacktestTable({
         symbol,
         short_window: params.short_window,
         long_window: params.long_window,
-        start_date: params.start_date,
+        period: params.period,
         buy_conditions: params.buy_conditions,
         buy_logic: params.buy_logic,
       });
@@ -165,33 +165,6 @@ export default function BacktestTable({
     <section>
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Backtest — {symbol}</h2>
-        <select
-          value={params.start_date}
-          onChange={(e) => onParamsChange({ ...params, start_date: e.target.value })}
-          className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-        >
-          <option value="">All data</option>
-          <option value="2026-01-01">2026</option>
-          <option value="2025-01-01">2025</option>
-          <option value="2024-01-01">2024</option>
-          <option value="2023-01-01">2023</option>
-          <option value="2022-01-01">2022</option>
-          <option value="2021-01-01">2021</option>
-          <option value="2020-01-01">2020</option>
-          <option value="2019-01-01">2019</option>
-          <option value="2018-01-01">2018</option>
-        </select>
-        <div className="flex items-center gap-1">
-          <span className="text-[10px] text-slate-500">Qty</span>
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={params.quantity}
-            onChange={(e) => onParamsChange({ ...params, quantity: Number(e.target.value) || 100 })}
-            className="w-20 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-          />
-        </div>
         <button
           onClick={onRun}
           disabled={running || params.buy_conditions.length === 0}

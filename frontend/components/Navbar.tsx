@@ -4,8 +4,10 @@ import { useState } from "react";
 
 type NavbarProps = {
   symbol: string;
+  period: string;
   loading: boolean;
-  onSymbolChange: (value: string) => void;
+  onSymbolChange: (symbol: string) => void;
+  onPeriodChange: (period: string) => void;
   onRefresh: () => void;
 };
 
@@ -142,7 +144,7 @@ const MY_SECTORS: SectorGroup[] = [
     label: "🔥 Popular",
     stocks: [
       { symbol: "5248.KL", name: "Bermaz Auto (BAUTO)" },
-      { symbol: "5099.KL", name: "JPG" },
+      { symbol: "5323.KL", name: "JPG" },
       { symbol: "5012.KL", name: "Ta Ann (TAANN)" },
       { symbol: "1155.KL", name: "Maybank" },
       { symbol: "1295.KL", name: "Public Bank" },
@@ -252,7 +254,19 @@ const COUNTRY_DEFAULT_SYMBOL: Record<Country, string> = {
 };
 
 
-export default function Navbar({ symbol, loading, onSymbolChange, onRefresh }: NavbarProps) {
+const PERIODS = [
+  { value: "1mo", label: "1M" },
+  { value: "3mo", label: "3M" },
+  { value: "6mo", label: "6M" },
+  { value: "1y", label: "1Y" },
+  { value: "2y", label: "2Y" },
+  { value: "5y", label: "5Y" },
+  { value: "10y", label: "10Y" },
+  { value: "max", label: "MAX" },
+];
+
+
+export default function Navbar({ symbol, period, loading, onSymbolChange, onPeriodChange, onRefresh }: NavbarProps) {
   const [country, setCountry] = useState<Country>("MY");
 
   const sectors = COUNTRY_SECTORS[country];
@@ -296,6 +310,23 @@ export default function Navbar({ symbol, loading, onSymbolChange, onRefresh }: N
             </optgroup>
           ))}
         </select>
+
+        {/* Period selector */}
+        <div className="flex items-center rounded-lg border border-slate-700 bg-slate-950 overflow-hidden">
+          {PERIODS.map((p) => (
+            <button
+              key={p.value}
+              onClick={() => onPeriodChange(p.value)}
+              className={`px-2.5 py-2 text-xs font-medium transition ${
+                period === p.value
+                  ? "bg-sky-500 text-slate-950"
+                  : "text-slate-400 hover:text-slate-100 hover:bg-slate-800"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
 
         <button
           onClick={onRefresh}

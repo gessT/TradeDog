@@ -25,7 +25,7 @@ class BacktestRequest(BaseModel):
     investment: float = Field(default=0.0, ge=0, description="USD amount per trade. If > 0, overrides quantity with investment/buy_price")
     short_window: int = Field(default=5, ge=2, le=100)
     long_window: int = Field(default=20, ge=3, le=300)
-    start_date: date | None = Field(default=None, description="Only use data from this date onward (YYYY-MM-DD)")
+    period: str = Field(default="5y", description="Data period for yfinance (1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, max)")
     buy_conditions: list[str] = Field(default=["sma_cross_up"], description="Buy condition names")
     sell_conditions: list[str] = Field(default=["close_below_sma10"], description="Sell condition names")
     buy_logic: str = Field(default="OR", pattern="^(AND|OR)$", description="AND = all buy conditions must be true, OR = any one triggers")
@@ -59,9 +59,6 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
     normalized["Close"] = pd.to_numeric(normalized["Close"], errors="coerce")
     normalized = normalized.dropna(subset=["Date", "Close"]).reset_index(drop=True)
 
-    if payload.start_date is not None:
-        normalized = normalized[normalized["Date"] >= pd.Timestamp(payload.start_date)].reset_index(drop=True)
-
     closes = normalized["Close"].astype(float).tolist()
     highs = normalized["High"].astype(float).tolist() if "High" in normalized.columns else closes
     lows = normalized["Low"].astype(float).tolist() if "Low" in normalized.columns else closes
@@ -83,11 +80,13 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
 
     # Pre-compute volume boost: volume >= 2x the 20-day average
     vol_boost = [False] * len(volumes)
+    vol_ratio = [0.0] * len(volumes)
     for i in range(len(volumes)):
         start = max(0, i - 20)
         window = volumes[start:i]
         avg = sum(window) / len(window) if window else 0
         vol_boost[i] = (volumes[i] >= avg * 2) if avg > 0 else False
+        vol_ratio[i] = (volumes[i] / avg) if avg > 0 else 0.0
 
     buy_fns = [get_buy_condition(name) for name in payload.buy_conditions] if payload.buy_conditions else [get_buy_condition("sma_cross_up")]
     sell_names = payload.sell_conditions if payload.sell_conditions else ["close_below_sma10"]
@@ -130,11 +129,16 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "price": price,
             "prev_close": float(closes[idx - 1]) if idx > 0 else 0,
             "prev_candle": candle_patterns[idx - 1] if idx > 0 else None,
+            "prev_candle_high": float(highs[idx - 1]) if idx > 0 else 0,
+            "prev_candle_low": float(lows[idx - 1]) if idx > 0 else 0,
+            "prev_vol_ratio": vol_ratio[idx - 1] if idx > 0 else 0.0,
             "weekly_trend_up": wst_dirs[idx] == -1 if idx < len(wst_dirs) else False,
             "prev_weekly_trend_up": wst_dirs[idx - 1] == -1 if idx > 0 and idx - 1 < len(wst_dirs) else False,
             "prev_day_boost": vol_boost[idx - 1] if idx > 0 else False,
             "prev_day_high": float(highs[idx - 1]) if idx > 0 else 0,
             "prev_day_low": float(lows[idx - 1]) if idx > 0 else 0,
+            "prev_day_vol": float(volumes[idx - 1]) if idx > 0 else 0,
+            "prev_prev_day_vol": float(volumes[idx - 2]) if idx > 1 else 0,
         }
 
         cur_sma_sell = float(sma_sell_values[idx]) if not pd.isna(sma_sell_values[idx]) else price
@@ -155,10 +159,17 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
             "take_profit_pct": payload.take_profit_pct / 100,
             "stop_loss_pct": payload.stop_loss_pct / 100,
             "hammer_close": float(open_trade.get("hammer_close", 0)) if open_trade else 0,
+            "boost_day_low": float(open_trade.get("boost_day_low", 0)) if open_trade else 0,
             "weekly_trend_up": wst_dirs[idx] == -1 if idx < len(wst_dirs) else False,
             "prev_day_boost": vol_boost[idx - 1] if idx > 0 else False,
             "prev_day_high": float(highs[idx - 1]) if idx > 0 else 0,
             "prev_day_low": float(lows[idx - 1]) if idx > 0 else 0,
+            "prev_candle": candle_patterns[idx - 1] if idx > 0 else None,
+            "prev_candle_high": float(highs[idx - 1]) if idx > 0 else 0,
+            "prev_candle_low": float(lows[idx - 1]) if idx > 0 else 0,
+            "prev_vol_ratio": vol_ratio[idx - 1] if idx > 0 else 0.0,
+            "prev_day_vol": float(volumes[idx - 1]) if idx > 0 else 0,
+            "prev_prev_day_vol": float(volumes[idx - 2]) if idx > 1 else 0,
         }
 
         if open_trade is None:
@@ -169,6 +180,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
                     "buy_price": price,
                     "highest_price": price,
                     "hammer_close": float(closes[idx - 1]) if idx > 0 and candle_patterns[idx - 1] == "Inverted Hammer" else 0,
+                    "boost_day_low": float(lows[idx - 1]) if idx > 0 else 0,
                     "buy_time": ts,
                     "buy_index": idx,
                     "buy_criteria": buy_joiner.join(payload.buy_conditions),
@@ -307,7 +319,7 @@ def _execute_backtest(payload: BacktestRequest, frame: pd.DataFrame, db: Session
 
 @router.post("/run")
 async def run_backtest(payload: BacktestRequest, db: Session = Depends(get_db)) -> dict[str, object]:
-    frame = await run_in_threadpool(fetch_stock, payload.symbol)
+    frame = await run_in_threadpool(fetch_stock, payload.symbol, payload.period)
     result = _execute_backtest(payload=payload, frame=frame, db=db, reset_before_run=True)
 
     try:
@@ -438,7 +450,7 @@ class SignalsRequest(BaseModel):
     symbol: str = Field(default="AAPL", min_length=1, max_length=16)
     short_window: int = Field(default=5, ge=2, le=100)
     long_window: int = Field(default=20, ge=3, le=300)
-    start_date: date | None = Field(default=None)
+    period: str = Field(default="5y", description="Data period for yfinance")
     buy_conditions: list[str] = Field(default=["sma_cross_up"])
     buy_logic: str = Field(default="OR", pattern="^(AND|OR)$")
 
@@ -446,7 +458,7 @@ class SignalsRequest(BaseModel):
 @router.post("/signals")
 async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
     """Scan data and return all dates where buy conditions fire (no trades executed)."""
-    frame = await run_in_threadpool(fetch_stock, payload.symbol)
+    frame = await run_in_threadpool(fetch_stock, payload.symbol, payload.period)
 
     if "Close" not in frame.columns:
         return {"symbol": payload.symbol.upper(), "signals": []}
@@ -458,9 +470,6 @@ async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
     normalized["Date"] = pd.to_datetime(normalized["Date"], errors="coerce")
     normalized["Close"] = pd.to_numeric(normalized["Close"], errors="coerce")
     normalized = normalized.dropna(subset=["Date", "Close"]).reset_index(drop=True)
-
-    if payload.start_date is not None:
-        normalized = normalized[normalized["Date"] >= pd.Timestamp(payload.start_date)].reset_index(drop=True)
 
     closes = normalized["Close"].astype(float).tolist()
     highs = normalized["High"].astype(float).tolist() if "High" in normalized.columns else closes
@@ -479,11 +488,13 @@ async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
     wst_dirs = weekly_supertrend(date_list, opens, highs, lows, closes)
 
     vol_boost = [False] * len(volumes)
+    vol_ratio = [0.0] * len(volumes)
     for i in range(len(volumes)):
         start = max(0, i - 20)
         window = volumes[start:i]
         avg = sum(window) / len(window) if window else 0
         vol_boost[i] = (volumes[i] >= avg * 2) if avg > 0 else False
+        vol_ratio[i] = (volumes[i] / avg) if avg > 0 else 0.0
 
     buy_fns = [get_buy_condition(name) for name in payload.buy_conditions]
     min_start = max(payload.short_window, payload.long_window)
@@ -513,11 +524,16 @@ async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
             "price": price,
             "prev_close": float(closes[idx - 1]) if idx > 0 else 0,
             "prev_candle": candle_patterns[idx - 1] if idx > 0 else None,
+            "prev_candle_high": float(highs[idx - 1]) if idx > 0 else 0,
+            "prev_candle_low": float(lows[idx - 1]) if idx > 0 else 0,
+            "prev_vol_ratio": vol_ratio[idx - 1] if idx > 0 else 0.0,
             "weekly_trend_up": wst_dirs[idx] == -1 if idx < len(wst_dirs) else False,
             "prev_weekly_trend_up": wst_dirs[idx - 1] == -1 if idx > 0 and idx - 1 < len(wst_dirs) else False,
             "prev_day_boost": vol_boost[idx - 1] if idx > 0 else False,
             "prev_day_high": float(highs[idx - 1]) if idx > 0 else 0,
             "prev_day_low": float(lows[idx - 1]) if idx > 0 else 0,
+            "prev_day_vol": float(volumes[idx - 1]) if idx > 0 else 0,
+            "prev_prev_day_vol": float(volumes[idx - 2]) if idx > 1 else 0,
         }
 
         buy_match = all(fn(buy_ctx) for fn in buy_fns) if payload.buy_logic == "AND" else any(fn(buy_ctx) for fn in buy_fns)

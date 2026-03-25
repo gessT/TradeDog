@@ -13,8 +13,11 @@ router = APIRouter(tags=["demo"])
 
 
 @router.get("/demo")
-async def demo(symbol: str = Query(default="AAPL")) -> list[dict[str, float | str | int | None]]:
-    frame = await run_in_threadpool(fetch_stock, symbol)
+async def demo(
+    symbol: str = Query(default="AAPL"),
+    period: str = Query(default="5y"),
+) -> list[dict[str, float | str | int | None]]:
+    frame = await run_in_threadpool(fetch_stock, symbol, period)
 
     if "Date" in frame.columns:
         frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
