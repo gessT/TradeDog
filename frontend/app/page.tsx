@@ -9,7 +9,7 @@ import NearATH from "../components/NearATH";
 import SignalPanel from "../components/SignalPanel";
 import SectorList from "../components/SectorList";
 import TopVolume from "../components/TopVolume";
-import TVChart, { type TVChartHandle } from "../components/TVChart";
+import TVChart, { type TVChartHandle, type EmaConfig } from "../components/TVChart";
 import type { BuySignal, DemoPoint } from "../services/api";
 import { fetchSectorChart } from "../services/api";
 import { useBacktest } from "../hooks/useBacktest";
@@ -41,6 +41,23 @@ export default function Page() {
   const [sectorChartData, setSectorChartData] = useState<DemoPoint[] | null>(null);
   const [sectorChartName, setSectorChartName] = useState<string>("");
   const [sectorChartLoading, setSectorChartLoading] = useState(false);
+
+  // EMA configuration
+  const [emaConfigs, setEmaConfigs] = useState<EmaConfig[]>([
+    { period: 9,   color: "#facc15", enabled: false },
+    { period: 20,  color: "#38bdf8", enabled: true },
+    { period: 28,  color: "#2dd4bf", enabled: false },
+    { period: 50,  color: "#a78bfa", enabled: false },
+    { period: 100, color: "#f97316", enabled: false },
+    { period: 200, color: "#ef4444", enabled: false },
+  ]);
+  const [showEmaPanel, setShowEmaPanel] = useState(false);
+
+  const toggleEma = useCallback((period: number) => {
+    setEmaConfigs((prev) =>
+      prev.map((e) => (e.period === period ? { ...e, enabled: !e.enabled } : e))
+    );
+  }, []);
 
   const handleSelectSector = useCallback(async (sectorName: string) => {
     setSectorChartLoading(true);
@@ -208,10 +225,61 @@ export default function Page() {
               <>
                 <span className="text-sm font-bold text-slate-200">{symbol}</span>
                 <span className="text-xs text-slate-500">Candlestick</span>
+
+                {/* EMA toggle buttons */}
+                <div className="flex items-center gap-1 ml-3">
+                  <button
+                    onClick={() => setShowEmaPanel(!showEmaPanel)}
+                    className={`text-[10px] px-1.5 py-0.5 rounded border transition ${
+                      showEmaPanel
+                        ? "border-cyan-600 bg-cyan-900/30 text-cyan-300"
+                        : "border-slate-700 text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    EMA
+                  </button>
+                  {emaConfigs.filter((e) => e.enabled).map((e) => (
+                    <button
+                      key={e.period}
+                      onClick={() => toggleEma(e.period)}
+                      className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border border-slate-700 hover:brightness-125 transition"
+                      style={{ color: e.color, borderColor: e.color + "60" }}
+                    >
+                      {e.period}
+                    </button>
+                  ))}
+                </div>
+
                 <span className="text-[10px] text-slate-600 ml-auto">Click a trade row to navigate</span>
               </>
             )}
           </div>
+
+          {/* EMA config panel */}
+          {showEmaPanel && !sectorChartData && (
+            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-slate-800/40 bg-slate-900/60">
+              <span className="text-[10px] text-slate-500 mr-1">EMA Lines:</span>
+              {emaConfigs.map((e) => (
+                <button
+                  key={e.period}
+                  onClick={() => toggleEma(e.period)}
+                  className={`flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded-full border transition ${
+                    e.enabled
+                      ? "border-opacity-60 bg-opacity-20"
+                      : "border-slate-700 text-slate-600 hover:text-slate-400"
+                  }`}
+                  style={e.enabled ? { color: e.color, borderColor: e.color, backgroundColor: e.color + "15" } : {}}
+                >
+                  <span
+                    className="w-2.5 h-0.5 rounded-full inline-block"
+                    style={{ backgroundColor: e.enabled ? e.color : "#475569" }}
+                  />
+                  {e.period}
+                </button>
+              ))}
+            </div>
+          )}
+
           {sectorChartLoading && (
             <div className="flex items-center justify-center py-8 text-xs text-slate-500">Loading sector chart…</div>
           )}
@@ -219,7 +287,7 @@ export default function Page() {
             {sectorChartData ? (
               <TVChart ref={chartRef} data={sectorChartData} trades={[]} buySignals={[]} buyConditions={[]} />
             ) : (
-              <TVChart ref={chartRef} data={rawPoints} trades={trades} buySignals={buySignals} buyConditions={params.buy_conditions} />
+              <TVChart ref={chartRef} data={rawPoints} trades={trades} buySignals={buySignals} buyConditions={params.buy_conditions} emaConfigs={emaConfigs} />
             )}
           </div>
         </section>

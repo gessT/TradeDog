@@ -3,10 +3,16 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers, type IChartApi, type ISeriesApi, type CandlestickData, type UTCTimestamp, type SeriesMarker } from "lightweight-charts";
 import type { DemoPoint, BacktestTradeRow, BuySignal } from "../services/api";
-import { weeklySupertrend } from "../utils/indicators";
+import { weeklySupertrend, ema } from "../utils/indicators";
 
 export type TVChartHandle = {
   goToDate: (dateStr: string) => void;
+};
+
+export type EmaConfig = {
+  period: number;
+  color: string;
+  enabled: boolean;
 };
 
 type TVChartProps = {
@@ -14,9 +20,10 @@ type TVChartProps = {
   trades: BacktestTradeRow[];
   buySignals?: BuySignal[];
   buyConditions?: string[];
+  emaConfigs?: EmaConfig[];
 };
 
-const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data, trades, buySignals = [], buyConditions = [] }, ref) {
+const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data, trades, buySignals = [], buyConditions = [], emaConfigs = [] }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -216,6 +223,32 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data,
       }
     }
 
+    // ── EMA line overlays ──
+    const enabledEmas = emaConfigs.filter((e) => e.enabled && e.period > 0);
+    if (enabledEmas.length > 0) {
+      const closes = sorted.map((p) => p.price);
+      const timestamps = sorted.map((p) => Math.floor(new Date(p.time).getTime() / 1000) as UTCTimestamp);
+
+      for (const cfg of enabledEmas) {
+        const emaValues = ema(closes, cfg.period);
+        const emaData: { time: UTCTimestamp; value: number }[] = [];
+        for (let i = cfg.period - 1; i < emaValues.length; i++) {
+          if (!seenTs.has(timestamps[i] as number)) continue;
+          emaData.push({ time: timestamps[i], value: emaValues[i] });
+        }
+        if (emaData.length > 0) {
+          const emaSeries = chart.addSeries(LineSeries, {
+            color: cfg.color,
+            lineWidth: 1,
+            priceScaleId: "right",
+            lastValueVisible: false,
+            priceLineVisible: false,
+          });
+          emaSeries.setData(emaData);
+        }
+      }
+    }
+
     // Add buy/sell markers from trades
     if (trades.length > 0) {
       const markers: SeriesMarker<UTCTimestamp>[] = [];
@@ -287,7 +320,7 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data,
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, trades, buySignals, buyConditions]);
+  }, [data, trades, buySignals, buyConditions, emaConfigs]);
 
   return (
     <div ref={containerRef} className="w-full h-full" />
