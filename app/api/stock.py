@@ -91,6 +91,80 @@ BURSA_STOCKS: dict[str, str] = {
     "5012.KL": "Ta Ann",
 }
 
+# ── Sector Mapping ───────────────────────────────────────────────────
+BURSA_SECTORS: dict[str, list[tuple[str, str]]] = {
+    "Banking & Finance": [
+        ("1155.KL", "Maybank"),
+        ("1295.KL", "Public Bank"),
+        ("1023.KL", "CIMB"),
+        ("5819.KL", "Hong Leong Bank"),
+        ("1066.KL", "RHB Bank"),
+        ("1082.KL", "Hong Leong Financial"),
+        ("1015.KL", "Ambank"),
+    ],
+    "Plantation": [
+        ("2445.KL", "KLK"),
+        ("5285.KL", "SD Guthrie"),
+        ("1961.KL", "IOI Corp"),
+        ("5012.KL", "Ta Ann"),
+    ],
+    "Oil & Gas / Energy": [
+        ("5183.KL", "Petronas Chemicals"),
+        ("5681.KL", "Petronas Dagangan"),
+        ("6033.KL", "Petronas Gas"),
+        ("5218.KL", "Vantris Energy"),
+    ],
+    "Technology": [
+        ("0166.KL", "Inari Amertron"),
+        ("0097.KL", "ViTrox"),
+        ("3867.KL", "MPI"),
+    ],
+    "Healthcare": [
+        ("5225.KL", "IHH Healthcare"),
+        ("5168.KL", "Hartalega"),
+        ("7113.KL", "Top Glove"),
+        ("7153.KL", "Kossan Rubber"),
+    ],
+    "Telecommunications": [
+        ("4863.KL", "Telekom Malaysia"),
+        ("6012.KL", "Maxis"),
+        ("6947.KL", "CelcomDigi"),
+        ("6888.KL", "Axiata"),
+    ],
+    "Consumer": [
+        ("4707.KL", "Nestle Malaysia"),
+        ("7052.KL", "Padini"),
+        ("6599.KL", "AEON Co"),
+        ("5296.KL", "MR DIY"),
+        ("4065.KL", "PPB Group"),
+    ],
+    "Utilities": [
+        ("5347.KL", "Tenaga Nasional"),
+        ("6742.KL", "YTL Power"),
+        ("4677.KL", "YTL Corp"),
+    ],
+    "Gaming & Leisure": [
+        ("3182.KL", "Genting Bhd"),
+        ("4715.KL", "Genting Malaysia"),
+        ("1562.KL", "Sports Toto"),
+    ],
+    "Industrial": [
+        ("8869.KL", "Press Metal"),
+        ("5398.KL", "Gamuda"),
+        ("4197.KL", "Sime Darby"),
+        ("5983.KL", "MBM Resources"),
+        ("5248.KL", "Bermaz Auto"),
+    ],
+    "Transport & Logistics": [
+        ("3816.KL", "MISC"),
+        ("7084.KL", "QL Resources"),
+    ],
+    "Conglomerate": [
+        ("3395.KL", "Berjaya Corp"),
+        ("2828.KL", "C.I. Holdings"),
+    ],
+}
+
 
 @router.get("/configuration")
 def get_stock_configuration(db: Session = Depends(get_db)) -> dict[str, str]:
@@ -322,6 +396,122 @@ async def top_volume(top: int = 10) -> dict:
         "scanned": len(BURSA_STOCKS),
         "stocks": stocks,
     }
+
+
+# ── Sector Momentum Scanner ─────────────────────────────────────────
+
+def _scan_sector_stock(code: str, name: str) -> dict | None:
+    """Get short-term momentum for a single stock (5-day & 20-day change)."""
+    try:
+        ticker = yf.Ticker(code)
+        hist = ticker.history(period="3mo", auto_adjust=False)
+        if hist is None or hist.empty or len(hist) < 21:
+            return None
+
+        cols = hist.columns
+        if isinstance(cols[0], tuple):
+            hist.columns = [c[0] if isinstance(c, tuple) else str(c) for c in cols]
+
+        if "Close" not in hist.columns:
+            return None
+
+        close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+        if len(close) < 21:
+            return None
+
+        current = float(close.iloc[-1])
+        prev_1d = float(close.iloc[-2])
+        prev_5d = float(close.iloc[-6]) if len(close) >= 6 else prev_1d
+        prev_20d = float(close.iloc[-21])
+
+        sma5 = float(close.iloc[-5:].mean())
+        sma20 = float(close.iloc[-20:].mean())
+
+        return {
+            "symbol": code,
+            "name": name,
+            "price": round(current, 4),
+            "change_1d": round((current - prev_1d) / prev_1d * 100, 2) if prev_1d else 0,
+            "change_5d": round((current - prev_5d) / prev_5d * 100, 2) if prev_5d else 0,
+            "change_20d": round((current - prev_20d) / prev_20d * 100, 2) if prev_20d else 0,
+            "sma5_above_sma20": sma5 > sma20,
+        }
+    except Exception as exc:
+        logger.debug("Sector stock scan failed for %s: %s", code, exc)
+        return None
+
+
+@router.get("/sectors")
+async def sector_overview() -> dict:
+    """Return sector-level momentum overview for Bursa Malaysia."""
+    import concurrent.futures
+
+    # Collect all stocks to scan
+    all_tasks: list[tuple[str, str, str]] = []  # (sector, code, name)
+    for sector, stocks_list in BURSA_SECTORS.items():
+        for code, name in stocks_list:
+            all_tasks.append((sector, code, name))
+
+    def _scan_all() -> dict[str, list[dict]]:
+        sector_results: dict[str, list[dict]] = {s: [] for s in BURSA_SECTORS}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {
+                pool.submit(_scan_sector_stock, code, name): (sector, code)
+                for sector, code, name in all_tasks
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                sector, _ = futures[fut]
+                res = fut.result()
+                if res is not None:
+                    sector_results[sector].append(res)
+        return sector_results
+
+    raw = await run_in_threadpool(_scan_all)
+
+    sectors: list[dict] = []
+    for sector_name, stock_results in raw.items():
+        if not stock_results:
+            continue
+
+        n = len(stock_results)
+        avg_1d = sum(s["change_1d"] for s in stock_results) / n
+        avg_5d = sum(s["change_5d"] for s in stock_results) / n
+        avg_20d = sum(s["change_20d"] for s in stock_results) / n
+        bullish_count = sum(1 for s in stock_results if s["sma5_above_sma20"])
+        bearish_count = n - bullish_count
+        green_count = sum(1 for s in stock_results if s["change_1d"] >= 0)
+
+        # Determine overall sentiment
+        if bullish_count > bearish_count and avg_5d > 0:
+            sentiment = "bullish"
+        elif bearish_count > bullish_count and avg_5d < 0:
+            sentiment = "bearish"
+        else:
+            sentiment = "neutral"
+
+        sectors.append({
+            "sector": sector_name,
+            "sentiment": sentiment,
+            "avg_change_1d": round(avg_1d, 2),
+            "avg_change_5d": round(avg_5d, 2),
+            "avg_change_20d": round(avg_20d, 2),
+            "bullish_count": bullish_count,
+            "bearish_count": bearish_count,
+            "green_today": green_count,
+            "total_stocks": n,
+            "stocks": sorted(stock_results, key=lambda x: x["change_1d"], reverse=True),
+        })
+
+    # Sort: bullish first, then by 5d change
+    sectors.sort(key=lambda x: (-1 if x["sentiment"] == "bullish" else 1 if x["sentiment"] == "bearish" else 0, -x["avg_change_5d"]))
+
+    return {
+        "count": len(sectors),
+        "total_stocks_scanned": sum(s["total_stocks"] for s in sectors),
+        "sectors": sectors,
+    }
+
+
 async def get_stock(symbol: str) -> dict[str, object]:
     try:
         data = await run_in_threadpool(fetch_stock, symbol)

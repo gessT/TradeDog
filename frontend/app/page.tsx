@@ -7,6 +7,7 @@ import MetricCards from "../components/MetricCards";
 import Navbar from "../components/Navbar";
 import NearATH from "../components/NearATH";
 import SignalPanel from "../components/SignalPanel";
+import SectorList from "../components/SectorList";
 import TopVolume from "../components/TopVolume";
 import TVChart, { type TVChartHandle } from "../components/TVChart";
 import type { BuySignal } from "../services/api";
@@ -116,6 +117,11 @@ export default function Page() {
           {/* Special Volume Today */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
             <TopVolume onSelectSymbol={setSymbol} />
+          </div>
+
+          {/* Sector Momentum */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+            <SectorList onSelectSymbol={setSymbol} />
           </div>
 
           {/* Signal */}

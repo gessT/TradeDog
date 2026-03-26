@@ -304,6 +304,48 @@ export async function getStockConfiguration(): Promise<StockConfiguration> {
   return (await response.json()) as StockConfiguration;
 }
 
+
+// ── Sector Scanner ──────────────────────────────────────────────────
+
+export type SectorStock = {
+  symbol: string;
+  name: string;
+  price: number;
+  change_1d: number;
+  change_5d: number;
+  change_20d: number;
+  sma5_above_sma20: boolean;
+};
+
+export type SectorInfo = {
+  sector: string;
+  sentiment: "bullish" | "bearish" | "neutral";
+  avg_change_1d: number;
+  avg_change_5d: number;
+  avg_change_20d: number;
+  bullish_count: number;
+  bearish_count: number;
+  green_today: number;
+  total_stocks: number;
+  stocks: SectorStock[];
+};
+
+export type SectorResponse = {
+  count: number;
+  total_stocks_scanned: number;
+  sectors: SectorInfo[];
+};
+
+export async function fetchSectors(): Promise<SectorResponse> {
+  const response = await fetch(`${API_BASE}/stock/sectors`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as SectorResponse;
+}
+
+
 export async function saveStockConfiguration(symbol: string, period: string): Promise<void> {
   const response = await fetch(`${API_BASE}/stock/configuration`, {
     method: "POST",
