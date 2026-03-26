@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 import pandas as pd
 from pydantic import BaseModel, Field
+import requests as http_requests
 from sqlalchemy.orm import Session
 import yfinance as yf
 
@@ -39,61 +40,103 @@ def _upsert_stock_pref(db: Session, key: str, value: str) -> None:
     else:
         db.add(StockPreference(key=key, value=value))
 
-# ── Major Bursa Malaysia (KLCI + popular) stocks ─────────────────────
+# ── Major Bursa Malaysia stocks (Yahoo Finance verified 2026) ────────
 BURSA_STOCKS: dict[str, str] = {
+    # FINANCE
     "1155.KL": "Maybank",
     "1295.KL": "Public Bank",
     "1023.KL": "CIMB",
-    "5347.KL": "Tenaga Nasional",
+    "5819.KL": "Hong Leong Bank",
+    "1066.KL": "RHB Bank",
+    "1082.KL": "Hong Leong Financial",
+    "1015.KL": "Ambank",
+    "5185.KL": "AFFIN Bank",
+    "1163.KL": "Allianz Malaysia",
+    "1818.KL": "Bursa Malaysia",
+    # CONSUMER
+    "4707.KL": "Nestle Malaysia",
+    "7052.KL": "Padini",
+    "6599.KL": "AEON Co",
+    "5296.KL": "MR DIY",
+    "4065.KL": "PPB Group",
+    "3026.KL": "Dutch Lady",
+    "3255.KL": "Heineken Malaysia",
+    "3689.KL": "Fraser & Neave",
+    "7084.KL": "QL Resources",
     "3182.KL": "Genting Bhd",
     "4715.KL": "Genting Malaysia",
-    "1082.KL": "Hong Leong Financial",
-    "5183.KL": "Petronas Chemicals",
-    "5681.KL": "Petronas Dagangan",
+    "1562.KL": "Sports Toto",
+    "5248.KL": "Bermaz Auto",
+    # TRANSPORTATION
+    "3816.KL": "MISC",
+    "5099.KL": "Capital A",
+    "5246.KL": "Westports",
+    "5983.KL": "MBM Resources",
+    # TELECOMMUNICATIONS
     "4863.KL": "Telekom Malaysia",
     "6012.KL": "Maxis",
     "6947.KL": "CelcomDigi",
-    "6033.KL": "Petronas Gas",
-    "4065.KL": "PPB Group",
-    "2445.KL": "KLK",
-    "5225.KL": "IHH Healthcare",
-    "4197.KL": "Sime Darby",
-    "4677.KL": "YTL Corp",
-    "6742.KL": "YTL Power",
-    "5285.KL": "SD Guthrie",
-    "1961.KL": "IOI Corp",
-    "3816.KL": "MISC",
-    "5819.KL": "Hong Leong Bank",
-    "1066.KL": "RHB Bank",
+    "6888.KL": "Axiata",
+    "0138.KL": "MyEG",
+    # IND-PROD
     "8869.KL": "Press Metal",
-    "7084.KL": "QL Resources",
+    "4197.KL": "Sime Darby",
     "5168.KL": "Hartalega",
     "7113.KL": "Top Glove",
     "7153.KL": "Kossan Rubber",
-    "6399.KL": "Astro Malaysia",
-    "5218.KL": "Vantris Energy",
-    "4707.KL": "Nestle Malaysia",
-    "6599.KL": "AEON Co",
-    "5235SS.KL": "KLCC Property",
-    "2828.KL": "C.I. Holdings",
-    "7052.KL": "Padini",
     "3867.KL": "MPI",
+    "5347.KL": "Tenaga Nasional",
+    # HEALTH
+    "5225.KL": "IHH Healthcare",
+    "5878.KL": "KPJ Healthcare",
+    "7081.KL": "Duopharma Biotech",
+    # CONSTRUCTION
+    "5398.KL": "Gamuda",
+    "1171.KL": "Sunway Bhd",
+    "3336.KL": "IJM Corp",
+    "5263.KL": "Sunway Construction",
+    "9679.KL": "WCT Holdings",
+    # PROPERTIES
+    "5235SS.KL": "KLCC Property",
+    "1651.KL": "MRCB",
+    "4677.KL": "YTL Corp",
+    "5148.KL": "UEM Sunrise",
+    "8664.KL": "SP Setia",
+    "5053.KL": "OSK Holdings",
+    "8583.KL": "Mah Sing",
+    # TECHNOLOGY
     "0166.KL": "Inari Amertron",
     "0097.KL": "ViTrox",
-    "5296.KL": "MR DIY",
-    "5398.KL": "Gamuda",
-    "1015.KL": "Ambank",
-    "5983.KL": "MBM Resources",
-    "6888.KL": "Axiata",
-    "3395.KL": "Berjaya Corp",
-    "1562.KL": "Sports Toto",
-    "5248.KL": "Bermaz Auto",
-    "5012.KL": "Ta Ann",
+    "0128.KL": "Frontken",
+    "0208.KL": "Greatech",
+    "5005.KL": "Unisem",
+    # PLANTATION
+    "2445.KL": "KLK",
+    "5285.KL": "SD Guthrie",
+    "1961.KL": "IOI Corp",
+    "2291.KL": "Genting Plantations",
+    "5126.KL": "Sarawak Oil Palms",
+    "1899.KL": "Batu Kawan",
+    "3034.KL": "Hap Seng",
+    # ENERGY
+    "5183.KL": "Petronas Chemicals",
+    "5681.KL": "Petronas Dagangan",
+    "6033.KL": "Petronas Gas",
+    "5209.KL": "Gas Malaysia",
+    # UTILITIES
+    "6742.KL": "YTL Power",
+    "5264.KL": "Malakoff",
+    "3069.KL": "Mega First",
+    # REIT
+    "5176.KL": "Sunway REIT",
+    "5227.KL": "IGB REIT",
+    "5212.KL": "Pavilion REIT",
+    "5106.KL": "Axis REIT",
 }
 
-# ── Sector Mapping ───────────────────────────────────────────────────
+# ── Bursa Malaysia Official Sector Mapping (Yahoo Finance 2026) ──────
 BURSA_SECTORS: dict[str, list[tuple[str, str]]] = {
-    "Banking & Finance": [
+    "FINANCE": [
         ("1155.KL", "Maybank"),
         ("1295.KL", "Public Bank"),
         ("1023.KL", "CIMB"),
@@ -101,67 +144,100 @@ BURSA_SECTORS: dict[str, list[tuple[str, str]]] = {
         ("1066.KL", "RHB Bank"),
         ("1082.KL", "Hong Leong Financial"),
         ("1015.KL", "Ambank"),
+        ("5185.KL", "AFFIN Bank"),
+        ("1163.KL", "Allianz Malaysia"),
+        ("1818.KL", "Bursa Malaysia"),
     ],
-    "Plantation": [
-        ("2445.KL", "KLK"),
-        ("5285.KL", "SD Guthrie"),
-        ("1961.KL", "IOI Corp"),
-        ("5012.KL", "Ta Ann"),
-    ],
-    "Oil & Gas / Energy": [
-        ("5183.KL", "Petronas Chemicals"),
-        ("5681.KL", "Petronas Dagangan"),
-        ("6033.KL", "Petronas Gas"),
-        ("5218.KL", "Vantris Energy"),
-    ],
-    "Technology": [
-        ("0166.KL", "Inari Amertron"),
-        ("0097.KL", "ViTrox"),
-        ("3867.KL", "MPI"),
-    ],
-    "Healthcare": [
-        ("5225.KL", "IHH Healthcare"),
-        ("5168.KL", "Hartalega"),
-        ("7113.KL", "Top Glove"),
-        ("7153.KL", "Kossan Rubber"),
-    ],
-    "Telecommunications": [
-        ("4863.KL", "Telekom Malaysia"),
-        ("6012.KL", "Maxis"),
-        ("6947.KL", "CelcomDigi"),
-        ("6888.KL", "Axiata"),
-    ],
-    "Consumer": [
+    "CONSUMER": [
         ("4707.KL", "Nestle Malaysia"),
         ("7052.KL", "Padini"),
         ("6599.KL", "AEON Co"),
         ("5296.KL", "MR DIY"),
         ("4065.KL", "PPB Group"),
-    ],
-    "Utilities": [
-        ("5347.KL", "Tenaga Nasional"),
-        ("6742.KL", "YTL Power"),
-        ("4677.KL", "YTL Corp"),
-    ],
-    "Gaming & Leisure": [
+        ("3026.KL", "Dutch Lady"),
+        ("3255.KL", "Heineken Malaysia"),
+        ("3689.KL", "Fraser & Neave"),
         ("3182.KL", "Genting Bhd"),
         ("4715.KL", "Genting Malaysia"),
+        ("7084.KL", "QL Resources"),
         ("1562.KL", "Sports Toto"),
-    ],
-    "Industrial": [
-        ("8869.KL", "Press Metal"),
-        ("5398.KL", "Gamuda"),
-        ("4197.KL", "Sime Darby"),
-        ("5983.KL", "MBM Resources"),
         ("5248.KL", "Bermaz Auto"),
     ],
-    "Transport & Logistics": [
+    "TRANSPORTATION": [
         ("3816.KL", "MISC"),
-        ("7084.KL", "QL Resources"),
+        ("5099.KL", "Capital A"),
+        ("5246.KL", "Westports"),
+        ("5983.KL", "MBM Resources"),
     ],
-    "Conglomerate": [
-        ("3395.KL", "Berjaya Corp"),
-        ("2828.KL", "C.I. Holdings"),
+    "TELECOMMUNICATIONS": [
+        ("4863.KL", "Telekom Malaysia"),
+        ("6012.KL", "Maxis"),
+        ("6947.KL", "CelcomDigi"),
+        ("6888.KL", "Axiata"),
+        ("0138.KL", "MyEG"),
+    ],
+    "IND-PROD": [
+        ("8869.KL", "Press Metal"),
+        ("4197.KL", "Sime Darby"),
+        ("5168.KL", "Hartalega"),
+        ("7113.KL", "Top Glove"),
+        ("7153.KL", "Kossan Rubber"),
+        ("3867.KL", "MPI"),
+        ("5347.KL", "Tenaga Nasional"),
+    ],
+    "HEALTH": [
+        ("5225.KL", "IHH Healthcare"),
+        ("5878.KL", "KPJ Healthcare"),
+        ("7081.KL", "Duopharma Biotech"),
+    ],
+    "CONSTRUCTN": [
+        ("5398.KL", "Gamuda"),
+        ("1171.KL", "Sunway Bhd"),
+        ("3336.KL", "IJM Corp"),
+        ("5263.KL", "Sunway Construction"),
+        ("9679.KL", "WCT Holdings"),
+    ],
+    "PROPERTIES": [
+        ("5235SS.KL", "KLCC Property"),
+        ("1651.KL", "MRCB"),
+        ("4677.KL", "YTL Corp"),
+        ("5148.KL", "UEM Sunrise"),
+        ("8664.KL", "SP Setia"),
+        ("5053.KL", "OSK Holdings"),
+        ("8583.KL", "Mah Sing"),
+    ],
+    "TECHNOLOGY": [
+        ("0166.KL", "Inari Amertron"),
+        ("0097.KL", "ViTrox"),
+        ("0128.KL", "Frontken"),
+        ("0208.KL", "Greatech"),
+        ("5005.KL", "Unisem"),
+    ],
+    "PLANTATION": [
+        ("2445.KL", "KLK"),
+        ("5285.KL", "SD Guthrie"),
+        ("1961.KL", "IOI Corp"),
+        ("2291.KL", "Genting Plantations"),
+        ("5126.KL", "Sarawak Oil Palms"),
+        ("1899.KL", "Batu Kawan"),
+        ("3034.KL", "Hap Seng"),
+    ],
+    "ENERGY": [
+        ("5183.KL", "Petronas Chemicals"),
+        ("5681.KL", "Petronas Dagangan"),
+        ("6033.KL", "Petronas Gas"),
+        ("5209.KL", "Gas Malaysia"),
+    ],
+    "UTILITIES": [
+        ("6742.KL", "YTL Power"),
+        ("5264.KL", "Malakoff"),
+        ("3069.KL", "Mega First"),
+    ],
+    "REIT": [
+        ("5176.KL", "Sunway REIT"),
+        ("5227.KL", "IGB REIT"),
+        ("5212.KL", "Pavilion REIT"),
+        ("5106.KL", "Axis REIT"),
     ],
 }
 
@@ -398,75 +474,133 @@ async def top_volume(top: int = 10) -> dict:
     }
 
 
-# ── Sector Momentum Scanner ─────────────────────────────────────────
+# ── Sector Momentum Scanner (TradingView) ────────────────────────────
 
-def _scan_sector_stock(code: str, name: str) -> dict | None:
-    """Get short-term momentum for a single stock (5-day & 20-day change)."""
-    try:
-        ticker = yf.Ticker(code)
-        hist = ticker.history(period="3mo", auto_adjust=False)
-        if hist is None or hist.empty or len(hist) < 21:
-            return None
+TRADINGVIEW_SCANNER_URL = "https://scanner.tradingview.com/malaysia/scan"
 
-        cols = hist.columns
-        if isinstance(cols[0], tuple):
-            hist.columns = [c[0] if isinstance(c, tuple) else str(c) for c in cols]
+# Yahoo Finance code → TradingView ticker name
+YF_TO_TV: dict[str, str] = {
+    # FINANCE
+    "1155.KL": "MAYBANK", "1295.KL": "PBBANK", "1023.KL": "CIMB",
+    "5819.KL": "HLBANK", "1066.KL": "RHBBANK", "1082.KL": "HLFG",
+    "1015.KL": "AMBANK", "5185.KL": "AFFIN", "1163.KL": "ALLIANZ",
+    "1818.KL": "BURSA",
+    # CONSUMER
+    "4707.KL": "NESTLE", "7052.KL": "PADINI", "6599.KL": "AEON",
+    "5296.KL": "MRDIY", "4065.KL": "PPB", "3026.KL": "DLADY",
+    "3255.KL": "HEIM", "3689.KL": "F&N", "7084.KL": "QL",
+    "3182.KL": "GENTING", "4715.KL": "GENM", "1562.KL": "SPTOTO",
+    "5248.KL": "BAUTO",
+    # TRANSPORTATION
+    "3816.KL": "MISC", "5099.KL": "CAPITALA", "5246.KL": "WPRTS",
+    "5983.KL": "MBMR",
+    # TELECOMMUNICATIONS
+    "4863.KL": "TM", "6012.KL": "MAXIS", "6947.KL": "CDB",
+    "6888.KL": "AXIATA", "0138.KL": "MYEG",
+    # IND-PROD
+    "8869.KL": "PMETAL", "4197.KL": "SIME", "5168.KL": "HARTA",
+    "7113.KL": "TOPGLOV", "7153.KL": "KOSSAN", "3867.KL": "MPI",
+    "5347.KL": "TENAGA",
+    # HEALTH
+    "5225.KL": "IHH", "5878.KL": "KPJ", "7081.KL": "DPHARMA",
+    # CONSTRUCTION
+    "5398.KL": "GAMUDA", "1171.KL": "SUNWAY", "3336.KL": "IJM",
+    "5263.KL": "SUNCON", "9679.KL": "WCT",
+    # PROPERTIES
+    "5235SS.KL": "KLCC", "1651.KL": "MRCB", "4677.KL": "YTL",
+    "5148.KL": "UEMS", "8664.KL": "SPSETIA", "5053.KL": "OSK",
+    "8583.KL": "MAHSING",
+    # TECHNOLOGY
+    "0166.KL": "INARI", "0097.KL": "VITROX", "0128.KL": "FRONTKN",
+    "0208.KL": "GREATEC", "5005.KL": "UNISEM",
+    # PLANTATION
+    "2445.KL": "KLK", "5285.KL": "SDG", "1961.KL": "IOICORP",
+    "2291.KL": "GENP", "5126.KL": "SOP", "1899.KL": "BKAWAN",
+    "3034.KL": "HAPSENG",
+    # ENERGY
+    "5183.KL": "PCHEM", "5681.KL": "PETDAG", "6033.KL": "PETGAS",
+    "5209.KL": "GASMSIA",
+    # UTILITIES
+    "6742.KL": "YTLPOWR", "5264.KL": "MALAKOF", "3069.KL": "MFCB",
+    # REIT
+    "5176.KL": "SUNREIT", "5227.KL": "IGBREIT", "5212.KL": "PAVREIT",
+    "5106.KL": "AXREIT",
+}
 
-        if "Close" not in hist.columns:
-            return None
+# Reverse lookup: TradingView ticker → Yahoo Finance code
+TV_TO_YF: dict[str, str] = {v: k for k, v in YF_TO_TV.items()}
 
-        close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
-        if len(close) < 21:
-            return None
 
-        current = float(close.iloc[-1])
-        prev_1d = float(close.iloc[-2])
-        prev_5d = float(close.iloc[-6]) if len(close) >= 6 else prev_1d
-        prev_20d = float(close.iloc[-21])
-
-        sma5 = float(close.iloc[-5:].mean())
-        sma20 = float(close.iloc[-20:].mean())
-
-        return {
-            "symbol": code,
-            "name": name,
-            "price": round(current, 4),
-            "change_1d": round((current - prev_1d) / prev_1d * 100, 2) if prev_1d else 0,
-            "change_5d": round((current - prev_5d) / prev_5d * 100, 2) if prev_5d else 0,
-            "change_20d": round((current - prev_20d) / prev_20d * 100, 2) if prev_20d else 0,
-            "sma5_above_sma20": sma5 > sma20,
-        }
-    except Exception as exc:
-        logger.debug("Sector stock scan failed for %s: %s", code, exc)
-        return None
+def _fetch_tv_sector_data() -> list[dict]:
+    """Fetch our specific stocks from TradingView scanner API in a single request."""
+    tv_tickers = [f"MYX:{tv}" for tv in YF_TO_TV.values()]
+    payload = {
+        "columns": [
+            "close", "change", "Perf.W", "Perf.1M",
+            "name", "description", "SMA5", "SMA20",
+        ],
+        "symbols": {"tickers": tv_tickers},
+    }
+    resp = http_requests.post(
+        TRADINGVIEW_SCANNER_URL,
+        json=payload,
+        headers={"Content-Type": "application/json"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json().get("data", [])
 
 
 @router.get("/sectors")
 async def sector_overview() -> dict:
-    """Return sector-level momentum overview for Bursa Malaysia."""
-    import concurrent.futures
+    """Return sector-level momentum overview using TradingView scanner API."""
 
-    # Collect all stocks to scan
-    all_tasks: list[tuple[str, str, str]] = []  # (sector, code, name)
+    # Build lookup: TV ticker -> (sector, yf_code, name) from our mapping
+    tv_lookup: dict[str, tuple[str, str, str]] = {}
     for sector, stocks_list in BURSA_SECTORS.items():
-        for code, name in stocks_list:
-            all_tasks.append((sector, code, name))
+        for yf_code, name in stocks_list:
+            tv_ticker = YF_TO_TV.get(yf_code)
+            if tv_ticker:
+                tv_lookup[tv_ticker] = (sector, yf_code, name)
 
-    def _scan_all() -> dict[str, list[dict]]:
+    def _scan() -> dict[str, list[dict]]:
+        tv_rows = _fetch_tv_sector_data()
+
         sector_results: dict[str, list[dict]] = {s: [] for s in BURSA_SECTORS}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-            futures = {
-                pool.submit(_scan_sector_stock, code, name): (sector, code)
-                for sector, code, name in all_tasks
-            }
-            for fut in concurrent.futures.as_completed(futures):
-                sector, _ = futures[fut]
-                res = fut.result()
-                if res is not None:
-                    sector_results[sector].append(res)
+
+        for row in tv_rows:
+            # TradingView symbol format: "MYX:MAYBANK"
+            tv_sym = row.get("s", "")
+            tv_ticker = tv_sym.split(":")[-1] if ":" in tv_sym else tv_sym
+
+            if tv_ticker not in tv_lookup:
+                continue
+
+            sector, yf_code, stock_name = tv_lookup[tv_ticker]
+            vals = row.get("d", [])
+            if len(vals) < 8:
+                continue
+
+            close = vals[0] or 0
+            change_1d = vals[1] or 0    # already in % (e.g. +1.72)
+            perf_w = vals[2] or 0       # already in % (e.g. -2.05)
+            perf_1m = vals[3] or 0      # already in % (e.g. +77.37)
+            sma5 = vals[6] or 0
+            sma20 = vals[7] or 0
+
+            sector_results[sector].append({
+                "symbol": yf_code,
+                "name": stock_name,
+                "price": round(close, 4),
+                "change_1d": round(change_1d, 2),
+                "change_5d": round(perf_w, 2),
+                "change_20d": round(perf_1m, 2),
+                "sma5_above_sma20": sma5 > sma20 if sma5 and sma20 else False,
+            })
+
         return sector_results
 
-    raw = await run_in_threadpool(_scan_all)
+    raw = await run_in_threadpool(_scan)
 
     sectors: list[dict] = []
     for sector_name, stock_results in raw.items():
@@ -509,6 +643,102 @@ async def sector_overview() -> dict:
         "count": len(sectors),
         "total_stocks_scanned": sum(s["total_stocks"] for s in sectors),
         "sectors": sectors,
+    }
+
+
+# ── Sector Candlestick Chart ────────────────────────────────────────
+
+def _fetch_sector_ohlcv(code: str, period: str) -> pd.DataFrame | None:
+    """Fetch OHLCV for a single stock and return normalized DataFrame."""
+    try:
+        ticker = yf.Ticker(code)
+        hist = ticker.history(period=period, auto_adjust=False)
+        if hist is None or hist.empty:
+            return None
+
+        cols = hist.columns
+        if isinstance(cols[0], tuple):
+            hist.columns = [c[0] if isinstance(c, tuple) else str(c) for c in cols]
+
+        required = {"Open", "High", "Low", "Close", "Volume"}
+        if not required.issubset(set(hist.columns)):
+            return None
+
+        hist.index = pd.to_datetime(hist.index)
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            hist[col] = pd.to_numeric(hist[col], errors="coerce")
+
+        # Normalize prices to percentage change from first day (so we can average across stocks)
+        first_close = hist["Close"].dropna().iloc[0]
+        if first_close <= 0:
+            return None
+
+        hist["Open_pct"] = (hist["Open"] / first_close - 1) * 100
+        hist["High_pct"] = (hist["High"] / first_close - 1) * 100
+        hist["Low_pct"] = (hist["Low"] / first_close - 1) * 100
+        hist["Close_pct"] = (hist["Close"] / first_close - 1) * 100
+
+        return hist[["Open_pct", "High_pct", "Low_pct", "Close_pct", "Volume"]].copy()
+    except Exception:
+        return None
+
+
+@router.get("/sector-chart")
+async def sector_chart(
+    sector: str = Query(..., description="Sector name"),
+    period: str = Query(default="6mo"),
+) -> dict:
+    """Return synthetic OHLCV candles for a sector by averaging constituent stocks."""
+    import concurrent.futures
+
+    if sector not in BURSA_SECTORS:
+        raise HTTPException(status_code=404, detail=f"Sector '{sector}' not found")
+
+    stocks_list = BURSA_SECTORS[sector]
+
+    def _collect() -> list[pd.DataFrame]:
+        frames: list[pd.DataFrame] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {
+                pool.submit(_fetch_sector_ohlcv, code, period): code
+                for code, _ in stocks_list
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                df = fut.result()
+                if df is not None and not df.empty:
+                    frames.append(df)
+        return frames
+
+    frames = await run_in_threadpool(_collect)
+
+    if not frames:
+        raise HTTPException(status_code=404, detail="No data available for this sector")
+
+    # Align all frames to the same date index and average
+    combined = pd.concat(frames, axis=0)
+    averaged = combined.groupby(combined.index).mean()
+    averaged = averaged.sort_index()
+    averaged = averaged.dropna()
+
+    rows: list[dict] = []
+    for ts, row in averaged.iterrows():
+        rows.append({
+            "time": str(ts.date()) if hasattr(ts, "date") else str(ts),
+            "price": round(float(row["Close_pct"]), 4),
+            "open": round(float(row["Open_pct"]), 4),
+            "high": round(float(row["High_pct"]), 4),
+            "low": round(float(row["Low_pct"]), 4),
+            "ema": round(float(row["Close_pct"]), 4),
+            "ht": None,
+            "ht_trend": None,
+            "volume": int(row["Volume"]),
+        })
+
+    return {
+        "data": rows,
+        "stock_name": f"{sector} (Sector Index)",
+        "sector": sector,
+        "constituents": len(frames),
     }
 
 

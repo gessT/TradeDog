@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import BacktestTable from "../components/BacktestTable";
 import DataTable from "../components/DataTable";
 import MetricCards from "../components/MetricCards";
@@ -10,7 +10,8 @@ import SignalPanel from "../components/SignalPanel";
 import SectorList from "../components/SectorList";
 import TopVolume from "../components/TopVolume";
 import TVChart, { type TVChartHandle } from "../components/TVChart";
-import type { BuySignal } from "../services/api";
+import type { BuySignal, DemoPoint } from "../services/api";
+import { fetchSectorChart } from "../services/api";
 import { useBacktest } from "../hooks/useBacktest";
 import { useStock } from "../hooks/useStock";
 
@@ -35,6 +36,30 @@ export default function Page() {
 
   const chartRef = useRef<TVChartHandle>(null);
   const [buySignals, setBuySignals] = useState<BuySignal[]>([]);
+
+  // Sector chart overlay state
+  const [sectorChartData, setSectorChartData] = useState<DemoPoint[] | null>(null);
+  const [sectorChartName, setSectorChartName] = useState<string>("");
+  const [sectorChartLoading, setSectorChartLoading] = useState(false);
+
+  const handleSelectSector = useCallback(async (sectorName: string) => {
+    setSectorChartLoading(true);
+    try {
+      const res = await fetchSectorChart(sectorName, "6mo");
+      setSectorChartData(res.data);
+      setSectorChartName(res.stock_name);
+    } catch {
+      setSectorChartData(null);
+      setSectorChartName("");
+    } finally {
+      setSectorChartLoading(false);
+    }
+  }, []);
+
+  const clearSectorChart = useCallback(() => {
+    setSectorChartData(null);
+    setSectorChartName("");
+  }, []);
 
   // Auto-run backtest when symbol changes (e.g. clicking TopVolume / NearATH)
   const prevSymbolRef = useRef(symbol);
@@ -121,7 +146,7 @@ export default function Page() {
 
           {/* Sector Momentum */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-            <SectorList onSelectSymbol={setSymbol} />
+            <SectorList onSelectSymbol={setSymbol} onSelectSector={handleSelectSector} />
           </div>
 
           {/* Signal */}
@@ -168,12 +193,34 @@ export default function Page() {
         {/* ── COL 3: TradingView-style Chart (2/5) ─────────── */}
         <section className="hidden md:flex md:w-2/5 flex-col overflow-hidden">
           <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-800/60">
-            <span className="text-sm font-bold text-slate-200">{symbol}</span>
-            <span className="text-xs text-slate-500">Candlestick</span>
-            <span className="text-[10px] text-slate-600 ml-auto">Click a trade row to navigate</span>
+            {sectorChartData ? (
+              <>
+                <span className="text-sm font-bold text-cyan-300">{sectorChartName}</span>
+                <span className="text-[9px] text-slate-500">% change from base</span>
+                <button
+                  onClick={clearSectorChart}
+                  className="ml-auto text-[10px] text-rose-400 hover:text-rose-300 border border-rose-800/50 rounded px-1.5 py-0.5"
+                >
+                  ✕ Back to {symbol}
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="text-sm font-bold text-slate-200">{symbol}</span>
+                <span className="text-xs text-slate-500">Candlestick</span>
+                <span className="text-[10px] text-slate-600 ml-auto">Click a trade row to navigate</span>
+              </>
+            )}
           </div>
+          {sectorChartLoading && (
+            <div className="flex items-center justify-center py-8 text-xs text-slate-500">Loading sector chart…</div>
+          )}
           <div className="flex-1 min-h-0">
-            <TVChart ref={chartRef} data={rawPoints} trades={trades} buySignals={buySignals} buyConditions={params.buy_conditions} />
+            {sectorChartData ? (
+              <TVChart ref={chartRef} data={sectorChartData} trades={[]} buySignals={[]} buyConditions={[]} />
+            ) : (
+              <TVChart ref={chartRef} data={rawPoints} trades={trades} buySignals={buySignals} buyConditions={params.buy_conditions} />
+            )}
           </div>
         </section>
 

@@ -345,6 +345,25 @@ export async function fetchSectors(): Promise<SectorResponse> {
   return (await response.json()) as SectorResponse;
 }
 
+export type SectorChartResponse = {
+  data: DemoPoint[];
+  stock_name: string;
+  sector: string;
+  constituents: number;
+};
+
+export async function fetchSectorChart(sector: string, period: string = "6mo"): Promise<SectorChartResponse> {
+  const response = await fetch(
+    `${API_BASE}/stock/sector-chart?sector=${encodeURIComponent(sector)}&period=${encodeURIComponent(period)}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as SectorChartResponse;
+}
+
 
 export async function saveStockConfiguration(symbol: string, period: string): Promise<void> {
   const response = await fetch(`${API_BASE}/stock/configuration`, {
