@@ -47,12 +47,17 @@ def atr(highs: list[float], lows: list[float], closes: list[float], period: int 
     return result
 
 
-def detect_candle(open_: float, high: float, low: float, close: float) -> str | None:
-    """Detect single-candle pattern. Returns pattern name or None.
-
-    Bullish (bottom reversal):  Hammer, Inverted Hammer
-    Bearish (top reversal):     Hanging Man, Shooting Star
-    """
+def detect_candle(
+    open_: float,
+    high: float,
+    low: float,
+    close: float,
+    prev_open: float | None = None,
+    prev_high: float | None = None,
+    prev_low: float | None = None,
+    prev_close: float | None = None,
+) -> str | None:
+    """Detect candle pattern. Returns pattern name or None."""
     body = abs(close - open_)
     rng = high - low
     if rng == 0:
@@ -63,17 +68,41 @@ def detect_candle(open_: float, high: float, low: float, close: float) -> str | 
     body_ratio = body / rng
     is_bullish = close >= open_
 
-    # Long lower shadow, small body near top → Hammer (bullish) or Hanging Man (bearish context)
+    # ── Two-candle patterns ──
+    if prev_open is not None and prev_close is not None:
+        prev_body = abs(prev_close - prev_open)
+        # Bullish Engulfing
+        if prev_close < prev_open and is_bullish and open_ <= prev_close and close >= prev_open and body > prev_body:
+            return "Bullish Engulfing"
+        # Bearish Engulfing
+        if prev_close > prev_open and not is_bullish and open_ >= prev_close and close <= prev_open and body > prev_body:
+            return "Bearish Engulfing"
+
+    # ── Single-candle patterns ──
+
+    # Doji variants
+    if body_ratio < 0.05:
+        if lower_shadow > upper_shadow * 2 and lower_shadow > rng * 0.3:
+            return "Dragonfly Doji"
+        if upper_shadow > lower_shadow * 2 and upper_shadow > rng * 0.3:
+            return "Gravestone Doji"
+        return "Doji"
+
+    # Hammer / Hanging Man
     if lower_shadow >= body * 2 and upper_shadow < body * 0.5 and body_ratio < 0.35:
         return "Hammer" if is_bullish else "Hanging Man"
 
-    # Long upper shadow, small body near bottom → Inverted Hammer (bullish) or Shooting Star (bearish context)
+    # Inverted Hammer / Shooting Star
     if upper_shadow >= body * 2 and lower_shadow < body * 0.5 and body_ratio < 0.35:
         return "Inverted Hammer" if is_bullish else "Shooting Star"
 
-    # Doji
-    if body_ratio < 0.05:
-        return "Doji"
+    # Marubozu: almost no shadows
+    if upper_shadow < rng * 0.05 and lower_shadow < rng * 0.05:
+        return "Bullish Marubozu" if is_bullish else "Bearish Marubozu"
+
+    # Spinning Top: small body, both shadows significant
+    if body_ratio < 0.3 and upper_shadow > body and lower_shadow > body:
+        return "Spinning Top"
 
     return None
 

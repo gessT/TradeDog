@@ -695,7 +695,12 @@ async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
     lows = normalized["Low"].astype(float).tolist() if "Low" in normalized.columns else closes
     opens = normalized["Open"].astype(float).tolist() if "Open" in normalized.columns else closes
     volumes = normalized["Volume"].astype(float).tolist() if "Volume" in normalized.columns else [0] * len(closes)
-    candle_patterns = [detect_candle(opens[i], highs[i], lows[i], closes[i]) for i in range(len(closes))]
+    candle_patterns = [
+        detect_candle(opens[i], highs[i], lows[i], closes[i],
+                       opens[i - 1] if i > 0 else None, highs[i - 1] if i > 0 else None,
+                       lows[i - 1] if i > 0 else None, closes[i - 1] if i > 0 else None)
+        for i in range(len(closes))
+    ]
 
     short_values = compute_sma(closes, payload.short_window)
     long_values = compute_sma(closes, payload.long_window)
@@ -781,6 +786,8 @@ async def preview_buy_signals(payload: SignalsRequest) -> dict[str, object]:
                 "wst": wst_label,
                 "ht": ht_label,
                 "rvol": round(vol_ratio[idx], 2),
+                "vol_color": "green" if closes[idx] >= opens[idx] else "red",
+                "candle_type": candle_patterns[idx] or "—",
             })
 
     return {"symbol": payload.symbol.upper(), "count": len(signals), "signals": signals}

@@ -108,6 +108,7 @@ export default function BacktestTable({
   const [buySignals, setBuySignals] = useState<BuySignal[]>([]);
   const [signalsLoading, setSignalsLoading] = useState(false);
   const [selectedTradeIdx, setSelectedTradeIdx] = useState<number | null>(null);
+  const [volFilter, setVolFilter] = useState<"all" | "green" | "red">("all");
 
   // Reset preferences flag when symbol changes so preferences reload for new stock
   useEffect(() => {
@@ -301,24 +302,52 @@ export default function BacktestTable({
       </div>
 
       {buySignals.length > 0 && (
-        <div className="mt-2 max-h-[200px] overflow-auto rounded-lg border border-emerald-800/40 bg-emerald-950/20">
+        <>
+          {/* Vol color filter buttons */}
+          <div className="mt-2 flex items-center gap-1.5">
+            <span className="text-[10px] text-slate-500 mr-1">Vol:</span>
+            {([["all", "All", "border-slate-600 text-slate-400"], ["green", "🟢 Green", "border-emerald-700 text-emerald-400"], ["red", "🔴 Red", "border-rose-700 text-rose-400"]] as const).map(([val, label, cls]) => {
+              const count = val === "all" ? buySignals.length : buySignals.filter((s) => s.vol_color === val).length;
+              return (
+                <button
+                  key={val}
+                  onClick={() => setVolFilter(val)}
+                  className={`text-[10px] px-2 py-0.5 rounded-full border transition ${
+                    volFilter === val
+                      ? `${cls} bg-slate-800/60 font-bold`
+                      : "border-slate-700/50 text-slate-600 hover:text-slate-400"
+                  }`}
+                >
+                  {label} ({count})
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-1.5 max-h-[200px] overflow-auto rounded-lg border border-emerald-800/40 bg-emerald-950/20">
           <table className="min-w-full divide-y divide-emerald-900/40 text-xs">
             <thead className="sticky top-0 bg-emerald-950/60 text-emerald-300">
               <tr>
                 <th className="px-3 py-1.5 text-left">#</th>
                 <th className="px-3 py-1.5 text-left">Date</th>
                 <th className="px-3 py-1.5 text-right">Price</th>
+                <th className="px-3 py-1.5 text-left">Candle</th>
                 <th className="px-3 py-1.5 text-left">W.ST</th>
                 <th className="px-3 py-1.5 text-left">HalfTrend</th>
                 <th className="px-3 py-1.5 text-right">RVOL</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-emerald-900/20">
-              {[...buySignals].sort((a, b) => b.date.localeCompare(a.date)).map((s, i) => (
+              {[...buySignals].filter((s) => volFilter === "all" || s.vol_color === volFilter).sort((a, b) => b.date.localeCompare(a.date)).map((s, i) => (
                 <tr key={`${s.date}-${i}`} className="hover:bg-emerald-900/20 cursor-pointer" onClick={() => onTradeClick?.(s.date)}>
                   <td className="px-3 py-1.5 text-slate-500">{i + 1}</td>
                   <td className="px-3 py-1.5 text-slate-200">{fmtDate(s.date)}</td>
                   <td className="px-3 py-1.5 text-right text-slate-100 font-medium">${s.price.toFixed(2)}</td>
+                  <td className={`px-3 py-1.5 text-xs whitespace-nowrap ${
+                    ["Bullish Engulfing", "Hammer", "Inverted Hammer", "Dragonfly Doji", "Bullish Marubozu"].includes(s.candle_type) ? "text-emerald-400"
+                    : ["Bearish Engulfing", "Hanging Man", "Shooting Star", "Gravestone Doji", "Bearish Marubozu"].includes(s.candle_type) ? "text-rose-400"
+                    : "text-slate-500"
+                  }`}>{s.candle_type}</td>
                   <td className={`px-3 py-1.5 font-medium ${
                     s.wst === "FLIP_UP" ? "text-emerald-300 bg-emerald-900/40"
                     : s.wst === "FLIP_DOWN" ? "text-rose-300 bg-rose-900/40"
@@ -327,12 +356,16 @@ export default function BacktestTable({
                     {s.wst === "FLIP_UP" ? "🟢 Flip Up" : s.wst === "FLIP_DOWN" ? "🔴 Flip Down" : s.wst === "UP" ? "▲ Up" : "▼ Down"}
                   </td>
                   <td className={`px-3 py-1.5 font-medium ${s.ht === "Green" ? "text-emerald-400" : s.ht === "Red" ? "text-rose-400" : "text-slate-500"}`}>{s.ht}</td>
-                  <td className={`px-3 py-1.5 text-right font-medium ${s.rvol >= 3 ? "text-amber-300 bg-amber-900/30" : s.rvol >= 2 ? "text-amber-400" : "text-slate-400"}`}>{s.rvol.toFixed(1)}x</td>
+                  <td className={`px-3 py-1.5 text-right font-medium ${s.rvol >= 3 ? "text-amber-300 bg-amber-900/30" : s.rvol >= 2 ? "text-amber-400" : "text-slate-400"}`}>
+                    <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${s.vol_color === "green" ? "bg-emerald-400" : "bg-rose-500"}`} />
+                    {s.rvol.toFixed(1)}x
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {/* ── Sell conditions checkboxes ─────────── */}
