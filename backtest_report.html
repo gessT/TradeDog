@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AAPL Strategy Backtest Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f172a; --card: #1e293b; --border: #334155;
+    --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8;
+    --green: #22c55e; --red: #ef4444; --gold: #eab308;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; padding:20px; }
+  h1 { text-align:center; font-size:1.8rem; margin-bottom:6px; color:var(--accent); }
+  h2 { font-size:1.2rem; margin-bottom:12px; color:var(--accent); border-bottom:1px solid var(--border); padding-bottom:6px; }
+  h3 { font-size:1rem; color:var(--gold); margin:16px 0 8px; }
+  .subtitle { text-align:center; color:var(--muted); margin-bottom:24px; font-size:0.9rem; }
+  .grid { display:grid; gap:16px; margin-bottom:20px; }
+  .g2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .g4 { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; }
+  .metric { text-align:center; }
+  .metric .val { font-size:1.6rem; font-weight:700; }
+  .metric .lbl { font-size:0.75rem; color:var(--muted); margin-top:2px; }
+  .metric .val.green { color:var(--green); }
+  .metric .val.red { color:var(--red); }
+  .metric .val.gold { color:var(--gold); }
+  .metric .val.accent { color:var(--accent); }
+  table { width:100%; border-collapse:collapse; font-size:0.8rem; }
+  th { background:#0f172a; position:sticky; top:0; padding:8px 6px; text-align:left; color:var(--accent); border-bottom:2px solid var(--border); }
+  td { padding:6px; border-bottom:1px solid var(--border); }
+  tr.win td:nth-child(6), tr.win td:nth-child(7) { color:var(--green); }
+  tr.loss td:nth-child(6), tr.loss td:nth-child(7) { color:var(--red); }
+  .scroll { max-height:500px; overflow-y:auto; }
+  .params-cell { font-size:0.7rem; color:var(--muted); max-width:250px; word-break:break-all; }
+  .strategy-box { background:linear-gradient(135deg, #1e3a5f, #1e293b); border:1px solid var(--accent); border-radius:10px; padding:20px; margin-bottom:20px; }
+  .strategy-box p { margin:4px 0; line-height:1.6; }
+  .tag { display:inline-block; background:var(--accent); color:#0f172a; padding:2px 8px; border-radius:4px; font-size:0.75rem; font-weight:600; margin:2px; }
+  .tag.sell { background:var(--red); color:white; }
+  .tag.filter { background:var(--gold); color:#0f172a; }
+  canvas { max-height: 350px; }
+  .best-params { display:flex; flex-wrap:wrap; gap:8px; }
+  .best-params .p { background:#0f172a; border:1px solid var(--border); padding:4px 10px; border-radius:6px; font-size:0.8rem; }
+  .best-params .p span { color:var(--accent); font-weight:600; }
+</style>
+</head>
+<body>
+
+<h1>📊 AAPL Quantitative Strategy Backtest</h1>
+<p class="subtitle">EMA + RSI + Supertrend + Volume — Optimized Trend-Following System &nbsp;|&nbsp; Data: 2015–2026</p>
+
+<!-- ═══ Strategy Description ═══ -->
+<div class="strategy-box">
+  <h2>🧠 Strategy Logic</h2>
+  <h3>Entry Conditions (ALL must be true)</h3>
+  <p><span class="tag">TREND</span> Price > EMA50, EMA9 > EMA21 > EMA50 (三重均线多排)</p>
+  <p><span class="tag">SUPERTREND</span> Supertrend(10, 3.0) in uptrend</p>
+  <p><span class="tag">RSI</span> RSI(14) between 30 and 70 — not overbought, not oversold</p>
+  <p><span class="tag filter">VOLUME</span> Relative Volume ≥ 1.0x 20-day average</p>
+  <p><span class="tag">MOMENTUM</span> EMA fast cross above slow <b>OR</b> RSI cross above 50 <b>OR</b> Supertrend flip</p>
+
+  <h3>Exit Conditions (any one triggers)</h3>
+  <p><span class="tag sell">STOP LOSS</span> Entry − 1.5 × ATR (volatility-adaptive)</p>
+  <p><span class="tag sell">TAKE PROFIT</span> Entry + 4.0 × ATR (R:R based)</p>
+  <p><span class="tag sell">TRAILING</span> Price − 2.0 × ATR (adaptive trail from high)</p>
+  <p><span class="tag sell">SUPERTREND</span> Supertrend flips to downtrend</p>
+  <p><span class="tag sell">EMA CROSS</span> EMA fast crosses below slow</p>
+
+  <h3>Risk Management</h3>
+  <p>• Risk per trade: <b>2%</b> of equity &nbsp;|&nbsp; Position sizing: risk-based (Kelly-lite)</p>
+  <p>• Max exposure: 100% of equity per trade (single position)</p>
+</div>
+
+<!-- ═══ Optimal Parameters ═══ -->
+<div class="card" style="margin-bottom:20px;">
+  <h2>⚙️ Best Parameter Combination</h2>
+  <div class="best-params">
+    <div class="p">EMA Fast: <span>9</span></div>
+    <div class="p">EMA Slow: <span>21</span></div>
+    <div class="p">EMA Trend: <span>50</span></div>
+    <div class="p">RSI Oversold: <span>30</span></div>
+    <div class="p">RSI Overbought: <span>70</span></div>
+    <div class="p">Supertrend Period: <span>10</span></div>
+    <div class="p">Supertrend Mult: <span>3.0</span></div>
+    <div class="p">ATR SL Mult: <span>1.5</span></div>
+    <div class="p">ATR TP Mult: <span>4.0</span></div>
+    <div class="p">Volume Filter: <span>1.0x</span></div>
+    <div class="p">Trailing ATR: <span>2.0</span></div>
+  </div>
+</div>
+
+<!-- ═══ Key Metrics ═══ -->
+<div class="grid g4">
+  <div class="card metric"><div class="val green">70.6%</div><div class="lbl">Win Rate</div></div>
+  <div class="card metric"><div class="val green">+56.3%</div><div class="lbl">Total Return</div></div>
+  <div class="card metric"><div class="val red">3.9%</div><div class="lbl">Max Drawdown</div></div>
+  <div class="card metric"><div class="val accent">1.95</div><div class="lbl">Risk:Reward</div></div>
+  <div class="card metric"><div class="val gold">17</div><div class="lbl">Total Trades</div></div>
+  <div class="card metric"><div class="val green">+6.66%</div><div class="lbl">Avg Win</div></div>
+  <div class="card metric"><div class="val red">-3.41%</div><div class="lbl">Avg Loss</div></div>
+  <div class="card metric"><div class="val accent">2.93</div><div class="lbl">Sharpe Ratio</div></div>
+  <div class="card metric"><div class="val accent">5.56</div><div class="lbl">Profit Factor</div></div>
+  <div class="card metric"><div class="val">$156,334</div><div class="lbl">Final Equity</div></div>
+  <div class="card metric"><div class="val">13</div><div class="lbl">Avg Bars Held</div></div>
+  <div class="card metric"><div class="val">12W / 5L</div><div class="lbl">Win / Loss</div></div>
+</div>
+
+<!-- ═══ Charts ═══ -->
+<div class="grid g2">
+  <div class="card">
+    <h2>📈 Equity Curve</h2>
+    <canvas id="equityChart"></canvas>
+  </div>
+  <div class="card">
+    <h2>🎯 Exit Reason Distribution</h2>
+    <canvas id="reasonChart"></canvas>
+  </div>
+</div>
+
+<!-- ═══ Top 5 Param Combos ═══ -->
+<div class="card" style="margin-top:20px;">
+  <h2>🏆 Top 5 Optimized Parameter Sets</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr>
+        <th>Rank</th><th>Win Rate</th><th>Return</th><th>Max DD</th><th>R:R</th><th>Trades</th><th>Sharpe</th><th>PF</th><th>Parameters</th>
+      </tr></thead>
+      <tbody><tr>
+            <td>#1</td>
+            <td>70.6%</td>
+            <td>56.33%</td>
+            <td>3.85%</td>
+            <td>1.95</td>
+            <td>17</td>
+            <td>2.93</td>
+            <td>5.56</td>
+            <td class="params-cell">ema_fast=9, ema_slow=21, ema_trend=50, rsi_oversold=30, rsi_overbought=70, st_period=10, st_mult=3.0, atr_sl_mult=1.5, atr_tp_mult=4.0, vol_filter=1.0, trailing_atr_mult=2.0</td>
+        </tr><tr>
+            <td>#2</td>
+            <td>70.6%</td>
+            <td>56.33%</td>
+            <td>3.85%</td>
+            <td>1.95</td>
+            <td>17</td>
+            <td>2.93</td>
+            <td>5.56</td>
+            <td class="params-cell">ema_fast=9, ema_slow=21, ema_trend=50, rsi_oversold=30, rsi_overbought=70, st_period=12, st_mult=3.0, atr_sl_mult=1.5, atr_tp_mult=4.0, vol_filter=1.0, trailing_atr_mult=2.0</td>
+        </tr><tr>
+            <td>#3</td>
+            <td>70.6%</td>
+            <td>56.33%</td>
+            <td>3.85%</td>
+            <td>1.95</td>
+            <td>17</td>
+            <td>2.93</td>
+            <td>5.56</td>
+            <td class="params-cell">ema_fast=9, ema_slow=21, ema_trend=50, rsi_oversold=30, rsi_overbought=75, st_period=10, st_mult=3.0, atr_sl_mult=1.5, atr_tp_mult=4.0, vol_filter=1.0, trailing_atr_mult=2.0</td>
+        </tr><tr>
+            <td>#4</td>
+            <td>70.6%</td>
+            <td>56.33%</td>
+            <td>3.85%</td>
+            <td>1.95</td>
+            <td>17</td>
+            <td>2.93</td>
+            <td>5.56</td>
+            <td class="params-cell">ema_fast=9, ema_slow=21, ema_trend=50, rsi_oversold=30, rsi_overbought=75, st_period=12, st_mult=3.0, atr_sl_mult=1.5, atr_tp_mult=4.0, vol_filter=1.0, trailing_atr_mult=2.0</td>
+        </tr><tr>
+            <td>#5</td>
+            <td>70.6%</td>
+            <td>56.33%</td>
+            <td>3.85%</td>
+            <td>1.95</td>
+            <td>17</td>
+            <td>2.93</td>
+            <td>5.56</td>
+            <td class="params-cell">ema_fast=9, ema_slow=21, ema_trend=50, rsi_oversold=35, rsi_overbought=70, st_period=10, st_mult=3.0, atr_sl_mult=1.5, atr_tp_mult=4.0, vol_filter=1.0, trailing_atr_mult=2.0</td>
+        </tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══ Trade Log ═══ -->
+<div class="card" style="margin-top:20px;">
+  <h2>📋 Trade Log (17 trades)</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr>
+        <th>#</th><th>Entry</th><th>Exit</th><th>Entry $</th><th>Exit $</th><th>Return</th><th>P&L</th><th>Bars</th><th>Exit Reason</th>
+      </tr></thead>
+      <tbody><tr class="loss">
+            <td>1</td>
+            <td>2015-04-27</td>
+            <td>2015-04-29</td>
+            <td>$29.52</td>
+            <td>$28.63</td>
+            <td>-3.04%</td>
+            <td>$-2,511.66</td>
+            <td>2</td>
+            <td>Stop Loss</td>
+        </tr><tr class="win">
+            <td>2</td>
+            <td>2016-07-27</td>
+            <td>2016-08-30</td>
+            <td>$23.48</td>
+            <td>$24.31</td>
+            <td>+3.52%</td>
+            <td>$+2,554.60</td>
+            <td>24</td>
+            <td>Trailing Stop</td>
+        </tr><tr class="win">
+            <td>3</td>
+            <td>2016-09-14</td>
+            <td>2016-10-27</td>
+            <td>$25.63</td>
+            <td>$26.25</td>
+            <td>+2.42%</td>
+            <td>$+1,823.91</td>
+            <td>31</td>
+            <td>Trailing Stop</td>
+        </tr><tr class="win">
+            <td>4</td>
+            <td>2016-12-09</td>
+            <td>2017-01-25</td>
+            <td>$26.27</td>
+            <td>$28.09</td>
+            <td>+6.96%</td>
+            <td>$+5,657.91</td>
+            <td>30</td>
+            <td>Take Profit</td>
+        </tr><tr class="win">
+            <td>5</td>
+            <td>2017-04-20</td>
+            <td>2017-05-05</td>
+            <td>$32.97</td>
+            <td>$34.48</td>
+            <td>+4.57%</td>
+            <td>$+4,917.71</td>
+            <td>11</td>
+            <td>Take Profit</td>
+        </tr><tr class="win">
+            <td>6</td>
+            <td>2017-08-01</td>
+            <td>2017-08-08</td>
+            <td>$34.88</td>
+            <td>$37.20</td>
+            <td>+6.66%</td>
+            <td>$+6,568.82</td>
+            <td>5</td>
+            <td>Take Profit</td>
+        </tr><tr class="loss">
+            <td>7</td>
+            <td>2017-09-11</td>
+            <td>2017-09-20</td>
+            <td>$37.68</td>
+            <td>$36.42</td>
+            <td>-3.35%</td>
+            <td>$-3,440.48</td>
+            <td>7</td>
+            <td>Stop Loss</td>
+        </tr><tr class="loss">
+            <td>8</td>
+            <td>2017-12-11</td>
+            <td>2017-12-26</td>
+            <td>$40.44</td>
+            <td>$39.94</td>
+            <td>-1.22%</td>
+            <td>$-1,144.75</td>
+            <td>10</td>
+            <td>Trailing Stop</td>
+        </tr><tr class="win">
+            <td>9</td>
+            <td>2018-01-03</td>
+            <td>2018-01-24</td>
+            <td>$40.33</td>
+            <td>$40.80</td>
+            <td>+1.15%</td>
+            <td>$+1,247.45</td>
+            <td>14</td>
+            <td>Trailing Stop</td>
+        </tr><tr class="win">
+            <td>10</td>
+            <td>2018-07-31</td>
+            <td>2018-08-01</td>
+            <td>$44.92</td>
+            <td>$47.57</td>
+            <td>+5.90%</td>
+            <td>$+6,231.33</td>
+            <td>1</td>
+            <td>Take Profit</td>
+        </tr><tr class="loss">
+            <td>11</td>
+            <td>2020-10-12</td>
+            <td>2020-10-19</td>
+            <td>$120.88</td>
+            <td>$112.70</td>
+            <td>-6.77%</td>
+            <td>$-3,206.56</td>
+            <td>5</td>
+            <td>Stop Loss</td>
+        </tr><tr class="win">
+            <td>12</td>
+            <td>2020-12-01</td>
+            <td>2020-12-28</td>
+            <td>$119.46</td>
+            <td>$133.07</td>
+            <td>+11.40%</td>
+            <td>$+6,820.11</td>
+            <td>18</td>
+            <td>Take Profit</td>
+        </tr><tr class="win">
+            <td>13</td>
+            <td>2021-06-17</td>
+            <td>2021-07-06</td>
+            <td>$128.70</td>
+            <td>$138.69</td>
+            <td>+7.76%</td>
+            <td>$+7,583.17</td>
+            <td>12</td>
+            <td>Take Profit</td>
+        </tr><tr class="win">
+            <td>14</td>
+            <td>2023-03-03</td>
+            <td>2023-03-31</td>
+            <td>$149.01</td>
+            <td>$162.70</td>
+            <td>+9.18%</td>
+            <td>$+7,088.31</td>
+            <td>20</td>
+            <td>Take Profit</td>
+        </tr><tr class="loss">
+            <td>15</td>
+            <td>2025-02-28</td>
+            <td>2025-03-06</td>
+            <td>$241.01</td>
+            <td>$234.53</td>
+            <td>-2.69%</td>
+            <td>$-2,062.55</td>
+            <td>4</td>
+            <td>EMA Cross Down</td>
+        </tr><tr class="win">
+            <td>16</td>
+            <td>2025-08-07</td>
+            <td>2025-09-04</td>
+            <td>$219.57</td>
+            <td>$239.55</td>
+            <td>+9.10%</td>
+            <td>$+7,432.56</td>
+            <td>19</td>
+            <td>Take Profit</td>
+        </tr><tr class="win">
+            <td>17</td>
+            <td>2025-09-11</td>
+            <td>2025-09-22</td>
+            <td>$229.81</td>
+            <td>$255.83</td>
+            <td>+11.32%</td>
+            <td>$+10,774.35</td>
+            <td>7</td>
+            <td>Take Profit</td>
+        </tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// Equity curve
+new Chart(document.getElementById('equityChart'), {
+  type: 'line',
+  data: {
+    labels: ["start", "2015-04-29", "2016-08-30", "2016-10-27", "2017-01-25", "2017-05-05", "2017-08-08", "2017-09-20", "2017-12-26", "2018-01-24", "2018-08-01", "2020-10-19", "2020-12-28", "2021-07-06", "2023-03-31", "2025-03-06", "2025-09-04", "2025-09-22"],
+    datasets: [{
+      label: 'Equity ($)',
+      data: [100000.0, 97488.34, 100042.94, 101866.85, 107524.76, 112442.47, 119011.29, 115570.81, 114426.06, 115673.51, 121904.84, 118698.28, 125518.39, 133101.56, 140189.87, 138127.32, 145559.88, 156334.23],
+      borderColor: '#38bdf8',
+      backgroundColor: 'rgba(56,189,248,0.1)',
+      fill: true,
+      tension: 0.3,
+      pointRadius: 0,
+      borderWidth: 2,
+    }]
+  },
+  options: {
+    responsive: true,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { display: true, ticks: { maxTicksLimit: 12, color: '#94a3b8', font: { size: 10 } }, grid: { color: '#1e293b' } },
+      y: { ticks: { color: '#94a3b8', callback: v => '$' + v.toLocaleString() }, grid: { color: '#1e293b' } }
+    }
+  }
+});
+
+// Exit reasons
+new Chart(document.getElementById('reasonChart'), {
+  type: 'doughnut',
+  data: {
+    labels: ["Stop Loss", "Trailing Stop", "Take Profit", "EMA Cross Down"],
+    datasets: [{
+      data: [3, 4, 9, 1],
+      backgroundColor: ['#22c55e','#38bdf8','#eab308','#ef4444','#a855f7','#f97316'],
+      borderColor: '#1e293b',
+      borderWidth: 2,
+    }]
+  },
+  options: {
+    responsive: true,
+    plugins: {
+      legend: { position: 'bottom', labels: { color: '#e2e8f0', padding: 12 } }
+    }
+  }
+});
+</script>
+
+<p style="text-align:center;color:var(--muted);margin-top:20px;font-size:0.75rem;">
+  Generated 2026-03-27 00:20 &nbsp;|&nbsp; No lookahead bias &nbsp;|&nbsp; Bar-by-bar simulation
+</p>
+</body>
+</html>

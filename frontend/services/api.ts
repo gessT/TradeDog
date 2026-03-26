@@ -376,3 +376,66 @@ export async function saveStockConfiguration(symbol: string, period: string): Pr
     throw new Error(detail || `Request failed with ${response.status}`);
   }
 }
+
+
+// ── Strategy Optimizer ──────────────────────────────────────────────
+
+export type StrategyTrade = {
+  entry_date: string;
+  exit_date: string;
+  entry_price: number;
+  exit_price: number;
+  pnl_pct: number;
+  pnl_dollar: number;
+  bars_held: number;
+  exit_reason: string;
+};
+
+export type StrategyMetrics = {
+  total_trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  avg_win_pct: number;
+  avg_loss_pct: number;
+  risk_reward: number;
+  sharpe: number;
+  profit_factor: number;
+  final_equity: number;
+  avg_bars_held: number;
+};
+
+export type StrategyTopResult = {
+  rank: number;
+  params: Record<string, number>;
+  metrics: StrategyMetrics;
+};
+
+export type StrategyResponse = {
+  symbol: string;
+  best_params: Record<string, number>;
+  metrics: StrategyMetrics;
+  trades: StrategyTrade[];
+  equity_curve: { date: string; equity: number }[];
+  top_results: StrategyTopResult[];
+};
+
+export async function runStrategyOptimizer(
+  symbol: string,
+  period: string = "5y",
+  capital: number = 100000,
+  start_year: number = 2015,
+): Promise<StrategyResponse> {
+  const response = await fetch(`${API_BASE}/backtest/strategy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol, period, capital, start_year }),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as StrategyResponse;
+}

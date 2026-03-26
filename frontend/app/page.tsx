@@ -1,41 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import BacktestTable from "../components/BacktestTable";
 import DataTable from "../components/DataTable";
-import MetricCards from "../components/MetricCards";
 import Navbar from "../components/Navbar";
 import NearATH from "../components/NearATH";
-import SignalPanel from "../components/SignalPanel";
 import SectorList from "../components/SectorList";
 import TopVolume from "../components/TopVolume";
+import StrategyPanel from "../components/StrategyPanel";
 import TVChart, { type TVChartHandle, type EmaConfig } from "../components/TVChart";
-import type { BuySignal, DemoPoint } from "../services/api";
+import type { DemoPoint } from "../services/api";
 import { fetchSectorChart } from "../services/api";
-import { useBacktest } from "../hooks/useBacktest";
 import { useStock } from "../hooks/useStock";
 
 
 export default function Page() {
-  const { symbol, setSymbol, period, setPeriod, stockName, rows, rawPoints, metrics, loading, error, refresh } = useStock("5248.KL");
-  const {
-    trades,
-    loading: backtestLoading,
-    running: backtestRunning,
-    resetting: backtestResetting,
-    error: backtestError,
-    summary,
-    params,
-    setParams,
-    loadTrades,
-    run,
-    reset,
-    resetPreferences,
-    markPrefsLoaded,
-  } = useBacktest(symbol, period);
+  const { symbol, setSymbol, period, setPeriod, stockName, rows, rawPoints, loading, error, refresh } = useStock("5248.KL");
 
   const chartRef = useRef<TVChartHandle>(null);
-  const [buySignals, setBuySignals] = useState<BuySignal[]>([]);
 
   // Sector chart overlay state
   const [sectorChartData, setSectorChartData] = useState<DemoPoint[] | null>(null);
@@ -78,121 +59,46 @@ export default function Page() {
     setSectorChartName("");
   }, []);
 
-  // Auto-run backtest when symbol changes (e.g. clicking TopVolume / NearATH)
-  const prevSymbolRef = useRef(symbol);
-  useEffect(() => {
-    if (prevSymbolRef.current !== symbol) {
-      prevSymbolRef.current = symbol;
-      run();
-    }
-  }, [symbol, run]);
-
-  function handleTradeClick(dateStr: string) {
-    chartRef.current?.goToDate(dateStr);
-  }
-
   return (
     <main className="h-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col">
       {/* ── Top navbar (sticky) ─────────── */}
       <Navbar symbol={symbol} period={period} onSymbolChange={setSymbol} onPeriodChange={setPeriod} onRefresh={refresh} loading={loading} />
 
       {/* ── Error banners ─────────── */}
-      {(error || backtestError) && (
+      {error && (
         <div className="px-4 md:px-6">
-          {error && (
-            <div className="mt-2 rounded-lg border border-rose-800 bg-rose-950/50 px-4 py-2 text-xs text-rose-200">{error}</div>
-          )}
-          {backtestError && (
-            <div className="mt-2 rounded-lg border border-rose-800 bg-rose-950/50 px-4 py-2 text-xs text-rose-200">{backtestError}</div>
-          )}
+          <div className="mt-2 rounded-lg border border-rose-800 bg-rose-950/50 px-4 py-2 text-xs text-rose-200">{error}</div>
         </div>
       )}
 
       {/* ── Main 3-column layout ─────────── */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* ── COL 1: Metrics + Panels (1/5) ─────────── */}
-        <aside className="w-full md:w-1/5 flex-shrink-0 overflow-y-auto border-r border-slate-800/60 bg-slate-900/40 p-4 space-y-3">
-          {/* Metric cards */}
-          <div className="grid gap-2 grid-cols-2">
-            <MetricCards metrics={metrics} />
-          </div>
-
-          {/* Backtest summary cards */}
-          {summary && (
-            <div>
-              <p className="mb-2 text-[10px] uppercase tracking-widest text-slate-500">Backtest Summary</p>
-              <div className="grid gap-2 grid-cols-2">
-                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-                  <p className="text-[10px] uppercase tracking-widest text-slate-500">Trades</p>
-                  <p className="mt-1 text-xl font-bold text-slate-100">{summary.count}</p>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-                  <p className="text-[10px] uppercase tracking-widest text-slate-500">Wins</p>
-                  <p className="mt-1 text-xl font-bold text-emerald-400">{summary.wins}<span className="ml-1 text-xs font-normal text-slate-400">/ {summary.count}</span></p>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-                  <p className="text-[10px] uppercase tracking-widest text-slate-500">Win Rate</p>
-                  <p className={`mt-1 text-xl font-bold ${summary.winRatePct >= 50 ? "text-emerald-400" : "text-rose-400"}`}>{summary.winRatePct.toFixed(1)}%</p>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-                  <p className="text-[10px] uppercase tracking-widest text-slate-500">Net PnL</p>
-                  <p className={`mt-1 text-xl font-bold ${summary.netPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>${summary.netPnl.toFixed(2)}</p>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-                  <p className="text-[10px] uppercase tracking-widest text-slate-500">Invested</p>
-                  <p className="mt-1 text-xl font-bold text-slate-100">${summary.totalInvested.toFixed(0)}</p>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-                  <p className="text-[10px] uppercase tracking-widest text-slate-500">ROI</p>
-                  <p className={`mt-1 text-xl font-bold ${summary.totalRoiPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{summary.totalRoiPct.toFixed(2)}%</p>
-                </div>
-              </div>
+        {/* ── COL 1: Discovery & Scanners (compact sidebar) ─────────── */}
+        <aside className="hidden md:flex md:w-1/3 flex-shrink-0 flex-col overflow-y-auto border-r border-slate-800/60 bg-slate-900/40">
+          {/* Scanners */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-3">
+            {/* Near ATH Board */}
+            <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-2.5">
+              <NearATH onSelectSymbol={setSymbol} />
             </div>
-          )}
 
-          {/* Near ATH Board */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-            <NearATH onSelectSymbol={setSymbol} />
-          </div>
+            {/* Special Volume Today */}
+            <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-2.5">
+              <TopVolume onSelectSymbol={setSymbol} />
+            </div>
 
-          {/* Special Volume Today */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-            <TopVolume onSelectSymbol={setSymbol} />
-          </div>
-
-          {/* Sector Momentum */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-            <SectorList onSelectSymbol={setSymbol} onSelectSector={handleSelectSector} />
-          </div>
-
-          {/* Signal */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-            <SignalPanel latest={rows.length ? rows[rows.length - 1] : null} />
+            {/* Sector Momentum */}
+            <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-2.5">
+              <SectorList onSelectSymbol={setSymbol} onSelectSector={handleSelectSector} />
+            </div>
           </div>
         </aside>
 
-        {/* ── COL 2: Backtest Controls + Results (2/5) ─────────── */}
-        <section className="w-full md:w-2/5 overflow-y-auto border-r border-slate-800/60 p-4 space-y-4">
-          <BacktestTable
-            symbol={symbol}
-            stockName={stockName}
-            trades={trades}
-            loading={backtestLoading}
-            running={backtestRunning}
-            resetting={backtestResetting}
-            params={params}
-            summary={summary}
-            error={backtestError}
-            onParamsChange={setParams}
-            onRun={run}
-            onReset={reset}
-            onReload={loadTrades}
-            onResetPreferences={resetPreferences}
-            onPrefsLoaded={markPrefsLoaded}
-            onTradeClick={handleTradeClick}
-            onSignalsChange={setBuySignals}
-          />
+        {/* ── COL 2: Strategy Workspace ─────────── */}
+        <section className="w-full md:w-1/3 overflow-y-auto border-r border-slate-800/60 p-4 space-y-3">
+          {/* Strategy Optimizer */}
+          <StrategyPanel symbol={symbol} period={period} />
 
           {/* Data History Table */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
@@ -208,7 +114,7 @@ export default function Page() {
         </section>
 
         {/* ── COL 3: TradingView-style Chart (2/5) ─────────── */}
-        <section className="hidden md:flex md:w-2/5 flex-col overflow-hidden">
+        <section className="hidden md:flex md:w-1/3 flex-col overflow-hidden">
           <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-800/60">
             {sectorChartData ? (
               <>
@@ -287,7 +193,7 @@ export default function Page() {
             {sectorChartData ? (
               <TVChart ref={chartRef} data={sectorChartData} trades={[]} buySignals={[]} buyConditions={[]} />
             ) : (
-              <TVChart ref={chartRef} data={rawPoints} trades={trades} buySignals={buySignals} buyConditions={params.buy_conditions} emaConfigs={emaConfigs} />
+              <TVChart ref={chartRef} data={rawPoints} trades={[]} buySignals={[]} buyConditions={[]} emaConfigs={emaConfigs} />
             )}
           </div>
         </section>
