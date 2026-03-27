@@ -389,6 +389,13 @@ export type StrategyTrade = {
   pnl_dollar: number;
   bars_held: number;
   exit_reason: string;
+  strategy: string;
+};
+
+export type StrategyBreakdownEntry = {
+  count: number;
+  wins: number;
+  pnl: number;
 };
 
 export type StrategyMetrics = {
@@ -405,6 +412,7 @@ export type StrategyMetrics = {
   profit_factor: number;
   final_equity: number;
   avg_bars_held: number;
+  strategy_breakdown?: Record<string, StrategyBreakdownEntry>;
 };
 
 export type StrategyTopResult = {
@@ -429,6 +437,24 @@ export async function runStrategyOptimizer(
   start_year: number = 2015,
 ): Promise<StrategyResponse> {
   const response = await fetch(`${API_BASE}/backtest/strategy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol, period, capital, start_year }),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as StrategyResponse;
+}
+
+export async function runStrategyOptimizerV1(
+  symbol: string,
+  period: string = "5y",
+  capital: number = 100000,
+  start_year: number = 2015,
+): Promise<StrategyResponse> {
+  const response = await fetch(`${API_BASE}/backtest/strategy/v1`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ symbol, period, capital, start_year }),

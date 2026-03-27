@@ -7,6 +7,7 @@ import NearATH from "../components/NearATH";
 import SectorList from "../components/SectorList";
 import TopVolume from "../components/TopVolume";
 import StrategyPanel from "../components/StrategyPanel";
+import StrategyPanelV1 from "../components/StrategyPanelV1";
 import TVChart, { type TVChartHandle, type EmaConfig } from "../components/TVChart";
 import type { DemoPoint } from "../services/api";
 import { fetchSectorChart } from "../services/api";
@@ -33,6 +34,7 @@ export default function Page() {
     { period: 200, color: "#ef4444", enabled: false },
   ]);
   const [showEmaPanel, setShowEmaPanel] = useState(false);
+  const [showHalfTrend, setShowHalfTrend] = useState(false);
 
   const toggleEma = useCallback((period: number) => {
     setEmaConfigs((prev) =>
@@ -97,8 +99,11 @@ export default function Page() {
 
         {/* ── COL 2: Strategy Workspace ─────────── */}
         <section className="w-full md:w-1/3 overflow-y-auto border-r border-slate-800/60 p-4 space-y-3">
-          {/* Strategy Optimizer */}
-          <StrategyPanel symbol={symbol} period={period} />
+          {/* Strategy Optimizer V1 */}
+          <StrategyPanelV1 symbol={symbol} period={period} onTradeClick={(d) => chartRef.current?.goToDate(d)} />
+
+          {/* Strategy Optimizer V2 */}
+          <StrategyPanel symbol={symbol} period={period} onTradeClick={(d) => chartRef.current?.goToDate(d)} />
 
           {/* Data History Table */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
@@ -134,6 +139,16 @@ export default function Page() {
 
                 {/* EMA toggle buttons */}
                 <div className="flex items-center gap-1 ml-3">
+                  <button
+                    onClick={() => setShowHalfTrend(!showHalfTrend)}
+                    className={`text-[10px] px-1.5 py-0.5 rounded border transition font-bold ${
+                      showHalfTrend
+                        ? "border-blue-500 bg-blue-900/30 text-blue-400"
+                        : "border-slate-700 text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    HT
+                  </button>
                   <button
                     onClick={() => setShowEmaPanel(!showEmaPanel)}
                     className={`text-[10px] px-1.5 py-0.5 rounded border transition ${
@@ -193,7 +208,7 @@ export default function Page() {
             {sectorChartData ? (
               <TVChart ref={chartRef} data={sectorChartData} trades={[]} buySignals={[]} buyConditions={[]} />
             ) : (
-              <TVChart ref={chartRef} data={rawPoints} trades={[]} buySignals={[]} buyConditions={[]} emaConfigs={emaConfigs} />
+              <TVChart ref={chartRef} data={rawPoints} trades={[]} buySignals={[]} buyConditions={[]} emaConfigs={emaConfigs} showHalfTrend={showHalfTrend} />
             )}
           </div>
         </section>

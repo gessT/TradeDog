@@ -131,7 +131,125 @@ export function ema(values: number[], window: number): number[] {
 }
 
 
-// ── Weekly Supertrend ────────────────────────────────────────────
+// ── HalfTrend Indicator ──────────────────────────────────────────
+
+export type HalfTrendPoint = {
+  value: number;
+  trend: 0 | 1; // 0 = uptrend (buy), 1 = downtrend (sell)
+};
+
+/**
+ * Compute the HalfTrend indicator from OHLC data.
+ * Pine Script port: amplitude controls highest/lowest lookback,
+ * channelDeviation controls ATR-based channel width.
+ */
+export function halfTrend(
+  bars: { high: number; low: number; close: number }[],
+  amplitude: number = 2,
+  channelDeviation: number = 2,
+): (HalfTrendPoint | null)[] {
+  const len = bars.length;
+  if (len < 2) return new Array(len).fill(null);
+
+  // ── ATR(100) via RMA ──
+  const atrPeriod = 100;
+  const tr: number[] = [bars[0].high - bars[0].low];
+  for (let i = 1; i < len; i++) {
+    const hl = bars[i].high - bars[i].low;
+    const hc = Math.abs(bars[i].high - bars[i - 1].close);
+    const lc = Math.abs(bars[i].low - bars[i - 1].close);
+    tr.push(Math.max(hl, hc, lc));
+  }
+  const atr: number[] = [tr[0]];
+  const alpha = 1 / atrPeriod;
+  for (let i = 1; i < len; i++) {
+    atr.push(alpha * tr[i] + (1 - alpha) * atr[i - 1]);
+  }
+
+  // ── SMA of highs and lows over amplitude ──
+  function smaArr(vals: number[], period: number): number[] {
+    const out: number[] = [];
+    let sum = 0;
+    for (let i = 0; i < vals.length; i++) {
+      sum += vals[i];
+      if (i >= period) sum -= vals[i - period];
+      out.push(i < period - 1 ? vals[i] : sum / period);
+    }
+    return out;
+  }
+  const highma = smaArr(bars.map((b) => b.high), amplitude);
+  const lowma = smaArr(bars.map((b) => b.low), amplitude);
+
+  // ── Highest high / Lowest low over amplitude window ──
+  function highest(vals: number[], period: number, idx: number): number {
+    let mx = -Infinity;
+    for (let j = Math.max(0, idx - period + 1); j <= idx; j++) mx = Math.max(mx, vals[j]);
+    return mx;
+  }
+  function lowest(vals: number[], period: number, idx: number): number {
+    let mn = Infinity;
+    for (let j = Math.max(0, idx - period + 1); j <= idx; j++) mn = Math.min(mn, vals[j]);
+    return mn;
+  }
+
+  const highs = bars.map((b) => b.high);
+  const lows = bars.map((b) => b.low);
+
+  // State variables
+  let trend = 0;         // 0 = up, 1 = down
+  let nextTrend = 0;
+  let maxLowPrice = lows[0];
+  let minHighPrice = highs[0];
+  let up = 0;
+  let down = 0;
+
+  const result: (HalfTrendPoint | null)[] = [];
+
+  for (let i = 0; i < len; i++) {
+    const atr2 = atr[i] / 2;
+    const dev = channelDeviation * atr2;
+    const highPrice = highest(highs, amplitude, i);
+    const lowPrice = lowest(lows, amplitude, i);
+
+    const prevTrend = trend;
+
+    // HalfTrend Logic
+    if (nextTrend === 1) {
+      maxLowPrice = Math.max(lowPrice, maxLowPrice);
+      if (highma[i] < maxLowPrice && bars[i].close < (i > 0 ? lows[i - 1] : lows[i])) {
+        trend = 1;
+        nextTrend = 0;
+        minHighPrice = highPrice;
+      }
+    } else {
+      minHighPrice = Math.min(highPrice, minHighPrice);
+      if (lowma[i] > minHighPrice && bars[i].close > (i > 0 ? highs[i - 1] : highs[i])) {
+        trend = 0;
+        nextTrend = 1;
+        maxLowPrice = lowPrice;
+      }
+    }
+
+    // Calculate HalfTrend value
+    if (trend === 0) {
+      if (prevTrend !== 0) {
+        up = down;
+      } else {
+        up = i === 0 ? maxLowPrice : Math.max(maxLowPrice, up);
+      }
+      result.push({ value: up, trend: 0 });
+    } else {
+      if (prevTrend !== 1) {
+        down = up;
+      } else {
+        down = i === 0 ? minHighPrice : Math.min(minHighPrice, down);
+      }
+      result.push({ value: down, trend: 1 });
+    }
+  }
+
+  return result;
+}
 
 type OHLCBar = { time: string; open: number; high: number; low: number; close: number };
 

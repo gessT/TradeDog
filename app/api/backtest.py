@@ -805,7 +805,7 @@ class StrategyRequest(BaseModel):
 @router.post("/strategy")
 async def run_strategy_optimizer(payload: StrategyRequest) -> dict[str, object]:
     """Run EMA+RSI+Supertrend+Volume strategy w/ grid-search optimization."""
-    from strategy_backtest import run_backtest as strat_backtest, optimize as strat_optimize, StrategyParams, equity_curve
+    from strategy_backtest_v2 import run_backtest as strat_backtest, optimize as strat_optimize, StrategyParams, equity_curve
 
     frame = await run_in_threadpool(fetch_stock, payload.symbol, payload.period)
     if "Close" not in frame.columns:
@@ -851,6 +851,88 @@ async def run_strategy_optimizer(payload: StrategyRequest) -> dict[str, object]:
 
     best_score, best_params, best_metrics, best_trades = top_results[0]
     curve = equity_curve(best_trades, payload.capital)
+
+    return {
+        "symbol": payload.symbol.upper(),
+        "best_params": best_params,
+        "metrics": best_metrics,
+        "trades": [
+            {
+                "entry_date": t.entry_date,
+                "exit_date": t.exit_date,
+                "entry_price": t.entry_price,
+                "exit_price": t.exit_price,
+                "pnl_pct": t.pnl_pct,
+                "pnl_dollar": t.pnl_dollar,
+                "bars_held": t.bars_held,
+                "exit_reason": t.exit_reason,
+                "strategy": t.strategy,
+            }
+            for t in best_trades
+        ],
+        "equity_curve": [{"date": c[0], "equity": c[1]} for c in curve],
+        "top_results": [
+            {
+                "rank": i + 1,
+                "params": kw,
+                "metrics": m,
+            }
+            for i, (score, kw, m, _) in enumerate(top_results)
+        ],
+    }
+
+
+# ── V1 Strategy Optimizer endpoint (single EMA+RSI+Supertrend) ──────
+
+@router.post("/strategy/v1")
+async def run_strategy_optimizer_v1(payload: StrategyRequest) -> dict[str, object]:
+    """Run V1 single EMA+RSI+Supertrend+Volume strategy w/ grid-search."""
+    from strategy_backtest import optimize as strat_optimize_v1, equity_curve as equity_curve_v1
+
+    frame = await run_in_threadpool(fetch_stock, payload.symbol, payload.period)
+    if "Close" not in frame.columns:
+        raise HTTPException(status_code=400, detail="No data for this symbol/period")
+
+    normalized = frame.copy()
+    if "Date" not in normalized.columns:
+        normalized = normalized.reset_index().rename(columns={"index": "Date"})
+    normalized["Date"] = pd.to_datetime(normalized["Date"], errors="coerce")
+    normalized = normalized.dropna(subset=["Date", "Close"]).reset_index(drop=True)
+
+    data = []
+    for _, row in normalized.iterrows():
+        try:
+            data.append({
+                "date": str(row["Date"])[:10],
+                "open": float(row.get("Open", row["Close"])),
+                "high": float(row.get("High", row["Close"])),
+                "low": float(row.get("Low", row["Close"])),
+                "close": float(row["Close"]),
+                "volume": float(row.get("Volume", 0)),
+            })
+        except (ValueError, TypeError):
+            continue
+
+    if len(data) < 100:
+        raise HTTPException(status_code=400, detail="Not enough data for V1 strategy optimization")
+
+    def _run():
+        return strat_optimize_v1(data, payload.capital, payload.start_year, top_n=5)
+
+    top_results = await run_in_threadpool(_run)
+
+    if not top_results:
+        return {
+            "symbol": payload.symbol.upper(),
+            "best_params": {},
+            "metrics": {},
+            "trades": [],
+            "equity_curve": [],
+            "top_results": [],
+        }
+
+    best_score, best_params, best_metrics, best_trades = top_results[0]
+    curve = equity_curve_v1(best_trades, payload.capital)
 
     return {
         "symbol": payload.symbol.upper(),

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { StrategyResponse } from "../services/api";
-import { runStrategyOptimizer } from "../services/api";
+import { runStrategyOptimizerV1 } from "../services/api";
 
 type Props = {
   symbol: string;
@@ -10,12 +10,11 @@ type Props = {
   onTradeClick?: (entryDate: string) => void;
 };
 
-/* Safe accessor — returns 0 for undefined/null */
 const n = (v: number | undefined | null) => v ?? 0;
 const fmt = (v: number | undefined | null, d = 2) => n(v).toFixed(d);
 const fmtK = (v: number | undefined | null) => n(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
-export default function StrategyPanel({ symbol, period, onTradeClick }: Props) {
+export default function StrategyPanelV1({ symbol, period, onTradeClick }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<StrategyResponse | null>(null);
@@ -28,7 +27,7 @@ export default function StrategyPanel({ symbol, period, onTradeClick }: Props) {
     setError(null);
     setResult(null);
     try {
-      const res = await runStrategyOptimizer(symbol, period);
+      const res = await runStrategyOptimizerV1(symbol, period);
       setResult(res);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Strategy run failed");
@@ -44,13 +43,13 @@ export default function StrategyPanel({ symbol, period, onTradeClick }: Props) {
     <div className="rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900/90 to-slate-900/60 overflow-hidden">
       {/* ── Header bar ── */}
       <div className="flex items-center gap-3 border-b border-slate-800/60 px-4 py-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-400 text-sm">⚡</div>
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400 text-sm">⚡</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <p className="text-[11px] font-bold uppercase tracking-widest text-cyan-400 leading-none">Strategy Optimizer</p>
-            <span className="rounded bg-cyan-500/20 px-1 py-[1px] text-[8px] font-extrabold tracking-wider text-cyan-300 border border-cyan-500/30">V2</span>
+            <p className="text-[11px] font-bold uppercase tracking-widest text-amber-400 leading-none">Strategy Optimizer</p>
+            <span className="rounded bg-amber-500/20 px-1 py-[1px] text-[8px] font-extrabold tracking-wider text-amber-300 border border-amber-500/30">V1</span>
           </div>
-          <p className="mt-0.5 text-[9px] text-slate-500 truncate">HalfTrend + EMA + RSI + Supertrend + MACD + BB · Multi-Signal · {symbol}</p>
+          <p className="mt-0.5 text-[9px] text-slate-500 truncate">EMA + RSI + Supertrend + Vol · Single Signal · {symbol}</p>
         </div>
         <button
           onClick={handleRun}
@@ -58,7 +57,7 @@ export default function StrategyPanel({ symbol, period, onTradeClick }: Props) {
           className={`shrink-0 rounded-lg px-3 py-1.5 text-[11px] font-bold transition-all ${
             loading
               ? "bg-slate-800 text-slate-500 cursor-wait"
-              : "bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95 shadow-md shadow-cyan-900/40"
+              : "bg-amber-600 text-white hover:bg-amber-500 active:scale-95 shadow-md shadow-amber-900/40"
           }`}
         >
           {loading ? (
@@ -126,47 +125,6 @@ export default function StrategyPanel({ symbol, period, onTradeClick }: Props) {
             <MiniStat label="Avg Bars" value={`${fmt(m.avg_bars_held, 0)}`} />
           </div>
 
-          {/* ── Strategy Breakdown ── */}
-          {m.strategy_breakdown && Object.keys(m.strategy_breakdown).length > 0 && (
-            <div>
-              <p className="mb-1 text-[9px] uppercase tracking-widest text-slate-600">Strategy Breakdown</p>
-              <div className="overflow-x-auto rounded-lg border border-slate-800/40">
-                <table className="w-full text-[10px]">
-                  <thead>
-                    <tr className="border-b border-slate-800 bg-slate-950/60 text-left text-slate-500">
-                      <th className="px-2 py-1.5">Strategy</th>
-                      <th className="px-2 py-1.5 text-right">Trades</th>
-                      <th className="px-2 py-1.5 text-right">Wins</th>
-                      <th className="px-2 py-1.5 text-right">Win Rate</th>
-                      <th className="px-2 py-1.5 text-right">P&L</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(m.strategy_breakdown)
-                      .sort((a, b) => b[1].pnl - a[1].pnl)
-                      .map(([name, s]) => {
-                        const wr = s.count > 0 ? (s.wins / s.count) * 100 : 0;
-                        const win = s.pnl >= 0;
-                        return (
-                          <tr key={name} className="border-b border-slate-800/30 hover:bg-slate-800/20">
-                            <td className="px-2 py-1 font-semibold text-cyan-300">{name}</td>
-                            <td className="px-2 py-1 text-right text-slate-300">{s.count}</td>
-                            <td className="px-2 py-1 text-right text-slate-300">{s.wins}</td>
-                            <td className={`px-2 py-1 text-right font-semibold ${wr >= 60 ? "text-emerald-400" : wr >= 50 ? "text-amber-400" : "text-rose-400"}`}>
-                              {wr.toFixed(1)}%
-                            </td>
-                            <td className={`px-2 py-1 text-right font-semibold ${win ? "text-emerald-400" : "text-rose-400"}`}>
-                              {win ? "+" : ""}${n(s.pnl).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
           {/* ── Equity curve sparkline ── */}
           {result.equity_curve.length > 2 && (
             <div>
@@ -208,7 +166,7 @@ export default function StrategyPanel({ symbol, period, onTradeClick }: Props) {
                 {Object.entries(result.best_params).map(([k, v]) => (
                   <span key={k} className="inline-flex items-center gap-1 rounded border border-slate-800/60 bg-slate-950/50 px-1.5 py-0.5 text-[10px]">
                     <span className="text-slate-500">{fmtParamShort(k)}</span>
-                    <span className="font-mono font-semibold text-cyan-300">{v}</span>
+                    <span className="font-mono font-semibold text-amber-300">{v}</span>
                   </span>
                 ))}
               </div>
@@ -251,7 +209,7 @@ export default function StrategyPanel({ symbol, period, onTradeClick }: Props) {
                 <tbody>
                   {result.top_results.map((r) => (
                     <tr key={r.rank} className="border-b border-slate-800/30 hover:bg-slate-800/20">
-                      <td className="px-2 py-1 font-bold text-cyan-400">#{r.rank}</td>
+                      <td className="px-2 py-1 font-bold text-amber-400">#{r.rank}</td>
                       <td className={`px-2 py-1 ${n(r.metrics.win_rate) >= 60 ? "text-emerald-400" : "text-slate-300"}`}>{fmt(r.metrics.win_rate, 1)}%</td>
                       <td className={`px-2 py-1 ${n(r.metrics.total_return_pct) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{fmt(r.metrics.total_return_pct, 1)}%</td>
                       <td className="px-2 py-1 text-rose-400">{fmt(r.metrics.max_drawdown_pct, 1)}%</td>
@@ -272,7 +230,6 @@ export default function StrategyPanel({ symbol, period, onTradeClick }: Props) {
                 <thead className="sticky top-0 bg-slate-900/95 backdrop-blur">
                   <tr className="border-b border-slate-800 text-left text-slate-500">
                     <th className="px-2 py-1.5">#</th>
-                    <th className="px-2 py-1.5">Strategy</th>
                     <th className="px-2 py-1.5">Entry</th>
                     <th className="px-2 py-1.5">Exit</th>
                     <th className="px-2 py-1.5 text-right">Entry $</th>
@@ -293,12 +250,11 @@ export default function StrategyPanel({ symbol, period, onTradeClick }: Props) {
                         onClick={() => { setSelectedTradeIdx(i); onTradeClick?.(t.entry_date); }}
                         className={`border-b cursor-pointer transition-colors ${
                           selected
-                            ? "border-cyan-500 bg-cyan-950/30 ring-1 ring-inset ring-cyan-500/50"
+                            ? "border-amber-500 bg-amber-950/30 ring-1 ring-inset ring-amber-500/50"
                             : `border-slate-800/30 hover:bg-slate-800/20 ${win ? "" : "bg-rose-950/10"}`
                         }`}
                       >
                         <td className="px-2 py-1 text-slate-600">{i + 1}</td>
-                        <td className="px-2 py-1 text-cyan-300 truncate max-w-[80px]" title={t.strategy}>{t.strategy}</td>
                         <td className="px-2 py-1 font-mono text-slate-300">{t.entry_date}</td>
                         <td className="px-2 py-1 font-mono text-slate-300">{t.exit_date}</td>
                         <td className="px-2 py-1 text-right">${n(t.entry_price).toFixed(2)}</td>

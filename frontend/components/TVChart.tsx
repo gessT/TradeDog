@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers, type IChartApi, type ISeriesApi, type CandlestickData, type UTCTimestamp, type SeriesMarker } from "lightweight-charts";
 import type { DemoPoint, BacktestTradeRow, BuySignal } from "../services/api";
-import { weeklySupertrend, ema } from "../utils/indicators";
+import { weeklySupertrend, ema, halfTrend } from "../utils/indicators";
 
 export type TVChartHandle = {
   goToDate: (dateStr: string) => void;
@@ -21,9 +21,10 @@ type TVChartProps = {
   buySignals?: BuySignal[];
   buyConditions?: string[];
   emaConfigs?: EmaConfig[];
+  showHalfTrend?: boolean;
 };
 
-const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data, trades, buySignals = [], buyConditions = [], emaConfigs = [] }, ref) {
+const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data, trades, buySignals = [], buyConditions = [], emaConfigs = [], showHalfTrend = false }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -249,6 +250,40 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data,
       }
     }
 
+    // ── HalfTrend overlay (computed from OHLC) ──
+    if (showHalfTrend) {
+      const ohlcForHT = sorted
+        .filter((p) => p.open != null && p.high != null && p.low != null)
+        .map((p) => ({ high: p.high!, low: p.low!, close: p.price }));
+
+      if (ohlcForHT.length > 10) {
+        const htResults = halfTrend(ohlcForHT, 2, 2);
+        const filteredSorted = sorted.filter((p) => p.open != null && p.high != null && p.low != null);
+
+        const htLineData: { time: UTCTimestamp; value: number; color: string }[] = [];
+        for (let i = 0; i < filteredSorted.length; i++) {
+          const ht = htResults[i];
+          if (!ht) continue;
+          const ts = Math.floor(new Date(filteredSorted[i].time).getTime() / 1000) as UTCTimestamp;
+          if (!seenTs.has(ts as number)) continue;
+          htLineData.push({
+            time: ts,
+            value: ht.value,
+            color: ht.trend === 0 ? "#3b82f6" : "#ef4444", // blue=up, red=down
+          });
+        }
+        if (htLineData.length > 0) {
+          const htSeries = chart.addSeries(LineSeries, {
+            lineWidth: 2,
+            priceScaleId: "right",
+            lastValueVisible: false,
+            priceLineVisible: false,
+          });
+          htSeries.setData(htLineData);
+        }
+      }
+    }
+
     // Add buy/sell markers from trades
     if (trades.length > 0) {
       const markers: SeriesMarker<UTCTimestamp>[] = [];
@@ -320,7 +355,7 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data,
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, trades, buySignals, buyConditions, emaConfigs]);
+  }, [data, trades, buySignals, buyConditions, emaConfigs, showHalfTrend]);
 
   return (
     <div ref={containerRef} className="w-full h-full" />
