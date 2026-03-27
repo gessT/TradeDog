@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import math
+import math 
 
 from fastapi import APIRouter, Query
 from fastapi.concurrency import run_in_threadpool
