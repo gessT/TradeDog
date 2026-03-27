@@ -570,3 +570,41 @@ export async function fetchMGCBacktest(
   }
   return (await response.json()) as MGCBacktestResponse;
 }
+
+
+// ── MGC Live Real-Time Data ─────────────────────────────────────────
+
+export type MGCLiveCandle = {
+  time: number;  // epoch ms
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+export type MGCLiveResponse = {
+  symbol: string;
+  identifier: string;
+  interval: string;
+  candles: MGCLiveCandle[];
+  ema_fast: (number | null)[];
+  ema_slow: (number | null)[];
+  rsi: (number | null)[];
+  signals: number[];
+  current_price: number;
+  timestamp: string;
+};
+
+export async function fetchMGCLive(
+  interval: string = "15m",
+  limit: number = 500,
+): Promise<MGCLiveResponse> {
+  const url = `${API_BASE}/mgc/live?interval=${encodeURIComponent(interval)}&limit=${limit}`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as MGCLiveResponse;
+}

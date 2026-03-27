@@ -16,6 +16,7 @@ import {
   type MGCBacktestResponse,
   type MGCTrade,
 } from "../services/api";
+import MGCLiveChart from "./MGCLiveChart";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Helpers
@@ -232,6 +233,7 @@ function MGCChart({ data }: Readonly<{ data: MGCBacktestResponse }>) {
 // ═══════════════════════════════════════════════════════════════════════
 
 export default function MGCDashboard() {
+  const [tab, setTab] = useState<"live" | "backtest">("live");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<MGCBacktestResponse | null>(null);
@@ -272,56 +274,77 @@ export default function MGCDashboard() {
           <span className="text-sm font-bold text-amber-400 tracking-wide">MGC MICRO GOLD</span>
         </div>
 
-        {/* Interval selector */}
-        <div className="flex gap-1 ml-2">
-          {["5m", "15m", "1h", "1d"].map((iv) => (
-            <button
-              key={iv}
-              onClick={() => setChartInterval(iv)}
-              className={`px-2 py-0.5 text-[10px] font-bold rounded ${
-                chartInterval === iv ? "bg-amber-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"
-              }`}
-            >{iv}</button>
-          ))}
+        {/* Tab: Live / Backtest */}
+        <div className="flex gap-0.5 ml-2 rounded-md overflow-hidden border border-slate-700">
+          <button
+            onClick={() => setTab("live")}
+            className={`px-3 py-1 text-[10px] font-bold transition ${
+              tab === "live" ? "bg-emerald-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"
+            }`}
+          >📡 LIVE</button>
+          <button
+            onClick={() => setTab("backtest")}
+            className={`px-3 py-1 text-[10px] font-bold transition ${
+              tab === "backtest" ? "bg-amber-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"
+            }`}
+          >⚡ BACKTEST</button>
         </div>
 
-        {/* Period selector */}
-        <div className="flex gap-1">
-          {["7d", "30d", "60d"].map((p) => (
+        {/* Backtest controls (only show in backtest tab) */}
+        {tab === "backtest" && (
+          <>
+            {/* Interval selector */}
+            <div className="flex gap-1 ml-2">
+              {["5m", "15m", "1h", "1d"].map((iv) => (
+                <button
+                  key={iv}
+                  onClick={() => setChartInterval(iv)}
+                  className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+                    chartInterval === iv ? "bg-amber-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"
+                  }`}
+                >{iv}</button>
+              ))}
+            </div>
+
+            {/* Period selector */}
+            <div className="flex gap-1">
+              {["7d", "30d", "60d"].map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setPeriod(p)}
+                  className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+                    period === p ? "bg-cyan-700 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"
+                  }`}
+                >{p}</button>
+              ))}
+            </div>
+
+            {/* Run button */}
             <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              className={`px-2 py-0.5 text-[10px] font-bold rounded ${
-                period === p ? "bg-cyan-700 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"
+              onClick={load}
+              disabled={loading}
+              className={`ml-auto px-3 py-1 text-[11px] font-bold rounded-lg transition-all ${
+                loading
+                  ? "bg-slate-800 text-slate-500 cursor-wait"
+                  : "bg-amber-600 text-white hover:bg-amber-500 active:scale-95 shadow-md shadow-amber-900/40"
               }`}
-            >{p}</button>
-          ))}
-        </div>
+            >
+              {loading ? "Running…" : "⚡ Run Backtest"}
+            </button>
 
-        {/* Run button */}
-        <button
-          onClick={load}
-          disabled={loading}
-          className={`ml-auto px-3 py-1 text-[11px] font-bold rounded-lg transition-all ${
-            loading
-              ? "bg-slate-800 text-slate-500 cursor-wait"
-              : "bg-amber-600 text-white hover:bg-amber-500 active:scale-95 shadow-md shadow-amber-900/40"
-          }`}
-        >
-          {loading ? "Running…" : "⚡ Run Backtest"}
-        </button>
-
-        {/* Auto-refresh toggle */}
-        <button
-          onClick={() => setAutoRefresh((v) => !v)}
-          className={`px-2 py-1 text-[10px] font-bold rounded-lg border ${
-            autoRefresh
-              ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
-              : "border-slate-700 bg-slate-800 text-slate-500 hover:text-slate-300"
-          }`}
-        >
-          {autoRefresh ? "🔴 LIVE" : "○ Live"}
-        </button>
+            {/* Auto-refresh toggle */}
+            <button
+              onClick={() => setAutoRefresh((v) => !v)}
+              className={`px-2 py-1 text-[10px] font-bold rounded-lg border ${
+                autoRefresh
+                  ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
+                  : "border-slate-700 bg-slate-800 text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              {autoRefresh ? "🔴 LIVE" : "○ Live"}
+            </button>
+          </>
+        )}
       </div>
 
       {/* ── Error ─────────────────────────────────────── */}
@@ -329,6 +352,16 @@ export default function MGCDashboard() {
         <div className="mx-4 mt-2 rounded-lg border border-rose-800/60 bg-rose-950/30 px-3 py-2 text-[11px] text-rose-300">{error}</div>
       )}
 
+      {/* ── LIVE tab ──────────────────────────────────── */}
+      {tab === "live" && (
+        <div className="flex-1 overflow-hidden">
+          <MGCLiveChart />
+        </div>
+      )}
+
+      {/* ── BACKTEST tab ──────────────────────────────── */}
+      {tab === "backtest" && (
+        <>
       {/* ── Idle state ────────────────────────────────── */}
       {!data && !loading && !error && (
         <div className="flex-1 flex items-center justify-center">
@@ -407,6 +440,8 @@ export default function MGCDashboard() {
             <span className="ml-auto">{data.timestamp}</span>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );
