@@ -3,7 +3,7 @@ from fastapi import Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api import backtest, demo, signal, stock, webhook, ws
+from app.api import backtest, demo, mgc, signal, stock, webhook, ws
 from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.core.logger import configure_logging, render_metrics, track
@@ -56,6 +56,7 @@ app.include_router(webhook.router, prefix="/webhook")
 app.include_router(ws.router)
 app.include_router(demo.router)
 app.include_router(backtest.router)
+app.include_router(mgc.router, prefix="/mgc")
 
 
 @app.get("/")

@@ -502,3 +502,71 @@ export async function fetchDailyScan(top: number = 6): Promise<DailyScanResponse
   }
   return (await response.json()) as DailyScanResponse;
 }
+
+
+// ── MGC Micro Gold Futures Trading ───────────────────────────────────
+
+export type MGCCandle = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  ema_fast: number | null;
+  ema_slow: number | null;
+  rsi: number | null;
+  signal: number;
+};
+
+export type MGCTrade = {
+  entry_time: string;
+  exit_time: string;
+  entry_price: number;
+  exit_price: number;
+  qty: number;
+  pnl: number;
+  pnl_pct: number;
+  reason: string;
+};
+
+export type MGCMetrics = {
+  initial_capital: number;
+  final_equity: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  total_trades: number;
+  winners: number;
+  losers: number;
+  win_rate: number;
+  avg_win: number;
+  avg_loss: number;
+  profit_factor: number;
+  risk_reward_ratio: number;
+};
+
+export type MGCBacktestResponse = {
+  symbol: string;
+  interval: string;
+  period: string;
+  candles: MGCCandle[];
+  trades: MGCTrade[];
+  equity_curve: number[];
+  metrics: MGCMetrics;
+  params: Record<string, unknown>;
+  timestamp: string;
+};
+
+export async function fetchMGCBacktest(
+  interval: string = "15m",
+  period: string = "60d",
+): Promise<MGCBacktestResponse> {
+  const url = `${API_BASE}/mgc/backtest?interval=${encodeURIComponent(interval)}&period=${encodeURIComponent(period)}`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as MGCBacktestResponse;
+}

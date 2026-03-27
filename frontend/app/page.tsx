@@ -7,6 +7,7 @@ import NearATH from "../components/NearATH";
 import SectorList from "../components/SectorList";
 import TopVolume from "../components/TopVolume";
 import DailyScanner from "../components/DailyScanner";
+import MGCDashboard from "../components/MGCDashboard";
 import StrategyPanel from "../components/StrategyPanel";
 import StrategyPanelV1 from "../components/StrategyPanelV1";
 import TVChart, { type TVChartHandle, type EmaConfig } from "../components/TVChart";
@@ -16,6 +17,7 @@ import { useStock } from "../hooks/useStock";
 
 
 export default function Page() {
+  const [mode, setMode] = useState<"KLSE" | "MGC">("KLSE");
   const { symbol, setSymbol, period, setPeriod, stockName, rows, rawPoints, loading, error, refresh } = useStock("5248.KL");
 
   const chartRef = useRef<TVChartHandle>(null);
@@ -65,6 +67,30 @@ export default function Page() {
   return (
     <main className="h-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col">
       {/* ── Top navbar (sticky) ─────────── */}
+      {/* ── Mode toggle ─────────── */}
+      <div className="flex items-center border-b border-slate-800/60 bg-slate-900/60">
+        <button
+          onClick={() => setMode("KLSE")}
+          className={`px-4 py-1.5 text-[11px] font-bold tracking-wide transition-colors ${
+            mode === "KLSE" ? "text-cyan-400 border-b-2 border-cyan-400 bg-cyan-500/5" : "text-slate-500 hover:text-slate-300"
+          }`}
+        >
+          🇲🇾 KLSE Stocks
+        </button>
+        <button
+          onClick={() => setMode("MGC")}
+          className={`px-4 py-1.5 text-[11px] font-bold tracking-wide transition-colors ${
+            mode === "MGC" ? "text-amber-400 border-b-2 border-amber-400 bg-amber-500/5" : "text-slate-500 hover:text-slate-300"
+          }`}
+        >
+          🥇 MGC Gold Futures
+        </button>
+      </div>
+
+      {mode === "MGC" ? (
+        <MGCDashboard />
+      ) : (
+        <>
       <Navbar symbol={symbol} period={period} onSymbolChange={setSymbol} onPeriodChange={setPeriod} onRefresh={refresh} loading={loading} />
 
       {/* ── Error banners ─────────── */}
@@ -218,6 +244,8 @@ export default function Page() {
         </section>
 
       </div>
+        </>
+      )}
     </main>
   );
 }
