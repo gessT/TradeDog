@@ -268,7 +268,7 @@ class TigerTrader:
         today = str(date.today())
         self._daily_trades[today] = self._daily_trades.get(today, 0) + 1
 
-    # ── Bracket order (entry + SL + TP) ─────────────────────────────
+    # ── Bracket order (entry + OCA SL/TP) ─────────────────────────
     def place_bracket_order(
         self,
         symbol: str,
@@ -277,12 +277,9 @@ class TigerTrader:
         stop_loss_price: float | None = None,
         take_profit_price: float | None = None,
     ) -> BracketResult:
-        """Place a market entry order, then attach stop-loss and take-profit.
+        """Place a market entry order, then an OCA order for SL + TP.
 
-        Strategy:
-          1. Market order for entry
-          2. Stop order (opposite side) for SL
-          3. Limit order (opposite side) for TP
+        OCA (One-Cancels-All): when SL fills → TP auto-cancelled, and vice versa.
         """
         result = BracketResult()
         close_side = "SELL" if side == "BUY" else "BUY"
@@ -293,84 +290,74 @@ class TigerTrader:
         if not entry or entry.status == "FAILED":
             return result
 
-        # Need real Tiger client for SL/TP orders
-        if self._client is None:
-            # Paper mode — log SL/TP
-            if stop_loss_price:
-                sl_rec = OrderRecord(
-                    timestamp=time.time(), symbol=symbol, side=close_side,
-                    qty=qty, price=stop_loss_price,
-                    order_id=f"PAPER-SL-{int(time.time())}", status="SL_PLACED_PAPER",
-                )
-                logger.info("📝 PAPER SL %s ×%d @ %.2f", close_side, qty, stop_loss_price)
-                result.stop_loss = sl_rec
-            if take_profit_price:
-                tp_rec = OrderRecord(
-                    timestamp=time.time(), symbol=symbol, side=close_side,
-                    qty=qty, price=take_profit_price,
-                    order_id=f"PAPER-TP-{int(time.time())}", status="TP_PLACED_PAPER",
-                )
-                logger.info("📝 PAPER TP %s ×%d @ %.2f", close_side, qty, take_profit_price)
-                result.take_profit = tp_rec
+        # Need both SL and TP for OCA
+        if not stop_loss_price or not take_profit_price:
+            logger.warning("OCA requires both SL and TP prices")
             return result
 
-        # Real Tiger execution for SL/TP
-        from tigeropen.common.util.order_utils import stop_order, limit_order
+        # Round to MGC tick size ($0.10)
+        stop_loss_price = round(round(stop_loss_price / 0.1) * 0.1, 1)
+        take_profit_price = round(round(take_profit_price / 0.1) * 0.1, 1)
+
+        # Paper mode
+        if self._client is None:
+            sl_rec = OrderRecord(
+                timestamp=time.time(), symbol=symbol, side=close_side,
+                qty=qty, price=stop_loss_price,
+                order_id=f"PAPER-SL-{int(time.time())}", status="SL_PLACED_PAPER",
+            )
+            tp_rec = OrderRecord(
+                timestamp=time.time(), symbol=symbol, side=close_side,
+                qty=qty, price=take_profit_price,
+                order_id=f"PAPER-TP-{int(time.time())}", status="TP_PLACED_PAPER",
+            )
+            logger.info("📝 PAPER OCA  SL %s ×%d @ %.2f  |  TP @ %.2f",
+                        close_side, qty, stop_loss_price, take_profit_price)
+            result.stop_loss = sl_rec
+            result.take_profit = tp_rec
+            return result
+
+        # Real Tiger: OCA order (one cancels the other)
+        from tigeropen.common.util.order_utils import oca_order, order_leg
 
         try:
             contracts = self._client.get_contracts(symbol, sec_type="FUT")
             if not contracts:
-                logger.error("No contract found for %s (SL/TP)", symbol)
+                logger.error("No contract found for %s (OCA)", symbol)
                 return result
             contract = contracts[0]
             contract.expiry = None
 
-            # 2. Stop-Loss order
-            if stop_loss_price:
-                try:
-                    sl_order = stop_order(
-                        account=self.account,
-                        contract=contract,
-                        action=close_side,
-                        quantity=qty,
-                        aux_price=stop_loss_price,
-                        time_in_force="DAY",
-                    )
-                    sl_id = self._client.place_order(sl_order)
-                    sl_rec = OrderRecord(
-                        timestamp=time.time(), symbol=symbol, side=close_side,
-                        qty=qty, price=stop_loss_price,
-                        order_id=str(sl_id), status="SL_SUBMITTED",
-                    )
-                    logger.info("🛑 SL ORDER %s ×%d @ %.2f → %s", close_side, qty, stop_loss_price, sl_rec.order_id)
-                    result.stop_loss = sl_rec
-                except Exception:
-                    logger.exception("Failed to place SL order")
+            sl_leg = order_leg("STP", price=stop_loss_price, time_in_force="DAY")
+            tp_leg = order_leg("LMT", limit_price=take_profit_price, time_in_force="DAY")
 
-            # 3. Take-Profit order
-            if take_profit_price:
-                try:
-                    tp_order = limit_order(
-                        account=self.account,
-                        contract=contract,
-                        action=close_side,
-                        quantity=qty,
-                        limit_price=take_profit_price,
-                        time_in_force="DAY",
-                    )
-                    tp_id = self._client.place_order(tp_order)
-                    tp_rec = OrderRecord(
-                        timestamp=time.time(), symbol=symbol, side=close_side,
-                        qty=qty, price=take_profit_price,
-                        order_id=str(tp_id), status="TP_SUBMITTED",
-                    )
-                    logger.info("🎯 TP ORDER %s ×%d @ %.2f → %s", close_side, qty, take_profit_price, tp_rec.order_id)
-                    result.take_profit = tp_rec
-                except Exception:
-                    logger.exception("Failed to place TP order")
+            oca = oca_order(
+                account=self.account,
+                contract=contract,
+                action=close_side,
+                order_legs=[sl_leg, tp_leg],
+                quantity=qty,
+            )
+            oca_id = self._client.place_order(oca)
+            oca_id_str = str(oca_id)
+
+            sl_rec = OrderRecord(
+                timestamp=time.time(), symbol=symbol, side=close_side,
+                qty=qty, price=stop_loss_price,
+                order_id=oca_id_str, status="OCA_SUBMITTED",
+            )
+            tp_rec = OrderRecord(
+                timestamp=time.time(), symbol=symbol, side=close_side,
+                qty=qty, price=take_profit_price,
+                order_id=oca_id_str, status="OCA_SUBMITTED",
+            )
+            result.stop_loss = sl_rec
+            result.take_profit = tp_rec
+            logger.info("🔄 OCA ORDER %s ×%d  SL @ %.2f | TP @ %.2f → %s",
+                        close_side, qty, stop_loss_price, take_profit_price, oca_id_str)
 
         except Exception:
-            logger.exception("Failed to get contract for SL/TP orders")
+            logger.exception("Failed to place OCA order")
 
         return result
 
