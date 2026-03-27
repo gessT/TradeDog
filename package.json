@@ -4,9 +4,9 @@
   "private": true,
   "description": "Scripts to run the Python trading backend with npm",
   "scripts": {
-    "setup": ".\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt",
-    "check": ".\\.venv\\Scripts\\python.exe -c \"from app.main import app; print(app.title)\"",
-    "dev": ".\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload",
+    "setup": "${PYTHON:-python3} -m pip install -r requirements.txt",
+    "check": "${PYTHON:-python3} -c \"from app.main import app; print(app.title)\"",
+    "dev": "${PYTHON:-python3} -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload",
     "dev:front": "npm --prefix frontend run dev",
     "build:front": "npm --prefix frontend run build",
     "dev:all": "start \"backend\" cmd /c npm run dev && start \"frontend\" cmd /c npm run dev:front"
