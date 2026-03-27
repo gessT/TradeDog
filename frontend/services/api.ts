@@ -608,3 +608,74 @@ export async function fetchMGCLive(
   }
   return (await response.json()) as MGCLiveResponse;
 }
+
+
+// ── MGC Scan Trade (One-Click) ──────────────────────────────────────
+
+export type ScanSignal = {
+  found: boolean;
+  symbol: string;
+  identifier: string;
+  entry_price: number;
+  stop_loss: number;
+  take_profit: number;
+  risk_reward: number;
+  qty: number;
+  signal_type: string;
+  strength: number;
+  strength_detail: Record<string, { pts: number; [k: string]: unknown }>;
+  rsi: number;
+  atr: number;
+  ema_fast: number;
+  ema_slow: number;
+  volume_ratio: number;
+  bar_time: string;
+};
+
+export type BacktestCheck = {
+  passed: boolean;
+  win_rate: number;
+  risk_reward: number;
+  total_trades: number;
+  profit_factor: number;
+  total_return_pct: number;
+  reason: string;
+};
+
+export type ExecutionResult = {
+  executed: boolean;
+  order_id: string;
+  side: string;
+  qty: number;
+  status: string;
+  reason: string;
+};
+
+export type ScanTradeResponse = {
+  opportunity: boolean;
+  signal: ScanSignal | null;
+  backtest: BacktestCheck | null;
+  execution: ExecutionResult | null;
+  risk_check: Record<string, number>;
+  timestamp: string;
+};
+
+export async function scanTrade(
+  autoExecute: boolean = false,
+  interval: string = "5m",
+): Promise<ScanTradeResponse> {
+  const response = await fetch(`${API_BASE}/mgc/scan_trade`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      auto_execute: autoExecute,
+      interval,
+      symbols: ["MGC"],
+    }),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Scan failed with ${response.status}`);
+  }
+  return (await response.json()) as ScanTradeResponse;
+}

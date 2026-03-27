@@ -341,3 +341,311 @@ async def mgc_live(
         current_price=round(price, 2),
         timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Scan Trade — One-Click Scan + Auto-Execute
+# ═══════════════════════════════════════════════════════════════════════
+
+class ScanSignal(BaseModel):
+    """A detected trading opportunity."""
+    found: bool
+    symbol: str
+    identifier: str
+    entry_price: float
+    stop_loss: float
+    take_profit: float
+    risk_reward: float
+    qty: int
+    signal_type: str        # "PULLBACK" / "BREAKOUT"
+    strength: int           # 1-10
+    strength_detail: dict   # breakdown of scoring
+    rsi: float
+    atr: float
+    ema_fast: float
+    ema_slow: float
+    volume_ratio: float
+    bar_time: str
+
+
+class BacktestCheck(BaseModel):
+    """Quick backtest validation result."""
+    passed: bool
+    win_rate: float
+    risk_reward: float
+    total_trades: int
+    profit_factor: float
+    total_return_pct: float
+    reason: str  # why passed/failed
+
+
+class ExecutionResult(BaseModel):
+    """Order execution result."""
+    executed: bool
+    order_id: str
+    side: str
+    qty: int
+    status: str
+    reason: str
+
+
+class ScanTradeResponse(BaseModel):
+    """Full response from /scan_trade endpoint."""
+    opportunity: bool
+    signal: Optional[ScanSignal]
+    backtest: Optional[BacktestCheck]
+    execution: Optional[ExecutionResult]
+    risk_check: dict
+    timestamp: str
+
+
+class ScanTradeRequest(BaseModel):
+    """Request body for /scan_trade endpoint."""
+    auto_execute: bool = False
+    interval: str = "5m"
+    symbols: list[str] = ["MGC"]
+
+
+@router.post("/scan_trade")
+async def scan_trade(req: ScanTradeRequest) -> ScanTradeResponse:
+    """One-click: Scan market → Find opportunity → Validate → Execute.
+
+    1. Fetch real-time 5m bars from Tiger API
+    2. Compute indicators + detect entry signals
+    3. Score signal strength (1-10)
+    4. Quick backtest validation (last 5 days)
+    5. If valid + auto_execute → place order on Tiger demo
+    """
+
+    def _run():
+        import math
+        import numpy as np
+        import pandas as pd
+        from mgc_trading import indicators as ind
+        from mgc_trading.backtest import Backtester
+        from mgc_trading.config import CONTRACT_SIZE, RISK_PER_TRADE
+        from mgc_trading.tiger_execution import TigerTrader
+
+        if not _tiger_quote_ok:
+            raise ValueError("Tiger SDK not available")
+
+        quote_client, trade_client = _get_tiger_clients()
+
+        # Resolve contract
+        symbol = req.symbols[0] if req.symbols else "MGC"
+        contracts = trade_client.get_contracts(symbol, sec_type="FUT")
+        if not contracts:
+            raise ValueError(f"No contract found for {symbol}")
+        identifier = contracts[0].identifier
+
+        period = _BAR_PERIOD_MAP.get(req.interval, _BAR_PERIOD_MAP.get("5m"))
+
+        # ── 1. Fetch real-time data ──────────────────────────────
+        df_raw = quote_client.get_future_bars(identifier, period=period, limit=500)
+        if df_raw is None or df_raw.empty:
+            raise ValueError("No data from Tiger API")
+
+        times_ms = df_raw["time"].tolist()
+        df = df_raw[["open", "high", "low", "close", "volume"]].copy()
+        df.index = pd.to_datetime(df_raw["time"], unit="ms")
+        df = df.sort_index()
+        df["_time_ms"] = sorted(times_ms)
+
+        # ── 2. Compute indicators ────────────────────────────────
+        p = {**DEFAULT_PARAMS, "ema_fast": 20, "ema_slow": 50}
+        strategy = MGCStrategy(p)
+        df_ind = strategy.compute_indicators(df[["open", "high", "low", "close", "volume"]].copy())
+        signals = strategy.generate_signals(df_ind)
+        df_ind["signal"] = signals
+
+        # Also compute breakout signals
+        high_20 = df_ind["high"].rolling(20).max().shift(1)
+        vol_ma = df_ind["volume"].rolling(20).mean()
+        vol_spike = df_ind["volume"] > 1.5 * vol_ma
+        breakout = (df_ind["close"] > high_20) & vol_spike & (df_ind["ema_fast"] > df_ind["ema_slow"])
+        df_ind["breakout"] = breakout.astype(int)
+
+        # ── 3. Check last completed bar ──────────────────────────
+        bar = df_ind.iloc[-2]  # second-to-last (completed)
+        bar_time = str(df_ind.index[-2])
+        current_price = float(df_ind["close"].iloc[-1])
+
+        pullback_signal = int(bar.get("signal", 0)) == 1
+        breakout_signal = int(bar.get("breakout", 0)) == 1
+        has_signal = pullback_signal or breakout_signal
+        signal_type = "PULLBACK" if pullback_signal else ("BREAKOUT" if breakout_signal else "NONE")
+
+        atr_val = float(bar["atr"]) if not _isnan(bar["atr"]) else 0.0
+        rsi_val = float(bar["rsi"]) if not _isnan(bar["rsi"]) else 50.0
+        ema_f = float(bar["ema_fast"]) if not _isnan(bar["ema_fast"]) else 0.0
+        ema_s = float(bar["ema_slow"]) if not _isnan(bar["ema_slow"]) else 0.0
+        vol_ratio = float(bar["volume"] / vol_ma.iloc[-2]) if vol_ma.iloc[-2] > 0 else 1.0
+
+        # Entry / SL / TP
+        entry_price = current_price
+        sl_price = entry_price - p["atr_sl_mult"] * atr_val
+        tp_price = entry_price + p["atr_tp_mult"] * atr_val
+        rr = abs(tp_price - entry_price) / abs(entry_price - sl_price) if abs(entry_price - sl_price) > 0 else 0
+
+        # ── 4. Signal strength scoring (1-10) ────────────────────
+        score = 0
+        detail = {}
+
+        # Trend alignment (0-2)
+        if ema_f > ema_s:
+            trend_gap_pct = (ema_f - ema_s) / ema_s * 100 if ema_s > 0 else 0
+            trend_pts = min(2, int(trend_gap_pct / 0.1) + 1) if trend_gap_pct > 0 else 0
+            score += trend_pts
+            detail["trend"] = {"pts": trend_pts, "ema_gap_pct": round(trend_gap_pct, 3)}
+        else:
+            detail["trend"] = {"pts": 0, "note": "EMA20 < EMA50"}
+
+        # RSI sweet spot (0-2)
+        if 40 <= rsi_val <= 60:
+            rsi_pts = 2
+        elif 30 <= rsi_val < 40 or 60 < rsi_val <= 70:
+            rsi_pts = 1
+        else:
+            rsi_pts = 0
+        score += rsi_pts
+        detail["rsi"] = {"pts": rsi_pts, "value": round(rsi_val, 1)}
+
+        # Volume confirmation (0-2)
+        if vol_ratio >= 2.0:
+            vol_pts = 2
+        elif vol_ratio >= 1.2:
+            vol_pts = 1
+        else:
+            vol_pts = 0
+        score += vol_pts
+        detail["volume"] = {"pts": vol_pts, "ratio": round(vol_ratio, 2)}
+
+        # Candle quality (0-2)
+        candle_pts = 0
+        if bool(bar.get("bullish_engulfing", False)):
+            candle_pts = 2
+        elif bool(bar.get("bullish_candle", False)):
+            body_pct = abs(float(bar["close"]) - float(bar["open"])) / atr_val * 100 if atr_val > 0 else 0
+            candle_pts = 2 if body_pct > 50 else 1
+        score += candle_pts
+        detail["candle"] = {"pts": candle_pts}
+
+        # Risk-reward quality (0-2)
+        if rr >= 2.5:
+            rr_pts = 2
+        elif rr >= 1.5:
+            rr_pts = 1
+        else:
+            rr_pts = 0
+        score += rr_pts
+        detail["risk_reward"] = {"pts": rr_pts, "rr": round(rr, 2)}
+
+        strength = max(1, min(10, score))
+
+        # ── 5. Position sizing (1% risk) ─────────────────────────
+        account_equity = 50_000.0  # demo default
+        risk_amount = account_equity * RISK_PER_TRADE
+        risk_per_contract = abs(entry_price - sl_price) * CONTRACT_SIZE
+        qty = max(1, int(risk_amount / risk_per_contract)) if risk_per_contract > 0 else 1
+
+        signal_obj = ScanSignal(
+            found=has_signal,
+            symbol=symbol,
+            identifier=identifier,
+            entry_price=round(entry_price, 2),
+            stop_loss=round(sl_price, 2),
+            take_profit=round(tp_price, 2),
+            risk_reward=round(rr, 2),
+            qty=qty,
+            signal_type=signal_type,
+            strength=strength,
+            strength_detail=detail,
+            rsi=round(rsi_val, 1),
+            atr=round(atr_val, 2),
+            ema_fast=round(ema_f, 2),
+            ema_slow=round(ema_s, 2),
+            volume_ratio=round(vol_ratio, 2),
+            bar_time=bar_time,
+        )
+
+        # ── 6. Quick backtest validation ─────────────────────────
+        bt_check = None
+        if has_signal:
+            bt = Backtester(capital=account_equity)
+            bt_df = df[["open", "high", "low", "close", "volume"]].copy()
+            result = bt.run(bt_df, p)
+
+            bt_passed = result.win_rate >= 55 and result.risk_reward_ratio >= 1.5
+            reason = "OK" if bt_passed else ""
+            if result.win_rate < 55:
+                reason = f"Win rate {result.win_rate:.1f}% < 55%"
+            if result.risk_reward_ratio < 1.5:
+                reason += ("; " if reason else "") + f"RR {result.risk_reward_ratio:.2f} < 1.5"
+
+            bt_check = BacktestCheck(
+                passed=bt_passed,
+                win_rate=round(result.win_rate, 1),
+                risk_reward=round(result.risk_reward_ratio, 2),
+                total_trades=result.total_trades,
+                profit_factor=round(result.profit_factor, 2),
+                total_return_pct=round(result.total_return_pct, 2),
+                reason=reason,
+            )
+
+        # ── 7. Risk check summary ────────────────────────────────
+        risk_check = {
+            "risk_per_trade_pct": RISK_PER_TRADE * 100,
+            "risk_amount_usd": round(risk_amount, 2),
+            "position_size": qty,
+            "max_loss_usd": round(risk_per_contract * qty, 2),
+            "account_equity": account_equity,
+        }
+
+        # ── 8. Auto-execute on Tiger Demo when signal found ─────
+        exec_result = None
+        if has_signal and req.auto_execute:
+            trader = TigerTrader()
+            trader.connect()
+            bracket = trader.place_bracket_order(
+                symbol=symbol,
+                qty=qty,
+                side="BUY",
+                stop_loss_price=sl_price,
+                take_profit_price=tp_price,
+            )
+            if bracket.entry and bracket.entry.status != "FAILED":
+                parts = [f"Entry {bracket.entry.order_id}"]
+                if bracket.stop_loss:
+                    parts.append(f"SL {bracket.stop_loss.order_id} @ ${sl_price:.2f}")
+                if bracket.take_profit:
+                    parts.append(f"TP {bracket.take_profit.order_id} @ ${tp_price:.2f}")
+                exec_result = ExecutionResult(
+                    executed=True,
+                    order_id=bracket.entry.order_id,
+                    side="BUY",
+                    qty=qty,
+                    status=bracket.entry.status,
+                    reason=" | ".join(parts),
+                )
+            else:
+                exec_result = ExecutionResult(
+                    executed=False,
+                    order_id="",
+                    side="BUY",
+                    qty=qty,
+                    status="FAILED",
+                    reason="Tiger API order failed",
+                )
+
+        return has_signal, signal_obj, bt_check, exec_result, risk_check
+
+    opportunity, signal, bt_check, exec_result, risk_check = await run_in_threadpool(_run)
+
+    return ScanTradeResponse(
+        opportunity=opportunity,
+        signal=signal,
+        backtest=bt_check,
+        execution=exec_result,
+        risk_check=risk_check,
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+    )

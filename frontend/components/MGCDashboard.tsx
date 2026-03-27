@@ -17,6 +17,7 @@ import {
   type MGCTrade,
 } from "../services/api";
 import MGCLiveChart from "./MGCLiveChart";
+import ScanTradePanel from "./ScanTradePanel";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Helpers
@@ -233,7 +234,7 @@ function MGCChart({ data }: Readonly<{ data: MGCBacktestResponse }>) {
 // ═══════════════════════════════════════════════════════════════════════
 
 export default function MGCDashboard() {
-  const [tab, setTab] = useState<"live" | "backtest">("live");
+  const [tab, setTab] = useState<"live" | "scan" | "backtest">("live");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<MGCBacktestResponse | null>(null);
@@ -282,6 +283,12 @@ export default function MGCDashboard() {
               tab === "live" ? "bg-emerald-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"
             }`}
           >📡 LIVE</button>
+          <button
+            onClick={() => setTab("scan")}
+            className={`px-3 py-1 text-[10px] font-bold transition ${
+              tab === "scan" ? "bg-cyan-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"
+            }`}
+          >🎯 SCAN</button>
           <button
             onClick={() => setTab("backtest")}
             className={`px-3 py-1 text-[10px] font-bold transition ${
@@ -356,6 +363,13 @@ export default function MGCDashboard() {
       {tab === "live" && (
         <div className="flex-1 overflow-hidden">
           <MGCLiveChart />
+        </div>
+      )}
+
+      {/* ── SCAN tab ──────────────────────────────────── */}
+      {tab === "scan" && (
+        <div className="flex-1 overflow-hidden">
+          <ScanTradePanel />
         </div>
       )}
 

@@ -55,6 +55,14 @@ class OrderRecord:
     status: str
 
 
+@dataclass
+class BracketResult:
+    """Result of a bracket order (entry + SL + TP)."""
+    entry: OrderRecord | None = None
+    stop_loss: OrderRecord | None = None
+    take_profit: OrderRecord | None = None
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Tiger Trader
 # ═══════════════════════════════════════════════════════════════════════
@@ -138,10 +146,10 @@ class TigerTrader:
         return qty
 
     # ── Duplicate prevention ────────────────────────────────────────
-    def _order_hash(self, symbol: str, side: str, qty: int) -> str:
+    def _order_hash(self, symbol: str, side: str, qty: int, tag: str = "") -> str:
         """Deterministic hash to prevent duplicate orders within 60 s."""
         minute = int(time.time() / 60)
-        raw = f"{symbol}:{side}:{qty}:{minute}"
+        raw = f"{symbol}:{side}:{qty}:{tag}:{minute}"
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     # ── Risk gates ──────────────────────────────────────────────────
@@ -259,6 +267,112 @@ class TigerTrader:
         self._order_log.append(record)
         today = str(date.today())
         self._daily_trades[today] = self._daily_trades.get(today, 0) + 1
+
+    # ── Bracket order (entry + SL + TP) ─────────────────────────────
+    def place_bracket_order(
+        self,
+        symbol: str,
+        qty: int,
+        side: str = "BUY",
+        stop_loss_price: float | None = None,
+        take_profit_price: float | None = None,
+    ) -> BracketResult:
+        """Place a market entry order, then attach stop-loss and take-profit.
+
+        Strategy:
+          1. Market order for entry
+          2. Stop order (opposite side) for SL
+          3. Limit order (opposite side) for TP
+        """
+        result = BracketResult()
+        close_side = "SELL" if side == "BUY" else "BUY"
+
+        # 1. Entry
+        entry = self.place_order(symbol=symbol, qty=qty, side=side, order_type="MKT")
+        result.entry = entry
+        if not entry or entry.status == "FAILED":
+            return result
+
+        # Need real Tiger client for SL/TP orders
+        if self._client is None:
+            # Paper mode — log SL/TP
+            if stop_loss_price:
+                sl_rec = OrderRecord(
+                    timestamp=time.time(), symbol=symbol, side=close_side,
+                    qty=qty, price=stop_loss_price,
+                    order_id=f"PAPER-SL-{int(time.time())}", status="SL_PLACED_PAPER",
+                )
+                logger.info("📝 PAPER SL %s ×%d @ %.2f", close_side, qty, stop_loss_price)
+                result.stop_loss = sl_rec
+            if take_profit_price:
+                tp_rec = OrderRecord(
+                    timestamp=time.time(), symbol=symbol, side=close_side,
+                    qty=qty, price=take_profit_price,
+                    order_id=f"PAPER-TP-{int(time.time())}", status="TP_PLACED_PAPER",
+                )
+                logger.info("📝 PAPER TP %s ×%d @ %.2f", close_side, qty, take_profit_price)
+                result.take_profit = tp_rec
+            return result
+
+        # Real Tiger execution for SL/TP
+        from tigeropen.common.util.order_utils import stop_order, limit_order
+
+        try:
+            contracts = self._client.get_contracts(symbol, sec_type="FUT")
+            if not contracts:
+                logger.error("No contract found for %s (SL/TP)", symbol)
+                return result
+            contract = contracts[0]
+            contract.expiry = None
+
+            # 2. Stop-Loss order
+            if stop_loss_price:
+                try:
+                    sl_order = stop_order(
+                        account=self.account,
+                        contract=contract,
+                        action=close_side,
+                        quantity=qty,
+                        aux_price=stop_loss_price,
+                        time_in_force="DAY",
+                    )
+                    sl_id = self._client.place_order(sl_order)
+                    sl_rec = OrderRecord(
+                        timestamp=time.time(), symbol=symbol, side=close_side,
+                        qty=qty, price=stop_loss_price,
+                        order_id=str(sl_id), status="SL_SUBMITTED",
+                    )
+                    logger.info("🛑 SL ORDER %s ×%d @ %.2f → %s", close_side, qty, stop_loss_price, sl_rec.order_id)
+                    result.stop_loss = sl_rec
+                except Exception:
+                    logger.exception("Failed to place SL order")
+
+            # 3. Take-Profit order
+            if take_profit_price:
+                try:
+                    tp_order = limit_order(
+                        account=self.account,
+                        contract=contract,
+                        action=close_side,
+                        quantity=qty,
+                        limit_price=take_profit_price,
+                        time_in_force="DAY",
+                    )
+                    tp_id = self._client.place_order(tp_order)
+                    tp_rec = OrderRecord(
+                        timestamp=time.time(), symbol=symbol, side=close_side,
+                        qty=qty, price=take_profit_price,
+                        order_id=str(tp_id), status="TP_SUBMITTED",
+                    )
+                    logger.info("🎯 TP ORDER %s ×%d @ %.2f → %s", close_side, qty, take_profit_price, tp_rec.order_id)
+                    result.take_profit = tp_rec
+                except Exception:
+                    logger.exception("Failed to place TP order")
+
+        except Exception:
+            logger.exception("Failed to get contract for SL/TP orders")
+
+        return result
 
     def record_loss(self) -> None:
         """Call after a trade closes at a loss."""
