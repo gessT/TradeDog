@@ -465,3 +465,39 @@ export async function runStrategyOptimizerV1(
   }
   return (await response.json()) as StrategyResponse;
 }
+
+
+// ── Daily Opportunity Scanner ────────────────────────────────────────
+
+export type DailyScanSetup = {
+  ticker: string;
+  name: string;
+  price: number;
+  change_pct: number;
+  score: number;
+  setup: "BREAKOUT" | "PULLBACK" | "TREND";
+  entry: number;
+  sl: number;
+  tp1: number;
+  tp2: number;
+  rr: number;
+  rsi: number;
+  vol_ratio: number;
+  reasons: string[];
+};
+
+export type DailyScanResponse = {
+  timestamp: string;
+  scanned: number;
+  qualified: number;
+  setups: DailyScanSetup[];
+};
+
+export async function fetchDailyScan(top: number = 6): Promise<DailyScanResponse> {
+  const response = await fetch(`${API_BASE}/stock/daily-scan?top=${top}`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as DailyScanResponse;
+}

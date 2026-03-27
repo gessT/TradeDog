@@ -782,3 +782,249 @@ async def get_stock(symbol: str) -> dict[str, object]:
     }
 
 
+# ── Daily Opportunity Scanner ─────────────────────────────────────────
+
+def _compute_scan_ema(vals: list[float], n: int) -> list[float]:
+    import math as _math
+    out = [_math.nan] * len(vals)
+    if len(vals) < n:
+        return out
+    k = 2 / (n + 1)
+    out[n - 1] = sum(vals[:n]) / n
+    for i in range(n, len(vals)):
+        out[i] = vals[i] * k + out[i - 1] * (1 - k)
+    return out
+
+
+def _compute_scan_rsi(vals: list[float], n: int = 14) -> list[float]:
+    out = [50.0] * len(vals)
+    if len(vals) < n + 1:
+        return out
+    g, lo2 = 0.0, 0.0
+    for i in range(1, n + 1):
+        d = vals[i] - vals[i - 1]
+        g += max(d, 0)
+        lo2 += max(-d, 0)
+    ag, al = g / n, lo2 / n
+    out[n] = 100 - 100 / (1 + ag / al) if al else 100.0
+    for i in range(n + 1, len(vals)):
+        d = vals[i] - vals[i - 1]
+        ag = (ag * (n - 1) + max(d, 0)) / n
+        al = (al * (n - 1) + max(-d, 0)) / n
+        out[i] = 100 - 100 / (1 + ag / al) if al else 100.0
+    return out
+
+
+def _compute_scan_atr(hv: list[float], lv: list[float], cv: list[float], n: int = 14) -> list[float]:
+    import math as _math
+    tr = [hv[0] - lv[0]] + [
+        max(hv[i] - lv[i], abs(hv[i] - cv[i - 1]), abs(lv[i] - cv[i - 1]))
+        for i in range(1, len(cv))
+    ]
+    out = [_math.nan] * len(cv)
+    if len(cv) < n:
+        return out
+    out[n - 1] = sum(tr[:n]) / n
+    for i in range(n, len(cv)):
+        out[i] = (out[i - 1] * (n - 1) + tr[i]) / n
+    return out
+
+
+def _scan_daily_setup(code: str, name: str) -> dict | None:
+    import math as _math
+    try:
+        tkr = yf.Ticker(code)
+        hist = tkr.history(period="6mo", auto_adjust=True)
+        if hist is None or hist.empty or len(hist) < 60:
+            return None
+        cols = hist.columns
+        if isinstance(cols[0], tuple):
+            hist.columns = [c[0] if isinstance(c, tuple) else str(c) for c in cols]
+        for col in ("Open", "High", "Low", "Close", "Volume"):
+            if col not in hist.columns:
+                return None
+            hist[col] = pd.to_numeric(hist[col], errors="coerce")
+        hist = hist.dropna(subset=["Close"])
+        cv = hist["Close"].tolist()
+        hv = hist["High"].tolist()
+        lv = hist["Low"].tolist()
+        vv = hist["Volume"].tolist()
+
+        e20 = _compute_scan_ema(cv, 20)
+        e50 = _compute_scan_ema(cv, 50)
+        e200 = _compute_scan_ema(cv, 200)
+        rsi_vals = _compute_scan_rsi(cv)
+        a14 = _compute_scan_atr(hv, lv, cv)
+
+        ef = _compute_scan_ema(cv, 12)
+        es2 = _compute_scan_ema(cv, 26)
+        ml = [
+            ef[i] - es2[i] if not (_math.isnan(ef[i]) or _math.isnan(es2[i])) else _math.nan
+            for i in range(len(cv))
+        ]
+        clean = [x for x in ml if not _math.isnan(x)]
+        hist_macd = [_math.nan] * len(cv)
+        if len(clean) >= 9:
+            start = next(i for i, x in enumerate(ml) if not _math.isnan(x))
+            sl2 = [_math.nan] * len(cv)
+            sl2[start + 8] = sum(clean[:9]) / 9
+            k2 = 2 / 10
+            for i in range(start + 9, len(cv)):
+                sl2[i] = ml[i] * k2 + sl2[i - 1] * (1 - k2)
+            hist_macd = [
+                ml[i] - sl2[i] if not (_math.isnan(ml[i]) or _math.isnan(sl2[i])) else _math.nan
+                for i in range(len(cv))
+            ]
+
+        st_dirs = [1] * len(cv)
+        up_band = [
+            ((hv[i] + lv[i]) / 2 - 3.0 * a14[i]) if not _math.isnan(a14[i]) else _math.nan
+            for i in range(len(cv))
+        ]
+        dn_band = [
+            ((hv[i] + lv[i]) / 2 + 3.0 * a14[i]) if not _math.isnan(a14[i]) else _math.nan
+            for i in range(len(cv))
+        ]
+        for i in range(1, len(cv)):
+            if _math.isnan(up_band[i]) or _math.isnan(dn_band[i]):
+                continue
+            up_band[i] = max(up_band[i], up_band[i - 1]) if cv[i - 1] > up_band[i - 1] else up_band[i]
+            dn_band[i] = min(dn_band[i], dn_band[i - 1]) if cv[i - 1] < dn_band[i - 1] else dn_band[i]
+            if st_dirs[i - 1] == 1 and cv[i] < up_band[i]:
+                st_dirs[i] = -1
+            elif st_dirs[i - 1] == -1 and cv[i] > dn_band[i]:
+                st_dirs[i] = 1
+            else:
+                st_dirs[i] = st_dirs[i - 1]
+
+        vol_window = vv[-21:-1]
+        avg_vol = sum(vol_window) / len(vol_window) if vol_window else 0
+        vr = round(vv[-1] / avg_vol, 2) if avg_vol > 0 else 0.0
+        price = cv[-1]
+
+        if any(_math.isnan(x) for x in [e20[-1], e50[-1], rsi_vals[-1], a14[-1]]):
+            return None
+
+        score = 0
+        reasons: list[str] = []
+        trend_up = price > e20[-1] and price > e50[-1]
+        if trend_up:
+            score += 1
+            reasons.append("Price above EMA20 & EMA50")
+        if e20[-1] > e50[-1]:
+            score += 1
+            reasons.append("EMA20 > EMA50 (aligned uptrend)")
+        if not _math.isnan(e200[-1]) and price > e200[-1]:
+            score += 1
+            reasons.append("Above EMA200 (macro bull)")
+        if st_dirs[-1] == 1:
+            score += 2
+            reasons.append("Supertrend bullish")
+        if st_dirs[-1] == 1 and st_dirs[-2] == -1:
+            score += 2
+            reasons.append("Supertrend just flipped bullish \u26a1")
+        rsi_cur = rsi_vals[-1]
+        rsi_prev = rsi_vals[-2]
+        if 45 < rsi_cur < 70:
+            score += 1
+            reasons.append(f"RSI {rsi_cur:.0f} (momentum zone)")
+        if rsi_cur > 50 and rsi_prev <= 50:
+            score += 1
+            reasons.append("RSI crossed above 50 \u2191")
+        if rsi_cur > rsi_prev and rsi_cur < 68:
+            score += 1
+            reasons.append("RSI rising")
+        if not _math.isnan(hist_macd[-1]) and not _math.isnan(hist_macd[-2]):
+            if hist_macd[-1] > 0:
+                score += 1
+                reasons.append("MACD histogram positive")
+            if hist_macd[-1] > hist_macd[-2]:
+                score += 1
+                reasons.append("MACD histogram expanding")
+        if vr >= 1.5:
+            score += 1
+            reasons.append(f"Volume {vr:.1f}x above average")
+        if vr >= 2.5:
+            score += 1
+            reasons.append("Strong volume surge")
+        pullback = e20[-1] <= price <= e20[-1] * 1.025
+        if pullback:
+            score += 2
+            reasons.append("Pullback to EMA20 (dip-buy zone)")
+        if cv[-1] > cv[-2] > cv[-4]:
+            score += 1
+            reasons.append("Higher lows forming")
+        recent_high = max(hv[-21:-1])
+        breakout = price > recent_high
+        if breakout:
+            score += 2
+            reasons.append("Breakout above 20-day high \U0001f680")
+
+        if score < 6 or not trend_up:
+            return None
+
+        if breakout:
+            setup = "BREAKOUT"
+            entry = round(price * 1.001, 3)
+            sl_price = round(recent_high * 0.985, 3)
+        elif pullback:
+            setup = "PULLBACK"
+            entry = round(e20[-1] * 1.002, 3)
+            sl_price = round(e20[-1] - a14[-1] * 1.5, 3)
+        else:
+            setup = "TREND"
+            support = lv[-1] * 0.97
+            for i in range(len(lv) - 2, 10, -1):
+                if lv[i] == min(lv[max(0, i - 10): i + 11]):
+                    support = lv[i]
+                    break
+            sl_price = round(max(support, price - a14[-1] * 2.0), 3)
+            entry = round(price, 3)
+
+        risk = entry - sl_price
+        if risk <= 0:
+            return None
+        tp1 = round(entry + risk * 1.5, 3)
+        tp2 = round(entry + risk * 2.5, 3)
+        chg_pct = round((cv[-1] - cv[-2]) / cv[-2] * 100, 2) if cv[-2] else 0.0
+        return {
+            "ticker": code, "name": name, "price": round(price, 3),
+            "change_pct": chg_pct, "score": score, "setup": setup,
+            "entry": entry, "sl": sl_price, "tp1": tp1, "tp2": tp2,
+            "rr": round((tp1 - entry) / risk, 1),
+            "rsi": round(rsi_cur, 1), "vol_ratio": vr,
+            "reasons": reasons,
+        }
+    except Exception:
+        return None
+
+
+@router.get("/daily-scan")
+async def daily_scan(top: int = Query(default=6, ge=1, le=20)) -> dict:
+    """Scan all KLSE stocks and return today's highest-probability trade setups."""
+    import concurrent.futures
+    from datetime import datetime as _dt
+
+    def _run() -> list[dict]:
+        out: list[dict] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+            futs = {
+                pool.submit(_scan_daily_setup, code, nm): code
+                for code, nm in BURSA_STOCKS.items()
+            }
+            for fut in concurrent.futures.as_completed(futs):
+                res = fut.result()
+                if res:
+                    out.append(res)
+        out.sort(key=lambda x: x["score"], reverse=True)
+        return out
+
+    setups = await run_in_threadpool(_run)
+    return {
+        "timestamp": _dt.now().strftime("%Y-%m-%d %H:%M"),
+        "scanned": len(BURSA_STOCKS),
+        "qualified": len(setups),
+        "setups": setups[:top],
+    }
+
+

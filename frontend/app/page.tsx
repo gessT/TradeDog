@@ -6,6 +6,7 @@ import Navbar from "../components/Navbar";
 import NearATH from "../components/NearATH";
 import SectorList from "../components/SectorList";
 import TopVolume from "../components/TopVolume";
+import DailyScanner from "../components/DailyScanner";
 import StrategyPanel from "../components/StrategyPanel";
 import StrategyPanelV1 from "../components/StrategyPanelV1";
 import TVChart, { type TVChartHandle, type EmaConfig } from "../components/TVChart";
@@ -80,6 +81,9 @@ export default function Page() {
         <aside className="hidden md:flex md:w-1/3 flex-shrink-0 flex-col overflow-y-auto border-r border-slate-800/60 bg-slate-900/40">
           {/* Scanners */}
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
+            {/* Daily Opportunity Scanner */}
+            <DailyScanner onSelectSymbol={setSymbol} />
+
             {/* Near ATH Board */}
             <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-2.5">
               <NearATH onSelectSymbol={setSymbol} />
