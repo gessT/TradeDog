@@ -377,7 +377,7 @@ def optimize(data, capital=100000.0, start_year=2015, top_n=5):
         kw = dict(zip(keys, combo))
         p = StrategyParams(**kw)
         trades, metrics = run_backtest(data, p, capital, start_year)
-        if not metrics or metrics["total_trades"] < 5:
+        if not metrics or metrics["total_trades"] < 3:
             continue
         # Score: prioritize win rate >= 60%, then total return, penalize drawdown
         wr = metrics["win_rate"]

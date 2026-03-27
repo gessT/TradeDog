@@ -801,7 +801,7 @@ class StrategyRequest(BaseModel):
     symbol: str = Field(default="AAPL", min_length=1, max_length=16)
     period: str = Field(default="5y")
     capital: float = Field(default=100000.0, gt=0)
-    start_year: int = Field(default=2015, ge=1990, le=2030)
+    start_year: int = Field(default=2010, ge=1990, le=2030)
 
 
 @router.post("/strategy")
