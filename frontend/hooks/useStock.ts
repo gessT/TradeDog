@@ -49,7 +49,7 @@ function shortTimeLabel(raw: string): string {
 
 export function useStock(initialSymbol: string) {
   const [symbol, setSymbol] = useState(initialSymbol);
-  const [period, setPeriod] = useState("5y");
+  const [period, setPeriod] = useState("6mo");
   const [configLoaded, setConfigLoaded] = useState(false);
   const [points, setPoints] = useState<DemoPoint[]>([]);
   const [stockName, setStockName] = useState("");
@@ -64,7 +64,7 @@ export function useStock(initialSymbol: string) {
           setSymbol(config.symbol);
         }
         if (config.period) {
-          setPeriod(config.period);
+          setPeriod(config.period.toLowerCase() === "5y" ? "6mo" : config.period);
         }
       } catch {
         // Keep local defaults if configuration has not been saved yet.

@@ -27,7 +27,7 @@ SMOOTHING_WINDOW = 20
 
 class StockConfigurationPayload(BaseModel):
     symbol: str = Field(default="5248.KL", min_length=1, max_length=16)
-    period: str = Field(default="5y", min_length=1, max_length=16)
+    period: str = Field(default="6mo", min_length=1, max_length=16)
 
 
 def _get_stock_pref_value(db: Session, key: str) -> str | None:
@@ -249,7 +249,7 @@ def get_stock_configuration(db: Session = Depends(get_db)) -> dict[str, str]:
     """Return persisted selected stock configuration for the dashboard."""
     return {
         "symbol": _get_stock_pref_value(db, "selected_symbol") or "5248.KL",
-        "period": _get_stock_pref_value(db, "selected_period") or "5y",
+        "period": _get_stock_pref_value(db, "selected_period") or "6mo",
     }
 
 
@@ -596,7 +596,7 @@ async def sector_overview() -> dict:
                 "price": round(close, 4),
                 "change_1d": round(change_1d, 2),
                 "change_5d": round(perf_w, 2),
-                "change_20d": round(perf_1m, 2),
+                "change_30d": round(perf_1m, 2),
                 "sma5_above_sma20": sma5 > sma20 if sma5 and sma20 else False,
             })
 
@@ -612,15 +612,18 @@ async def sector_overview() -> dict:
         n = len(stock_results)
         avg_1d = sum(s["change_1d"] for s in stock_results) / n
         avg_5d = sum(s["change_5d"] for s in stock_results) / n
-        avg_20d = sum(s["change_20d"] for s in stock_results) / n
+        avg_30d = sum(s["change_30d"] for s in stock_results) / n
         bullish_count = sum(1 for s in stock_results if s["sma5_above_sma20"])
         bearish_count = n - bullish_count
         green_count = sum(1 for s in stock_results if s["change_1d"] >= 0)
 
-        # Determine overall sentiment
-        if bullish_count > bearish_count and avg_5d > 0:
+        bullish_balance = (bullish_count - bearish_count) / n  # -1.0 (fully bearish) to +1.0 (fully bullish)
+        trend_30d_score = (avg_30d * 0.7) + (bullish_balance * 10.0)
+
+        # Determine overall sentiment using 30-day direction + breadth
+        if avg_30d > 0 and bullish_count >= bearish_count:
             sentiment = "bullish"
-        elif bearish_count > bullish_count and avg_5d < 0:
+        elif avg_30d < 0 and bearish_count > bullish_count:
             sentiment = "bearish"
         else:
             sentiment = "neutral"
@@ -630,7 +633,8 @@ async def sector_overview() -> dict:
             "sentiment": sentiment,
             "avg_change_1d": round(avg_1d, 2),
             "avg_change_5d": round(avg_5d, 2),
-            "avg_change_20d": round(avg_20d, 2),
+            "avg_change_30d": round(avg_30d, 2),
+            "trend_30d_score": round(trend_30d_score, 2),
             "bullish_count": bullish_count,
             "bearish_count": bearish_count,
             "green_today": green_count,
@@ -638,8 +642,8 @@ async def sector_overview() -> dict:
             "stocks": sorted(stock_results, key=lambda x: x["change_1d"], reverse=True),
         })
 
-    # Sort: bullish first, then by 5d change
-    sectors.sort(key=lambda x: (-1 if x["sentiment"] == "bullish" else 1 if x["sentiment"] == "bearish" else 0, -x["avg_change_5d"]))
+    # Sort by 30-day overall trend strength: strongest bullish first, strongest bearish last.
+    sectors.sort(key=lambda x: x["trend_30d_score"], reverse=True)
 
     return {
         "count": len(sectors),

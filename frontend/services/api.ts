@@ -313,7 +313,7 @@ export type SectorStock = {
   price: number;
   change_1d: number;
   change_5d: number;
-  change_20d: number;
+  change_30d: number;
   sma5_above_sma20: boolean;
 };
 
@@ -322,7 +322,8 @@ export type SectorInfo = {
   sentiment: "bullish" | "bearish" | "neutral";
   avg_change_1d: number;
   avg_change_5d: number;
-  avg_change_20d: number;
+  avg_change_30d: number;
+  trend_30d_score: number;
   bullish_count: number;
   bearish_count: number;
   green_today: number;

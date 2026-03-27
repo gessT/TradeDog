@@ -28,7 +28,7 @@ def _get_stock_name(symbol: str) -> str:
 @router.get("/demo")
 async def demo(
     symbol: str = Query(default="AAPL"),
-    period: str = Query(default="5y"),
+    period: str = Query(default="6mo"),
 ) -> dict[str, object]:
     frame = await run_in_threadpool(fetch_stock, symbol, period)
     stock_name = await run_in_threadpool(_get_stock_name, symbol)

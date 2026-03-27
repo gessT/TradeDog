@@ -8,6 +8,13 @@ interface Props {
   onSelectSector?: (sectorName: string) => void;
 }
 
+const n = (value: unknown): number => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return 0;
+};
+
 const SECTOR_ICONS: Record<string, { icon: string; color: string }> = {
   FINANCE:            { icon: "💰", color: "from-green-600/30 to-green-900/10 border-green-700/40" },
   CONSUMER:           { icon: "🛒", color: "from-orange-600/30 to-orange-900/10 border-orange-700/40" },
@@ -24,14 +31,15 @@ const SECTOR_ICONS: Record<string, { icon: string; color: string }> = {
   REIT:               { icon: "🏢", color: "from-indigo-600/30 to-indigo-900/10 border-indigo-700/40" },
 };
 
-function ChangeTag({ value, size = "sm" }: { value: number; size?: "sm" | "md" }) {
-  const isUp = value >= 0;
+function ChangeTag({ value, size = "sm" }: Readonly<{ value: number | undefined | null; size?: "sm" | "md" }>) {
+  const safeValue = n(value);
+  const isUp = safeValue >= 0;
   const base = isUp ? "text-emerald-400" : "text-rose-400";
   const cls = size === "md" ? `text-sm font-bold ${base}` : `text-[11px] font-semibold ${base}`;
-  return <span className={cls}>{isUp ? "+" : ""}{value.toFixed(2)}%</span>;
+  return <span className={cls}>{isUp ? "+" : ""}{safeValue.toFixed(2)}%</span>;
 }
 
-export default function SectorList({ onSelectSymbol, onSelectSector }: Props) {
+export default function SectorList({ onSelectSymbol, onSelectSector }: Readonly<Props>) {
   const [sectors, setSectors] = useState<SectorInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +77,7 @@ export default function SectorList({ onSelectSymbol, onSelectSector }: Props) {
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs uppercase tracking-widest text-slate-400 font-semibold">
-          🏭 Sector Momentum
+          🏭 Sector Momentum (30D)
         </p>
         <button
           onClick={load}
@@ -123,12 +131,12 @@ export default function SectorList({ onSelectSymbol, onSelectSector }: Props) {
                     {sec.avg_change_5d > 2 && <span className="text-xs">🔥</span>}
                   </div>
 
-                  {/* 1W and 1M row */}
+                  {/* 1W and 30D row */}
                   <div className="flex items-center gap-3 text-[10px]">
                     <span className="text-slate-500">1W</span>
                     <ChangeTag value={sec.avg_change_5d} />
-                    <span className="text-slate-500 ml-1">1M</span>
-                    <ChangeTag value={sec.avg_change_20d} />
+                    <span className="text-slate-500 ml-1">30D</span>
+                    <ChangeTag value={sec.avg_change_30d ?? (sec as SectorInfo & { avg_change_20d?: number }).avg_change_20d} />
                   </div>
 
                   {/* Green count bar */}
@@ -174,7 +182,7 @@ export default function SectorList({ onSelectSymbol, onSelectSector }: Props) {
                             </div>
                             <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                               <span className="text-[10px] font-mono text-slate-400">
-                                {stock.price.toFixed(2)}
+                                {n(stock.price).toFixed(2)}
                               </span>
                               <ChangeTag value={stock.change_1d} />
                               {stock.sma5_above_sma20 ? (
