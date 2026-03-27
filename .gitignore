@@ -58,3 +58,4 @@ dist/
 
 # Generated data exports
 apple_stock.json
+mgc_trading/tiger_private.pem

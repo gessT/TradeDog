@@ -65,10 +65,10 @@ DATA_PERIOD = "60d"          # Max intraday history from yfinance
 # ═══════════════════════════════════════════════════════════════════════
 # Tiger Open API  (fill in before live / demo trading)
 # ═══════════════════════════════════════════════════════════════════════
-TIGER_ID = ""                # Your Tiger developer ID
-TIGER_PRIVATE_KEY = ""       # Path to RSA private-key PEM file
-TIGER_ACCOUNT = ""           # Trading account number
-TIGER_IS_SANDBOX = True      # True = demo, False = live
+TIGER_ID = "20158240"                # Your Tiger developer ID
+TIGER_PRIVATE_KEY = "mgc_trading/tiger_private.pem"  # RSA private-key PEM file
+TIGER_ACCOUNT = "21216597850872657"           # Trading account number
+TIGER_IS_SANDBOX = False     # sandbox_debug deprecated in newer SDK
 
 # ═══════════════════════════════════════════════════════════════════════
 # Webhook Server

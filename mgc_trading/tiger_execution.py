@@ -98,13 +98,13 @@ class TigerTrader:
             return False
 
         try:
-            config = TigerOpenClientConfig(sandbox_debug=self.sandbox)
+            config = TigerOpenClientConfig()
             config.tiger_id = self.tiger_id
             config.language = Language.en_US
             config.private_key = read_private_key(self.private_key_path)
             config.account = self.account
             self._client = TradeClient(config)
-            logger.info("Connected to Tiger %s", "SANDBOX" if self.sandbox else "LIVE")
+            logger.info("Connected to Tiger (account: %s)", self.account)
             return True
         except Exception:
             logger.exception("Failed to connect to Tiger API")
@@ -211,6 +211,8 @@ class TigerTrader:
             return record
 
         # ── Real Tiger execution ────────────────────────────────────
+        from tigeropen.common.util.order_utils import market_order, limit_order
+
         for attempt in range(1, retries + 1):
             try:
                 contracts = self._client.get_contracts(symbol, sec_type="FUT")
@@ -218,25 +220,26 @@ class TigerTrader:
                     logger.error("No contract found for %s", symbol)
                     return None
                 contract = contracts[0]
+                contract.expiry = None  # deprecated in SDK v3.5.7
 
                 if order_type == "LMT" and limit_price is not None:
-                    from tigeropen.trade.domain.order import LimitOrder
-                    order = LimitOrder(
+                    order = limit_order(
+                        account=self.account,
                         contract=contract,
                         action=side,
                         quantity=qty,
                         limit_price=limit_price,
                     )
                 else:
-                    from tigeropen.trade.domain.order import MarketOrder
-                    order = MarketOrder(
+                    order = market_order(
+                        account=self.account,
                         contract=contract,
                         action=side,
                         quantity=qty,
                     )
 
                 result = self._client.place_order(order)
-                record.order_id = str(getattr(result, "order_id", result))
+                record.order_id = str(result)
                 record.status = "SUBMITTED"
                 logger.info("✅ ORDER %s %s ×%d → %s", side, symbol, qty, record.order_id)
                 self._register_fill(record)
