@@ -22,15 +22,20 @@ type TVChartProps = {
   buyConditions?: string[];
   emaConfigs?: EmaConfig[];
   showHalfTrend?: boolean;
+  showWstBackground?: boolean;
 };
 
-const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data, trades, buySignals = [], buyConditions = [], emaConfigs = [], showHalfTrend = false }, ref) {
+const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data, trades, buySignals = [], buyConditions = [], emaConfigs = [], showHalfTrend = false, showWstBackground = false }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const wstBgSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const htSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const emaSeriesRefs = useRef<ISeriesApi<"Line">[]>([]);
 
   const sortedDataRef = useRef<DemoPoint[]>([]);
+  const seenTsRef = useRef<Set<number>>(new Set());
 
   // Expose goToDate to parent via ref
   const goToDate = useCallback((dateStr: string) => {
@@ -140,6 +145,7 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data,
     const candleData: CandlestickData[] = [];
     const volumeData: { time: UTCTimestamp; value: number; color: string }[] = [];
     const seenTs = new Set<number>();
+    seenTsRef.current = seenTs;
 
     for (const point of sorted) {
       const d = new Date(point.time);
@@ -224,66 +230,6 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data,
       }
     }
 
-    // ── EMA line overlays ──
-    const enabledEmas = emaConfigs.filter((e) => e.enabled && e.period > 0);
-    if (enabledEmas.length > 0) {
-      const closes = sorted.map((p) => p.price);
-      const timestamps = sorted.map((p) => Math.floor(new Date(p.time).getTime() / 1000) as UTCTimestamp);
-
-      for (const cfg of enabledEmas) {
-        const emaValues = ema(closes, cfg.period);
-        const emaData: { time: UTCTimestamp; value: number }[] = [];
-        for (let i = cfg.period - 1; i < emaValues.length; i++) {
-          if (!seenTs.has(timestamps[i] as number)) continue;
-          emaData.push({ time: timestamps[i], value: emaValues[i] });
-        }
-        if (emaData.length > 0) {
-          const emaSeries = chart.addSeries(LineSeries, {
-            color: cfg.color,
-            lineWidth: 1,
-            priceScaleId: "right",
-            lastValueVisible: false,
-            priceLineVisible: false,
-          });
-          emaSeries.setData(emaData);
-        }
-      }
-    }
-
-    // ── HalfTrend overlay (computed from OHLC) ──
-    if (showHalfTrend) {
-      const ohlcForHT = sorted
-        .filter((p) => p.open != null && p.high != null && p.low != null)
-        .map((p) => ({ high: p.high!, low: p.low!, close: p.price }));
-
-      if (ohlcForHT.length > 10) {
-        const htResults = halfTrend(ohlcForHT, 2, 2);
-        const filteredSorted = sorted.filter((p) => p.open != null && p.high != null && p.low != null);
-
-        const htLineData: { time: UTCTimestamp; value: number; color: string }[] = [];
-        for (let i = 0; i < filteredSorted.length; i++) {
-          const ht = htResults[i];
-          if (!ht) continue;
-          const ts = Math.floor(new Date(filteredSorted[i].time).getTime() / 1000) as UTCTimestamp;
-          if (!seenTs.has(ts as number)) continue;
-          htLineData.push({
-            time: ts,
-            value: ht.value,
-            color: ht.trend === 0 ? "#3b82f6" : "#ef4444", // blue=up, red=down
-          });
-        }
-        if (htLineData.length > 0) {
-          const htSeries = chart.addSeries(LineSeries, {
-            lineWidth: 2,
-            priceScaleId: "right",
-            lastValueVisible: false,
-            priceLineVisible: false,
-          });
-          htSeries.setData(htLineData);
-        }
-      }
-    }
-
     // Add buy/sell markers from trades
     if (trades.length > 0) {
       const markers: SeriesMarker<UTCTimestamp>[] = [];
@@ -355,7 +301,154 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data,
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, trades, buySignals, buyConditions, emaConfigs, showHalfTrend]);
+  }, [data, trades, buySignals, buyConditions]);
+
+  // ── HalfTrend overlay (separate effect — no chart rebuild) ──
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    // Remove existing HT series
+    if (htSeriesRef.current) {
+      try { chart.removeSeries(htSeriesRef.current); } catch { /* already removed */ }
+      htSeriesRef.current = null;
+    }
+
+    if (!showHalfTrend) return;
+
+    const sorted = sortedDataRef.current;
+    const seenTs = seenTsRef.current;
+    if (!sorted.length) return;
+
+    const ohlcForHT = sorted
+      .filter((p) => p.open != null && p.high != null && p.low != null)
+      .map((p) => ({ high: p.high!, low: p.low!, close: p.price }));
+
+    if (ohlcForHT.length <= 10) return;
+
+    const htResults = halfTrend(ohlcForHT, 2, 2);
+    const filteredSorted = sorted.filter((p) => p.open != null && p.high != null && p.low != null);
+
+    const htLineData: { time: UTCTimestamp; value: number; color: string }[] = [];
+    for (let i = 0; i < filteredSorted.length; i++) {
+      const ht = htResults[i];
+      if (!ht) continue;
+      const ts = Math.floor(new Date(filteredSorted[i].time).getTime() / 1000) as UTCTimestamp;
+      if (!seenTs.has(ts as number)) continue;
+      htLineData.push({
+        time: ts,
+        value: ht.value,
+        color: ht.trend === 0 ? "#3b82f6" : "#ef4444",
+      });
+    }
+    if (htLineData.length > 0) {
+      const htSeries = chart.addSeries(LineSeries, {
+        lineWidth: 2,
+        priceScaleId: "right",
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      htSeries.setData(htLineData);
+      htSeriesRef.current = htSeries;
+    }
+  }, [showHalfTrend, data]);
+
+  // ── EMA line overlays (separate effect — no chart rebuild) ──
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    // Remove existing EMA series
+    for (const s of emaSeriesRefs.current) {
+      try { chart.removeSeries(s); } catch { /* already removed */ }
+    }
+    emaSeriesRefs.current = [];
+
+    const sorted = sortedDataRef.current;
+    const seenTs = seenTsRef.current;
+    if (!sorted.length) return;
+
+    const enabledEmas = emaConfigs.filter((e) => e.enabled && e.period > 0);
+    if (enabledEmas.length === 0) return;
+
+    const closes = sorted.map((p) => p.price);
+    const timestamps = sorted.map((p) => Math.floor(new Date(p.time).getTime() / 1000) as UTCTimestamp);
+
+    for (const cfg of enabledEmas) {
+      const emaValues = ema(closes, cfg.period);
+      const emaData: { time: UTCTimestamp; value: number }[] = [];
+      for (let i = cfg.period - 1; i < emaValues.length; i++) {
+        if (!seenTs.has(timestamps[i] as number)) continue;
+        emaData.push({ time: timestamps[i], value: emaValues[i] });
+      }
+      if (emaData.length > 0) {
+        const emaSeries = chart.addSeries(LineSeries, {
+          color: cfg.color,
+          lineWidth: 1,
+          priceScaleId: "right",
+          lastValueVisible: false,
+          priceLineVisible: false,
+        });
+        emaSeries.setData(emaData);
+        emaSeriesRefs.current.push(emaSeries);
+      }
+    }
+  }, [emaConfigs, data]);
+
+  // ── Weekly Supertrend background tint (separate effect — no chart rebuild) ──
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    // Remove existing WST bg series
+    if (wstBgSeriesRef.current) {
+      try { chart.removeSeries(wstBgSeriesRef.current); } catch { /* already removed */ }
+      wstBgSeriesRef.current = null;
+    }
+
+    if (!showWstBackground) return;
+
+    const sorted = sortedDataRef.current;
+    const seenTs = seenTsRef.current;
+    if (!sorted.length) return;
+
+    const ohlcForBg = sorted
+      .filter((p) => p.open != null && p.high != null && p.low != null)
+      .map((p) => ({
+        time: p.time,
+        open: p.open!,
+        high: p.high!,
+        low: p.low!,
+        close: p.price,
+      }));
+    if (ohlcForBg.length === 0) return;
+
+    const bgWst = weeklySupertrend(ohlcForBg);
+    const bgSeries = chart.addSeries(HistogramSeries, {
+      priceScaleId: "wst_bg",
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    chart.priceScale("wst_bg").applyOptions({
+      scaleMargins: { top: 0, bottom: 0 },
+      visible: false,
+    });
+    wstBgSeriesRef.current = bgSeries;
+
+    const bgData: { time: UTCTimestamp; value: number; color: string }[] = [];
+    const filteredForBg = sorted.filter((p) => p.open != null && p.high != null && p.low != null);
+    for (let i = 0; i < filteredForBg.length; i++) {
+      const ts = Math.floor(new Date(filteredForBg[i].time).getTime() / 1000) as UTCTimestamp;
+      if (!seenTs.has(ts as number)) continue;
+      const up = bgWst[i]?.dir === -1;
+      bgData.push({
+        time: ts,
+        value: 1e10,
+        color: up ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
+      });
+    }
+    bgSeries.setData(bgData);
+  }, [showWstBackground, data]);
 
   return (
     <div ref={containerRef} className="w-full h-full" />

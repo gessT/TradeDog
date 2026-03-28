@@ -473,23 +473,6 @@ export async function runStrategyOptimizerV1(
 
 // ── KLSE Multi-Timeframe Strategy ────────────────────────────────────
 
-export async function runKLSEStrategy(
-  symbol: string,
-  period: string = "max",
-  capital: number = 100000,
-): Promise<StrategyResponse> {
-  const response = await fetch(`${API_BASE}/backtest/strategy/klse`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ symbol, period, capital }),
-  });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Request failed with ${response.status}`);
-  }
-  return (await response.json()) as StrategyResponse;
-}
-
 export async function optimizeKLSEStrategy(
   symbol: string,
   period: string = "max",

@@ -35,6 +35,11 @@ export default function KLSEDashboard() {
   ]);
   const [showEmaPanel, setShowEmaPanel] = useState(false);
   const [showHalfTrend, setShowHalfTrend] = useState(false);
+  const [showWstBg, setShowWstBg] = useState(true);
+
+  // Latest Weekly Supertrend direction
+  const latestWst = rows.length > 0 ? rows[rows.length - 1].wst : null;
+  const wstUp = latestWst ? latestWst.dir === -1 : false;
 
   const toggleEma = useCallback((p: number) => {
     setEmaConfigs((prev) => prev.map((e) => (e.period === p ? { ...e, enabled: !e.enabled } : e)));
@@ -111,7 +116,9 @@ export default function KLSEDashboard() {
               ) : (
                 <>
                   <StockPicker symbol={symbol} stockName={stockName} market="MY" onSymbolChange={setSymbol} />
-                  <span className="text-xs text-slate-500">Candlestick</span>
+                  <button onClick={() => setShowWstBg(!showWstBg)} className={`text-[10px] font-bold px-1.5 py-0.5 rounded border transition ${showWstBg ? (wstUp ? "text-emerald-400 border-emerald-600/50 bg-emerald-950/40" : "text-rose-400 border-rose-600/50 bg-rose-950/40") : "text-slate-500 border-slate-700 bg-slate-900/40"}`}>
+                    WST {wstUp ? "▲ UP" : "▼ DN"}
+                  </button>
                   <div className="flex items-center rounded border border-slate-700 bg-slate-950 overflow-hidden ml-2">
                     {PERIODS.map((p) => (
                       <button key={p.value} onClick={() => setPeriod(p.value)}
@@ -167,7 +174,7 @@ export default function KLSEDashboard() {
               {sectorChartData ? (
                 <TVChart ref={chartRef} data={sectorChartData} trades={[]} buySignals={[]} buyConditions={[]} />
               ) : (
-                <TVChart ref={chartRef} data={rawPoints} trades={[]} buySignals={[]} buyConditions={[]} emaConfigs={emaConfigs} showHalfTrend={showHalfTrend} />
+                <TVChart ref={chartRef} data={rawPoints} trades={[]} buySignals={[]} buyConditions={[]} emaConfigs={emaConfigs} showHalfTrend={showHalfTrend} showWstBackground={showWstBg} />
               )}
             </div>
           </div>

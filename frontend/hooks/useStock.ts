@@ -49,7 +49,7 @@ function shortTimeLabel(raw: string): string {
 
 export function useStock(initialSymbol: string) {
   const [symbol, setSymbol] = useState(initialSymbol);
-  const [period, setPeriod] = useState("6mo");
+  const [period, setPeriod] = useState("2y");
   const [configLoaded, setConfigLoaded] = useState(false);
   const [points, setPoints] = useState<DemoPoint[]>([]);
   const [stockName, setStockName] = useState("");

@@ -1145,7 +1145,7 @@ async def optimize_klse_strategy(payload: KLSEOptimizeRequest) -> dict[str, obje
             except Exception:
                 continue
             score = composite_score(r)
-            if r.total_trades >= 5 and r.win_rate >= 45.0:
+            if r.total_trades >= 1:
                 results.append((pdict, r, score))
         results.sort(key=lambda x: x[2], reverse=True)
         return results[:10]

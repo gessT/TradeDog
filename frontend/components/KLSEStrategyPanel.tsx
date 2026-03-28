@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { StrategyResponse } from "../services/api";
-import { runKLSEStrategy, optimizeKLSEStrategy } from "../services/api";
+import { optimizeKLSEStrategy } from "../services/api";
 
 type Props = Readonly<{
   symbol: string;
@@ -42,27 +42,12 @@ function rowBgClass(win: boolean, selected: boolean): string {
 }
 
 export default function KLSEStrategyPanel({ symbol, period, onTradeClick }: Props) {
-  const [loading, setLoading] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<StrategyResponse | null>(null);
   const [showTrades, setShowTrades] = useState(false);
   const [selectedTradeIdx, setSelectedTradeIdx] = useState<number | null>(null);
   const [showTopResults, setShowTopResults] = useState(false);
-
-  async function handleRun() {
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    try {
-      const res = await runKLSEStrategy(symbol, period);
-      setResult(res);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Strategy run failed");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function handleOptimize() {
     setOptimizing(true);
@@ -96,33 +81,12 @@ export default function KLSEStrategyPanel({ symbol, period, onTradeClick }: Prop
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <button
-            onClick={handleRun}
-            disabled={loading || optimizing}
-            className={`rounded-lg px-3 py-1.5 text-[11px] font-bold transition-all ${
-              loading || optimizing
-                ? "bg-slate-800 text-slate-500 cursor-wait"
-                : "bg-amber-600 text-white hover:bg-amber-500 active:scale-95 shadow-md shadow-amber-900/40"
-            }`}
-          >
-            {loading ? (
-              <span className="flex items-center gap-1.5">
-                <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
-                  <path d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z" fill="currentColor" className="opacity-75" />
-                </svg>
-                Running…
-              </span>
-            ) : (
-              "🚀 Run"
-            )}
-          </button>
-          <button
             onClick={handleOptimize}
-            disabled={loading || optimizing}
+            disabled={optimizing}
             className={`rounded-lg px-3 py-1.5 text-[11px] font-bold transition-all ${
               optimizing
                 ? "bg-violet-900 text-violet-300 cursor-wait"
-                : "bg-violet-600 text-white hover:bg-violet-500 active:scale-95 shadow-md shadow-violet-900/40 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-wait"
+                : "bg-violet-600 text-white hover:bg-violet-500 active:scale-95 shadow-md shadow-violet-900/40"
             }`}
           >
             {optimizing ? (
@@ -148,7 +112,7 @@ export default function KLSEStrategyPanel({ symbol, period, onTradeClick }: Prop
       )}
 
       {/* No results */}
-      {result && !hasMetrics && !loading && (
+      {result && !hasMetrics && !optimizing && (
         <div className="px-4 py-6 text-center">
           <p className="text-sm text-slate-500">No valid trades found for <span className="text-slate-300 font-semibold">{result.symbol}</span></p>
           <p className="mt-1 text-[10px] text-slate-600">Try a different period or symbol with more data</p>
