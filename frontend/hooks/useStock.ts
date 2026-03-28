@@ -55,6 +55,7 @@ export function useStock(initialSymbol: string) {
   const [stockName, setStockName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
   useEffect(() => {
     const loadConfiguration = async () => {
@@ -83,6 +84,7 @@ export function useStock(initialSymbol: string) {
       const res = await getDemoSeries(symbol, period);
       setPoints(res.data);
       setStockName(res.stock_name);
+      setLastRefreshed(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch data");
     } finally {
@@ -197,5 +199,6 @@ export function useStock(initialSymbol: string) {
     loading,
     error,
     refresh,
+    lastRefreshed,
   };
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import Navbar from "../Navbar";
 import DailyScanner from "../DailyScanner";
 import NearATH from "../NearATH";
 import TopVolume from "../TopVolume";
@@ -15,7 +14,7 @@ import { fetchSectorChart } from "../../services/api";
 import { useStock } from "../../hooks/useStock";
 
 export default function USDashboard() {
-  const { symbol, setSymbol, period, setPeriod, stockName, rows, rawPoints, loading, error, refresh } = useStock("AAPL");
+  const { symbol, setSymbol, period, setPeriod, stockName, rows, rawPoints, loading, error, refresh, lastRefreshed } = useStock("AAPL");
   const chartRef = useRef<TVChartHandle>(null);
 
   // Sector chart overlay
@@ -57,10 +56,19 @@ export default function USDashboard() {
     setSectorChartName("");
   }, []);
 
+  const PERIODS = [
+    { value: "1mo", label: "1M" },
+    { value: "3mo", label: "3M" },
+    { value: "6mo", label: "6M" },
+    { value: "1y", label: "1Y" },
+    { value: "2y", label: "2Y" },
+    { value: "5y", label: "5Y" },
+    { value: "10y", label: "10Y" },
+    { value: "max", label: "MAX" },
+  ];
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <Navbar period={period} onPeriodChange={setPeriod} onRefresh={refresh} loading={loading} />
-
       {error && (
         <div className="px-4 md:px-6">
           <div className="mt-2 rounded-lg border border-rose-800 bg-rose-950/50 px-4 py-2 text-xs text-rose-200">{error}</div>
@@ -101,7 +109,17 @@ export default function USDashboard() {
                 <>
                   <StockPicker symbol={symbol} stockName={stockName} market="US" onSymbolChange={setSymbol} />
                   <span className="text-xs text-slate-500">Candlestick</span>
-                  <div className="flex items-center gap-1 ml-3">
+                  <div className="flex items-center rounded border border-slate-700 bg-slate-950 overflow-hidden ml-2">
+                    {PERIODS.map((p) => (
+                      <button key={p.value} onClick={() => setPeriod(p.value)}
+                        className={`px-1.5 py-0.5 text-[10px] font-medium transition ${period === p.value ? "bg-sky-500 text-slate-950" : "text-slate-500 hover:text-slate-100 hover:bg-slate-800"}`}
+                      >{p.label}</button>
+                    ))}
+                  </div>
+                  <button onClick={refresh} disabled={loading}
+                    className="text-[10px] px-1.5 py-0.5 rounded border border-sky-600 bg-sky-500/20 text-sky-300 hover:bg-sky-500/40 disabled:opacity-40 transition ml-1"
+                  >{loading ? "…" : "↻"}</button>
+                  <div className="flex items-center gap-1 ml-2">
                     <button
                       onClick={() => setShowHalfTrend(!showHalfTrend)}
                       className={`text-[10px] px-1.5 py-0.5 rounded border transition font-bold ${showHalfTrend ? "border-blue-500 bg-blue-900/30 text-blue-400" : "border-slate-700 text-slate-500 hover:text-slate-300"}`}
@@ -117,7 +135,9 @@ export default function USDashboard() {
                       >{e.period}</button>
                     ))}
                   </div>
-                  <span className="text-[10px] text-slate-600 ml-auto">Click a trade row to navigate</span>
+                  <span className="text-[10px] text-slate-600 ml-auto">
+                    {lastRefreshed && `${lastRefreshed.toLocaleDateString("en-GB")} ${lastRefreshed.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`}
+                  </span>
                 </>
               )}
             </div>
