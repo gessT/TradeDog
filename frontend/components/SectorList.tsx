@@ -45,6 +45,7 @@ export default function SectorList({ onSelectSymbol, onSelectSector }: Readonly<
   const [error, setError] = useState<string | null>(null);
   const [totalScanned, setTotalScanned] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -74,11 +75,23 @@ export default function SectorList({ onSelectSymbol, onSelectSector }: Readonly<
 
   return (
     <div>
-      {/* Header */}
+      {/* Header — clickable to collapse/expand */}
       <div className="flex items-center justify-between mb-3">
-        <p className="text-xs uppercase tracking-widest text-slate-400 font-semibold">
-          🏭 Sector Momentum (30D)
-        </p>
+        <button
+          type="button"
+          className="flex items-center gap-1 cursor-pointer select-none text-left"
+          onClick={() => setCollapsed((v) => !v)}
+        >
+          <p className="text-xs uppercase tracking-widest text-slate-400 font-semibold">
+            <span className={`inline-block transition-transform ${collapsed ? "" : "rotate-90"}`}>▶</span>{" "}
+            🏭 Sector Momentum (30D)
+            {collapsed && sectors.length > 0 && (
+              <span className="ml-2 text-[10px] text-slate-500 normal-case tracking-normal">
+                {sectors.length} sectors
+              </span>
+            )}
+          </p>
+        </button>
         <button
           onClick={load}
           disabled={loading}
@@ -88,6 +101,8 @@ export default function SectorList({ onSelectSymbol, onSelectSector }: Readonly<
         </button>
       </div>
 
+      {!collapsed && (
+        <>
       {error && (
         <p className="text-xs text-rose-400 mb-2 bg-rose-500/10 rounded px-2 py-1">{error}</p>
       )}
@@ -108,9 +123,10 @@ export default function SectorList({ onSelectSymbol, onSelectSector }: Readonly<
 
             return (
               <div key={sec.sector} className={isExpanded ? "col-span-2" : ""}>
-                {/* Card */}
-                <div
-                  className={`rounded-lg border bg-gradient-to-br p-2.5 transition-all hover:brightness-110 cursor-pointer ${si.color}`}
+                {/* Card — expand/collapse toggle */}
+                <button
+                  type="button"
+                  className={`rounded-lg border bg-gradient-to-br p-2.5 transition-all hover:brightness-110 cursor-pointer w-full text-left ${si.color}`}
                   onClick={() => setExpanded(isExpanded ? null : sec.sector)}
                 >
                   {/* Top: icon + name + sentiment badge */}
@@ -151,15 +167,16 @@ export default function SectorList({ onSelectSymbol, onSelectSector }: Readonly<
                       {sec.green_today}/{sec.total_stocks}
                     </span>
                   </div>
+                </button>
 
-                  {/* Chart button */}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onSelectSector?.(sec.sector); }}
-                    className="mt-1.5 w-full text-[10px] text-cyan-400 hover:text-cyan-300 bg-slate-800/40 hover:bg-slate-800/70 rounded py-0.5 transition"
-                  >
-                    📈 View Chart
-                  </button>
-                </div>
+                {/* Chart button — outside card button to avoid nesting */}
+                <button
+                  type="button"
+                  onClick={() => onSelectSector?.(sec.sector)}
+                  className={`mt-0.5 w-full text-[10px] text-cyan-400 hover:text-cyan-300 bg-slate-800/40 hover:bg-slate-800/70 rounded py-0.5 transition border ${si.color.split(" ").find(c => c.startsWith("border-")) ?? "border-slate-700/40"}`}
+                >
+                  📈 View Chart
+                </button>
 
                 {/* Expanded stocks */}
                 {isExpanded && (
@@ -207,6 +224,8 @@ export default function SectorList({ onSelectSymbol, onSelectSector }: Readonly<
         <p className="text-[10px] text-slate-600 mt-2 text-center">
           {sectors.length} sectors · {totalScanned} stocks scanned
         </p>
+      )}
+        </>
       )}
     </div>
   );
