@@ -113,9 +113,6 @@ export default function USDashboard() {
               ) : (
                 <>
                   <StockPicker symbol={symbol} stockName={stockName} market="US" onSymbolChange={setSymbol} />
-                  <button onClick={() => setShowWstBg(!showWstBg)} className={`text-[10px] font-bold px-1.5 py-0.5 rounded border transition ${showWstBg ? (wstUp ? "text-emerald-400 border-emerald-600/50 bg-emerald-950/40" : "text-rose-400 border-rose-600/50 bg-rose-950/40") : "text-slate-500 border-slate-700 bg-slate-900/40"}`}>
-                    WST {wstUp ? "▲ UP" : "▼ DN"}
-                  </button>
                   <div className="flex items-center rounded border border-slate-700 bg-slate-950 overflow-hidden ml-2">
                     {PERIODS.map((p) => (
                       <button key={p.value} onClick={() => setPeriod(p.value)}
@@ -131,6 +128,9 @@ export default function USDashboard() {
                       onClick={() => setShowHalfTrend(!showHalfTrend)}
                       className={`text-[10px] px-1.5 py-0.5 rounded border transition font-bold ${showHalfTrend ? "border-blue-500 bg-blue-900/30 text-blue-400" : "border-slate-700 text-slate-500 hover:text-slate-300"}`}
                     >HT</button>
+                    <button onClick={() => setShowWstBg(!showWstBg)}
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded border transition ${showWstBg ? (wstUp ? "text-emerald-400 border-emerald-600/50 bg-emerald-950/40" : "text-rose-400 border-rose-600/50 bg-rose-950/40") : "text-slate-500 border-slate-700 bg-slate-900/40"}`}
+                    >WST</button>
                     <button
                       onClick={() => setShowEmaPanel(!showEmaPanel)}
                       className={`text-[10px] px-1.5 py-0.5 rounded border transition ${showEmaPanel ? "border-cyan-600 bg-cyan-900/30 text-cyan-300" : "border-slate-700 text-slate-500 hover:text-slate-300"}`}
@@ -169,9 +169,9 @@ export default function USDashboard() {
             )}
             <div className="flex-1 min-h-0">
               {sectorChartData ? (
-                <TVChart ref={chartRef} data={sectorChartData} trades={[]} buySignals={[]} buyConditions={[]} />
+                <TVChart ref={chartRef} data={sectorChartData} trades={[]} buySignals={[]} />
               ) : (
-                <TVChart ref={chartRef} data={rawPoints} trades={[]} buySignals={[]} buyConditions={[]} emaConfigs={emaConfigs} showHalfTrend={showHalfTrend} showWstBackground={showWstBg} />
+                <TVChart ref={chartRef} data={rawPoints} trades={[]} buySignals={[]} emaConfigs={emaConfigs} showHalfTrend={showHalfTrend} showWstBackground={showWstBg} />
               )}
             </div>
           </div>
