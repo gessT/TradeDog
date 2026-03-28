@@ -657,12 +657,21 @@ export type ScanTradeResponse = {
   backtest: BacktestCheck | null;
   execution: ExecutionResult | null;
   risk_check: Record<string, number>;
+  position: { current_qty: number; max_qty: number; trade_qty: number; blocked: boolean };
   timestamp: string;
 };
+
+export async function getMgcPosition(): Promise<{ current_qty: number; symbol: string }> {
+  const res = await fetch(`${API_BASE}/mgc/position`);
+  if (!res.ok) return { current_qty: 0, symbol: "MGC" };
+  return res.json();
+}
 
 export async function scanTrade(
   autoExecute: boolean = false,
   interval: string = "5m",
+  qty: number = 1,
+  maxQty: number = 5,
 ): Promise<ScanTradeResponse> {
   const response = await fetch(`${API_BASE}/mgc/scan_trade`, {
     method: "POST",
@@ -671,6 +680,8 @@ export async function scanTrade(
       auto_execute: autoExecute,
       interval,
       symbols: ["MGC"],
+      qty,
+      max_qty: maxQty,
     }),
   });
   if (!response.ok) {

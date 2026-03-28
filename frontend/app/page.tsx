@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import DataTable from "../components/DataTable";
 import Navbar from "../components/Navbar";
 import NearATH from "../components/NearATH";
@@ -18,7 +18,7 @@ import { useStock } from "../hooks/useStock";
 
 export default function Page() {
   const [mode, setMode] = useState<"KLSE" | "MGC">("KLSE");
-  const { symbol, setSymbol, period, setPeriod, stockName, rows, rawPoints, loading, error, refresh } = useStock("5248.KL");
+  const { symbol, setSymbol, period, setPeriod, rows, rawPoints, loading, error, refresh } = useStock("5248.KL");
 
   const chartRef = useRef<TVChartHandle>(null);
 

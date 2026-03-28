@@ -88,7 +88,7 @@ def main() -> None:
     else:
         df = load_yfinance(symbol=args.symbol, interval=args.interval, period=args.period)
 
-    print(f"\n  Instrument       : Micro Gold Futures (MGC)")
+    print("\n  Instrument       : Micro Gold Futures (MGC)")
     print(f"  Bars Loaded      : {len(df)}")
     print(f"  Date Range       : {df.index[0]} → {df.index[-1]}")
     print(f"  Price Range      : ${df['close'].min():.2f} — ${df['close'].max():.2f}")
@@ -173,7 +173,7 @@ def main() -> None:
     if args.output:
         output_data = {
             "strategy_type": best_params.get("strategy_type"),
-            "params": {k: v for k, v in best_params.items()},
+            "params": dict(best_params.items()),
             "results": {
                 "win_rate": best_result.win_rate,
                 "total_return_pct": best_result.total_return_pct,
@@ -212,7 +212,7 @@ def _print_trade_log(result: BacktestResult, last_n: int = 15) -> None:
     # P&L distribution
     wins = [t.pnl for t in result.trades if t.pnl > 0]
     losses = [t.pnl for t in result.trades if t.pnl <= 0]
-    print(f"\n  P&L Distribution:")
+    print("\n  P&L Distribution:")
     print(f"    Total P&L      : ${sum(t.pnl for t in result.trades):,.2f}")
     if wins:
         print(f"    Best Trade     : ${max(wins):,.2f}")
@@ -225,7 +225,7 @@ def _print_trade_log(result: BacktestResult, last_n: int = 15) -> None:
     reasons = {}
     for t in result.trades:
         reasons[t.reason] = reasons.get(t.reason, 0) + 1
-    print(f"\n  Exit Reasons:")
+    print("\n  Exit Reasons:")
     for reason, count in sorted(reasons.items()):
         print(f"    {reason:12s}: {count:4d} ({count/len(result.trades)*100:.1f}%)")
 

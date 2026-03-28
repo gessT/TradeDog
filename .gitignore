@@ -26,7 +26,8 @@ env/
 
 # Python local config
 .env
-.env.*
+.env.local
+!.env.example
 
 # Databases / runtime artifacts
 *.db
@@ -48,6 +49,7 @@ front/.env.*
 # Build outputs
 build/
 dist/
+_archive/
 
 # TypeScript
 *.tsbuildinfo

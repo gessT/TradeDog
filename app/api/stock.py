@@ -16,7 +16,7 @@ from app.db.database import get_db
 from app.models.stock import StockPreference
 from app.services.data_collector import fetch_stock
 from app.services.redis_client import redis_service
-from app.utils.indicators import ema
+from app.utils.indicators import ema, rsi as compute_rsi, atr as compute_atr
 
 logger = logging.getLogger(__name__)
 
@@ -788,50 +788,10 @@ async def get_stock(symbol: str) -> dict[str, object]:
 
 # ── Daily Opportunity Scanner ─────────────────────────────────────────
 
-def _compute_scan_ema(vals: list[float], n: int) -> list[float]:
-    import math as _math
-    out = [_math.nan] * len(vals)
-    if len(vals) < n:
-        return out
-    k = 2 / (n + 1)
-    out[n - 1] = sum(vals[:n]) / n
-    for i in range(n, len(vals)):
-        out[i] = vals[i] * k + out[i - 1] * (1 - k)
-    return out
-
-
-def _compute_scan_rsi(vals: list[float], n: int = 14) -> list[float]:
-    out = [50.0] * len(vals)
-    if len(vals) < n + 1:
-        return out
-    g, lo2 = 0.0, 0.0
-    for i in range(1, n + 1):
-        d = vals[i] - vals[i - 1]
-        g += max(d, 0)
-        lo2 += max(-d, 0)
-    ag, al = g / n, lo2 / n
-    out[n] = 100 - 100 / (1 + ag / al) if al else 100.0
-    for i in range(n + 1, len(vals)):
-        d = vals[i] - vals[i - 1]
-        ag = (ag * (n - 1) + max(d, 0)) / n
-        al = (al * (n - 1) + max(-d, 0)) / n
-        out[i] = 100 - 100 / (1 + ag / al) if al else 100.0
-    return out
-
-
-def _compute_scan_atr(hv: list[float], lv: list[float], cv: list[float], n: int = 14) -> list[float]:
-    import math as _math
-    tr = [hv[0] - lv[0]] + [
-        max(hv[i] - lv[i], abs(hv[i] - cv[i - 1]), abs(lv[i] - cv[i - 1]))
-        for i in range(1, len(cv))
-    ]
-    out = [_math.nan] * len(cv)
-    if len(cv) < n:
-        return out
-    out[n - 1] = sum(tr[:n]) / n
-    for i in range(n, len(cv)):
-        out[i] = (out[i - 1] * (n - 1) + tr[i]) / n
-    return out
+# Use shared indicator functions from app.utils.indicators
+_compute_scan_ema = ema
+_compute_scan_rsi = compute_rsi
+_compute_scan_atr = compute_atr
 
 
 def _scan_daily_setup(code: str, name: str) -> dict | None:

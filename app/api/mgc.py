@@ -7,8 +7,9 @@ can call to get chart data, trade markers, and performance metrics.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Query
 from fastapi.concurrency import run_in_threadpool
@@ -85,10 +86,10 @@ class MGCBacktestResponse(BaseModel):
 
 @router.get("/backtest")
 async def mgc_backtest(
-    symbol: str = Query(default="MGC=F"),
-    interval: str = Query(default="15m"),
-    period: str = Query(default="60d"),
-    capital: float = Query(default=INITIAL_CAPITAL),
+    symbol: Annotated[str, Query()] = "MGC=F",
+    interval: Annotated[str, Query()] = "15m",
+    period: Annotated[str, Query()] = "60d",
+    capital: Annotated[float, Query()] = INITIAL_CAPITAL,
     # Optional param overrides
     ema_fast: Optional[int] = None,
     ema_slow: Optional[int] = None,
@@ -188,7 +189,6 @@ async def mgc_backtest(
 
 def _isnan(v) -> bool:
     try:
-        import math
         return math.isnan(float(v))
     except (TypeError, ValueError):
         return True
@@ -254,8 +254,8 @@ def _get_tiger_clients():
 
 @router.get("/live")
 async def mgc_live(
-    interval: str = Query(default="15m"),
-    limit: int = Query(default=500, ge=50, le=1000),
+    interval: Annotated[str, Query()] = "15m",
+    limit: Annotated[int, Query(ge=50, le=1000)] = 500,
 ) -> MGCLiveResponse:
     """Fetch real-time MGC bars from Tiger API with indicators."""
 
@@ -292,7 +292,7 @@ async def mgc_live(
         ema_f = ind.ema(df["close"], p["ema_fast"])
         ema_s = ind.ema(df["close"], p["ema_slow"])
         rsi_vals = ind.rsi(df["close"], p["rsi_period"])
-        atr_vals = ind.atr(df["high"], df["low"], df["close"], p["atr_period"])
+        ind.atr(df["high"], df["low"], df["close"], p["atr_period"])
 
         # Compute signals
         strategy = MGCStrategy(p)
@@ -392,10 +392,11 @@ class ExecutionResult(BaseModel):
 class ScanTradeResponse(BaseModel):
     """Full response from /scan_trade endpoint."""
     opportunity: bool
-    signal: Optional[ScanSignal]
-    backtest: Optional[BacktestCheck]
-    execution: Optional[ExecutionResult]
+    signal: Optional[ScanSignal] = None
+    backtest: Optional[BacktestCheck] = None
+    execution: Optional[ExecutionResult] = None
     risk_check: dict
+    position: dict  # current_qty, max_qty, blocked
     timestamp: str
 
 
@@ -404,6 +405,36 @@ class ScanTradeRequest(BaseModel):
     auto_execute: bool = False
     interval: str = "5m"
     symbols: list[str] = ["MGC"]
+    qty: int = 1        # contracts per trade
+    max_qty: int = 5    # max total holding
+
+
+# Fetch real position from Tiger Demo account
+def _get_tiger_position(symbol: str = "MGC") -> int:
+    """Get current holding qty for a symbol from Tiger account."""
+    try:
+        _, trade_client = _get_tiger_clients()
+        if trade_client is None:
+            return 0
+        positions = trade_client.get_positions(
+            account=TIGER_ACCOUNT, sec_type="FUT"
+        )
+        if not positions:
+            return 0
+        total = 0
+        for p in positions:
+            if p.contract and p.contract.symbol and p.contract.symbol.startswith(symbol):
+                total += int(p.quantity)
+        return total
+    except Exception:
+        return 0
+
+
+@router.get("/position")
+async def get_position(symbol: str = "MGC"):
+    """Return current Tiger position for a symbol."""
+    qty = _get_tiger_position(symbol)
+    return {"current_qty": qty, "symbol": symbol}
 
 
 @router.post("/scan_trade")
@@ -473,7 +504,12 @@ async def scan_trade(req: ScanTradeRequest) -> ScanTradeResponse:
         pullback_signal = int(bar.get("signal", 0)) == 1
         breakout_signal = int(bar.get("breakout", 0)) == 1
         has_signal = pullback_signal or breakout_signal
-        signal_type = "PULLBACK" if pullback_signal else ("BREAKOUT" if breakout_signal else "NONE")
+        if pullback_signal:
+            signal_type = "PULLBACK"
+        elif breakout_signal:
+            signal_type = "BREAKOUT"
+        else:
+            signal_type = "NONE"
 
         atr_val = float(bar["atr"]) if not _isnan(bar["atr"]) else 0.0
         rsi_val = float(bar["rsi"]) if not _isnan(bar["rsi"]) else 50.0
@@ -542,11 +578,11 @@ async def scan_trade(req: ScanTradeRequest) -> ScanTradeResponse:
 
         strength = max(1, min(10, score))
 
-        # ── 5. Position sizing (1% risk) ─────────────────────────
+        # ── 5. Position sizing — use requested qty ────────────
         account_equity = 50_000.0  # demo default
-        risk_amount = account_equity * RISK_PER_TRADE
+        qty = req.qty
         risk_per_contract = abs(entry_price - sl_price) * CONTRACT_SIZE
-        qty = max(1, int(risk_amount / risk_per_contract)) if risk_per_contract > 0 else 1
+        risk_amount = risk_per_contract * qty
 
         signal_obj = ScanSignal(
             found=has_signal,
@@ -593,53 +629,71 @@ async def scan_trade(req: ScanTradeRequest) -> ScanTradeResponse:
             )
 
         # ── 7. Risk check summary ────────────────────────────────
+        current_pos = _get_tiger_position(symbol)
+        at_max = current_pos >= req.max_qty
         risk_check = {
-            "risk_per_trade_pct": RISK_PER_TRADE * 100,
+            "risk_per_trade_pct": round(risk_amount / account_equity * 100, 2),
             "risk_amount_usd": round(risk_amount, 2),
             "position_size": qty,
             "max_loss_usd": round(risk_per_contract * qty, 2),
             "account_equity": account_equity,
         }
+        position_info = {
+            "current_qty": current_pos,
+            "max_qty": req.max_qty,
+            "trade_qty": qty,
+            "blocked": at_max,
+        }
 
         # ── 8. Auto-execute on Tiger Demo when signal found ─────
         exec_result = None
         if has_signal and req.auto_execute:
-            trader = TigerTrader()
-            trader.connect()
-            bracket = trader.place_bracket_order(
-                symbol=symbol,
-                qty=qty,
-                side="BUY",
-                stop_loss_price=sl_price,
-                take_profit_price=tp_price,
-            )
-            if bracket.entry and bracket.entry.status != "FAILED":
-                parts = [f"Entry {bracket.entry.order_id}"]
-                if bracket.stop_loss:
-                    parts.append(f"SL {bracket.stop_loss.order_id} @ ${sl_price:.2f}")
-                if bracket.take_profit:
-                    parts.append(f"TP {bracket.take_profit.order_id} @ ${tp_price:.2f}")
-                exec_result = ExecutionResult(
-                    executed=True,
-                    order_id=bracket.entry.order_id,
-                    side="BUY",
-                    qty=qty,
-                    status=bracket.entry.status,
-                    reason=" | ".join(parts),
-                )
-            else:
+            if at_max:
                 exec_result = ExecutionResult(
                     executed=False,
                     order_id="",
                     side="BUY",
                     qty=qty,
-                    status="FAILED",
-                    reason="Tiger API order failed",
+                    status="MAX_POSITION",
+                    reason=f"Position {current_pos}/{req.max_qty} — at max, no new orders",
                 )
+            else:
+                trader = TigerTrader()
+                trader.connect()
+                bracket = trader.place_bracket_order(
+                    symbol=symbol,
+                    qty=qty,
+                    side="BUY",
+                    stop_loss_price=sl_price,
+                    take_profit_price=tp_price,
+                )
+                if bracket.entry and bracket.entry.status != "FAILED":
+                    parts = [f"Entry {bracket.entry.order_id}"]
+                    if bracket.stop_loss:
+                        parts.append(f"SL {bracket.stop_loss.order_id} @ ${sl_price:.2f}")
+                    if bracket.take_profit:
+                        parts.append(f"TP {bracket.take_profit.order_id} @ ${tp_price:.2f}")
+                    exec_result = ExecutionResult(
+                        executed=True,
+                        order_id=bracket.entry.order_id,
+                        side="BUY",
+                        qty=qty,
+                        status=bracket.entry.status,
+                        reason=" | ".join(parts),
+                    )
+                else:
+                    exec_result = ExecutionResult(
+                        executed=False,
+                        order_id="",
+                        side="BUY",
+                        qty=qty,
+                        status="FAILED",
+                        reason="Tiger API order failed",
+                    )
 
-        return has_signal, signal_obj, bt_check, exec_result, risk_check
+        return has_signal, signal_obj, bt_check, exec_result, risk_check, position_info
 
-    opportunity, signal, bt_check, exec_result, risk_check = await run_in_threadpool(_run)
+    opportunity, signal, bt_check, exec_result, risk_check, position_info = await run_in_threadpool(_run)
 
     return ScanTradeResponse(
         opportunity=opportunity,
@@ -647,5 +701,6 @@ async def scan_trade(req: ScanTradeRequest) -> ScanTradeResponse:
         backtest=bt_check,
         execution=exec_result,
         risk_check=risk_check,
+        position=position_info,
         timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
     )

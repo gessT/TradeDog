@@ -3,7 +3,7 @@ from fastapi import Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api import backtest, demo, mgc, signal, stock, webhook, ws
+from app.api import backtest, demo, mgc, stock, webhook, ws
 from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.core.logger import configure_logging, render_metrics, track
@@ -50,7 +50,6 @@ app.add_middleware(
 )
 
 app.include_router(stock.router, prefix="/stock")
-app.include_router(signal.router, prefix="/signal")
 app.include_router(health_router)
 app.include_router(webhook.router, prefix="/webhook")
 app.include_router(ws.router)

@@ -164,7 +164,7 @@ def optimize_all_strategies(
     total = len(all_combos)
     print(f"\n{'='*60}")
     print(f"  MGC PRO OPTIMIZER — {total} total combinations")
-    print(f"  Strategies: pullback, breakout, momentum, trend_following")
+    print("  Strategies: pullback, breakout, momentum, trend_following")
     print(f"  Filters: WR>={min_win_rate}% | DD<={max_drawdown}% | Trades>={min_trades}")
     print(f"  Workers: {workers}")
     print(f"{'='*60}\n")
@@ -248,10 +248,10 @@ def print_top_results(results: list[tuple[dict, BacktestResult, float]], top_n: 
         print("\n" + "=" * 60)
         print("  BEST STRATEGY DETAILS")
         print("=" * 60)
-        best_params, best_result, best_score = results[0]
+        best_params, best_result, _best_score = results[0]
         print_result(best_result)
 
-        print(f"\n  Key Parameters:")
+        print("\n  Key Parameters:")
         important_keys = [
             "strategy_type", "ema_fast", "ema_slow", "rsi_low", "rsi_high",
             "atr_sl_mult", "atr_tp_mult", "pullback_atr_mult", "breakout_lookback",

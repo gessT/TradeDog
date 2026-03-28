@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   scanTrade,
+  getMgcPosition,
   type ScanTradeResponse,
   type ScanSignal,
   type BacktestCheck,
@@ -195,6 +196,18 @@ function ExecPanel({ exec: ex }: Readonly<{ exec: ExecutionResult }>) {
   );
 }
 
+function scanButtonStyle(atMax: boolean, scanning: boolean) {
+  if (atMax) return "bg-rose-900/30 text-rose-400 border border-rose-800/50 cursor-not-allowed";
+  if (scanning) return "bg-slate-800 text-slate-500 cursor-wait";
+  return "bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-500 hover:to-blue-500 active:scale-95 shadow-cyan-900/40";
+}
+
+function scanButtonText(atMax: boolean, scanning: boolean, maxQty: number) {
+  if (atMax) return `⛔ Max ${maxQty} Reached`;
+  if (scanning) return "Scanning…";
+  return "⚡ Scan & Execute";
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
@@ -204,19 +217,38 @@ export default function ScanTradePanel() {
   const [data, setData] = useState<ScanTradeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scanInterval, setScanInterval] = useState("5m");
+  const [tradeQty, setTradeQty] = useState(1);
+  const [maxQty, setMaxQty] = useState(5);
+  const [liveQty, setLiveQty] = useState(0);
+
+  // Fetch real position on mount and every 10s
+  useEffect(() => {
+    const fetch = () => getMgcPosition().then((p) => setLiveQty(p.current_qty)).catch(() => {});
+    fetch();
+    const id = setInterval(fetch, 10_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Update liveQty when scan returns fresh position data
+  useEffect(() => {
+    if (data?.position) setLiveQty(data.position.current_qty);
+  }, [data]);
+
+  const currentPos = liveQty;
+  const atMax = currentPos >= maxQty;
 
   const doScan = useCallback(async () => {
     setScanning(true);
     setError(null);
     try {
-      const res = await scanTrade(true, scanInterval);
+      const res = await scanTrade(true, scanInterval, tradeQty, maxQty);
       setData(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Scan failed");
     } finally {
       setScanning(false);
     }
-  }, [scanInterval]);
+  }, [scanInterval, tradeQty, maxQty]);
 
   return (
     <div className="flex flex-col h-full bg-slate-950 text-slate-100">
@@ -238,17 +270,44 @@ export default function ScanTradePanel() {
           ))}
         </div>
 
+        {/* Unit inputs */}
+        <div className="flex items-center gap-1.5 ml-2">
+          <span className="text-[9px] text-slate-500 uppercase">Qty</span>
+          <input
+            type="number"
+            min={1}
+            max={maxQty}
+            value={tradeQty}
+            onChange={(e) => setTradeQty(Math.max(1, Math.min(maxQty, Number(e.target.value) || 1)))}
+            className="w-12 px-1.5 py-0.5 text-[11px] bg-slate-800 border border-slate-700 rounded text-center text-slate-200 tabular-nums"
+          />
+          <span className="text-[9px] text-slate-500 uppercase ml-1">Max</span>
+          <input
+            type="number"
+            min={1}
+            max={99}
+            value={maxQty}
+            onChange={(e) => setMaxQty(Math.max(1, Number(e.target.value) || 1))}
+            className="w-12 px-1.5 py-0.5 text-[11px] bg-slate-800 border border-slate-700 rounded text-center text-slate-200 tabular-nums"
+          />
+        </div>
+
+        {/* Position badge */}
+        <div className={`px-2 py-0.5 text-[10px] font-bold rounded-md border ${
+          atMax
+            ? "border-rose-500/50 bg-rose-500/10 text-rose-400"
+            : "border-slate-700 bg-slate-800 text-slate-400"
+        }`}>
+          {currentPos}/{maxQty} held
+        </div>
+
         {/* SCAN & EXECUTE button */}
         <button
           onClick={doScan}
-          disabled={scanning}
-          className={`ml-auto px-5 py-2 text-sm font-bold rounded-lg transition-all shadow-lg ${
-            scanning
-              ? "bg-slate-800 text-slate-500 cursor-wait"
-              : "bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-500 hover:to-blue-500 active:scale-95 shadow-cyan-900/40"
-          }`}
+          disabled={scanning || atMax}
+          className={`ml-auto px-5 py-2 text-sm font-bold rounded-lg transition-all shadow-lg ${scanButtonStyle(atMax, scanning)}`}
         >
-          {scanning ? "Scanning…" : "⚡ Scan & Execute"}
+          {scanButtonText(atMax, scanning, maxQty)}
         </button>
       </div>
 
@@ -298,22 +357,28 @@ export default function ScanTradePanel() {
               <BacktestPanel bt={data.backtest} />
             )}
 
-            {/* Risk info */}
+            {/* Risk + Position info */}
             {data.signal && data.signal.found && (
               <div className="rounded-lg border border-slate-800/60 bg-slate-900/40 p-3">
-                <p className="text-[9px] text-slate-500 uppercase tracking-widest mb-1.5">Risk Management</p>
-                <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
+                <p className="text-[9px] text-slate-500 uppercase tracking-widest mb-1.5">Position & Risk</p>
+                <div className="grid grid-cols-4 gap-2 text-center text-[10px]">
                   <div>
-                    <div className="text-slate-500">Risk/Trade</div>
-                    <div className="font-bold text-slate-300">{data.risk_check.risk_per_trade_pct}%</div>
+                    <div className="text-slate-500">Position</div>
+                    <div className={`font-bold ${data.position?.blocked ? "text-rose-400" : "text-cyan-400"}`}>
+                      {data.position?.current_qty ?? 0}/{data.position?.max_qty ?? maxQty}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500">Trade Qty</div>
+                    <div className="font-bold text-slate-300">×{data.position?.trade_qty ?? tradeQty}</div>
                   </div>
                   <div>
                     <div className="text-slate-500">Max Loss</div>
                     <div className="font-bold text-rose-400">${data.risk_check.max_loss_usd}</div>
                   </div>
                   <div>
-                    <div className="text-slate-500">Qty</div>
-                    <div className="font-bold text-cyan-400">×{data.risk_check.position_size}</div>
+                    <div className="text-slate-500">Risk %</div>
+                    <div className="font-bold text-slate-300">{data.risk_check.risk_per_trade_pct}%</div>
                   </div>
                 </div>
               </div>

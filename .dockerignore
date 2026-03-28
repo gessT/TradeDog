@@ -1,0 +1,8 @@
+_archive/
+frontend/node_modules/
+frontend/.next/
+.git/
+__pycache__/
+*.pyc
+.env
+*.pem
