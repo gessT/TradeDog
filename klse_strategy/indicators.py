@@ -1,8 +1,11 @@
 """
-indicators.py — Technical indicators for Bursa Malaysia multi-timeframe strategy.
+indicators.py — Technical indicators for HalfTrend + Weekly Supertrend strategy.
 
-Implements: Supertrend, HalfTrend, EMA, ATR, Pivot Points.
-All indicators are vectorised with numpy/pandas for speed.
+Implements exact Pine Script logic:
+  - HalfTrend with amplitude, channelDeviation, ATR deviation
+  - Supertrend (ATR-based, factor/period configurable)
+  - Weekly Supertrend aggregation (no lookahead)
+  - ATR (Wilder RMA)
 """
 from __future__ import annotations
 
@@ -29,6 +32,13 @@ def atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     return out
 
 
+# ─── SMA ───────────────────────────────────────────────────────────────
+def sma(values: np.ndarray, period: int) -> np.ndarray:
+    """Simple Moving Average."""
+    s = pd.Series(values)
+    return s.rolling(period, min_periods=1).mean().to_numpy()
+
+
 # ─── EMA ───────────────────────────────────────────────────────────────
 def ema(values: np.ndarray, period: int) -> np.ndarray:
     """Exponential Moving Average."""
@@ -41,7 +51,7 @@ def supertrend(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
                atr_period: int = 10, multiplier: float = 3.0
                ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Compute Supertrend indicator.
+    Supertrend matching Pine Script ta.supertrend().
 
     Returns
     -------
@@ -88,7 +98,12 @@ def weekly_supertrend(daily_df: pd.DataFrame,
                       atr_period: int = 10,
                       multiplier: float = 3.0) -> np.ndarray:
     """
-    Compute Weekly Supertrend and map back to daily bars.
+    Compute Weekly Supertrend and map back to daily bars WITHOUT lookahead.
+
+    Each daily bar sees only the COMPLETED weekly Supertrend (prev week).
+    The current week's partial data updates the weekly candle but the
+    Supertrend direction used is from the *last completed* weekly bar
+    until the current week closes.
 
     Returns ndarray (len == daily bars): -1 = bullish, +1 = bearish.
     """
@@ -99,7 +114,7 @@ def weekly_supertrend(daily_df: pd.DataFrame,
     n = len(dates)
 
     # Aggregate daily → weekly
-    w_opens, w_highs, w_lows, w_closes = [], [], [], []
+    w_highs, w_lows, w_closes = [], [], []
     week_map = np.zeros(n, dtype=int)  # daily idx → week idx
     w_idx = -1
 
@@ -110,7 +125,6 @@ def weekly_supertrend(daily_df: pd.DataFrame,
                     or dt.year != pd.Timestamp(dates[i - 1]).year)
         if new_week:
             w_idx += 1
-            w_opens.append(daily_df["open"].iat[i])
             w_highs.append(highs[i])
             w_lows.append(lows[i])
             w_closes.append(closes[i])
@@ -126,99 +140,125 @@ def weekly_supertrend(daily_df: pd.DataFrame,
 
     w_dir, _ = supertrend(w_h, w_l, w_c, atr_period, multiplier)
 
-    # Map weekly direction back to daily
-    return np.array([w_dir[week_map[i]] for i in range(n)])
+    # Map weekly direction back to daily (use PREVIOUS completed week to avoid lookahead)
+    # Within current week, use dir from previous completed week
+    out = np.ones(n)
+    for i in range(n):
+        wi = week_map[i]
+        # Use the completed previous week's direction
+        if wi > 0:
+            out[i] = w_dir[wi - 1]
+        else:
+            out[i] = w_dir[0]  # first week, no prior data
+    return out
 
 
-# ─── HalfTrend ─────────────────────────────────────────────────────────
+# ─── HalfTrend (exact Pine Script replica) ────────────────────────────
 def halftrend(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
-              amplitude: int = 2, atr_length: int = 100
-              ) -> tuple[np.ndarray, np.ndarray]:
+              amplitude: int = 5, channel_deviation: int = 2
+              ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Pine Script HalfTrend indicator.
+    Exact Pine Script HalfTrend indicator.
+
+    Pine Script reference:
+      amplitude = input(5)
+      channelDeviation = input(2)
+      Uses ATR(100) for channel width, SMA of high/low for trend detection.
+
+    Parameters
+    ----------
+    amplitude : int
+        Lookback for highest/lowest and SMA of high/low.
+    channel_deviation : int
+        Multiplier for ATR-based channel deviation.
 
     Returns
     -------
-    trend : ndarray  0 = uptrend (buy), 1 = downtrend (sell)
-    ht    : ndarray  halftrend line value
+    trend       : ndarray  0 = uptrend (bullish), 1 = downtrend (bearish)
+    ht_line     : ndarray  HalfTrend line value
+    buy_signal  : ndarray  1 = buy signal (trend flipped bullish), 0 = no signal
+    sell_signal : ndarray  1 = sell signal (trend flipped bearish), 0 = no signal
     """
     n = len(closes)
     trend = np.zeros(n, dtype=int)
-    ht = np.zeros(n)
+    ht_line = np.zeros(n)
+    buy_signal = np.zeros(n, dtype=int)
+    sell_signal = np.zeros(n, dtype=int)
 
-    atr_vals = atr(highs, lows, closes, atr_length)
+    # ATR(100) for deviation channel — matches Pine default
+    atr_vals = atr(highs, lows, closes, 100)
+    dev = channel_deviation * atr_vals
 
     next_trend = 0
     max_low_price = lows[0]
     min_high_price = highs[0]
     up = 0.0
     down = 0.0
+    atr_high = 0.0
+    atr_low = 0.0
 
     for i in range(n):
         lo = max(0, i - amplitude)
-        highest = np.max(highs[lo:i + 1])
-        lowest = np.min(lows[lo:i + 1])
+        highest_val = np.max(highs[lo:i + 1])
+        lowest_val = np.min(lows[lo:i + 1])
+        # SMA of highs and lows over amplitude period
         high_ma = np.mean(highs[lo:i + 1])
         low_ma = np.mean(lows[lo:i + 1])
 
+        prev_trend = trend[i - 1] if i > 0 else next_trend
+
         if next_trend == 1:
-            max_low_price = max(lowest, max_low_price)
-            if high_ma < max_low_price and (i == 0 or closes[i] < lows[i - 1]):
-                trend[i] = 0
+            # Currently bearish, check for flip to bullish
+            max_low_price = max(lowest_val, max_low_price)
+            if high_ma < max_low_price and closes[i] < (lows[max(0, i - 1)] if i > 0 else lows[0]):
+                trend[i] = 0  # flip to bullish
                 next_trend = 0
-                min_high_price = highest
+                min_high_price = highest_val
+                # Set up line
+                up = max(max_low_price, up if i > 0 else max_low_price)
             else:
-                trend[i] = 1
+                trend[i] = 1  # stay bearish
         else:
-            min_high_price = min(highest, min_high_price)
-            if low_ma > min_high_price and (i == 0 or closes[i] > highs[i - 1]):
-                trend[i] = 1
+            # Currently bullish, check for flip to bearish
+            min_high_price = min(highest_val, min_high_price)
+            if low_ma > min_high_price and closes[i] > (highs[max(0, i - 1)] if i > 0 else highs[0]):
+                trend[i] = 1  # flip to bearish
                 next_trend = 1
-                max_low_price = lowest
+                max_low_price = lowest_val
+                # Set down line
+                down = min(min_high_price, down if (i > 0 and down > 0) else min_high_price)
             else:
-                trend[i] = 0
+                trend[i] = 0  # stay bullish
 
+        # Update HalfTrend line
         if trend[i] == 0:
-            up = max(max_low_price, up if i > 0 else max_low_price)
-            ht[i] = up
+            if prev_trend != 0:
+                up = max(max_low_price, up if i > 0 else max_low_price)
+            else:
+                up = max(max_low_price, up)
+            atr_high = up + dev[i]
+            atr_low = up - dev[i]
+            ht_line[i] = up
         else:
-            down = min(min_high_price, down if (i > 0 and down > 0) else min_high_price)
-            ht[i] = down
+            if prev_trend != 1:
+                down = min(min_high_price, down if (i > 0 and down > 0) else min_high_price)
+            else:
+                down = min(min_high_price, down if down > 0 else min_high_price)
+            atr_high = down + dev[i]
+            atr_low = down - dev[i]
+            ht_line[i] = down
 
-    return trend, ht
+        # Detect signals: trend flip
+        if i > 0:
+            if trend[i] == 0 and trend[i - 1] == 1:
+                buy_signal[i] = 1   # bearish → bullish
+            elif trend[i] == 1 and trend[i - 1] == 0:
+                sell_signal[i] = 1  # bullish → bearish
 
-
-# ─── Pivot Points (Support / Resistance) ──────────────────────────────
-def pivot_points(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
-                 lookback: int = 10
-                 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Classic Pivot with rolling lookback.
-
-    Returns
-    -------
-    pivot   : ndarray (PP = (H + L + C) / 3 over lookback)
-    support : ndarray (S1 = 2*PP - H)
-    resist  : ndarray (R1 = 2*PP - L)
-    """
-    n = len(closes)
-    pivot = np.full(n, np.nan)
-    support = np.full(n, np.nan)
-    resist = np.full(n, np.nan)
-
-    for i in range(lookback, n):
-        h = np.max(highs[i - lookback:i])
-        l = np.min(lows[i - lookback:i])
-        c = closes[i - 1]
-        pp = (h + l + c) / 3.0
-        pivot[i] = pp
-        support[i] = 2 * pp - h
-        resist[i] = 2 * pp - l
-
-    return pivot, support, resist
+    return trend, ht_line, buy_signal, sell_signal
 
 
-# ─── Swing High / Low detection ───────────────────────────────────────
+# ─── Swing Low detection ──────────────────────────────────────────────
 def swing_low(lows: np.ndarray, lookback: int = 10) -> np.ndarray:
     """Return rolling swing low (confirmed minimum over ±lookback bars)."""
     n = len(lows)
@@ -229,42 +269,7 @@ def swing_low(lows: np.ndarray, lookback: int = 10) -> np.ndarray:
         if lows[i] == np.min(window):
             last_swing = lows[i]
         out[i + lookback] = last_swing
-    # Forward fill
     for i in range(1, n):
         if np.isnan(out[i]):
             out[i] = out[i - 1] if i > 0 else np.nan
     return out
-
-
-def swing_high(highs: np.ndarray, lookback: int = 10) -> np.ndarray:
-    """Return rolling swing high."""
-    n = len(highs)
-    out = np.full(n, np.nan)
-    last_swing = np.nan
-    for i in range(lookback, n - lookback):
-        window = highs[i - lookback:i + lookback + 1]
-        if highs[i] == np.max(window):
-            last_swing = highs[i]
-        out[i + lookback] = last_swing
-    for i in range(1, n):
-        if np.isnan(out[i]):
-            out[i] = out[i - 1] if i > 0 else np.nan
-    return out
-
-
-# ─── Volume filter ─────────────────────────────────────────────────────
-def volume_ratio(volumes: np.ndarray, period: int = 20) -> np.ndarray:
-    """Rolling volume / SMA(volume, period)."""
-    s = pd.Series(volumes)
-    avg = s.rolling(period, min_periods=1).mean()
-    return (s / avg.replace(0, 1)).to_numpy()
-
-
-# ─── ATR volatility filter (avoid flat markets) ───────────────────────
-def atr_filter(atr_vals: np.ndarray, threshold_pct: float = 0.02,
-               closes: np.ndarray | None = None) -> np.ndarray:
-    """Return True where ATR / close > threshold (market is moving)."""
-    if closes is None:
-        return np.ones(len(atr_vals), dtype=bool)
-    ratio = atr_vals / np.where(closes > 0, closes, 1.0)
-    return ratio > threshold_pct

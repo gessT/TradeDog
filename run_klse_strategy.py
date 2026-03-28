@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-run_klse_strategy.py — Run backtest + optimize on VS Industry (6963.KL)
+run_klse_strategy.py — Run backtest + optimize HalfTrend + Weekly Supertrend
 """
 import sys
 import os
 import time
 
-# Ensure project root on the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from klse_strategy.data_loader import load_json
 from klse_strategy.strategy import StrategyParams
 from klse_strategy.backtest import run_backtest
-from klse_strategy.optimizer import optimize, print_results, DEFAULT_GRID
+from klse_strategy.optimizer import optimize, print_results, DEFAULT_GRID, QUICK_GRID
 from klse_strategy.trade_log import print_trade_log, print_summary
 
 
@@ -36,24 +35,10 @@ def main():
     print("  Phase 2: Parameter Optimisation")
     print("═" * 60)
 
-    # Use a focused grid for faster results
-    focused_grid = {
-        "wst_atr_period":     [7, 10, 14],
-        "wst_multiplier":     [2.0, 3.0, 4.0],
-        "ht_amplitude":       [2, 3, 5],
-        "ema_fast":           [10, 20, 50],
-        "ema_slow":           [50, 100, 200],
-        "atr_sl_mult":        [1.0, 1.5, 2.0],
-        "atr_tp_mult":        [2.0, 3.0, 4.0, 5.0],
-        "use_pivot_breakout": [True, False],
-        "vol_min":            [1.0, 1.3],
-        "min_rr":             [1.5, 1.8, 2.0],
-    }
-
     t0 = time.time()
     top_results = optimize(
         df,
-        grid=focused_grid,
+        grid=DEFAULT_GRID,
         capital=100_000.0,
         min_win_rate=50.0,
         min_trades=5,

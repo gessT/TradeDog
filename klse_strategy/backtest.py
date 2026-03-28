@@ -1,7 +1,14 @@
 """
-backtest.py — Bar-by-bar backtesting engine for the KLSE multi-timeframe strategy.
+backtest.py — Bar-by-bar backtesting engine for HalfTrend + Weekly Supertrend.
 
-No lookahead bias: signals at bar[i] → entry at bar[i+1] open.
+Core logic:
+  - Signal at bar[i] → entry at bar[i+1] open (no lookahead)
+  - Max 2 positions per trend cycle
+  - Exit ALL positions when HalfTrend sells (miniSellSignal)
+  - Hard SL = entry - ATR * sl_mult
+  - TP = entry + ATR * tp_mult
+  - Optional trailing stop
+  - 1% risk per trade position sizing
 """
 from __future__ import annotations
 
@@ -30,6 +37,18 @@ class Trade:
 
 
 @dataclass
+class OpenPosition:
+    """Track a single open position."""
+    entry_price: float
+    entry_date: str
+    entry_idx: int
+    sl: float
+    tp: float
+    qty: float
+    trail_stop: float = 0.0
+
+
+@dataclass
 class BacktestResult:
     trades: list[Trade] = field(default_factory=list)
     initial_capital: float = 100_000.0
@@ -48,22 +67,48 @@ class BacktestResult:
     equity_curve: list[float] = field(default_factory=list)
 
 
-def run_backtest(df: pd.DataFrame, params: StrategyParams,
-                 capital: float = 100_000.0,
-                 risk_per_trade_pct: float = 2.0) -> BacktestResult:
-    """
-    Execute a bar-by-bar backtest.
+def _close_position(pos: OpenPosition, exit_price: float, exit_date: str,
+                     bar_idx: int, reason: str) -> Trade:
+    """Close a single position and return a Trade record."""
+    pnl = (exit_price - pos.entry_price) * pos.qty
+    ret_pct = (exit_price - pos.entry_price) / pos.entry_price * 100.0
+    risk = pos.entry_price - pos.sl
+    rr = (exit_price - pos.entry_price) / risk if risk > 0 else 0.0
+    return Trade(
+        entry_date=pos.entry_date,
+        exit_date=exit_date,
+        entry_price=round(pos.entry_price, 4),
+        exit_price=round(exit_price, 4),
+        sl_price=round(pos.sl, 4),
+        tp_price=round(pos.tp, 4),
+        pnl=round(pnl, 2),
+        return_pct=round(ret_pct, 2),
+        rr=round(rr, 2),
+        bars_held=bar_idx - pos.entry_idx,
+        exit_reason=reason,
+        win=pnl > 0,
+    )
 
-    Parameters
-    ----------
-    df      : Daily OHLCV DataFrame (must have date, open, high, low, close, volume).
-    params  : Strategy parameters.
-    capital : Starting equity (MYR).
-    risk_per_trade_pct : % of equity risked per trade.
+
+def run_backtest(df: pd.DataFrame, params: StrategyParams,
+                 capital: float = 100_000.0) -> BacktestResult:
+    """
+    Bar-by-bar backtest: HalfTrend + Weekly Supertrend.
+
+    Position management:
+      - Max 2 positions per trend cycle
+      - Each position sized by risk_pct of equity
+      - All positions closed on HalfTrend sell signal
+
+    Exit priority per bar:
+      1. HalfTrend sell → close ALL at bar close
+      2. TP hit → close that position at TP price
+      3. SL hit → close that position at SL price
+      4. Optional trailing stop update
     """
     df = df.copy()
     df = compute_indicators(df, params)
-    signals = generate_signals(df, params)
+    entry_signals, exit_signals = generate_signals(df, params)
 
     n = len(df)
     dates = df["date"].astype(str).values
@@ -73,157 +118,110 @@ def run_backtest(df: pd.DataFrame, params: StrategyParams,
     closes = df["close"].values
     atr_vals = df["atr"].values
     swing_lo = df["swing_low"].values
-    resist = df["resist"].values
 
     equity = capital
     peak_equity = capital
     equity_curve = [capital]
     trades: list[Trade] = []
-
-    # Position state
-    in_pos = False
-    entry_price = 0.0
-    entry_date = ""
-    entry_idx = 0
-    sl = 0.0
-    tp = 0.0
-    qty = 0.0
-    highest_since_entry = 0.0
-    trailing_active = False
+    positions: list[OpenPosition] = []  # up to max_entries open at once
 
     for i in range(1, n):
-        if in_pos:
-            # ─── Check exits ────────────────────────────────────
-            bar_low = lows[i]
-            bar_high = highs[i]
-            bar_close = closes[i]
-            exit_price = 0.0
-            exit_reason = ""
+        closed_indices = []
 
-            # Stop loss hit
-            if bar_low <= sl:
-                exit_price = sl
-                exit_reason = "SL"
-            # Take profit hit
-            elif bar_high >= tp:
-                exit_price = tp
-                exit_reason = "TP"
-            else:
-                # Update trailing stop
-                if params.use_trailing:
-                    if bar_high > highest_since_entry:
-                        highest_since_entry = bar_high
-                    # Activate trailing after 1R profit
-                    one_r = entry_price - sl
-                    if one_r > 0 and (bar_high - entry_price) >= one_r:
-                        trailing_active = True
-                    if trailing_active:
-                        trail_sl = highest_since_entry - params.trail_atr_mult * atr_vals[i]
-                        if trail_sl > sl:
-                            sl = trail_sl
-                        if bar_close <= sl:
-                            exit_price = sl
-                            exit_reason = "TRAIL"
-
-            if exit_price > 0:
-                pnl = (exit_price - entry_price) * qty
-                ret_pct = (exit_price - entry_price) / entry_price * 100.0
-                risk = entry_price - sl if sl < entry_price else atr_vals[entry_idx] * params.atr_sl_mult
-                rr = (exit_price - entry_price) / risk if risk > 0 else 0.0
-                bars_held = i - entry_idx
-
-                equity += pnl
-                trades.append(Trade(
-                    entry_date=entry_date,
-                    exit_date=dates[i],
-                    entry_price=round(entry_price, 4),
-                    exit_price=round(exit_price, 4),
-                    sl_price=round(sl, 4),
-                    tp_price=round(tp, 4),
-                    pnl=round(pnl, 2),
-                    return_pct=round(ret_pct, 2),
-                    rr=round(rr, 2),
-                    bars_held=bars_held,
-                    exit_reason=exit_reason,
-                    win=pnl > 0,
-                ))
-                in_pos = False
-                trailing_active = False
-
+        # ─── EXIT CHECK: HalfTrend sell → close ALL ────────────────
+        if exit_signals[i]:
+            for idx, pos in enumerate(positions):
+                t = _close_position(pos, closes[i], dates[i], i, "HT_SELL")
+                equity += t.pnl
+                trades.append(t)
+                closed_indices.append(idx)
+            positions.clear()
         else:
-            # ─── Check entry ────────────────────────────────────
-            if i > 0 and signals[i - 1] == 1:
-                entry_price = opens[i]
-                if entry_price <= 0:
+            # ─── Per-position SL/TP checks ─────────────────────────
+            for idx, pos in enumerate(positions):
+                if idx in closed_indices:
                     continue
-                entry_date = dates[i]
-                entry_idx = i
 
-                # Stop loss: max(swing low, entry - atr_sl * ATR)
-                sw_lo = swing_lo[i] if not np.isnan(swing_lo[i]) else 0.0
-                atr_sl = entry_price - params.atr_sl_mult * atr_vals[i]
-                sl = max(sw_lo, atr_sl)
-                # Ensure SL is below entry
+                # TP: high touches TP → exit at TP price
+                if highs[i] >= pos.tp:
+                    t = _close_position(pos, pos.tp, dates[i], i, "TP")
+                    equity += t.pnl
+                    trades.append(t)
+                    closed_indices.append(idx)
+                    continue
+
+                # SL: low touches SL → exit at SL price
+                effective_sl = pos.trail_stop if params.use_trailing and pos.trail_stop > pos.sl else pos.sl
+                if lows[i] <= effective_sl:
+                    t = _close_position(pos, effective_sl, dates[i], i, "SL")
+                    equity += t.pnl
+                    trades.append(t)
+                    closed_indices.append(idx)
+                    continue
+
+                # Trailing stop update
+                if params.use_trailing:
+                    new_trail = closes[i] - params.trail_atr_mult * atr_vals[i]
+                    if new_trail > pos.trail_stop:
+                        pos.trail_stop = new_trail
+
+            # Remove closed positions (in reverse to keep indices valid)
+            for idx in sorted(closed_indices, reverse=True):
+                positions.pop(idx)
+
+        # ─── ENTRY CHECK ───────────────────────────────────────────
+        # Signal at bar[i-1] → enter at bar[i] open
+        if i > 0 and entry_signals[i - 1] and len(positions) < params.max_entries:
+            entry_price = opens[i]
+            if entry_price <= 0:
+                pass  # skip invalid price
+            else:
+                a = atr_vals[i]
+                sl = entry_price - params.sl_atr_mult * a
+                tp = entry_price + params.tp_atr_mult * a
+
+                # Alternative SL: use swing low if higher than ATR SL
+                sw = swing_lo[i] if not np.isnan(swing_lo[i]) else 0.0
+                if sw > 0 and sw < entry_price:
+                    sl = max(sl, sw)
+
+                # Safety: SL must be below entry
                 if sl >= entry_price:
-                    sl = entry_price * 0.95
+                    sl = entry_price * 0.97
 
                 risk = entry_price - sl
-
-                # Take profit: min(entry + atr_tp * ATR, next pivot resistance)
-                atr_tp = entry_price + params.atr_tp_mult * atr_vals[i]
-                piv_r = resist[i] if not np.isnan(resist[i]) else atr_tp
-                tp = min(atr_tp, piv_r) if piv_r > entry_price else atr_tp
-
-                # Ensure minimum RR
-                reward = tp - entry_price
-                if risk > 0 and reward / risk < params.min_rr:
-                    tp = entry_price + params.min_rr * risk
-
-                # Position sizing (% risk)
-                risk_amount = equity * (risk_per_trade_pct / 100.0)
+                risk_amount = equity * (params.risk_pct / 100.0)
                 qty = risk_amount / risk if risk > 0 else 0.0
-                if qty <= 0:
-                    continue
 
-                in_pos = True
-                highest_since_entry = highs[i]
+                if qty > 0:
+                    pos = OpenPosition(
+                        entry_price=entry_price,
+                        entry_date=dates[i],
+                        entry_idx=i,
+                        sl=sl,
+                        tp=tp,
+                        qty=qty,
+                        trail_stop=sl if params.use_trailing else 0.0,
+                    )
+                    positions.append(pos)
 
-        # Track equity curve (mark-to-market)
-        if in_pos:
-            unrealised = (closes[i] - entry_price) * qty
-            equity_curve.append(equity + unrealised)
-        else:
-            equity_curve.append(equity)
+        # ─── Mark-to-market equity ─────────────────────────────────
+        unrealised = sum((closes[i] - pos.entry_price) * pos.qty for pos in positions)
+        equity_curve.append(equity + unrealised)
 
-        # Drawdown tracking
         if equity_curve[-1] > peak_equity:
             peak_equity = equity_curve[-1]
 
-    # Close unclosed position
-    if in_pos:
-        exit_price = closes[-1]
-        pnl = (exit_price - entry_price) * qty
-        ret_pct = (exit_price - entry_price) / entry_price * 100.0
-        risk = entry_price - sl if sl < entry_price else 1.0
-        rr = (exit_price - entry_price) / risk if risk > 0 else 0.0
-        equity += pnl
-        trades.append(Trade(
-            entry_date=entry_date,
-            exit_date=dates[-1],
-            entry_price=round(entry_price, 4),
-            exit_price=round(exit_price, 4),
-            sl_price=round(sl, 4),
-            tp_price=round(tp, 4),
-            pnl=round(pnl, 2),
-            return_pct=round(ret_pct, 2),
-            rr=round(rr, 2),
-            bars_held=n - 1 - entry_idx,
-            exit_reason="EOD",
-            win=pnl > 0,
-        ))
+    # ─── Close unclosed positions at last bar ──────────────────────
+    for pos in positions:
+        t = _close_position(pos, closes[-1], dates[-1], n - 1, "EOD")
+        equity += t.pnl
+        trades.append(t)
+    positions.clear()
+    if equity_curve:
         equity_curve[-1] = equity
 
-    # ─── Compute metrics ────────────────────────────────────────
+    # ─── Compute metrics ───────────────────────────────────────────
     result = BacktestResult()
     result.trades = trades
     result.initial_capital = capital
@@ -259,7 +257,7 @@ def run_backtest(df: pd.DataFrame, params: StrategyParams,
 
     # Sharpe ratio (daily returns → annualised)
     if len(equity_curve) > 2:
-        rets = np.diff(equity_curve) / np.array(equity_curve[:-1])
+        rets = np.diff(equity_curve) / np.maximum(np.array(equity_curve[:-1]), 1.0)
         if np.std(rets) > 0:
             result.sharpe_ratio = round(
                 float(np.mean(rets) / np.std(rets) * np.sqrt(252)), 2

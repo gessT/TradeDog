@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { StrategyResponse } from "../services/api";
-import { runKLSEStrategy } from "../services/api";
+import { runKLSEStrategy, optimizeKLSEStrategy } from "../services/api";
 
 type Props = Readonly<{
   symbol: string;
@@ -43,10 +43,12 @@ function rowBgClass(win: boolean, selected: boolean): string {
 
 export default function KLSEStrategyPanel({ symbol, period, onTradeClick }: Props) {
   const [loading, setLoading] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<StrategyResponse | null>(null);
   const [showTrades, setShowTrades] = useState(false);
   const [selectedTradeIdx, setSelectedTradeIdx] = useState<number | null>(null);
+  const [showTopResults, setShowTopResults] = useState(false);
 
   async function handleRun() {
     setLoading(true);
@@ -59,6 +61,21 @@ export default function KLSEStrategyPanel({ symbol, period, onTradeClick }: Prop
       setError(e instanceof Error ? e.message : "Strategy run failed");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleOptimize() {
+    setOptimizing(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await optimizeKLSEStrategy(symbol, period);
+      setResult(res);
+      setShowTopResults(true);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Optimization failed");
+    } finally {
+      setOptimizing(false);
     }
   }
 
@@ -75,29 +92,52 @@ export default function KLSEStrategyPanel({ symbol, period, onTradeClick }: Prop
             <p className="text-[11px] font-bold uppercase tracking-widest text-amber-400 leading-none">KLSE Multi-Timeframe</p>
             <span className="rounded bg-amber-500/20 px-1 py-[1px] text-[8px] font-extrabold tracking-wider text-amber-300 border border-amber-500/30">MTF</span>
           </div>
-          <p className="mt-0.5 text-[9px] text-slate-500 truncate">Weekly Supertrend + Daily HalfTrend + EMA · {symbol}</p>
+          <p className="mt-0.5 text-[9px] text-slate-500 truncate">HalfTrend(amp={5},chDev={2}) + Weekly Supertrend(3,10) · ATR SL/TP · Max 2 entries · {symbol}</p>
         </div>
-        <button
-          onClick={handleRun}
-          disabled={loading}
-          className={`shrink-0 rounded-lg px-3 py-1.5 text-[11px] font-bold transition-all ${
-            loading
-              ? "bg-slate-800 text-slate-500 cursor-wait"
-              : "bg-amber-600 text-white hover:bg-amber-500 active:scale-95 shadow-md shadow-amber-900/40"
-          }`}
-        >
-          {loading ? (
-            <span className="flex items-center gap-1.5">
-              <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
-                <path d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z" fill="currentColor" className="opacity-75" />
-              </svg>
-              Running…
-            </span>
-          ) : (
-            "🚀 Run"
-          )}
-        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={handleRun}
+            disabled={loading || optimizing}
+            className={`rounded-lg px-3 py-1.5 text-[11px] font-bold transition-all ${
+              loading || optimizing
+                ? "bg-slate-800 text-slate-500 cursor-wait"
+                : "bg-amber-600 text-white hover:bg-amber-500 active:scale-95 shadow-md shadow-amber-900/40"
+            }`}
+          >
+            {loading ? (
+              <span className="flex items-center gap-1.5">
+                <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
+                  <path d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z" fill="currentColor" className="opacity-75" />
+                </svg>
+                Running…
+              </span>
+            ) : (
+              "🚀 Run"
+            )}
+          </button>
+          <button
+            onClick={handleOptimize}
+            disabled={loading || optimizing}
+            className={`rounded-lg px-3 py-1.5 text-[11px] font-bold transition-all ${
+              optimizing
+                ? "bg-violet-900 text-violet-300 cursor-wait"
+                : "bg-violet-600 text-white hover:bg-violet-500 active:scale-95 shadow-md shadow-violet-900/40 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-wait"
+            }`}
+          >
+            {optimizing ? (
+              <span className="flex items-center gap-1.5">
+                <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
+                  <path d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z" fill="currentColor" className="opacity-75" />
+                </svg>
+                Optimizing…
+              </span>
+            ) : (
+              "⚡ Optimize"
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Error */}
@@ -208,7 +248,58 @@ export default function KLSEStrategyPanel({ symbol, period, onTradeClick }: Prop
             >
               📋 Trades ({n(m.total_trades)}) {showTrades ? "▲" : "▼"}
             </button>
+            {result.top_results && result.top_results.length > 0 && (
+              <button
+                onClick={() => setShowTopResults(!showTopResults)}
+                className="rounded border border-violet-700/60 bg-violet-950/30 px-2 py-1 text-[10px] text-violet-400 hover:text-violet-200 hover:border-violet-500 transition"
+              >
+                🏆 Top {result.top_results.length} Results {showTopResults ? "▲" : "▼"}
+              </button>
+            )}
           </div>
+
+          {/* Top optimization results */}
+          {showTopResults && result.top_results && result.top_results.length > 0 && (
+            <div className="max-h-52 overflow-y-auto rounded-lg border border-violet-800/40">
+              <table className="w-full text-[10px]">
+                <thead className="sticky top-0 bg-slate-900/95 backdrop-blur">
+                  <tr className="border-b border-violet-800/40 text-left text-violet-400/80">
+                    <th className="px-2 py-1.5">#</th>
+                    <th className="px-2 py-1.5 text-right">Win%</th>
+                    <th className="px-2 py-1.5 text-right">Return</th>
+                    <th className="px-2 py-1.5 text-right">MaxDD</th>
+                    <th className="px-2 py-1.5 text-right">PF</th>
+                    <th className="px-2 py-1.5 text-right">Trades</th>
+                    <th className="px-2 py-1.5">Params</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.top_results.map((tr: Record<string, unknown>, i: number) => {
+                    const params = (tr.params ?? {}) as Record<string, number | string>;
+                    const paramStr = params
+                      ? `HT(${String(params.ht_amplitude ?? "")}/{String(params.ht_channel_deviation ?? "")}) WST(${String(params.wst_atr_period ?? "")}/${String(params.wst_multiplier ?? "")}) SL/TP(${String(params.sl_atr_mult ?? "")}/${String(params.tp_atr_mult ?? "")})`
+                      : "";
+                    const key = `opt-${String(params.ht_amplitude)}-${String(params.wst_atr_period)}-${String(params.sl_atr_mult)}-${i}`;
+                    return (
+                      <tr key={key} className={`border-b border-slate-800/30 ${i === 0 ? "bg-violet-950/30" : "hover:bg-slate-800/20"}`}>
+                        <td className="px-2 py-1 text-violet-400 font-bold">{i === 0 ? "🥇" : i + 1}</td>
+                        <td className={`px-2 py-1 text-right font-semibold ${n(tr.win_rate as number) >= 60 ? "text-emerald-400" : "text-slate-300"}`}>
+                          {fmt(tr.win_rate as number, 1)}%
+                        </td>
+                        <td className={`px-2 py-1 text-right font-semibold ${n(tr.total_return_pct as number) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                          {n(tr.total_return_pct as number) > 0 ? "+" : ""}{fmt(tr.total_return_pct as number, 1)}%
+                        </td>
+                        <td className="px-2 py-1 text-right text-rose-400/70">{fmt(tr.max_drawdown_pct as number, 1)}%</td>
+                        <td className="px-2 py-1 text-right font-mono">{fmt(tr.profit_factor as number)}</td>
+                        <td className="px-2 py-1 text-right">{n(tr.total_trades as number)}</td>
+                        <td className="px-2 py-1 font-mono text-[9px] text-slate-400">{paramStr}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Trade log */}
           {showTrades && (
@@ -295,14 +386,20 @@ function fmtParamShort(key: string): string {
     wst_atr_period: "WST.P",
     wst_multiplier: "WST.M",
     ht_amplitude: "HT.A",
+    ht_channel_deviation: "HT.D",
     ht_atr_length: "HT.L",
     ema_fast: "EF",
     ema_slow: "ES",
+    sl_atr_mult: "SL×",
+    tp_atr_mult: "TP×",
     atr_sl_mult: "SL×",
     atr_tp_mult: "TP×",
+    risk_pct: "Risk%",
+    max_entries: "MaxE",
     min_rr: "RR≥",
     swing_lookback: "Swing",
     trail_atr_mult: "Trail",
+    use_trailing: "Trail?",
     vol_min: "Vol≥",
   };
   return shorts[key] ?? key.replaceAll(/_/g, " ").replaceAll(/\b\w/g, (c) => c.toUpperCase());
