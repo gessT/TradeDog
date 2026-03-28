@@ -8,6 +8,7 @@ import SectorList from "../SectorList";
 import StockPicker from "../StockPicker";
 import StrategyPanel from "../StrategyPanel";
 import StrategyPanelV1 from "../StrategyPanelV1";
+import KLSEStrategyPanel from "../KLSEStrategyPanel";
 import DataTable from "../DataTable";
 import TVChart, { type TVChartHandle, type EmaConfig } from "../TVChart";
 import type { DemoPoint } from "../../services/api";
@@ -173,6 +174,7 @@ export default function KLSEDashboard() {
 
           {/* Strategy panels (bottom half) — V1 + V2 for KLSE */}
           <div className="overflow-y-auto border-t border-slate-800/60 p-4 space-y-3" style={{ height: "50%" }}>
+            <KLSEStrategyPanel symbol={symbol} period={period} onTradeClick={(d) => chartRef.current?.goToDate(d)} />
             <StrategyPanelV1 symbol={symbol} period={period} onTradeClick={(d) => chartRef.current?.goToDate(d)} />
             <StrategyPanel symbol={symbol} period={period} onTradeClick={(d) => chartRef.current?.goToDate(d)} />
             <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">

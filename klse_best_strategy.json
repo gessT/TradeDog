@@ -1,0 +1,77 @@
+{
+  "symbol": "6963.KL",
+  "name": "VS Industry",
+  "best_params": {
+    "wst_atr_period": 10,
+    "wst_multiplier": 4.0,
+    "ht_amplitude": 6,
+    "ht_atr_length": 50,
+    "ema_fast": 10,
+    "ema_slow": 50,
+    "atr_sl_mult": 1.5,
+    "atr_tp_mult": 2.0,
+    "use_pivot_breakout": true,
+    "vol_min": 1.0,
+    "min_rr": 2.5,
+    "swing_lookback": 15,
+    "trail_atr_mult": 1.5
+  },
+  "performance": {
+    "win_rate": 90.91,
+    "total_return_pct": 32.84,
+    "max_drawdown_pct": 4.66,
+    "profit_factor": 13.11,
+    "risk_reward": 1.32,
+    "sharpe_ratio": 13.57,
+    "total_trades": 11,
+    "winners": 10,
+    "losers": 1
+  },
+  "score": 44.82,
+  "top_10": [
+    {
+      "params": {
+        "wst_atr_period": 10,
+        "wst_multiplier": 4.0,
+        "ht_amplitude": 6,
+        "ht_atr_length": 50,
+        "ema_fast": 10,
+        "ema_slow": 50,
+        "atr_sl_mult": 1.5,
+        "atr_tp_mult": 2.0,
+        "use_pivot_breakout": true,
+        "vol_min": 1.0,
+        "min_rr": 2.5,
+        "swing_lookback": 15,
+        "trail_atr_mult": 1.5
+      },
+      "win_rate": 90.91,
+      "return_pct": 32.84,
+      "max_dd_pct": 4.66,
+      "trades": 11,
+      "score": 44.82
+    },
+    {
+      "params": {
+        "wst_atr_period": 10,
+        "wst_multiplier": 4.0,
+        "ht_amplitude": 6,
+        "ht_atr_length": 50,
+        "ema_fast": 10,
+        "ema_slow": 50,
+        "atr_sl_mult": 1.5,
+        "atr_tp_mult": 2.0,
+        "use_pivot_breakout": true,
+        "vol_min": 1.0,
+        "min_rr": 2.5,
+        "swing_lookback": 10,
+        "trail_atr_mult": 1.5
+      },
+      "win_rate": 90.91,
+      "return_pct": 30.14,
+      "max_dd_pct": 4.66,
+      "trades": 11,
+      "score": 44.01
+    }
+  ]
+}

@@ -971,3 +971,132 @@ async def run_strategy_optimizer_v1(payload: StrategyRequest) -> dict[str, objec
             for i, (score, kw, m, _) in enumerate(top_results)
         ],
     }
+
+
+# ── KLSE Multi-Timeframe Strategy (Weekly Supertrend + HalfTrend) ────
+
+
+class KLSEStrategyRequest(BaseModel):
+    symbol: str = Field(default="5248.KL", min_length=1, max_length=16)
+    period: str = Field(default="max")
+    capital: float = Field(default=100000.0, gt=0)
+    wst_atr_period: int = Field(default=10, ge=5, le=30)
+    wst_multiplier: float = Field(default=4.0, ge=1.0, le=10.0)
+    ht_amplitude: int = Field(default=6, ge=1, le=20)
+    ht_atr_length: int = Field(default=50, ge=10, le=200)
+    ema_fast: int = Field(default=10, ge=5, le=50)
+    ema_slow: int = Field(default=50, ge=20, le=200)
+    atr_sl_mult: float = Field(default=1.5, ge=0.5, le=5.0)
+    atr_tp_mult: float = Field(default=2.0, ge=1.0, le=10.0)
+    min_rr: float = Field(default=2.5, ge=1.0, le=5.0)
+    swing_lookback: int = Field(default=15, ge=3, le=30)
+    trail_atr_mult: float = Field(default=1.5, ge=0.5, le=5.0)
+    vol_min: float = Field(default=1.0, ge=0.5, le=3.0)
+
+
+@router.post("/strategy/klse")
+async def run_klse_strategy(payload: KLSEStrategyRequest) -> dict[str, object]:
+    """Run KLSE Multi-Timeframe strategy: Weekly Supertrend + Daily HalfTrend + EMA."""
+    from klse_strategy.strategy import StrategyParams
+    from klse_strategy.backtest import run_backtest as klse_backtest
+
+    frame = await run_in_threadpool(fetch_stock, payload.symbol, payload.period)
+    if "Close" not in frame.columns:
+        raise HTTPException(status_code=400, detail="No data for this symbol/period")
+
+    normalized = frame.copy()
+    if "Date" not in normalized.columns:
+        normalized = normalized.reset_index().rename(columns={"index": "Date"})
+    normalized["Date"] = pd.to_datetime(normalized["Date"], errors="coerce")
+    normalized = normalized.dropna(subset=["Date", "Close"]).reset_index(drop=True)
+
+    df = pd.DataFrame({
+        "date": pd.to_datetime(normalized["Date"]),
+        "open": normalized.get("Open", normalized["Close"]).astype(float),
+        "high": normalized.get("High", normalized["Close"]).astype(float),
+        "low": normalized.get("Low", normalized["Close"]).astype(float),
+        "close": normalized["Close"].astype(float),
+        "volume": normalized.get("Volume", 0).astype(float),
+    })
+
+    if len(df) < 200:
+        raise HTTPException(status_code=400, detail="Need at least 200 bars for KLSE strategy")
+
+    params = StrategyParams(
+        wst_atr_period=payload.wst_atr_period,
+        wst_multiplier=payload.wst_multiplier,
+        ht_amplitude=payload.ht_amplitude,
+        ht_atr_length=payload.ht_atr_length,
+        ema_fast=payload.ema_fast,
+        ema_slow=payload.ema_slow,
+        atr_sl_mult=payload.atr_sl_mult,
+        atr_tp_mult=payload.atr_tp_mult,
+        min_rr=payload.min_rr,
+        swing_lookback=payload.swing_lookback,
+        trail_atr_mult=payload.trail_atr_mult,
+        vol_min=payload.vol_min,
+    )
+
+    result = await run_in_threadpool(klse_backtest, df, params, payload.capital)
+
+    dates = df["date"].astype(str).tolist()
+
+    curve = []
+    eq = result.equity_curve
+    for i, val in enumerate(eq):
+        d = dates[i] if i < len(dates) else dates[-1]
+        curve.append({"date": d[:10], "equity": round(val, 2)})
+
+    return {
+        "symbol": payload.symbol.upper(),
+        "best_params": {
+            "wst_atr_period": params.wst_atr_period,
+            "wst_multiplier": params.wst_multiplier,
+            "ht_amplitude": params.ht_amplitude,
+            "ht_atr_length": params.ht_atr_length,
+            "ema_fast": params.ema_fast,
+            "ema_slow": params.ema_slow,
+            "atr_sl_mult": params.atr_sl_mult,
+            "atr_tp_mult": params.atr_tp_mult,
+            "min_rr": params.min_rr,
+            "swing_lookback": params.swing_lookback,
+            "trail_atr_mult": params.trail_atr_mult,
+            "vol_min": params.vol_min,
+        },
+        "metrics": {
+            "total_trades": result.total_trades,
+            "wins": result.winners,
+            "losses": result.losers,
+            "win_rate": result.win_rate,
+            "total_return_pct": result.total_return_pct,
+            "max_drawdown_pct": result.max_drawdown_pct,
+            "avg_win_pct": result.avg_win_pct,
+            "avg_loss_pct": result.avg_loss_pct,
+            "risk_reward": result.risk_reward,
+            "sharpe": result.sharpe_ratio,
+            "profit_factor": result.profit_factor,
+            "final_equity": result.final_equity,
+            "avg_bars_held": round(
+                sum(t.bars_held for t in result.trades) / max(len(result.trades), 1), 1
+            ),
+        },
+        "trades": [
+            {
+                "entry_date": t.entry_date,
+                "exit_date": t.exit_date,
+                "entry_price": t.entry_price,
+                "exit_price": t.exit_price,
+                "sl_price": t.sl_price,
+                "tp_price": t.tp_price,
+                "pnl_pct": t.return_pct,
+                "pnl_dollar": t.pnl,
+                "rr": t.rr,
+                "bars_held": t.bars_held,
+                "exit_reason": t.exit_reason,
+                "strategy": "WST+HT+EMA",
+            }
+            for t in result.trades
+        ],
+        "equity_curve": curve,
+        "top_results": [],
+    }
