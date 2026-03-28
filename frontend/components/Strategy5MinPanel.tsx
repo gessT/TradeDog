@@ -4,11 +4,13 @@ import { useCallback, useState } from "react";
 import {
   fetchMGC5MinBacktest,
   scan5Min,
+  execute5Min,
   fetchTradeLog5Min,
   type MGC5MinBacktestResponse,
   type Scan5MinResponse,
   type TradeLog5MinResponse,
   type MGC5MinTrade,
+  type Scan5MinSignal,
 } from "../services/api";
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -79,6 +81,9 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
         {win ? "+" : ""}{n(t.pnl).toFixed(2)}
       </td>
       <td className="px-2 py-1 text-center">
+        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${t.direction === "PUT" ? "bg-rose-900/40 text-rose-400" : "bg-emerald-900/40 text-emerald-400"}`}>{t.direction || "CALL"}</span>
+      </td>
+      <td className="px-2 py-1 text-center">
         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${reasonStyle(t.reason)}`}>{t.reason}</span>
       </td>
       <td className="px-2 py-1 text-center text-[9px] text-slate-500">{t.signal_type.slice(0, 3) || "—"}</td>
@@ -100,10 +105,14 @@ function ScannerTab({
   scanData,
   loading,
   onScan,
+  onExecute,
+  executing,
 }: Readonly<{
   scanData: Scan5MinResponse | null;
   loading: boolean;
   onScan: () => void;
+  onExecute: () => void;
+  executing: boolean;
 }>) {
   const sig = scanData?.signal;
   return (
@@ -120,6 +129,25 @@ function ScannerTab({
         {loading ? "Scanning..." : "Scan 5min Signal"}
       </button>
 
+      {/* Execute button — only when signal found */}
+      {scanData?.signal?.found && (
+        <button
+          onClick={onExecute}
+          disabled={executing}
+          className={`w-full px-4 py-2.5 text-sm font-bold rounded-lg transition-all ${
+            executing
+              ? "bg-slate-800 text-slate-500 cursor-wait"
+              : scanData.signal.direction === "PUT"
+                ? "bg-rose-600 text-white hover:bg-rose-500 active:scale-95 shadow-lg shadow-rose-900/40"
+                : "bg-emerald-600 text-white hover:bg-emerald-500 active:scale-95 shadow-lg shadow-emerald-900/40"
+          }`}
+        >
+          {executing
+            ? "Executing..."
+            : `🐯 Execute ${scanData.signal.direction} @ Tiger`}
+        </button>
+      )}
+
       {!scanData && !loading && (
         <div className="text-center py-10">
           <p className="text-sm text-slate-400">Scan for real-time 5min entry signals</p>
@@ -130,10 +158,10 @@ function ScannerTab({
       {scanData && sig && (
         <div className="space-y-3">
           <div className={`rounded-xl p-4 text-center border ${
-            sig.found ? "border-emerald-700/60 bg-emerald-950/30" : "border-slate-700/60 bg-slate-900/50"
+            sig.found ? (sig.direction === "PUT" ? "border-rose-700/60 bg-rose-950/30" : "border-emerald-700/60 bg-emerald-950/30") : "border-slate-700/60 bg-slate-900/50"
           }`}>
-            <p className={`text-lg font-bold ${sig.found ? "text-emerald-400" : "text-slate-400"}`}>
-              {sig.found ? `${sig.signal_type} SIGNAL` : "NO SIGNAL"}
+            <p className={`text-lg font-bold ${sig.found ? (sig.direction === "PUT" ? "text-rose-400" : "text-emerald-400") : "text-slate-400"}`}>
+              {sig.found ? `${sig.direction || "CALL"} · ${sig.signal_type} SIGNAL` : "NO SIGNAL"}
             </p>
             {sig.found && (
               <div className="mt-2 flex justify-center gap-4">
@@ -238,6 +266,7 @@ function TradeLogTab({
                     <th className="px-2 py-1 text-right">In$</th>
                     <th className="px-2 py-1 text-right">Out$</th>
                     <th className="px-2 py-1 text-right">P&L</th>
+                    <th className="px-2 py-1 text-center">Dir</th>
                     <th className="px-2 py-1 text-center">Type</th>
                     <th className="px-2 py-1 text-center">Sig</th>
                   </tr>
@@ -247,7 +276,7 @@ function TradeLogTab({
                     <TradeRow5Min key={`${t.entry_time}-${i}`} t={t} idx={i} onTradeClick={onTradeClick} />
                   ))}
                   {logData.trades.length === 0 && (
-                    <tr><td colSpan={7} className="text-center text-[10px] text-slate-600 py-4">No trades</td></tr>
+                    <tr><td colSpan={8} className="text-center text-[10px] text-slate-600 py-4">No trades</td></tr>
                   )}
                 </tbody>
               </table>
@@ -275,6 +304,7 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
 
   // Scanner state
   const [scanData, setScanData] = useState<Scan5MinResponse | null>(null);
+  const [executing, setExecuting] = useState(false);
 
   // Trade log state
   const [logData, setLogData] = useState<TradeLog5MinResponse | null>(null);
@@ -306,6 +336,46 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
       setLoading(false);
     }
   }, []);
+
+  // ── Execute Trade on Tiger ────────────────────────────
+  const executeSignal = useCallback(async (sig?: Scan5MinSignal) => {
+    const s = sig ?? scanData?.signal;
+    if (!s?.found) return;
+
+    const dir = s.direction || "CALL";
+    const ok = confirm(
+      `🐯 Execute ${dir} on Tiger Account\n\n` +
+      `Direction: ${dir}\n` +
+      `Entry: $${s.entry_price}\n` +
+      `Stop Loss: $${s.stop_loss}\n` +
+      `Take Profit: $${s.take_profit}\n` +
+      `R:R = 1:${s.risk_reward}\n\n` +
+      `This will place a REAL bracket order. Proceed?`
+    );
+    if (!ok) return;
+
+    setExecuting(true);
+    setError(null);
+    try {
+      const res = await execute5Min(
+        dir,
+        1,    // qty
+        5,    // maxQty
+        s.entry_price,
+        s.stop_loss,
+        s.take_profit,
+      );
+      if (res.execution?.executed) {
+        alert(`✅ Order Placed!\n\n${res.execution.reason}`);
+      } else {
+        alert(`❌ Order Failed\n\n${res.execution?.reason || "Unknown error"}`);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Execution failed");
+    } finally {
+      setExecuting(false);
+    }
+  }, [scanData]);
 
   // ── Trade Log ─────────────────────────────────────────
   const loadTradeLog = useCallback(async () => {
@@ -384,6 +454,35 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
             >
               {loading ? "Running…" : "🎯 Run 5min"}
             </button>
+            <button
+              onClick={async () => {
+                setLoading(true);
+                setError(null);
+                try {
+                  const res = await scan5Min(false);
+                  setScanData(res);
+                  if (res.signal?.found) {
+                    setTab("scanner");
+                    await executeSignal(res.signal);
+                  } else {
+                    setTab("scanner");
+                    alert("No signal found — cannot execute.");
+                  }
+                } catch (e: unknown) {
+                  setError(e instanceof Error ? e.message : "Failed");
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              disabled={loading || executing}
+              className={`px-3 py-1 text-[11px] font-bold rounded-lg transition-all ${
+                loading || executing
+                  ? "bg-slate-800 text-slate-500 cursor-wait"
+                  : "bg-amber-600 text-white hover:bg-amber-500 active:scale-95 shadow-md shadow-amber-900/40"
+              }`}
+            >
+              {executing ? "Executing…" : "🐯 Execute"}
+            </button>
           </div>
 
           {/* Idle state */}
@@ -439,6 +538,7 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
                         <th className="px-2 py-1 text-right">In$</th>
                         <th className="px-2 py-1 text-right">Out$</th>
                         <th className="px-2 py-1 text-right">P&L</th>
+                        <th className="px-2 py-1 text-center">Dir</th>
                         <th className="px-2 py-1 text-center">Type</th>
                         <th className="px-2 py-1 text-center">Sig</th>
                       </tr>
@@ -448,7 +548,7 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
                         <TradeRow5Min key={`${t.entry_time}-${i}`} t={t} idx={i} onTradeClick={onTradeClick} />
                       ))}
                       {btData.trades.length === 0 && (
-                        <tr><td colSpan={7} className="text-center text-[10px] text-slate-600 py-4">No trades generated</td></tr>
+                        <tr><td colSpan={8} className="text-center text-[10px] text-slate-600 py-4">No trades generated</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -470,7 +570,7 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
       {/* TAB: Scanner                                         */}
       {/* ═════════════════════════════════════════════════════ */}
       {tab === "scanner" && (
-        <ScannerTab scanData={scanData} loading={loading} onScan={runScan} />
+        <ScannerTab scanData={scanData} loading={loading} onScan={runScan} onExecute={() => executeSignal()} executing={executing} />
       )}
 
       {/* ═════════════════════════════════════════════════════ */}

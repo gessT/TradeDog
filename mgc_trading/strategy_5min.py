@@ -29,9 +29,9 @@ from mgc_trading import indicators_5min as ind5
 # ═══════════════════════════════════════════════════════════════════════
 
 DEFAULT_5MIN_PARAMS: dict = {
-    # Trend — EMA7 reacts fastest on 5min, EMA21 anchor
+    # Trend — EMA7 fast, EMA30 anchor (wider gap = better PUT detection)
     "ema_fast": 7,
-    "ema_slow": 21,
+    "ema_slow": 30,
     # RSI
     "rsi_period": 14,
     "rsi_low": 35,
@@ -40,9 +40,9 @@ DEFAULT_5MIN_PARAMS: dict = {
     "macd_fast": 8,
     "macd_slow": 17,
     "macd_signal": 9,
-    # ATR — symmetric R:R = 1:1
+    # ATR — asymmetric: wider SL for noise, tighter TP for quicker wins
     "atr_period": 14,
-    "atr_sl_mult": 2.5,        # SL = 2.5× ATR
+    "atr_sl_mult": 3.0,        # SL = 3.0× ATR
     "atr_tp_mult": 2.5,        # TP = 2.5× ATR
     # Breakeven stop — OFF (causes trade churn at 5min scale)
     "use_breakeven": False,
@@ -91,6 +91,7 @@ class MGCStrategy5Min:
 
         # EMA slope (confirms genuine trend, not whipsaw)
         df["ema_slope"] = ind5.ema_slope(df["ema_fast"], lookback=3)
+        df["ema_slope_falling"] = ind5.ema_slope_falling(df["ema_fast"], lookback=3)
 
         # RSI
         df["rsi"] = ind.rsi(c, p["rsi_period"])
@@ -116,8 +117,14 @@ class MGCStrategy5Min:
         # MACD momentum (positive or fresh cross)
         df["macd_mom"] = ind5.macd_momentum(macd_hist)
 
-        # Breakout
+        # MACD bearish momentum
+        df["macd_mom_bear"] = ind5.macd_momentum_bear(macd_hist)
+
+        # Breakout (long)
         df["breakout"] = ind5.breakout_high(c, df["high"], p["breakout_lookback"])
+
+        # Breakout (short)
+        df["breakout_low"] = ind5.breakout_low(c, df["low"], p["breakout_lookback"])
 
         # Pullback (both sides of EMA)
         df["pullback"] = ind5.pullback_to_ema(
@@ -129,8 +136,11 @@ class MGCStrategy5Min:
             df["volume"], p["vol_period"], p["vol_spike_mult"]
         )
 
-        # RSI momentum
+        # RSI momentum (bullish)
         df["rsi_rising"] = ind5.rsi_rising(df["rsi"], p["rsi_low"], p["rsi_high"])
+
+        # RSI momentum (bearish)
+        df["rsi_falling"] = ind5.rsi_falling(df["rsi"])
 
         # ADX — trend strength filter (avoids choppy markets)
         df["adx"] = ind5.adx(df["high"], df["low"], c, p.get("adx_period", 14))
@@ -150,58 +160,68 @@ class MGCStrategy5Min:
         return df
 
     def generate_signals(self, df: pd.DataFrame) -> pd.Series:
-        """Generate entry signals — 1 = long entry, 0 = no signal.
+        """Generate entry signals: +1 = CALL (long), -1 = PUT (short), 0 = no signal.
 
-        Core conditions (ALL must be True):
-          1. EMA fast > EMA slow AND EMA fast is rising (trend + slope)
+        CALL conditions (ALL must be True):
+          1. EMA fast > EMA slow AND EMA fast rising
           2. Pullback to EMA OR Breakout above recent high
           3. Supertrend bullish
-          4. ADX >= threshold (trending, not choppy)
-          5. Price above EMA50 (higher-TF bullish bias)
-        Confirmation (at least momentum from MACD or RSI):
-          6. MACD momentum positive (or fresh cross)
-          7. RSI in healthy zone / rising
-        Filters:
-          8. Volume above average
-          9. Within session hours (if enabled)
-          10. ATR sufficient
+          4. MACD or RSI bullish momentum
+        PUT conditions (ALL must be True — mirror of CALL):
+          1. EMA fast < EMA slow AND EMA fast falling
+          2. Pullback to EMA OR Breakout below recent low
+          3. Supertrend bearish
+          4. MACD or RSI bearish momentum
+        Common filters:
+          - Volume above average
+          - Session hours (if enabled)
+          - ATR sufficient
+          - ADX / HTF (if enabled)
         """
         p = self.p
-        # Core trend: EMA cross + rising slope
-        cond_trend = (df["ema_fast"] > df["ema_slow"]) & (df["ema_slope"] == 1)
-        # Entry trigger: pullback or breakout
-        cond_entry = (df["pullback"] == 1) | (df["breakout"] == 1)
-        # Supertrend confirmation
-        cond_st = df["st_dir"] == 1
-        # ADX trend strength (default >= 20)
-        cond_adx = df["adx"] >= p.get("adx_min", 20)
-        # Higher TF trend (price above EMA50)
-        cond_htf = df["htf_trend"] == 1
-        # Momentum: MACD or RSI (at least one)
-        cond_momentum = (df["macd_mom"] == 1) | (df["rsi_rising"] == 1)
-        # Filters
+        # ── Common filters ──────────────────────────────────────
         cond_vol = df["vol_spike"] == 1
         cond_session = df["in_session"] == 1
         cond_atr = df["atr_ok"] == 1
+        cond_adx = df["adx"] >= p.get("adx_min", 0)
 
-        signal = (
-            cond_trend
-            & cond_entry
-            & cond_st
-            & cond_adx
-            & cond_htf
-            & cond_momentum
-            & cond_vol
-            & cond_session
-            & cond_atr
-        ).astype(int)
+        filters = cond_vol & cond_session & cond_atr & cond_adx
+
+        # ── CALL (long) ────────────────────────────────────────
+        call_trend = (df["ema_fast"] > df["ema_slow"]) & (df["ema_slope"] == 1)
+        call_entry = (df["pullback"] == 1) | (df["breakout"] == 1)
+        call_st = df["st_dir"] == 1
+        call_mom = (df["macd_mom"] == 1) | (df["rsi_rising"] == 1)
+        htf_ema_period = p.get("htf_ema_period", 999)
+        call_htf = df["htf_trend"] == 1 if htf_ema_period < 500 else True
+
+        call_signal = call_trend & call_entry & call_st & call_mom & filters
+        if htf_ema_period < 500:
+            call_signal = call_signal & call_htf
+
+        # ── PUT (short) ────────────────────────────────────────
+        put_trend = (df["ema_fast"] < df["ema_slow"]) & (df["ema_slope_falling"] == 1)
+        put_entry = (df["pullback"] == 1) | (df["breakout_low"] == 1)
+        put_st = df["st_dir"] == -1
+        put_mom = (df["macd_mom_bear"] == 1) | (df["rsi_falling"] == 1)
+
+        put_signal = put_trend & put_entry & put_st & put_mom & filters
+
+        # ── Combine: +1 = CALL, -1 = PUT ──────────────────────
+        signal = pd.Series(0, index=df.index, dtype=int)
+        signal[call_signal] = 1
+        signal[put_signal] = -1
+        # If both fire on same bar (rare), prefer the trend direction
+        both = call_signal & put_signal
+        if both.any():
+            signal[both] = 0
 
         # Cooldown: suppress signals within N bars of a previous signal
         cooldown = p.get("cooldown_bars", 0)
         if cooldown > 0:
             last_signal_idx = -cooldown - 1
             for i in range(len(signal)):
-                if signal.iloc[i] == 1:
+                if signal.iloc[i] != 0:
                     if i - last_signal_idx <= cooldown:
                         signal.iloc[i] = 0
                     else:

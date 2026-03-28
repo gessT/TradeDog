@@ -721,6 +721,7 @@ export type MGC5MinTrade = {
   pnl_pct: number;
   reason: string;
   signal_type: string;
+  direction: string;
 };
 
 export type MGC5MinMetrics = {
@@ -772,6 +773,7 @@ export async function fetchMGC5MinBacktest(
 
 export type Scan5MinSignal = {
   found: boolean;
+  direction: string;
   signal_type: string;
   entry_price: number;
   stop_loss: number;
@@ -806,6 +808,42 @@ export async function scan5Min(
     throw new Error(detail || `Scan failed with ${response.status}`);
   }
   return (await response.json()) as Scan5MinResponse;
+}
+
+
+// ── 5min Execute (Tiger Bracket Order) ──────────────────────────────
+
+export type Execute5MinResponse = {
+  execution: ExecutionResult | null;
+  position: { current_qty: number; max_qty: number; trade_qty: number; blocked: boolean };
+  timestamp: string;
+};
+
+export async function execute5Min(
+  direction: string,
+  qty: number = 1,
+  maxQty: number = 5,
+  entryPrice: number = 0,
+  stopLoss: number = 0,
+  takeProfit: number = 0,
+): Promise<Execute5MinResponse> {
+  const response = await fetch(`${API_BASE}/mgc/execute_5min`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      direction,
+      qty,
+      max_qty: maxQty,
+      entry_price: entryPrice,
+      stop_loss: stopLoss,
+      take_profit: takeProfit,
+    }),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Execute failed with ${response.status}`);
+  }
+  return (await response.json()) as Execute5MinResponse;
 }
 
 

@@ -43,6 +43,16 @@ def breakout_high(
     return (close > prev_high).astype(int)
 
 
+def breakout_low(
+    close: pd.Series,
+    low: pd.Series,
+    lookback: int = 20,
+) -> pd.Series:
+    """True when close breaks below the lowest low of *lookback* bars (shifted)."""
+    prev_low = low.rolling(lookback).min().shift(1)
+    return (close < prev_low).astype(int)
+
+
 def pullback_to_ema(
     close: pd.Series,
     ema_line: pd.Series,
@@ -64,6 +74,14 @@ def ema_slope(
 ) -> pd.Series:
     """True when EMA has been rising over the last *lookback* bars."""
     return (ema_line > ema_line.shift(lookback)).astype(int)
+
+
+def ema_slope_falling(
+    ema_line: pd.Series,
+    lookback: int = 3,
+) -> pd.Series:
+    """True when EMA has been falling over the last *lookback* bars."""
+    return (ema_line < ema_line.shift(lookback)).astype(int)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -139,13 +157,7 @@ def rsi_rising(
     low_thresh: float = 35.0,
     strength_thresh: float = 45.0,
 ) -> pd.Series:
-    """True when RSI shows bullish momentum.
-
-    Conditions (OR):
-    - RSI was below *low_thresh* in last 5 bars AND current > *strength_thresh*
-    - RSI is in the 35-65 healthy momentum zone (not overbought)
-    - RSI is rising (current > 2 bars ago)
-    """
+    """True when RSI shows bullish momentum."""
     was_low = rsi_vals.rolling(5).min() < low_thresh
     now_strong = rsi_vals > strength_thresh
     in_zone = (rsi_vals >= 35) & (rsi_vals <= 65)
@@ -153,19 +165,39 @@ def rsi_rising(
     return ((was_low & now_strong) | (in_zone & rising)).astype(int)
 
 
+def rsi_falling(
+    rsi_vals: pd.Series,
+    high_thresh: float = 65.0,
+    weakness_thresh: float = 55.0,
+) -> pd.Series:
+    """True when RSI shows bearish momentum (mirror of rsi_rising)."""
+    was_high = rsi_vals.rolling(5).max() > high_thresh
+    now_weak = rsi_vals < weakness_thresh
+    in_zone = (rsi_vals >= 35) & (rsi_vals <= 65)
+    falling = rsi_vals < rsi_vals.shift(2)
+    return ((was_high & now_weak) | (in_zone & falling)).astype(int)
+
+
 def macd_momentum(
     macd_hist: pd.Series,
     lookback: int = 3,
 ) -> pd.Series:
-    """True when MACD histogram is positive OR has just crossed above zero.
-
-    More forgiving than requiring hist > 0 at the exact bar — catches
-    fresh momentum shifts that the previous version missed.
-    """
+    """True when MACD histogram is positive OR has just crossed above zero."""
     positive = macd_hist > 0
     was_neg = macd_hist.rolling(lookback).min() < 0
     fresh_cross = positive & was_neg
     return (positive | fresh_cross).astype(int)
+
+
+def macd_momentum_bear(
+    macd_hist: pd.Series,
+    lookback: int = 3,
+) -> pd.Series:
+    """True when MACD histogram is negative OR has just crossed below zero."""
+    negative = macd_hist < 0
+    was_pos = macd_hist.rolling(lookback).max() > 0
+    fresh_cross = negative & was_pos
+    return (negative | fresh_cross).astype(int)
 
 
 # ═══════════════════════════════════════════════════════════════════════

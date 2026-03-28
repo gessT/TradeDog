@@ -742,6 +742,7 @@ class MGC5MinTrade(BaseModel):
     pnl_pct: float
     reason: str
     signal_type: str = ""
+    direction: str = "CALL"  # "CALL" or "PUT"
 
 
 class MGC5MinMetrics(BaseModel):
@@ -835,6 +836,7 @@ async def mgc_backtest_5min(
                 pnl_pct=round(t.pnl_pct, 2),
                 reason=t.reason,
                 signal_type=t.signal_type,
+                direction=t.direction,
             )
             for t in result.trades
         ]
@@ -879,6 +881,7 @@ async def mgc_backtest_5min(
 
 class Scan5MinSignal(BaseModel):
     found: bool
+    direction: str  # "CALL" / "PUT" / "NONE"
     signal_type: str
     entry_price: float
     stop_loss: float
@@ -921,6 +924,7 @@ async def mgc_scan_5min(
 
         sig = Scan5MinSignal(
             found=result.found,
+            direction=result.direction,
             signal_type=result.signal_type,
             entry_price=result.entry_price,
             stop_loss=result.stop_loss,
@@ -980,6 +984,7 @@ async def mgc_scan_5min_live() -> Scan5MinResponse:
 
         sig = Scan5MinSignal(
             found=result.found,
+            direction=result.direction,
             signal_type=result.signal_type,
             entry_price=result.entry_price,
             stop_loss=result.stop_loss,
@@ -1003,6 +1008,100 @@ async def mgc_scan_5min_live() -> Scan5MinResponse:
     return Scan5MinResponse(
         opportunity=found,
         signal=sig,
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+    )
+
+
+# ── 5min Execute (Tiger Bracket Order) ──────────────────────────────
+
+class Execute5MinRequest(BaseModel):
+    """Request body for /execute_5min endpoint."""
+    qty: int = 1
+    max_qty: int = 5
+    direction: str = "CALL"       # "CALL" or "PUT"
+    entry_price: float = 0.0
+    stop_loss: float = 0.0
+    take_profit: float = 0.0
+
+
+class Execute5MinResponse(BaseModel):
+    """Response from /execute_5min endpoint."""
+    execution: Optional[ExecutionResult] = None
+    position: dict = {}            # current_qty, max_qty, blocked
+    timestamp: str = ""
+
+
+@router.post("/execute_5min")
+async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
+    """Execute a 5-minute strategy trade on Tiger account.
+
+    Places a bracket order (entry MKT + OCA SL/TP) for the given direction.
+    """
+    def _run():
+        from mgc_trading.tiger_execution import TigerTrader
+
+        side = "BUY" if req.direction == "CALL" else "SELL"
+
+        # Position check
+        current_pos = _get_tiger_position("MGC")
+        at_max = current_pos >= req.max_qty
+        position_info = {
+            "current_qty": current_pos,
+            "max_qty": req.max_qty,
+            "trade_qty": req.qty,
+            "blocked": at_max,
+        }
+
+        if at_max:
+            exec_result = ExecutionResult(
+                executed=False,
+                order_id="",
+                side=side,
+                qty=req.qty,
+                status="MAX_POSITION",
+                reason=f"Position {current_pos}/{req.max_qty} — at max, no new orders",
+            )
+            return exec_result, position_info
+
+        trader = TigerTrader()
+        trader.connect()
+        bracket = trader.place_bracket_order(
+            symbol="MGC",
+            qty=req.qty,
+            side=side,
+            stop_loss_price=req.stop_loss,
+            take_profit_price=req.take_profit,
+        )
+        if bracket.entry and bracket.entry.status != "FAILED":
+            parts = [f"Entry {bracket.entry.order_id} {side}"]
+            if bracket.stop_loss:
+                parts.append(f"SL {bracket.stop_loss.order_id} @ ${req.stop_loss:.2f}")
+            if bracket.take_profit:
+                parts.append(f"TP {bracket.take_profit.order_id} @ ${req.take_profit:.2f}")
+            exec_result = ExecutionResult(
+                executed=True,
+                order_id=bracket.entry.order_id,
+                side=side,
+                qty=req.qty,
+                status=bracket.entry.status,
+                reason=" | ".join(parts),
+            )
+        else:
+            exec_result = ExecutionResult(
+                executed=False,
+                order_id="",
+                side=side,
+                qty=req.qty,
+                status="FAILED",
+                reason="Tiger API order failed",
+            )
+        return exec_result, position_info
+
+    exec_result, position_info = await run_in_threadpool(_run)
+
+    return Execute5MinResponse(
+        execution=exec_result,
+        position=position_info,
         timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
     )
 

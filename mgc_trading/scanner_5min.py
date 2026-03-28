@@ -22,6 +22,7 @@ from . import indicators_5min as ind5
 class ScanResult5Min:
     """Result from a 5-minute market scan."""
     found: bool
+    direction: str          # "CALL" / "PUT" / "NONE"
     signal_type: str        # "PULLBACK" / "BREAKOUT" / "NONE"
     entry_price: float
     stop_loss: float
@@ -69,15 +70,24 @@ def scan_5min(
     current_price = float(df_ind["close"].iloc[-1])
     bar_time = str(df_ind.index[bar_idx])
 
-    has_signal = int(signals.iloc[bar_idx]) == 1
+    sig_val = int(signals.iloc[bar_idx])
+    has_signal = sig_val != 0
 
-    # Determine signal type
-    if has_signal:
+    # Determine direction and signal type
+    if sig_val == 1:
+        direction = "CALL"
         if int(bar.get("breakout", 0)) == 1:
             signal_type = "BREAKOUT"
         else:
             signal_type = "PULLBACK"
+    elif sig_val == -1:
+        direction = "PUT"
+        if int(bar.get("breakout_low", 0)) == 1:
+            signal_type = "BREAKOUT"
+        else:
+            signal_type = "PULLBACK"
     else:
+        direction = "NONE"
         signal_type = "NONE"
 
     # Get indicator values
@@ -93,8 +103,12 @@ def scan_5min(
 
     # Entry / SL / TP
     entry_price = current_price
-    sl_price = entry_price - p["atr_sl_mult"] * atr_val
-    tp_price = entry_price + p["atr_tp_mult"] * atr_val
+    if direction == "PUT":
+        sl_price = entry_price + p["atr_sl_mult"] * atr_val
+        tp_price = entry_price - p["atr_tp_mult"] * atr_val
+    else:
+        sl_price = entry_price - p["atr_sl_mult"] * atr_val
+        tp_price = entry_price + p["atr_tp_mult"] * atr_val
     rr = abs(tp_price - entry_price) / abs(entry_price - sl_price) if abs(entry_price - sl_price) > 0 else 0
 
     # ── Signal strength scoring (1-10) ────────────────────────────
@@ -102,13 +116,16 @@ def scan_5min(
     detail: dict = {}
 
     # 1. Trend alignment (0-2)
-    if ema_f > ema_s:
-        gap_pct = (ema_f - ema_s) / ema_s * 100 if ema_s > 0 else 0
+    is_bullish_trend = ema_f > ema_s
+    is_bearish_trend = ema_f < ema_s
+    trend_aligned = (direction == "CALL" and is_bullish_trend) or (direction == "PUT" and is_bearish_trend)
+    if trend_aligned:
+        gap_pct = abs(ema_f - ema_s) / max(ema_s, 1e-10) * 100
         trend_pts = min(2, 1 + (1 if gap_pct > 0.15 else 0))
         score += trend_pts
         detail["trend"] = {"pts": trend_pts, "ema_gap_pct": round(gap_pct, 3)}
     else:
-        detail["trend"] = {"pts": 0, "note": "bearish"}
+        detail["trend"] = {"pts": 0, "note": "against trend"}
 
     # 2. RSI sweet spot (0-2)
     if 40 <= rsi_val <= 60:
@@ -121,15 +138,17 @@ def scan_5min(
     detail["rsi"] = {"pts": rsi_pts, "value": round(rsi_val, 1)}
 
     # 3. MACD momentum (0-2)
-    if macd_h > 0:
-        macd_pts = 2 if macd_h > atr_val * 0.1 else 1
+    macd_aligned = (direction == "CALL" and macd_h > 0) or (direction == "PUT" and macd_h < 0)
+    if macd_aligned:
+        macd_pts = 2 if abs(macd_h) > atr_val * 0.1 else 1
     else:
         macd_pts = 0
     score += macd_pts
     detail["macd"] = {"pts": macd_pts, "hist": round(macd_h, 4)}
 
     # 4. Supertrend confirmation (0-2)
-    st_pts = 2 if st_dir == 1 else 0
+    st_aligned = (direction == "CALL" and st_dir == 1) or (direction == "PUT" and st_dir == -1)
+    st_pts = 2 if st_aligned else 0
     score += st_pts
     detail["supertrend"] = {"pts": st_pts, "dir": st_dir}
 
@@ -147,6 +166,7 @@ def scan_5min(
 
     return ScanResult5Min(
         found=has_signal,
+        direction=direction,
         signal_type=signal_type,
         entry_price=round(entry_price, 2),
         stop_loss=round(sl_price, 2),

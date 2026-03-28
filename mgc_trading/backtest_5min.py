@@ -35,6 +35,7 @@ class Trade5Min:
     pnl_pct: float
     reason: str  # "TP", "SL", "TRAILING", "EOD"
     signal_type: str = ""  # "PULLBACK" / "BREAKOUT"
+    direction: str = "CALL"  # "CALL" (long) / "PUT" (short)
 
 
 @dataclass
@@ -106,10 +107,13 @@ class Backtester5Min:
             is_trades, is_curve, is_equity = self._simulate(
                 df_ind.iloc[:split_idx], signals.iloc[:split_idx], full_params
             )
-            # Out-of-sample run
+            # Out-of-sample run — chain from IS ending equity
+            saved_capital = self.initial_capital
+            self.initial_capital = is_equity
             oos_trades, oos_curve, oos_equity = self._simulate(
                 df_ind.iloc[split_idx:], signals.iloc[split_idx:], full_params
             )
+            self.initial_capital = saved_capital
             # Merge curves
             all_trades = is_trades + oos_trades
             all_curve = is_curve + oos_curve
@@ -136,14 +140,14 @@ class Backtester5Min:
         signals: pd.Series,
         params: dict,
     ) -> tuple[list[Trade5Min], list[float], float]:
-        """Bar-by-bar simulation loop."""
+        """Bar-by-bar simulation loop. Supports CALL (+1) and PUT (-1) signals."""
         equity = self.initial_capital
         position: dict | None = None
         trades: list[Trade5Min] = []
         equity_curve: list[float] = []
         consec_losses = 0
         daily_counts: dict[str, int] = {}
-        highest_since_entry = 0.0
+        extreme_since_entry = 0.0  # highest for CALL, lowest for PUT
 
         for i in range(1, len(df)):
             bar = df.iloc[i]
@@ -154,34 +158,63 @@ class Backtester5Min:
             if position is not None:
                 sl = position["sl"]
                 tp = position["tp"]
+                direction = position["direction"]  # 1 = CALL, -1 = PUT
 
-                # Breakeven stop: move SL to entry when price reaches BE threshold
-                if params.get("use_breakeven") and not position.get("be_triggered"):
-                    be_thresh = position["entry_price"] + params.get("be_atr_mult", 1.0) * position["entry_atr"]
-                    if bar["high"] >= be_thresh:
-                        position["be_triggered"] = True
-                        be_offset = params.get("be_offset_atr", 0.1) * position["entry_atr"]
-                        new_sl = position["entry_price"] + be_offset
+                if direction == 1:
+                    # ── CALL exit logic (long) ──
+                    # Breakeven stop
+                    if params.get("use_breakeven") and not position.get("be_triggered"):
+                        be_thresh = position["entry_price"] + params.get("be_atr_mult", 1.0) * position["entry_atr"]
+                        if bar["high"] >= be_thresh:
+                            position["be_triggered"] = True
+                            new_sl = position["entry_price"] + params.get("be_offset_atr", 0.1) * position["entry_atr"]
+                            if new_sl > sl:
+                                sl = new_sl
+                                position["sl"] = sl
+                    # Trailing stop
+                    if params.get("use_trailing") and bar["high"] > extreme_since_entry:
+                        extreme_since_entry = bar["high"]
+                        new_sl = extreme_since_entry - params["trailing_atr_mult"] * prev["atr"]
                         if new_sl > sl:
                             sl = new_sl
                             position["sl"] = sl
 
-                # Trailing stop update
-                if params.get("use_trailing") and bar["high"] > highest_since_entry:
-                    highest_since_entry = bar["high"]
-                    new_sl = highest_since_entry - params["trailing_atr_mult"] * prev["atr"]
-                    if new_sl > sl:
-                        sl = new_sl
-                        position["sl"] = sl
+                    hit_sl = bar["low"] <= sl
+                    hit_tp = bar["high"] >= tp
+                else:
+                    # ── PUT exit logic (short) ──
+                    # Breakeven stop (inverted)
+                    if params.get("use_breakeven") and not position.get("be_triggered"):
+                        be_thresh = position["entry_price"] - params.get("be_atr_mult", 1.0) * position["entry_atr"]
+                        if bar["low"] <= be_thresh:
+                            position["be_triggered"] = True
+                            new_sl = position["entry_price"] - params.get("be_offset_atr", 0.1) * position["entry_atr"]
+                            if new_sl < sl:
+                                sl = new_sl
+                                position["sl"] = sl
+                    # Trailing stop (inverted)
+                    if params.get("use_trailing") and bar["low"] < extreme_since_entry:
+                        extreme_since_entry = bar["low"]
+                        new_sl = extreme_since_entry + params["trailing_atr_mult"] * prev["atr"]
+                        if new_sl < sl:
+                            sl = new_sl
+                            position["sl"] = sl
 
-                if bar["low"] <= sl:
+                    hit_sl = bar["high"] >= sl
+                    hit_tp = bar["low"] <= tp
+
+                if hit_sl:
                     exit_price = sl
-                    pnl = (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                    pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
                     pnl_pct = pnl / (self.initial_capital or 1) * 100
                     equity += pnl
-                    is_trailing = params.get("use_trailing") and sl > position["orig_sl"]
-                    is_be = position.get("be_triggered", False) and sl >= position["entry_price"]
-                    reason = "BE" if is_be else ("TRAILING" if is_trailing else "SL")
+                    reason = "SL"
+                    if params.get("use_breakeven") and position.get("be_triggered"):
+                        if (direction == 1 and sl >= position["entry_price"]) or \
+                           (direction == -1 and sl <= position["entry_price"]):
+                            reason = "BE"
+                    elif params.get("use_trailing") and sl != position["orig_sl"]:
+                        reason = "TRAILING"
                     trades.append(Trade5Min(
                         entry_time=position["entry_time"],
                         exit_time=bar.name,
@@ -192,13 +225,14 @@ class Backtester5Min:
                         pnl_pct=round(pnl_pct, 2),
                         reason=reason,
                         signal_type=position.get("signal_type", ""),
+                        direction="CALL" if direction == 1 else "PUT",
                     ))
                     consec_losses = consec_losses + 1 if pnl < 0 else 0
                     position = None
 
-                elif bar["high"] >= tp:
+                elif hit_tp:
                     exit_price = tp
-                    pnl = (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                    pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
                     pnl_pct = pnl / (self.initial_capital or 1) * 100
                     equity += pnl
                     trades.append(Trade5Min(
@@ -211,12 +245,14 @@ class Backtester5Min:
                         pnl_pct=round(pnl_pct, 2),
                         reason="TP",
                         signal_type=position.get("signal_type", ""),
+                        direction="CALL" if direction == 1 else "PUT",
                     ))
                     consec_losses = 0
                     position = None
 
             # ── 2. No position → consider entry ────────────────────
-            if position is None and i > 0 and signals.iloc[i - 1] == 1:
+            sig_val = signals.iloc[i - 1] if i > 0 else 0
+            if position is None and sig_val != 0:
                 if consec_losses >= self.MAX_CONSEC_LOSSES:
                     equity_curve.append(equity)
                     continue
@@ -230,8 +266,13 @@ class Backtester5Min:
                     equity_curve.append(equity)
                     continue
 
-                sl_price = entry_price - params["atr_sl_mult"] * atr_val
-                tp_price = entry_price + params["atr_tp_mult"] * atr_val
+                direction = int(sig_val)  # +1 = CALL, -1 = PUT
+                if direction == 1:
+                    sl_price = entry_price - params["atr_sl_mult"] * atr_val
+                    tp_price = entry_price + params["atr_tp_mult"] * atr_val
+                else:
+                    sl_price = entry_price + params["atr_sl_mult"] * atr_val
+                    tp_price = entry_price - params["atr_tp_mult"] * atr_val
 
                 risk_per_contract = abs(entry_price - sl_price) * CONTRACT_SIZE
                 if risk_per_contract <= 0:
@@ -243,7 +284,9 @@ class Backtester5Min:
 
                 # Determine signal type
                 sig_type = "PULLBACK"
-                if int(prev.get("breakout", 0)) == 1:
+                if direction == 1 and int(prev.get("breakout", 0)) == 1:
+                    sig_type = "BREAKOUT"
+                elif direction == -1 and int(prev.get("breakout_low", 0)) == 1:
                     sig_type = "BREAKOUT"
 
                 position = {
@@ -256,13 +299,15 @@ class Backtester5Min:
                     "signal_type": sig_type,
                     "entry_atr": atr_val,
                     "be_triggered": False,
+                    "direction": direction,
                 }
-                highest_since_entry = entry_price
+                extreme_since_entry = entry_price
                 daily_counts[bar_date] = daily_counts.get(bar_date, 0) + 1
 
             # ── 3. Record equity ───────────────────────────────────
             if position is not None:
-                unrealized = (float(bar["close"]) - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                d = position["direction"]
+                unrealized = d * (float(bar["close"]) - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
                 equity_curve.append(equity + unrealized)
             else:
                 equity_curve.append(equity)
@@ -270,7 +315,8 @@ class Backtester5Min:
         # Close remaining position at last close
         if position is not None:
             last = df.iloc[-1]
-            pnl = (float(last["close"]) - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+            d = position["direction"]
+            pnl = d * (float(last["close"]) - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
             pnl_pct = pnl / (self.initial_capital or 1) * 100
             equity += pnl
             trades.append(Trade5Min(
@@ -283,6 +329,7 @@ class Backtester5Min:
                 pnl_pct=round(pnl_pct, 2),
                 reason="EOD",
                 signal_type=position.get("signal_type", ""),
+                direction="CALL" if d == 1 else "PUT",
             ))
 
         return trades, equity_curve, equity
