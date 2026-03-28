@@ -141,12 +141,12 @@ export type HalfTrendPoint = {
 /**
  * Compute the HalfTrend indicator from OHLC data.
  * Pine Script port: amplitude controls highest/lowest lookback,
- * channelDeviation controls ATR-based channel width.
+ * channelDeviation controls ATR-based channel width (price gap to half).
  */
 export function halfTrend(
   bars: { high: number; low: number; close: number }[],
   amplitude: number = 2,
-  channelDeviation: number = 2,
+  channelDeviation: number = 10,
 ): (HalfTrendPoint | null)[] {
   const len = bars.length;
   if (len < 2) return new Array(len).fill(null);
@@ -195,7 +195,7 @@ export function halfTrend(
   const highs = bars.map((b) => b.high);
   const lows = bars.map((b) => b.low);
 
-  // State variables
+  // State variables (matching Pine var declarations)
   let trend = 0;         // 0 = up, 1 = down
   let nextTrend = 0;
   let maxLowPrice = lows[0];
@@ -208,12 +208,12 @@ export function halfTrend(
   for (let i = 0; i < len; i++) {
     const atr2 = atr[i] / 2;
     const dev = channelDeviation * atr2;
-    const highPrice = highest(highs, amplitude, i);
-    const lowPrice = lowest(lows, amplitude, i);
+    const highPrice = highs[highest_bar(highs, amplitude, i)];
+    const lowPrice = lows[lowest_bar(lows, amplitude, i)];
 
     const prevTrend = trend;
 
-    // HalfTrend Logic
+    // HalfTrend Logic - Upward Trend Detection (nextTrend == 1)
     if (nextTrend === 1) {
       maxLowPrice = Math.max(lowPrice, maxLowPrice);
       if (highma[i] < maxLowPrice && bars[i].close < (i > 0 ? lows[i - 1] : lows[i])) {
@@ -222,6 +222,7 @@ export function halfTrend(
         minHighPrice = highPrice;
       }
     } else {
+      // HalfTrend Logic - Downward Trend Detection (nextTrend == 0)
       minHighPrice = Math.min(highPrice, minHighPrice);
       if (lowma[i] > minHighPrice && bars[i].close > (i > 0 ? highs[i - 1] : highs[i])) {
         trend = 0;
@@ -230,16 +231,20 @@ export function halfTrend(
       }
     }
 
-    // Calculate HalfTrend value
+    // Calculate HalfTrend value (matching Pine exactly)
     if (trend === 0) {
+      // Uptrend
       if (prevTrend !== 0) {
+        // Trend just flipped to up: up = previous down value
         up = down;
       } else {
         up = i === 0 ? maxLowPrice : Math.max(maxLowPrice, up);
       }
       result.push({ value: up, trend: 0 });
     } else {
+      // Downtrend
       if (prevTrend !== 1) {
+        // Trend just flipped to down: down = previous up value
         down = up;
       } else {
         down = i === 0 ? minHighPrice : Math.min(minHighPrice, down);
@@ -249,6 +254,24 @@ export function halfTrend(
   }
 
   return result;
+}
+
+/** Return index of highest value in window ending at idx */
+function highest_bar(vals: number[], period: number, idx: number): number {
+  let mxIdx = idx;
+  for (let j = Math.max(0, idx - period + 1); j <= idx; j++) {
+    if (vals[j] > vals[mxIdx]) mxIdx = j;
+  }
+  return mxIdx;
+}
+
+/** Return index of lowest value in window ending at idx */
+function lowest_bar(vals: number[], period: number, idx: number): number {
+  let mnIdx = idx;
+  for (let j = Math.max(0, idx - period + 1); j <= idx; j++) {
+    if (vals[j] < vals[mnIdx]) mnIdx = j;
+  }
+  return mnIdx;
 }
 
 type OHLCBar = { time: string; open: number; high: number; low: number; close: number };

@@ -274,7 +274,7 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data,
         .map((p) => ({ high: p.high!, low: p.low!, close: p.price }));
 
       if (ohlcForHT.length > 10) {
-        const htResults = halfTrend(ohlcForHT, 2, 2);
+        const htResults = halfTrend(ohlcForHT, 5, 2);
         const filteredSorted = sorted.filter((p) => p.open != null && p.high != null && p.low != null);
         const htLineData: { time: UTCTimestamp; value: number; color: string }[] = [];
         for (let i = 0; i < filteredSorted.length; i++) {
