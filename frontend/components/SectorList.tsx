@@ -6,6 +6,7 @@ import { fetchSectors, SectorInfo, SectorStock } from "../services/api";
 interface Props {
   onSelectSymbol?: (symbol: string) => void;
   onSelectSector?: (sectorName: string) => void;
+  market?: string;
 }
 
 const n = (value: unknown): number => {
@@ -23,12 +24,15 @@ const SECTOR_ICONS: Record<string, { icon: string; color: string }> = {
   "IND-PROD":         { icon: "🏭", color: "from-red-600/30 to-red-900/10 border-red-700/40" },
   PLANTATION:         { icon: "🌴", color: "from-lime-600/30 to-lime-900/10 border-lime-700/40" },
   HEALTH:             { icon: "⚕️", color: "from-pink-600/30 to-pink-900/10 border-pink-700/40" },
+  HEALTHCARE:         { icon: "⚕️", color: "from-pink-600/30 to-pink-900/10 border-pink-700/40" },
   CONSTRUCTN:         { icon: "🏗️", color: "from-amber-600/30 to-amber-900/10 border-amber-700/40" },
   PROPERTIES:         { icon: "🏠", color: "from-purple-600/30 to-purple-900/10 border-purple-700/40" },
   TECHNOLOGY:         { icon: "⚡", color: "from-emerald-600/30 to-emerald-900/10 border-emerald-700/40" },
   ENERGY:             { icon: "🛢️", color: "from-teal-600/30 to-teal-900/10 border-teal-700/40" },
   UTILITIES:          { icon: "💡", color: "from-cyan-600/30 to-cyan-900/10 border-cyan-700/40" },
   REIT:               { icon: "🏢", color: "from-indigo-600/30 to-indigo-900/10 border-indigo-700/40" },
+  INDUSTRIALS:        { icon: "⚙️", color: "from-amber-600/30 to-amber-900/10 border-amber-700/40" },
+  COMMUNICATION:      { icon: "📡", color: "from-violet-600/30 to-violet-900/10 border-violet-700/40" },
 };
 
 function ChangeTag({ value, size = "sm" }: Readonly<{ value: number | undefined | null; size?: "sm" | "md" }>) {
@@ -39,7 +43,7 @@ function ChangeTag({ value, size = "sm" }: Readonly<{ value: number | undefined 
   return <span className={cls}>{isUp ? "+" : ""}{safeValue.toFixed(2)}%</span>;
 }
 
-export default function SectorList({ onSelectSymbol, onSelectSector }: Readonly<Props>) {
+export default function SectorList({ onSelectSymbol, onSelectSector, market = "MY" }: Readonly<Props>) {
   const [sectors, setSectors] = useState<SectorInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +55,7 @@ export default function SectorList({ onSelectSymbol, onSelectSector }: Readonly<
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchSectors();
+      const res = await fetchSectors(market);
       setSectors(res.sectors);
       setTotalScanned(res.total_stocks_scanned);
     } catch (e: unknown) {
@@ -59,7 +63,7 @@ export default function SectorList({ onSelectSymbol, onSelectSector }: Readonly<
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [market]);
 
   useEffect(() => {
     load();
@@ -109,7 +113,7 @@ export default function SectorList({ onSelectSymbol, onSelectSector }: Readonly<
 
       {loading && sectors.length === 0 && (
         <div className="text-xs text-slate-500 text-center py-4">
-          Scanning Bursa Malaysia sectors…
+          Scanning {market === "US" ? "US" : "Bursa Malaysia"} sectors…
         </div>
       )}
 
@@ -193,7 +197,7 @@ export default function SectorList({ onSelectSymbol, onSelectSector }: Readonly<
                             <div className="min-w-0 flex items-center gap-1.5">
                               <span className={`w-1.5 h-1.5 rounded-full ${stockUp ? "bg-emerald-400" : "bg-rose-500"}`} />
                               <span className="text-[11px] font-semibold text-slate-300 truncate">
-                                {stock.symbol.replace(".KL", "")}
+                                {market === "US" ? stock.symbol : stock.symbol.replace(".KL", "")}
                               </span>
                               <span className="text-[10px] text-slate-500 truncate">{stock.name}</span>
                             </div>

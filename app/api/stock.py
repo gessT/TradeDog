@@ -254,6 +254,88 @@ BURSA_STOCKS: dict[str, str] = {
     "5130.KL": "Atrium REIT",
 }
 
+# ── Major US stocks (Yahoo Finance tickers) ──────────────────────────
+US_STOCKS: dict[str, str] = {
+    # TECHNOLOGY (15)
+    "AAPL": "Apple", "MSFT": "Microsoft", "GOOGL": "Alphabet",
+    "AMZN": "Amazon", "NVDA": "NVIDIA", "META": "Meta Platforms",
+    "TSLA": "Tesla", "AVGO": "Broadcom", "ORCL": "Oracle",
+    "CRM": "Salesforce", "AMD": "AMD", "INTC": "Intel",
+    "ADBE": "Adobe", "NFLX": "Netflix", "CSCO": "Cisco",
+    # FINANCE (10)
+    "JPM": "JPMorgan Chase", "BAC": "Bank of America", "WFC": "Wells Fargo",
+    "GS": "Goldman Sachs", "MS": "Morgan Stanley", "C": "Citigroup",
+    "BLK": "BlackRock", "SCHW": "Charles Schwab", "AXP": "American Express",
+    "V": "Visa",
+    # HEALTHCARE (10)
+    "UNH": "UnitedHealth", "JNJ": "Johnson & Johnson", "LLY": "Eli Lilly",
+    "PFE": "Pfizer", "ABBV": "AbbVie", "MRK": "Merck",
+    "TMO": "Thermo Fisher", "ABT": "Abbott Labs", "BMY": "Bristol-Myers",
+    "AMGN": "Amgen",
+    # CONSUMER (10)
+    "WMT": "Walmart", "PG": "Procter & Gamble", "KO": "Coca-Cola",
+    "PEP": "PepsiCo", "COST": "Costco", "NKE": "Nike",
+    "MCD": "McDonald's", "SBUX": "Starbucks", "HD": "Home Depot",
+    "TGT": "Target",
+    # ENERGY (5)
+    "XOM": "Exxon Mobil", "CVX": "Chevron", "COP": "ConocoPhillips",
+    "SLB": "Schlumberger", "EOG": "EOG Resources",
+    # INDUSTRIALS (5)
+    "BA": "Boeing", "CAT": "Caterpillar", "HON": "Honeywell",
+    "UPS": "UPS", "GE": "GE Aerospace",
+    # COMMUNICATION (5)
+    "DIS": "Walt Disney", "CMCSA": "Comcast", "T": "AT&T",
+    "VZ": "Verizon", "TMUS": "T-Mobile",
+}
+
+US_SECTORS: dict[str, list[tuple[str, str]]] = {
+    "TECHNOLOGY": [
+        ("AAPL", "Apple"), ("MSFT", "Microsoft"), ("GOOGL", "Alphabet"),
+        ("AMZN", "Amazon"), ("NVDA", "NVIDIA"), ("META", "Meta Platforms"),
+        ("TSLA", "Tesla"), ("AVGO", "Broadcom"), ("ORCL", "Oracle"),
+        ("CRM", "Salesforce"), ("AMD", "AMD"), ("INTC", "Intel"),
+        ("ADBE", "Adobe"), ("NFLX", "Netflix"), ("CSCO", "Cisco"),
+    ],
+    "FINANCE": [
+        ("JPM", "JPMorgan Chase"), ("BAC", "Bank of America"), ("WFC", "Wells Fargo"),
+        ("GS", "Goldman Sachs"), ("MS", "Morgan Stanley"), ("C", "Citigroup"),
+        ("BLK", "BlackRock"), ("SCHW", "Charles Schwab"), ("AXP", "American Express"),
+        ("V", "Visa"),
+    ],
+    "HEALTHCARE": [
+        ("UNH", "UnitedHealth"), ("JNJ", "Johnson & Johnson"), ("LLY", "Eli Lilly"),
+        ("PFE", "Pfizer"), ("ABBV", "AbbVie"), ("MRK", "Merck"),
+        ("TMO", "Thermo Fisher"), ("ABT", "Abbott Labs"), ("BMY", "Bristol-Myers"),
+        ("AMGN", "Amgen"),
+    ],
+    "CONSUMER": [
+        ("WMT", "Walmart"), ("PG", "Procter & Gamble"), ("KO", "Coca-Cola"),
+        ("PEP", "PepsiCo"), ("COST", "Costco"), ("NKE", "Nike"),
+        ("MCD", "McDonald's"), ("SBUX", "Starbucks"), ("HD", "Home Depot"),
+        ("TGT", "Target"),
+    ],
+    "ENERGY": [
+        ("XOM", "Exxon Mobil"), ("CVX", "Chevron"), ("COP", "ConocoPhillips"),
+        ("SLB", "Schlumberger"), ("EOG", "EOG Resources"),
+    ],
+    "INDUSTRIALS": [
+        ("BA", "Boeing"), ("CAT", "Caterpillar"), ("HON", "Honeywell"),
+        ("UPS", "UPS"), ("GE", "GE Aerospace"),
+    ],
+    "COMMUNICATION": [
+        ("DIS", "Walt Disney"), ("CMCSA", "Comcast"), ("T", "AT&T"),
+        ("VZ", "Verizon"), ("TMUS", "T-Mobile"),
+    ],
+}
+
+
+def _get_stock_universe(market: str) -> tuple[dict[str, str], dict[str, list[tuple[str, str]]]]:
+    """Return (stocks_dict, sectors_dict) for the given market."""
+    if market == "US":
+        return US_STOCKS, US_SECTORS
+    return BURSA_STOCKS, BURSA_SECTORS
+
+
 # ── Bursa Malaysia Official Sector Mapping (Yahoo Finance 2026) ──────
 BURSA_SECTORS: dict[str, list[tuple[str, str]]] = {
     "FINANCE": [
@@ -607,10 +689,11 @@ def _scan_single_stock(code: str, name: str) -> dict | None:
 
 
 @router.get("/near-ath")
-async def near_ath(top: int = 10) -> dict:
-    """Return top N Bursa Malaysia stocks nearest to their All-Time High."""
+async def near_ath(top: int = 10, market: str = Query(default="MY")) -> dict:
+    """Return top N stocks nearest to their All-Time High."""
     import concurrent.futures
 
+    stocks_dict, _ = _get_stock_universe(market)
     top = min(max(top, 1), 50)
 
     def _scan_all() -> list[dict]:
@@ -618,7 +701,7 @@ async def near_ath(top: int = 10) -> dict:
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             futures = {
                 pool.submit(_scan_single_stock, code, name): code
-                for code, name in BURSA_STOCKS.items()
+                for code, name in stocks_dict.items()
             }
             for fut in concurrent.futures.as_completed(futures):
                 res = fut.result()
@@ -631,7 +714,7 @@ async def near_ath(top: int = 10) -> dict:
 
     return {
         "count": len(stocks),
-        "scanned": len(BURSA_STOCKS),
+        "scanned": len(stocks_dict),
         "stocks": stocks,
     }
 
@@ -683,10 +766,11 @@ def _scan_volume(code: str, name: str, avg_days: int = 20) -> dict | None:
 
 
 @router.get("/top-volume")
-async def top_volume(top: int = 10) -> dict:
-    """Return top N Bursa Malaysia stocks with highest volume ratio (today vs 20-day avg)."""
+async def top_volume(top: int = 10, market: str = Query(default="MY")) -> dict:
+    """Return top N stocks with highest volume ratio (today vs 20-day avg)."""
     import concurrent.futures
 
+    stocks_dict, _ = _get_stock_universe(market)
     top = min(max(top, 1), 50)
 
     def _scan_all() -> list[dict]:
@@ -694,7 +778,7 @@ async def top_volume(top: int = 10) -> dict:
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             futures = {
                 pool.submit(_scan_volume, code, name): code
-                for code, name in BURSA_STOCKS.items()
+                for code, name in stocks_dict.items()
             }
             for fut in concurrent.futures.as_completed(futures):
                 res = fut.result()
@@ -707,14 +791,15 @@ async def top_volume(top: int = 10) -> dict:
 
     return {
         "count": len(stocks),
-        "scanned": len(BURSA_STOCKS),
+        "scanned": len(stocks_dict),
         "stocks": stocks,
     }
 
 
 # ── Sector Momentum Scanner (TradingView) ────────────────────────────
 
-TRADINGVIEW_SCANNER_URL = "https://scanner.tradingview.com/malaysia/scan"
+TRADINGVIEW_SCANNER_URL_MY = "https://scanner.tradingview.com/malaysia/scan"
+TRADINGVIEW_SCANNER_URL_US = "https://scanner.tradingview.com/america/scan"
 
 # Yahoo Finance code → TradingView ticker name
 YF_TO_TV: dict[str, str] = {
@@ -802,10 +887,35 @@ YF_TO_TV: dict[str, str] = {
 # Reverse lookup: TradingView ticker → Yahoo Finance code
 TV_TO_YF: dict[str, str] = {v: k for k, v in YF_TO_TV.items()}
 
+# US stocks: TradingView exchange mapping (ticker → exchange prefix for TV API)
+US_TV_EXCHANGE: dict[str, str] = {
+    "AAPL": "NASDAQ", "MSFT": "NASDAQ", "GOOGL": "NASDAQ", "AMZN": "NASDAQ",
+    "NVDA": "NASDAQ", "META": "NASDAQ", "TSLA": "NASDAQ", "AVGO": "NASDAQ",
+    "ORCL": "NYSE", "CRM": "NYSE", "AMD": "NASDAQ", "INTC": "NASDAQ",
+    "ADBE": "NASDAQ", "NFLX": "NASDAQ", "CSCO": "NASDAQ",
+    "JPM": "NYSE", "BAC": "NYSE", "WFC": "NYSE", "GS": "NYSE",
+    "MS": "NYSE", "C": "NYSE", "BLK": "NYSE", "SCHW": "NYSE",
+    "AXP": "NYSE", "V": "NYSE",
+    "UNH": "NYSE", "JNJ": "NYSE", "LLY": "NYSE", "PFE": "NYSE",
+    "ABBV": "NYSE", "MRK": "NYSE", "TMO": "NYSE", "ABT": "NYSE",
+    "BMY": "NYSE", "AMGN": "NASDAQ",
+    "WMT": "NYSE", "PG": "NYSE", "KO": "NYSE", "PEP": "NASDAQ",
+    "COST": "NASDAQ", "NKE": "NYSE", "MCD": "NYSE", "SBUX": "NASDAQ",
+    "HD": "NYSE", "TGT": "NYSE",
+    "XOM": "NYSE", "CVX": "NYSE", "COP": "NYSE", "SLB": "NYSE", "EOG": "NYSE",
+    "BA": "NYSE", "CAT": "NYSE", "HON": "NASDAQ", "UPS": "NYSE", "GE": "NYSE",
+    "DIS": "NYSE", "CMCSA": "NASDAQ", "T": "NYSE", "VZ": "NYSE", "TMUS": "NASDAQ",
+}
 
-def _fetch_tv_sector_data() -> list[dict]:
+
+def _fetch_tv_sector_data(market: str = "MY") -> list[dict]:
     """Fetch our specific stocks from TradingView scanner API in a single request."""
-    tv_tickers = [f"MYX:{tv}" for tv in YF_TO_TV.values()]
+    if market == "US":
+        tv_tickers = [f"{US_TV_EXCHANGE.get(t, 'NYSE')}:{t}" for t in US_STOCKS]
+        scanner_url = TRADINGVIEW_SCANNER_URL_US
+    else:
+        tv_tickers = [f"MYX:{tv}" for tv in YF_TO_TV.values()]
+        scanner_url = TRADINGVIEW_SCANNER_URL_MY
     payload = {
         "columns": [
             "close", "change", "Perf.W", "Perf.1M",
@@ -814,7 +924,7 @@ def _fetch_tv_sector_data() -> list[dict]:
         "symbols": {"tickers": tv_tickers},
     }
     resp = http_requests.post(
-        TRADINGVIEW_SCANNER_URL,
+        scanner_url,
         json=payload,
         headers={"Content-Type": "application/json"},
         timeout=30,
@@ -824,24 +934,28 @@ def _fetch_tv_sector_data() -> list[dict]:
 
 
 @router.get("/sectors")
-async def sector_overview() -> dict:
+async def sector_overview(market: str = Query(default="MY")) -> dict:
     """Return sector-level momentum overview using TradingView scanner API."""
+    _, sectors_dict = _get_stock_universe(market)
 
     # Build lookup: TV ticker -> (sector, yf_code, name) from our mapping
     tv_lookup: dict[str, tuple[str, str, str]] = {}
-    for sector, stocks_list in BURSA_SECTORS.items():
+    for sector, stocks_list in sectors_dict.items():
         for yf_code, name in stocks_list:
-            tv_ticker = YF_TO_TV.get(yf_code)
-            if tv_ticker:
-                tv_lookup[tv_ticker] = (sector, yf_code, name)
+            if market == "US":
+                tv_lookup[yf_code] = (sector, yf_code, name)
+            else:
+                tv_ticker = YF_TO_TV.get(yf_code)
+                if tv_ticker:
+                    tv_lookup[tv_ticker] = (sector, yf_code, name)
 
     def _scan() -> dict[str, list[dict]]:
-        tv_rows = _fetch_tv_sector_data()
+        tv_rows = _fetch_tv_sector_data(market)
 
-        sector_results: dict[str, list[dict]] = {s: [] for s in BURSA_SECTORS}
+        sector_results: dict[str, list[dict]] = {s: [] for s in sectors_dict}
 
         for row in tv_rows:
-            # TradingView symbol format: "MYX:MAYBANK"
+            # TradingView symbol format: "MYX:MAYBANK" or "NASDAQ:AAPL"
             tv_sym = row.get("s", "")
             tv_ticker = tv_sym.split(":")[-1] if ":" in tv_sym else tv_sym
 
@@ -963,14 +1077,17 @@ def _fetch_sector_ohlcv(code: str, period: str) -> pd.DataFrame | None:
 async def sector_chart(
     sector: str = Query(..., description="Sector name"),
     period: str = Query(default="6mo"),
+    market: str = Query(default="MY"),
 ) -> dict:
     """Return synthetic OHLCV candles for a sector by averaging constituent stocks."""
     import concurrent.futures
 
-    if sector not in BURSA_SECTORS:
+    _, sectors_dict = _get_stock_universe(market)
+
+    if sector not in sectors_dict:
         raise HTTPException(status_code=404, detail=f"Sector '{sector}' not found")
 
-    stocks_list = BURSA_SECTORS[sector]
+    stocks_list = sectors_dict[sector]
 
     def _collect() -> list[pd.DataFrame]:
         frames: list[pd.DataFrame] = []
@@ -1234,17 +1351,19 @@ def _scan_daily_setup(code: str, name: str) -> dict | None:
 
 
 @router.get("/daily-scan")
-async def daily_scan(top: int = Query(default=6, ge=1, le=20)) -> dict:
-    """Scan all KLSE stocks and return today's highest-probability trade setups."""
+async def daily_scan(top: int = Query(default=6, ge=1, le=20), market: str = Query(default="MY")) -> dict:
+    """Scan all stocks and return today's highest-probability trade setups."""
     import concurrent.futures
     from datetime import datetime as _dt
+
+    stocks_dict, _ = _get_stock_universe(market)
 
     def _run() -> list[dict]:
         out: list[dict] = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
             futs = {
                 pool.submit(_scan_daily_setup, code, nm): code
-                for code, nm in BURSA_STOCKS.items()
+                for code, nm in stocks_dict.items()
             }
             for fut in concurrent.futures.as_completed(futs):
                 res = fut.result()
@@ -1256,7 +1375,7 @@ async def daily_scan(top: int = Query(default=6, ge=1, le=20)) -> dict:
     setups = await run_in_threadpool(_run)
     return {
         "timestamp": _dt.now().strftime("%d/%m/%Y %H:%M"),
-        "scanned": len(BURSA_STOCKS),
+        "scanned": len(stocks_dict),
         "qualified": len(setups),
         "setups": setups[:top],
     }

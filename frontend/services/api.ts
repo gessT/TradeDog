@@ -258,8 +258,8 @@ export type NearATHResponse = {
   stocks: NearATHStock[];
 };
 
-export async function fetchNearATH(top: number = 10): Promise<NearATHResponse> {
-  const response = await fetch(`${API_BASE}/stock/near-ath?top=${top}`, { cache: "no-store" });
+export async function fetchNearATH(top: number = 10, market: string = "MY"): Promise<NearATHResponse> {
+  const response = await fetch(`${API_BASE}/stock/near-ath?top=${top}&market=${encodeURIComponent(market)}`, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Request failed with ${response.status}`);
@@ -286,8 +286,8 @@ export type TopVolumeResponse = {
   stocks: TopVolumeStock[];
 };
 
-export async function fetchTopVolume(top: number = 10): Promise<TopVolumeResponse> {
-  const response = await fetch(`${API_BASE}/stock/top-volume?top=${top}`, { cache: "no-store" });
+export async function fetchTopVolume(top: number = 10, market: string = "MY"): Promise<TopVolumeResponse> {
+  const response = await fetch(`${API_BASE}/stock/top-volume?top=${top}&market=${encodeURIComponent(market)}`, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Request failed with ${response.status}`);
@@ -337,8 +337,8 @@ export type SectorResponse = {
   sectors: SectorInfo[];
 };
 
-export async function fetchSectors(): Promise<SectorResponse> {
-  const response = await fetch(`${API_BASE}/stock/sectors`, { cache: "no-store" });
+export async function fetchSectors(market: string = "MY"): Promise<SectorResponse> {
+  const response = await fetch(`${API_BASE}/stock/sectors?market=${encodeURIComponent(market)}`, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Request failed with ${response.status}`);
@@ -353,9 +353,9 @@ export type SectorChartResponse = {
   constituents: number;
 };
 
-export async function fetchSectorChart(sector: string, period: string = "6mo"): Promise<SectorChartResponse> {
+export async function fetchSectorChart(sector: string, period: string = "6mo", market: string = "MY"): Promise<SectorChartResponse> {
   const response = await fetch(
-    `${API_BASE}/stock/sector-chart?sector=${encodeURIComponent(sector)}&period=${encodeURIComponent(period)}`,
+    `${API_BASE}/stock/sector-chart?sector=${encodeURIComponent(sector)}&period=${encodeURIComponent(period)}&market=${encodeURIComponent(market)}`,
     { cache: "no-store" },
   );
   if (!response.ok) {
@@ -494,8 +494,8 @@ export type DailyScanResponse = {
   setups: DailyScanSetup[];
 };
 
-export async function fetchDailyScan(top: number = 6): Promise<DailyScanResponse> {
-  const response = await fetch(`${API_BASE}/stock/daily-scan?top=${top}`, { cache: "no-store" });
+export async function fetchDailyScan(top: number = 6, market: string = "MY"): Promise<DailyScanResponse> {
+  const response = await fetch(`${API_BASE}/stock/daily-scan?top=${top}&market=${encodeURIComponent(market)}`, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Request failed with ${response.status}`);

@@ -11,9 +11,10 @@ function fmtVol(v: number): string {
 
 interface Props {
   onSelectSymbol?: (symbol: string) => void;
+  market?: string;
 }
 
-export default function TopVolume({ onSelectSymbol }: Props) {
+export default function TopVolume({ onSelectSymbol, market = "MY" }: Readonly<Props>) {
   const [stocks, setStocks] = useState<TopVolumeStock[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +24,7 @@ export default function TopVolume({ onSelectSymbol }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchTopVolume(10);
+      const res = await fetchTopVolume(10, market);
       setStocks(res.stocks);
       setScanned(res.scanned);
     } catch (e: unknown) {
@@ -31,7 +32,7 @@ export default function TopVolume({ onSelectSymbol }: Props) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [market]);
 
   useEffect(() => {
     load();
@@ -59,7 +60,7 @@ export default function TopVolume({ onSelectSymbol }: Props) {
 
         {loading && stocks.length === 0 && (
           <div className="text-xs text-slate-500 text-center py-2">
-            Scanning {scanned || "~47"} Bursa stocks…
+            Scanning {scanned || (market === "US" ? "~60" : "~47")} stocks…
           </div>
         )}
 
@@ -80,7 +81,7 @@ export default function TopVolume({ onSelectSymbol }: Props) {
                       <span className="text-[9px] font-mono text-slate-600 w-3">{idx + 1}</span>
                       <div className="min-w-0">
                         <p className="text-[11px] font-semibold text-slate-200 group-hover/item:text-cyan-300 truncate leading-tight">
-                          {s.symbol.replace(".KL", "")}
+                          {market === "US" ? s.symbol : s.symbol.replace(".KL", "")}
                         </p>
                         <p className="text-[9px] text-slate-500 truncate leading-tight">{s.name}</p>
                       </div>
@@ -88,7 +89,7 @@ export default function TopVolume({ onSelectSymbol }: Props) {
                     <div className="text-right flex-shrink-0 ml-2">
                       <div className="flex items-center gap-1 justify-end">
                         <p className="text-[11px] font-mono text-slate-200 leading-tight">
-                          RM{s.current_price.toFixed(2)}
+                          {market === "US" ? "$" : "RM"}{s.current_price.toFixed(2)}
                         </p>
                         <span className={`text-[9px] font-bold ${up ? "text-emerald-400" : "text-rose-400"}`}>
                           {up ? "+" : ""}{s.change_pct.toFixed(1)}%

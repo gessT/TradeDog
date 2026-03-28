@@ -5,6 +5,7 @@ import { fetchDailyScan, type DailyScanSetup } from "../services/api";
 
 type Props = {
   onSelectSymbol?: (symbol: string) => void;
+  market?: string;
 };
 
 const SETUP_COLOR: Record<string, string> = {
@@ -35,7 +36,7 @@ function ScoreBar({ score }: Readonly<{ score: number }>) {
   );
 }
 
-function SetupCard({ setup, onSelect }: Readonly<{ setup: DailyScanSetup; onSelect?: (s: string) => void }>) {
+function SetupCard({ setup, onSelect, market = "MY" }: Readonly<{ setup: DailyScanSetup; onSelect?: (s: string) => void; market?: string }>) {
   const [open, setOpen] = useState(false);
   const chgColor = setup.change_pct >= 0 ? "text-emerald-400" : "text-rose-400";
   const setupCls = SETUP_COLOR[setup.setup] ?? "text-slate-400 bg-slate-700/20 border-slate-700/40";
@@ -58,7 +59,7 @@ function SetupCard({ setup, onSelect }: Readonly<{ setup: DailyScanSetup; onSele
             <span className={`text-[10px] font-semibold ${chgColor}`}>
               {setup.change_pct >= 0 ? "+" : ""}{setup.change_pct.toFixed(2)}%
             </span>
-            <span className="text-[10px] text-slate-400 font-mono">RM {setup.price.toFixed(3)}</span>
+            <span className="text-[10px] text-slate-400 font-mono">{market === "US" ? "$" : "RM"} {setup.price.toFixed(market === "US" ? 2 : 3)}</span>
           </div>
         </div>
         <div className="shrink-0 w-20">
@@ -80,7 +81,7 @@ function SetupCard({ setup, onSelect }: Readonly<{ setup: DailyScanSetup; onSele
             ].map(({ label, value, cls }) => (
               <div key={label} className="rounded bg-slate-950/50 px-1.5 py-1.5">
                 <div className="text-[8px] text-slate-500 uppercase tracking-wider">{label}</div>
-                <div className={`text-[11px] font-bold font-mono ${cls}`}>{value.toFixed(3)}</div>
+                <div className={`text-[11px] font-bold font-mono ${cls}`}>{value.toFixed(market === "US" ? 2 : 3)}</div>
               </div>
             ))}
           </div>
@@ -119,7 +120,7 @@ function SetupCard({ setup, onSelect }: Readonly<{ setup: DailyScanSetup; onSele
   );
 }
 
-export default function DailyScanner({ onSelectSymbol }: Readonly<Props>) {
+export default function DailyScanner({ onSelectSymbol, market = "MY" }: Readonly<Props>) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<{ timestamp: string; scanned: number; qualified: number; setups: DailyScanSetup[] } | null>(null);
@@ -128,7 +129,7 @@ export default function DailyScanner({ onSelectSymbol }: Readonly<Props>) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchDailyScan(8);
+      const res = await fetchDailyScan(8, market);
       setData(res);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Scan failed");
@@ -197,7 +198,7 @@ export default function DailyScanner({ onSelectSymbol }: Readonly<Props>) {
       {data && data.setups.length > 0 && (
         <div className="p-3 space-y-2">
           {data.setups.map((s) => (
-            <SetupCard key={s.ticker} setup={s} onSelect={onSelectSymbol} />
+            <SetupCard key={s.ticker} setup={s} onSelect={onSelectSymbol} market={market} />
           ))}
         </div>
       )}

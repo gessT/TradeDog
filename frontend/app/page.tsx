@@ -5,6 +5,7 @@ import DataTable from "../components/DataTable";
 import Navbar from "../components/Navbar";
 import NearATH from "../components/NearATH";
 import SectorList from "../components/SectorList";
+import StockPicker from "../components/StockPicker";
 import TopVolume from "../components/TopVolume";
 import DailyScanner from "../components/DailyScanner";
 import MGCDashboard from "../components/MGCDashboard";
@@ -18,7 +19,8 @@ import { useStock } from "../hooks/useStock";
 
 export default function Page() {
   const [mode, setMode] = useState<"KLSE" | "MGC">("KLSE");
-  const { symbol, setSymbol, period, setPeriod, rows, rawPoints, loading, error, refresh } = useStock("5248.KL");
+  const [stockMarket, setStockMarket] = useState<"MY" | "US">("MY");
+  const { symbol, setSymbol, period, setPeriod, stockName, rows, rawPoints, loading, error, refresh } = useStock("5248.KL");
 
   const chartRef = useRef<TVChartHandle>(null);
 
@@ -48,7 +50,7 @@ export default function Page() {
   const handleSelectSector = useCallback(async (sectorName: string) => {
     setSectorChartLoading(true);
     try {
-      const res = await fetchSectorChart(sectorName, "6mo");
+      const res = await fetchSectorChart(sectorName, "6mo", stockMarket);
       setSectorChartData(res.data);
       setSectorChartName(res.stock_name);
     } catch {
@@ -57,7 +59,7 @@ export default function Page() {
     } finally {
       setSectorChartLoading(false);
     }
-  }, []);
+  }, [stockMarket]);
 
   const clearSectorChart = useCallback(() => {
     setSectorChartData(null);
@@ -70,12 +72,20 @@ export default function Page() {
       {/* ── Mode toggle ─────────── */}
       <div className="flex items-center border-b border-slate-800/60 bg-slate-900/60">
         <button
-          onClick={() => setMode("KLSE")}
+          onClick={() => { setMode("KLSE"); setStockMarket("MY"); setSymbol("5248.KL"); }}
           className={`px-4 py-1.5 text-[11px] font-bold tracking-wide transition-colors ${
-            mode === "KLSE" ? "text-cyan-400 border-b-2 border-cyan-400 bg-cyan-500/5" : "text-slate-500 hover:text-slate-300"
+            mode === "KLSE" && stockMarket === "MY" ? "text-cyan-400 border-b-2 border-cyan-400 bg-cyan-500/5" : "text-slate-500 hover:text-slate-300"
           }`}
         >
-          🇲🇾 KLSE Stocks
+          🇲🇾 Malaysia
+        </button>
+        <button
+          onClick={() => { setMode("KLSE"); setStockMarket("US"); setSymbol("AAPL"); }}
+          className={`px-4 py-1.5 text-[11px] font-bold tracking-wide transition-colors ${
+            mode === "KLSE" && stockMarket === "US" ? "text-blue-400 border-b-2 border-blue-400 bg-blue-500/5" : "text-slate-500 hover:text-slate-300"
+          }`}
+        >
+          🇺🇸 US Stocks
         </button>
         <button
           onClick={() => setMode("MGC")}
@@ -91,7 +101,7 @@ export default function Page() {
         <MGCDashboard />
       ) : (
         <>
-      <Navbar symbol={symbol} period={period} onSymbolChange={setSymbol} onPeriodChange={setPeriod} onRefresh={refresh} loading={loading} />
+      <Navbar period={period} onPeriodChange={setPeriod} onRefresh={refresh} loading={loading} />
 
       {/* ── Error banners ─────────── */}
       {error && (
@@ -100,147 +110,135 @@ export default function Page() {
         </div>
       )}
 
-      {/* ── Main 3-column layout ─────────── */}
+      {/* ── Main 2-column layout (1/3 + 2/3) ─────────── */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* ── COL 1: Discovery & Scanners (compact sidebar) ─────────── */}
+        {/* ── LEFT 1/3: Discovery & Scanners ─────────── */}
         <aside className="hidden md:flex md:w-1/3 flex-shrink-0 flex-col overflow-y-auto border-r border-slate-800/60 bg-slate-900/40">
-          {/* Scanners */}
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
-            {/* Daily Opportunity Scanner */}
-            <DailyScanner onSelectSymbol={setSymbol} />
-
-            {/* Near ATH Board */}
+            <DailyScanner onSelectSymbol={setSymbol} market={stockMarket} />
             <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-2.5">
-              <NearATH onSelectSymbol={setSymbol} />
+              <NearATH onSelectSymbol={setSymbol} market={stockMarket} />
             </div>
-
-            {/* Special Volume Today */}
             <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-2.5">
-              <TopVolume onSelectSymbol={setSymbol} />
+              <TopVolume onSelectSymbol={setSymbol} market={stockMarket} />
             </div>
-
-            {/* Sector Momentum */}
             <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-2.5">
-              <SectorList onSelectSymbol={setSymbol} onSelectSector={handleSelectSector} />
+              <SectorList onSelectSymbol={setSymbol} onSelectSector={handleSelectSector} market={stockMarket} />
             </div>
           </div>
         </aside>
 
-        {/* ── COL 2: Strategy Workspace ─────────── */}
-        <section className="w-full md:w-1/3 overflow-y-auto border-r border-slate-800/60 p-4 space-y-3">
-          {/* Strategy Optimizer V1 */}
-          <StrategyPanelV1 symbol={symbol} period={period} onTradeClick={(d) => chartRef.current?.goToDate(d)} />
+        {/* ── RIGHT 2/3: Chart (top) + Strategy panels (bottom) ─────────── */}
+        <section className="w-full md:w-2/3 flex flex-col overflow-hidden">
 
-          {/* Strategy Optimizer V2 */}
-          <StrategyPanel symbol={symbol} period={period} onTradeClick={(d) => chartRef.current?.goToDate(d)} />
-
-          {/* Data History Table */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-            <details>
-              <summary className="cursor-pointer select-none text-sm font-semibold text-slate-200">
-                Data History ({rows.length})
-              </summary>
-              <div className="mt-3">
-                <DataTable rows={[...rows].reverse()} />
-              </div>
-            </details>
-          </div>
-        </section>
-
-        {/* ── COL 3: TradingView-style Chart (2/5) ─────────── */}
-        <section className="hidden md:flex md:w-1/3 flex-col overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-800/60">
-            {sectorChartData ? (
-              <>
-                <span className="text-sm font-bold text-cyan-300">{sectorChartName}</span>
-                <span className="text-[9px] text-slate-500">% change from base</span>
-                <button
-                  onClick={clearSectorChart}
-                  className="ml-auto text-[10px] text-rose-400 hover:text-rose-300 border border-rose-800/50 rounded px-1.5 py-0.5"
-                >
-                  ✕ Back to {symbol}
-                </button>
-              </>
-            ) : (
-              <>
-                <span className="text-sm font-bold text-slate-200">{symbol}</span>
-                <span className="text-xs text-slate-500">Candlestick</span>
-
-                {/* EMA toggle buttons */}
-                <div className="flex items-center gap-1 ml-3">
+          {/* ── Chart area (top half) ─────────── */}
+          <div className="flex flex-col" style={{ height: "50%" }}>
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-800/60">
+              {sectorChartData ? (
+                <>
+                  <span className="text-sm font-bold text-cyan-300">{sectorChartName}</span>
+                  <span className="text-[9px] text-slate-500">% change from base</span>
                   <button
-                    onClick={() => setShowHalfTrend(!showHalfTrend)}
-                    className={`text-[10px] px-1.5 py-0.5 rounded border transition font-bold ${
-                      showHalfTrend
-                        ? "border-blue-500 bg-blue-900/30 text-blue-400"
-                        : "border-slate-700 text-slate-500 hover:text-slate-300"
-                    }`}
+                    onClick={clearSectorChart}
+                    className="ml-auto text-[10px] text-rose-400 hover:text-rose-300 border border-rose-800/50 rounded px-1.5 py-0.5"
                   >
-                    HT
+                    ✕ Back to {symbol}
                   </button>
-                  <button
-                    onClick={() => setShowEmaPanel(!showEmaPanel)}
-                    className={`text-[10px] px-1.5 py-0.5 rounded border transition ${
-                      showEmaPanel
-                        ? "border-cyan-600 bg-cyan-900/30 text-cyan-300"
-                        : "border-slate-700 text-slate-500 hover:text-slate-300"
-                    }`}
-                  >
-                    EMA
-                  </button>
-                  {emaConfigs.filter((e) => e.enabled).map((e) => (
+                </>
+              ) : (
+                <>
+                  <StockPicker symbol={symbol} stockName={stockName} market={stockMarket} onSymbolChange={setSymbol} />
+                  <span className="text-xs text-slate-500">Candlestick</span>
+                  <div className="flex items-center gap-1 ml-3">
                     <button
-                      key={e.period}
-                      onClick={() => toggleEma(e.period)}
-                      className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border border-slate-700 hover:brightness-125 transition"
-                      style={{ color: e.color, borderColor: e.color + "60" }}
+                      onClick={() => setShowHalfTrend(!showHalfTrend)}
+                      className={`text-[10px] px-1.5 py-0.5 rounded border transition font-bold ${
+                        showHalfTrend
+                          ? "border-blue-500 bg-blue-900/30 text-blue-400"
+                          : "border-slate-700 text-slate-500 hover:text-slate-300"
+                      }`}
                     >
-                      {e.period}
+                      HT
                     </button>
-                  ))}
-                </div>
-
-                <span className="text-[10px] text-slate-600 ml-auto">Click a trade row to navigate</span>
-              </>
-            )}
-          </div>
-
-          {/* EMA config panel */}
-          {showEmaPanel && !sectorChartData && (
-            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-slate-800/40 bg-slate-900/60">
-              <span className="text-[10px] text-slate-500 mr-1">EMA Lines:</span>
-              {emaConfigs.map((e) => (
-                <button
-                  key={e.period}
-                  onClick={() => toggleEma(e.period)}
-                  className={`flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded-full border transition ${
-                    e.enabled
-                      ? "border-opacity-60 bg-opacity-20"
-                      : "border-slate-700 text-slate-600 hover:text-slate-400"
-                  }`}
-                  style={e.enabled ? { color: e.color, borderColor: e.color, backgroundColor: e.color + "15" } : {}}
-                >
-                  <span
-                    className="w-2.5 h-0.5 rounded-full inline-block"
-                    style={{ backgroundColor: e.enabled ? e.color : "#475569" }}
-                  />
-                  {e.period}
-                </button>
-              ))}
+                    <button
+                      onClick={() => setShowEmaPanel(!showEmaPanel)}
+                      className={`text-[10px] px-1.5 py-0.5 rounded border transition ${
+                        showEmaPanel
+                          ? "border-cyan-600 bg-cyan-900/30 text-cyan-300"
+                          : "border-slate-700 text-slate-500 hover:text-slate-300"
+                      }`}
+                    >
+                      EMA
+                    </button>
+                    {emaConfigs.filter((e) => e.enabled).map((e) => (
+                      <button
+                        key={e.period}
+                        onClick={() => toggleEma(e.period)}
+                        className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border border-slate-700 hover:brightness-125 transition"
+                        style={{ color: e.color, borderColor: e.color + "60" }}
+                      >
+                        {e.period}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-[10px] text-slate-600 ml-auto">Click a trade row to navigate</span>
+                </>
+              )}
             </div>
-          )}
 
-          {sectorChartLoading && (
-            <div className="flex items-center justify-center py-8 text-xs text-slate-500">Loading sector chart…</div>
-          )}
-          <div className="flex-1 min-h-0">
-            {sectorChartData ? (
-              <TVChart ref={chartRef} data={sectorChartData} trades={[]} buySignals={[]} buyConditions={[]} />
-            ) : (
-              <TVChart ref={chartRef} data={rawPoints} trades={[]} buySignals={[]} buyConditions={[]} emaConfigs={emaConfigs} showHalfTrend={showHalfTrend} />
+            {showEmaPanel && !sectorChartData && (
+              <div className="flex items-center gap-2 px-4 py-1.5 border-b border-slate-800/40 bg-slate-900/60">
+                <span className="text-[10px] text-slate-500 mr-1">EMA Lines:</span>
+                {emaConfigs.map((e) => (
+                  <button
+                    key={e.period}
+                    onClick={() => toggleEma(e.period)}
+                    className={`flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded-full border transition ${
+                      e.enabled
+                        ? "border-opacity-60 bg-opacity-20"
+                        : "border-slate-700 text-slate-600 hover:text-slate-400"
+                    }`}
+                    style={e.enabled ? { color: e.color, borderColor: e.color, backgroundColor: e.color + "15" } : {}}
+                  >
+                    <span
+                      className="w-2.5 h-0.5 rounded-full inline-block"
+                      style={{ backgroundColor: e.enabled ? e.color : "#475569" }}
+                    />
+                    {e.period}
+                  </button>
+                ))}
+              </div>
             )}
+
+            {sectorChartLoading && (
+              <div className="flex items-center justify-center py-8 text-xs text-slate-500">Loading sector chart…</div>
+            )}
+            <div className="flex-1 min-h-0">
+              {sectorChartData ? (
+                <TVChart ref={chartRef} data={sectorChartData} trades={[]} buySignals={[]} buyConditions={[]} />
+              ) : (
+                <TVChart ref={chartRef} data={rawPoints} trades={[]} buySignals={[]} buyConditions={[]} emaConfigs={emaConfigs} showHalfTrend={showHalfTrend} />
+              )}
+            </div>
           </div>
+
+          {/* ── Strategy panels (bottom half, scrollable) ─────────── */}
+          <div className="overflow-y-auto border-t border-slate-800/60 p-4 space-y-3" style={{ height: "50%" }}>
+            <StrategyPanelV1 symbol={symbol} period={period} onTradeClick={(d) => chartRef.current?.goToDate(d)} />
+            <StrategyPanel symbol={symbol} period={period} onTradeClick={(d) => chartRef.current?.goToDate(d)} />
+            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+              <details>
+                <summary className="cursor-pointer select-none text-sm font-semibold text-slate-200">
+                  Data History ({rows.length})
+                </summary>
+                <div className="mt-3">
+                  <DataTable rows={[...rows].reverse()} />
+                </div>
+              </details>
+            </div>
+          </div>
+
         </section>
 
       </div>
