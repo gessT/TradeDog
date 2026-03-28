@@ -20,6 +20,17 @@ import {
 const n = (v: unknown): number =>
   typeof v === "number" && Number.isFinite(v) ? v : 0;
 
+/** Format "YYYY-MM-DD HH:MM:SS" → "DD/MM HH:MM" for 5min trade times */
+function fmtDateTime(raw: string): string {
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw.slice(5, 16);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const HH = String(d.getHours()).padStart(2, "0");
+  const MM = String(d.getMinutes()).padStart(2, "0");
+  return `${dd}/${mm} ${HH}:${MM}`;
+}
+
 function winRateColor(wr: number): string {
   if (wr >= 65) return "text-emerald-400";
   if (wr >= 55) return "text-amber-400";
@@ -73,8 +84,8 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
       className={`${idx % 2 === 0 ? "bg-slate-900/30" : ""} ${onTradeClick ? "cursor-pointer hover:bg-cyan-900/20 transition-colors" : ""}`}
       onClick={() => onTradeClick?.(t)}
     >
-      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{t.entry_time.slice(5, 16)}</td>
-      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{t.exit_time.slice(5, 16)}</td>
+      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{fmtDateTime(t.entry_time)}</td>
+      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{fmtDateTime(t.exit_time)}</td>
       <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{n(t.entry_price).toFixed(2)}</td>
       <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{n(t.exit_price).toFixed(2)}</td>
       <td className={`px-2 py-1 text-right text-[10px] font-bold ${win ? "text-emerald-400" : "text-rose-400"}`}>

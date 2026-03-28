@@ -1255,7 +1255,7 @@ async def daily_scan(top: int = Query(default=6, ge=1, le=20)) -> dict:
 
     setups = await run_in_threadpool(_run)
     return {
-        "timestamp": _dt.now().strftime("%Y-%m-%d %H:%M"),
+        "timestamp": _dt.now().strftime("%d/%m/%Y %H:%M"),
         "scanned": len(BURSA_STOCKS),
         "qualified": len(setups),
         "setups": setups[:top],

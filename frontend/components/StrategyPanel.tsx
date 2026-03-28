@@ -15,6 +15,15 @@ const n = (v: number | undefined | null) => v ?? 0;
 const fmt = (v: number | undefined | null, d = 2) => n(v).toFixed(d);
 const fmtK = (v: number | undefined | null) => n(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
+function fmtDate(raw: string): string {
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
 export default function StrategyPanel({ symbol, period, onTradeClick }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -191,7 +200,7 @@ export default function StrategyPanel({ symbol, period, onTradeClick }: Props) {
                           minWidth: "2px",
                           opacity: 0.75,
                         }}
-                        title={`${result.equity_curve[i].date}: $${v.toLocaleString()}`}
+                        title={`${fmtDate(result.equity_curve[i].date)}: $${v.toLocaleString()}`}
                       />
                     );
                   });
@@ -299,8 +308,8 @@ export default function StrategyPanel({ symbol, period, onTradeClick }: Props) {
                       >
                         <td className="px-2 py-1 text-slate-600">{i + 1}</td>
                         <td className="px-2 py-1 text-cyan-300 truncate max-w-[80px]" title={t.strategy}>{t.strategy}</td>
-                        <td className="px-2 py-1 font-mono text-slate-300">{t.entry_date}</td>
-                        <td className="px-2 py-1 font-mono text-slate-300">{t.exit_date}</td>
+                        <td className="px-2 py-1 font-mono text-slate-300">{fmtDate(t.entry_date)}</td>
+                        <td className="px-2 py-1 font-mono text-slate-300">{fmtDate(t.exit_date)}</td>
                         <td className="px-2 py-1 text-right">${n(t.entry_price).toFixed(2)}</td>
                         <td className="px-2 py-1 text-right">${n(t.exit_price).toFixed(2)}</td>
                         <td className={`px-2 py-1 text-right font-semibold ${win ? "text-emerald-400" : "text-rose-400"}`}>

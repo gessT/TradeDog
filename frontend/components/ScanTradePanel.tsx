@@ -81,7 +81,7 @@ function SignalPanel({ signal }: Readonly<{ signal: ScanSignal }>) {
           {signal.signal_type}
         </span>
         <span className="text-[9px] text-slate-500">{signal.identifier}</span>
-        <span className="text-[9px] text-slate-600 ml-auto">{signal.bar_time.slice(0, 19)}</span>
+        <span className="text-[9px] text-slate-600 ml-auto">{(() => { const d = new Date(signal.bar_time); return Number.isNaN(d.getTime()) ? signal.bar_time.slice(0, 19) : `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; })()}</span>
       </div>
 
       {/* Strength gauge */}

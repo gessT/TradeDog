@@ -190,7 +190,7 @@ async def mgc_backtest(
         equity_curve=eq_curve,
         metrics=metrics,
         params=params,
-        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
     )
 
 
@@ -346,7 +346,7 @@ async def mgc_live(
         rsi=rsi_vals,
         signals=signals,
         current_price=round(price, 2),
-        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
 
 
@@ -709,7 +709,7 @@ async def scan_trade(req: ScanTradeRequest) -> ScanTradeResponse:
         execution=exec_result,
         risk_check=risk_check,
         position=position_info,
-        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
 
 
@@ -873,7 +873,7 @@ async def mgc_backtest_5min(
         equity_curve=eq_curve,
         metrics=metrics,
         params=params,
-        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
     )
 
 
@@ -948,7 +948,7 @@ async def mgc_scan_5min(
     return Scan5MinResponse(
         opportunity=found,
         signal=sig,
-        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
 
 
@@ -1008,7 +1008,7 @@ async def mgc_scan_5min_live() -> Scan5MinResponse:
     return Scan5MinResponse(
         opportunity=found,
         signal=sig,
-        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
 
 
@@ -1102,7 +1102,7 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
     return Execute5MinResponse(
         execution=exec_result,
         position=position_info,
-        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
 
 
@@ -1187,7 +1187,7 @@ async def mgc_optimize_5min(
         total_combos=total_combos,
         passed_filter=passed,
         results=top,
-        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
     )
 
 
@@ -1251,5 +1251,5 @@ async def mgc_trade_log_5min(
         total=total,
         win_rate=wr,
         total_pnl=pnl,
-        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )

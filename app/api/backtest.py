@@ -807,6 +807,10 @@ class StrategyRequest(BaseModel):
 @router.post("/strategy")
 async def run_strategy_optimizer(payload: StrategyRequest) -> dict[str, object]:
     """Run EMA+RSI+Supertrend+Volume strategy w/ grid-search optimization."""
+    import sys, os
+    _scripts = os.path.join(os.path.dirname(__file__), "..", "..", "_archive", "scripts")
+    if _scripts not in sys.path:
+        sys.path.insert(0, os.path.abspath(_scripts))
     from strategy_backtest_v2 import run_backtest as strat_backtest, optimize as strat_optimize, StrategyParams, equity_curve
 
     frame = await run_in_threadpool(fetch_stock, payload.symbol, payload.period)
@@ -889,6 +893,10 @@ async def run_strategy_optimizer(payload: StrategyRequest) -> dict[str, object]:
 @router.post("/strategy/v1")
 async def run_strategy_optimizer_v1(payload: StrategyRequest) -> dict[str, object]:
     """Run V1 single EMA+RSI+Supertrend+Volume strategy w/ grid-search."""
+    import sys, os
+    _scripts = os.path.join(os.path.dirname(__file__), "..", "..", "_archive", "scripts")
+    if _scripts not in sys.path:
+        sys.path.insert(0, os.path.abspath(_scripts))
     from strategy_backtest import optimize as strat_optimize_v1, equity_curve as equity_curve_v1
 
     frame = await run_in_threadpool(fetch_stock, payload.symbol, payload.period)
