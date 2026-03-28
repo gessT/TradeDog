@@ -75,7 +75,7 @@ def main() -> None:
     parser.add_argument("--json", type=str, help="Path to JSON OHLCV file")
     parser.add_argument("--csv", type=str, help="Path to CSV OHLCV file")
     parser.add_argument("--symbol", type=str, default="MGC=F", help="Yahoo Finance symbol")
-    parser.add_argument("--interval", type=str, default="15m", help="Bar interval (5m, 15m, 1d)")
+    parser.add_argument("--interval", type=str, default="15m", help="Bar interval (1m, 5m, 15m, 1h, 1d)")
     parser.add_argument("--period", type=str, default="60d", help="History period")
     parser.add_argument("--capital", type=float, default=INITIAL_CAPITAL)
     parser.add_argument("--optimize", action="store_true", help="Run grid-search optimizer")
@@ -101,7 +101,7 @@ def main() -> None:
     print("  STEP 1: Default Parameter Backtest")
     print("━" * 60)
     bt = Backtester(capital=args.capital)
-    result = bt.run(df, DEFAULT_PARAMS)
+    result = bt.run(df, DEFAULT_PARAMS, interval=args.interval)
     print_result(result)
 
     # ── Show trade log ──────────────────────────────────────────────

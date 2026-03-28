@@ -99,8 +99,15 @@ async def mgc_backtest(
     """Run MGC backtest and return chart candles + trades + metrics."""
 
     def _run():
+        # yfinance caps: 1m → max 7d, 5m → max 60d
+        effective_period = period
+        if interval == "1m" and period not in ("1d", "2d", "5d", "7d"):
+            effective_period = "7d"
+        elif interval == "5m" and period not in ("1d", "2d", "5d", "7d", "30d", "60d"):
+            effective_period = "60d"
+
         # Load data
-        df = load_yfinance(symbol=symbol, interval=interval, period=period)
+        df = load_yfinance(symbol=symbol, interval=interval, period=effective_period)
 
         # Build params (merge overrides)
         params = {**DEFAULT_PARAMS}
@@ -121,7 +128,7 @@ async def mgc_backtest(
 
         # Run backtest
         bt = Backtester(capital=capital)
-        result = bt.run(df, params)
+        result = bt.run(df, params, interval=interval)
 
         # Build candle list
         candles = []
@@ -702,5 +709,448 @@ async def scan_trade(req: ScanTradeRequest) -> ScanTradeResponse:
         execution=exec_result,
         risk_check=risk_check,
         position=position_info,
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 5-Minute Strategy Endpoints
+# ═══════════════════════════════════════════════════════════════════════
+
+class MGC5MinCandle(BaseModel):
+    time: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    ema_fast: Optional[float] = None
+    ema_slow: Optional[float] = None
+    rsi: Optional[float] = None
+    macd_hist: Optional[float] = None
+    st_dir: Optional[int] = None
+    signal: int = 0
+
+
+class MGC5MinTrade(BaseModel):
+    entry_time: str
+    exit_time: str
+    entry_price: float
+    exit_price: float
+    qty: int
+    pnl: float
+    pnl_pct: float
+    reason: str
+    signal_type: str = ""
+
+
+class MGC5MinMetrics(BaseModel):
+    initial_capital: float
+    final_equity: float
+    total_return_pct: float
+    max_drawdown_pct: float
+    sharpe_ratio: float
+    total_trades: int
+    winners: int
+    losers: int
+    win_rate: float
+    avg_win: float
+    avg_loss: float
+    profit_factor: float
+    risk_reward_ratio: float
+    # Out-of-sample
+    oos_win_rate: float = 0.0
+    oos_total_trades: int = 0
+    oos_return_pct: float = 0.0
+
+
+class MGC5MinBacktestResponse(BaseModel):
+    symbol: str
+    interval: str
+    period: str
+    candles: list[MGC5MinCandle]
+    trades: list[MGC5MinTrade]
+    equity_curve: list[float]
+    metrics: MGC5MinMetrics
+    params: dict
+    timestamp: str
+
+
+@router.get("/backtest_5min")
+async def mgc_backtest_5min(
+    symbol: Annotated[str, Query()] = "MGC=F",
+    period: Annotated[str, Query()] = "60d",
+    capital: Annotated[float, Query()] = INITIAL_CAPITAL,
+    oos_split: Annotated[float, Query(ge=0, le=0.5)] = 0.3,
+) -> MGC5MinBacktestResponse:
+    """Run 5-minute strategy backtest with out-of-sample validation."""
+
+    def _run():
+        from mgc_trading.backtest_5min import Backtester5Min
+        from mgc_trading.strategy_5min import MGCStrategy5Min, DEFAULT_5MIN_PARAMS
+
+        # 5min: max 60d on yfinance
+        effective_period = period
+        if period not in ("1d", "2d", "5d", "7d", "30d", "60d"):
+            effective_period = "60d"
+
+        df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
+
+        strategy = MGCStrategy5Min()
+        df_ind = strategy.compute_indicators(
+            df[["open", "high", "low", "close", "volume"]].copy()
+        )
+        signals = strategy.generate_signals(df_ind)
+        df_ind["signal"] = signals
+
+        bt = Backtester5Min(capital=capital)
+        result = bt.run(df, oos_split=oos_split)
+
+        # Build candle list
+        candles = []
+        for ts, row in df_ind.iterrows():
+            candles.append(MGC5MinCandle(
+                time=str(ts),
+                open=round(float(row["open"]), 2),
+                high=round(float(row["high"]), 2),
+                low=round(float(row["low"]), 2),
+                close=round(float(row["close"]), 2),
+                volume=float(row.get("volume", 0)),
+                ema_fast=round(float(row["ema_fast"]), 2) if not _isnan(row.get("ema_fast")) else None,
+                ema_slow=round(float(row["ema_slow"]), 2) if not _isnan(row.get("ema_slow")) else None,
+                rsi=round(float(row["rsi"]), 1) if not _isnan(row.get("rsi")) else None,
+                macd_hist=round(float(row["macd_hist"]), 4) if not _isnan(row.get("macd_hist")) else None,
+                st_dir=int(row["st_dir"]) if not _isnan(row.get("st_dir")) else None,
+                signal=int(row.get("signal", 0)),
+            ))
+
+        trades = [
+            MGC5MinTrade(
+                entry_time=str(t.entry_time),
+                exit_time=str(t.exit_time),
+                entry_price=round(t.entry_price, 2),
+                exit_price=round(t.exit_price, 2),
+                qty=t.qty,
+                pnl=round(t.pnl, 2),
+                pnl_pct=round(t.pnl_pct, 2),
+                reason=t.reason,
+                signal_type=t.signal_type,
+            )
+            for t in result.trades
+        ]
+
+        metrics = MGC5MinMetrics(
+            initial_capital=result.initial_capital,
+            final_equity=result.final_equity,
+            total_return_pct=result.total_return_pct,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            total_trades=result.total_trades,
+            winners=result.winners,
+            losers=result.losers,
+            win_rate=result.win_rate,
+            avg_win=result.avg_win,
+            avg_loss=result.avg_loss,
+            profit_factor=result.profit_factor,
+            risk_reward_ratio=result.risk_reward_ratio,
+            oos_win_rate=result.oos_win_rate,
+            oos_total_trades=result.oos_total_trades,
+            oos_return_pct=result.oos_return_pct,
+        )
+
+        return candles, trades, result.equity_curve, metrics, result.params
+
+    candles, trades, eq_curve, metrics, params = await run_in_threadpool(_run)
+
+    return MGC5MinBacktestResponse(
+        symbol=symbol,
+        interval="5m",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        params=params,
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+    )
+
+
+# ── 5min Scan endpoint ──────────────────────────────────────────────
+
+class Scan5MinSignal(BaseModel):
+    found: bool
+    signal_type: str
+    entry_price: float
+    stop_loss: float
+    take_profit: float
+    risk_reward: float
+    strength: int
+    strength_detail: dict
+    rsi: float
+    atr: float
+    ema_fast: float
+    ema_slow: float
+    macd_hist: float
+    supertrend_dir: int
+    volume_ratio: float
+    bar_time: str
+
+
+class Scan5MinResponse(BaseModel):
+    opportunity: bool
+    signal: Scan5MinSignal
+    timestamp: str
+
+
+@router.get("/scan_5min")
+async def mgc_scan_5min(
+    symbol: Annotated[str, Query()] = "MGC=F",
+    period: Annotated[str, Query()] = "60d",
+) -> Scan5MinResponse:
+    """Scan for 5-minute entry signal using yfinance data."""
+
+    def _run():
+        from mgc_trading.scanner_5min import scan_5min
+
+        effective_period = period
+        if period not in ("1d", "2d", "5d", "7d", "30d", "60d"):
+            effective_period = "60d"
+
+        df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
+        result = scan_5min(df)
+
+        sig = Scan5MinSignal(
+            found=result.found,
+            signal_type=result.signal_type,
+            entry_price=result.entry_price,
+            stop_loss=result.stop_loss,
+            take_profit=result.take_profit,
+            risk_reward=result.risk_reward,
+            strength=result.strength,
+            strength_detail=result.strength_detail,
+            rsi=result.rsi,
+            atr=result.atr,
+            ema_fast=result.ema_fast,
+            ema_slow=result.ema_slow,
+            macd_hist=result.macd_hist,
+            supertrend_dir=result.supertrend_dir,
+            volume_ratio=result.volume_ratio,
+            bar_time=result.bar_time,
+        )
+        return result.found, sig
+
+    found, sig = await run_in_threadpool(_run)
+
+    return Scan5MinResponse(
+        opportunity=found,
+        signal=sig,
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+    )
+
+
+# ── 5min Live Scan (Tiger API) ──────────────────────────────────────
+
+@router.get("/scan_5min_live")
+async def mgc_scan_5min_live() -> Scan5MinResponse:
+    """Scan for 5-minute entry signal using Tiger live data."""
+
+    def _run():
+        import pandas as pd
+        from mgc_trading.scanner_5min import scan_5min
+
+        if not _tiger_quote_ok:
+            raise ValueError("Tiger SDK not available")
+
+        quote_client, trade_client = _get_tiger_clients()
+        contracts = trade_client.get_contracts("MGC", sec_type="FUT")
+        if not contracts:
+            raise ValueError("No MGC contract found")
+        identifier = contracts[0].identifier
+        period = _BAR_PERIOD_MAP.get("5m")
+
+        df_raw = quote_client.get_future_bars(identifier, period=period, limit=500)
+        if df_raw is None or df_raw.empty:
+            raise ValueError("No data from Tiger API")
+
+        df = df_raw[["open", "high", "low", "close", "volume"]].copy()
+        df.index = pd.to_datetime(df_raw["time"], unit="ms")
+        df = df.sort_index()
+
+        result = scan_5min(df)
+
+        sig = Scan5MinSignal(
+            found=result.found,
+            signal_type=result.signal_type,
+            entry_price=result.entry_price,
+            stop_loss=result.stop_loss,
+            take_profit=result.take_profit,
+            risk_reward=result.risk_reward,
+            strength=result.strength,
+            strength_detail=result.strength_detail,
+            rsi=result.rsi,
+            atr=result.atr,
+            ema_fast=result.ema_fast,
+            ema_slow=result.ema_slow,
+            macd_hist=result.macd_hist,
+            supertrend_dir=result.supertrend_dir,
+            volume_ratio=result.volume_ratio,
+            bar_time=result.bar_time,
+        )
+        return result.found, sig
+
+    found, sig = await run_in_threadpool(_run)
+
+    return Scan5MinResponse(
+        opportunity=found,
+        signal=sig,
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+    )
+
+
+# ── 5min Optimize endpoint ──────────────────────────────────────────
+
+class Optimize5MinResult(BaseModel):
+    rank: int
+    score: float
+    win_rate: float
+    total_return_pct: float
+    max_drawdown_pct: float
+    sharpe_ratio: float
+    profit_factor: float
+    risk_reward_ratio: float
+    total_trades: int
+    oos_win_rate: float
+    oos_total_trades: int
+    oos_return_pct: float
+    params: dict
+
+
+class Optimize5MinResponse(BaseModel):
+    total_combos: int
+    passed_filter: int
+    results: list[Optimize5MinResult]
+    timestamp: str
+
+
+@router.get("/optimize_5min")
+async def mgc_optimize_5min(
+    symbol: Annotated[str, Query()] = "MGC=F",
+    period: Annotated[str, Query()] = "60d",
+    quick: Annotated[bool, Query()] = True,
+    top_n: Annotated[int, Query(ge=1, le=20)] = 5,
+) -> Optimize5MinResponse:
+    """Run 5-minute strategy optimisation (grid search)."""
+
+    def _run():
+        from mgc_trading.optimizer_5min import (
+            optimize_5min,
+            QUICK_5MIN_GRID,
+            DEFAULT_5MIN_GRID,
+        )
+        from itertools import product
+
+        effective_period = period
+        if period not in ("1d", "2d", "5d", "7d", "30d", "60d"):
+            effective_period = "60d"
+
+        df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
+
+        grid = QUICK_5MIN_GRID if quick else DEFAULT_5MIN_GRID
+        total_combos = 1
+        for v in grid.values():
+            total_combos *= len(v)
+
+        results = optimize_5min(df, quick=quick)
+
+        top = []
+        for i, (params, res, score) in enumerate(results[:top_n]):
+            top.append(Optimize5MinResult(
+                rank=i + 1,
+                score=round(score, 4),
+                win_rate=res.win_rate,
+                total_return_pct=res.total_return_pct,
+                max_drawdown_pct=res.max_drawdown_pct,
+                sharpe_ratio=res.sharpe_ratio,
+                profit_factor=res.profit_factor,
+                risk_reward_ratio=res.risk_reward_ratio,
+                total_trades=res.total_trades,
+                oos_win_rate=res.oos_win_rate,
+                oos_total_trades=res.oos_total_trades,
+                oos_return_pct=res.oos_return_pct,
+                params=params,
+            ))
+
+        return total_combos, len(results), top
+
+    total_combos, passed, top = await run_in_threadpool(_run)
+
+    return Optimize5MinResponse(
+        total_combos=total_combos,
+        passed_filter=passed,
+        results=top,
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+    )
+
+
+# ── Trade Log (last 50 from backtest) ───────────────────────────────
+
+class TradeLog5MinResponse(BaseModel):
+    trades: list[MGC5MinTrade]
+    total: int
+    win_rate: float
+    total_pnl: float
+    timestamp: str
+
+
+@router.get("/trade_log_5min")
+async def mgc_trade_log_5min(
+    symbol: Annotated[str, Query()] = "MGC=F",
+    period: Annotated[str, Query()] = "60d",
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> TradeLog5MinResponse:
+    """Return the last N trades from 5-minute backtest."""
+
+    def _run():
+        from mgc_trading.backtest_5min import Backtester5Min
+
+        effective_period = period
+        if period not in ("1d", "2d", "5d", "7d", "30d", "60d"):
+            effective_period = "60d"
+
+        df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
+        bt = Backtester5Min()
+        result = bt.run(df)
+
+        all_trades = result.trades
+        recent = all_trades[-limit:] if len(all_trades) > limit else all_trades
+
+        trade_list = [
+            MGC5MinTrade(
+                entry_time=str(t.entry_time),
+                exit_time=str(t.exit_time),
+                entry_price=round(t.entry_price, 2),
+                exit_price=round(t.exit_price, 2),
+                qty=t.qty,
+                pnl=round(t.pnl, 2),
+                pnl_pct=round(t.pnl_pct, 2),
+                reason=t.reason,
+                signal_type=t.signal_type,
+            )
+            for t in recent
+        ]
+
+        total_pnl = sum(t.pnl for t in recent)
+        wins = sum(1 for t in recent if t.pnl > 0)
+        wr = wins / len(recent) * 100 if recent else 0
+
+        return trade_list, len(all_trades), round(wr, 1), round(total_pnl, 2)
+
+    trades, total, wr, pnl = await run_in_threadpool(_run)
+
+    return TradeLog5MinResponse(
+        trades=trades,
+        total=total,
+        win_rate=wr,
+        total_pnl=pnl,
         timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
     )

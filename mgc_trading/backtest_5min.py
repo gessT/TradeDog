@@ -1,9 +1,9 @@
 """
-MGC Backtester — Bar-by-bar Simulation Engine
-==============================================
-• No lookahead bias — signals at bar *i* enter at open of bar *i+1*.
-• Realistic position sizing based on 1 % account risk.
-• Full trade log + equity curve + performance metrics.
+5-Minute Backtester — Dedicated bar-by-bar simulation for 5min strategy
+========================================================================
+• Uses MGCStrategy5Min for signal generation
+• Out-of-sample split (70/30) to detect overfitting
+• Same bar-by-bar engine as main Backtester with 5min defaults
 """
 from __future__ import annotations
 
@@ -14,24 +14,18 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from .config import (
-    CONTRACT_SIZE,
-    INITIAL_CAPITAL,
-    MAX_CONSECUTIVE_LOSSES,
-    MAX_DAILY_TRADES,
-    RISK_PER_TRADE,
-)
-from .strategy import MGCStrategy
+from .config import CONTRACT_SIZE, INITIAL_CAPITAL, RISK_PER_TRADE
+from .strategy_5min import MGCStrategy5Min, DEFAULT_5MIN_PARAMS
 
 logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Data classes
+# Data classes (same shape as main backtest for API compatibility)
 # ═══════════════════════════════════════════════════════════════════════
 
 @dataclass
-class Trade:
+class Trade5Min:
     entry_time: object
     exit_time: object
     entry_price: float
@@ -40,11 +34,12 @@ class Trade:
     pnl: float
     pnl_pct: float
     reason: str  # "TP", "SL", "TRAILING", "EOD"
+    signal_type: str = ""  # "PULLBACK" / "BREAKOUT"
 
 
 @dataclass
-class BacktestResult:
-    trades: list[Trade] = field(default_factory=list)
+class BacktestResult5Min:
+    trades: list[Trade5Min] = field(default_factory=list)
     equity_curve: list[float] = field(default_factory=list)
     initial_capital: float = 0.0
     final_equity: float = 0.0
@@ -60,40 +55,91 @@ class BacktestResult:
     max_drawdown_pct: float = 0.0
     sharpe_ratio: float = 0.0
     params: dict = field(default_factory=dict)
+    # Out-of-sample metrics
+    oos_win_rate: float = 0.0
+    oos_total_trades: int = 0
+    oos_return_pct: float = 0.0
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Backtester
+# Backtester5Min
 # ═══════════════════════════════════════════════════════════════════════
 
-class Backtester:
-    """Bar-by-bar backtest engine for the MGC long-only strategy."""
+class Backtester5Min:
+    """5-minute bar-by-bar backtest engine with out-of-sample support."""
+
+    # Risk management defaults (tighter for 5min)
+    MAX_CONSEC_LOSSES = 4
+    MAX_DAILY_TRADES = 15
 
     def __init__(
         self,
         capital: float = INITIAL_CAPITAL,
         risk_per_trade: float = RISK_PER_TRADE,
-        max_consec_losses: int = MAX_CONSECUTIVE_LOSSES,
-        max_daily_trades: int = MAX_DAILY_TRADES,
     ) -> None:
         self.initial_capital = capital
         self.risk_per_trade = risk_per_trade
-        self.max_consec_losses = max_consec_losses
-        self.max_daily_trades = max_daily_trades
 
-    # ── Main entry point ────────────────────────────────────────────
-    def run(self, df: pd.DataFrame, params: dict | None = None, interval: str = "15m") -> BacktestResult:
-        """Execute the backtest. Returns a ``BacktestResult``."""
-        self._interval = interval
-        strategy = MGCStrategy(params)
-        p = strategy.p
+    def run(
+        self,
+        df: pd.DataFrame,
+        params: dict | None = None,
+        oos_split: float = 0.0,
+    ) -> BacktestResult5Min:
+        """Execute 5min backtest.
 
-        df = strategy.compute_indicators(df)
-        signals = strategy.generate_signals(df)
+        If *oos_split* > 0 (e.g. 0.3), split data 70/30 and report
+        out-of-sample metrics separately.
+        """
+        full_params = {**DEFAULT_5MIN_PARAMS, **(params or {})}
+        strategy = MGCStrategy5Min(full_params)
 
+        # Compute indicators on full dataset
+        df_ind = strategy.compute_indicators(
+            df[["open", "high", "low", "close", "volume"]].copy()
+        )
+        signals = strategy.generate_signals(df_ind)
+
+        # In-sample run (full data or first portion)
+        if oos_split > 0:
+            split_idx = int(len(df_ind) * (1 - oos_split))
+            is_trades, is_curve, is_equity = self._simulate(
+                df_ind.iloc[:split_idx], signals.iloc[:split_idx], full_params
+            )
+            # Out-of-sample run
+            oos_trades, oos_curve, oos_equity = self._simulate(
+                df_ind.iloc[split_idx:], signals.iloc[split_idx:], full_params
+            )
+            # Merge curves
+            all_trades = is_trades + oos_trades
+            all_curve = is_curve + oos_curve
+        else:
+            all_trades, all_curve, _ = self._simulate(df_ind, signals, full_params)
+            is_trades = all_trades
+            oos_trades = []
+
+        result = self._compute_metrics(all_trades, all_curve, self.initial_capital, full_params)
+
+        # OOS metrics
+        if oos_trades:
+            oos_wins = [t for t in oos_trades if t.pnl > 0]
+            result.oos_total_trades = len(oos_trades)
+            result.oos_win_rate = len(oos_wins) / len(oos_trades) * 100 if oos_trades else 0
+            total_pnl = sum(t.pnl for t in oos_trades)
+            result.oos_return_pct = round(total_pnl / self.initial_capital * 100, 2)
+
+        return result
+
+    def _simulate(
+        self,
+        df: pd.DataFrame,
+        signals: pd.Series,
+        params: dict,
+    ) -> tuple[list[Trade5Min], list[float], float]:
+        """Bar-by-bar simulation loop."""
         equity = self.initial_capital
         position: dict | None = None
-        trades: list[Trade] = []
+        trades: list[Trade5Min] = []
         equity_curve: list[float] = []
         consec_losses = 0
         daily_counts: dict[str, int] = {}
@@ -109,29 +155,43 @@ class Backtester:
                 sl = position["sl"]
                 tp = position["tp"]
 
+                # Breakeven stop: move SL to entry when price reaches BE threshold
+                if params.get("use_breakeven") and not position.get("be_triggered"):
+                    be_thresh = position["entry_price"] + params.get("be_atr_mult", 1.0) * position["entry_atr"]
+                    if bar["high"] >= be_thresh:
+                        position["be_triggered"] = True
+                        be_offset = params.get("be_offset_atr", 0.1) * position["entry_atr"]
+                        new_sl = position["entry_price"] + be_offset
+                        if new_sl > sl:
+                            sl = new_sl
+                            position["sl"] = sl
+
                 # Trailing stop update
-                if p.get("use_trailing") and bar["high"] > highest_since_entry:
+                if params.get("use_trailing") and bar["high"] > highest_since_entry:
                     highest_since_entry = bar["high"]
-                    new_sl = highest_since_entry - p["trailing_atr_mult"] * prev["atr"]
+                    new_sl = highest_since_entry - params["trailing_atr_mult"] * prev["atr"]
                     if new_sl > sl:
                         sl = new_sl
                         position["sl"] = sl
 
-                # Check SL first (conservative: assume worst fill)
                 if bar["low"] <= sl:
                     exit_price = sl
                     pnl = (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
-                    pnl_pct = pnl / (self.initial_capital if self.initial_capital else 1) * 100
+                    pnl_pct = pnl / (self.initial_capital or 1) * 100
                     equity += pnl
-                    trades.append(Trade(
+                    is_trailing = params.get("use_trailing") and sl > position["orig_sl"]
+                    is_be = position.get("be_triggered", False) and sl >= position["entry_price"]
+                    reason = "BE" if is_be else ("TRAILING" if is_trailing else "SL")
+                    trades.append(Trade5Min(
                         entry_time=position["entry_time"],
                         exit_time=bar.name,
                         entry_price=position["entry_price"],
-                        exit_price=exit_price,
+                        exit_price=round(exit_price, 2),
                         qty=position["qty"],
                         pnl=round(pnl, 2),
                         pnl_pct=round(pnl_pct, 2),
-                        reason="TRAILING" if p.get("use_trailing") and sl > position["orig_sl"] else "SL",
+                        reason=reason,
+                        signal_type=position.get("signal_type", ""),
                     ))
                     consec_losses = consec_losses + 1 if pnl < 0 else 0
                     position = None
@@ -139,39 +199,39 @@ class Backtester:
                 elif bar["high"] >= tp:
                     exit_price = tp
                     pnl = (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
-                    pnl_pct = pnl / (self.initial_capital if self.initial_capital else 1) * 100
+                    pnl_pct = pnl / (self.initial_capital or 1) * 100
                     equity += pnl
-                    trades.append(Trade(
+                    trades.append(Trade5Min(
                         entry_time=position["entry_time"],
                         exit_time=bar.name,
                         entry_price=position["entry_price"],
-                        exit_price=exit_price,
+                        exit_price=round(exit_price, 2),
                         qty=position["qty"],
                         pnl=round(pnl, 2),
                         pnl_pct=round(pnl_pct, 2),
                         reason="TP",
+                        signal_type=position.get("signal_type", ""),
                     ))
                     consec_losses = 0
                     position = None
 
             # ── 2. No position → consider entry ────────────────────
-            if position is None and signals.iloc[i - 1] == 1:
-                # Risk-management gates
-                if consec_losses >= self.max_consec_losses:
+            if position is None and i > 0 and signals.iloc[i - 1] == 1:
+                if consec_losses >= self.MAX_CONSEC_LOSSES:
                     equity_curve.append(equity)
                     continue
-                if daily_counts.get(bar_date, 0) >= self.max_daily_trades:
-                    equity_curve.append(equity)
-                    continue
-
-                entry_price = bar["open"]  # enter at open of this bar
-                atr_val = prev["atr"]
-                if atr_val <= 0 or math.isnan(atr_val):
+                if daily_counts.get(bar_date, 0) >= self.MAX_DAILY_TRADES:
                     equity_curve.append(equity)
                     continue
 
-                sl_price = entry_price - p["atr_sl_mult"] * atr_val
-                tp_price = entry_price + p["atr_tp_mult"] * atr_val
+                entry_price = float(bar["open"])
+                atr_val = float(prev["atr"]) if not math.isnan(float(prev["atr"])) else 0.0
+                if atr_val <= 0:
+                    equity_curve.append(equity)
+                    continue
+
+                sl_price = entry_price - params["atr_sl_mult"] * atr_val
+                tp_price = entry_price + params["atr_tp_mult"] * atr_val
 
                 risk_per_contract = abs(entry_price - sl_price) * CONTRACT_SIZE
                 if risk_per_contract <= 0:
@@ -181,6 +241,11 @@ class Backtester:
                 risk_amount = equity * self.risk_per_trade
                 qty = max(1, int(risk_amount / risk_per_contract))
 
+                # Determine signal type
+                sig_type = "PULLBACK"
+                if int(prev.get("breakout", 0)) == 1:
+                    sig_type = "BREAKOUT"
+
                 position = {
                     "entry_price": entry_price,
                     "sl": sl_price,
@@ -188,52 +253,53 @@ class Backtester:
                     "tp": tp_price,
                     "qty": qty,
                     "entry_time": bar.name,
+                    "signal_type": sig_type,
+                    "entry_atr": atr_val,
+                    "be_triggered": False,
                 }
                 highest_since_entry = entry_price
                 daily_counts[bar_date] = daily_counts.get(bar_date, 0) + 1
 
             # ── 3. Record equity ───────────────────────────────────
             if position is not None:
-                unrealized = (bar["close"] - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                unrealized = (float(bar["close"]) - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
                 equity_curve.append(equity + unrealized)
             else:
                 equity_curve.append(equity)
 
-        # ── Close any remaining position at last close ─────────────
+        # Close remaining position at last close
         if position is not None:
             last = df.iloc[-1]
-            pnl = (last["close"] - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
-            pnl_pct = pnl / (self.initial_capital if self.initial_capital else 1) * 100
+            pnl = (float(last["close"]) - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+            pnl_pct = pnl / (self.initial_capital or 1) * 100
             equity += pnl
-            trades.append(Trade(
+            trades.append(Trade5Min(
                 entry_time=position["entry_time"],
                 exit_time=last.name,
                 entry_price=position["entry_price"],
-                exit_price=float(last["close"]),
+                exit_price=round(float(last["close"]), 2),
                 qty=position["qty"],
                 pnl=round(pnl, 2),
                 pnl_pct=round(pnl_pct, 2),
                 reason="EOD",
+                signal_type=position.get("signal_type", ""),
             ))
 
-        return self._compute_metrics(trades, equity_curve, self.initial_capital, params or {}, getattr(self, '_interval', '15m'))
+        return trades, equity_curve, equity
 
-    # ── Metrics computation ─────────────────────────────────────────
     @staticmethod
     def _compute_metrics(
-        trades: list[Trade],
+        trades: list[Trade5Min],
         equity_curve: list[float],
         initial_capital: float,
         params: dict,
-        interval: str = "15m",
-    ) -> BacktestResult:
-        result = BacktestResult(
+    ) -> BacktestResult5Min:
+        result = BacktestResult5Min(
             trades=trades,
             equity_curve=equity_curve,
             initial_capital=initial_capital,
             params=params,
         )
-
         if not trades:
             result.final_equity = initial_capital
             return result
@@ -244,17 +310,15 @@ class Backtester:
         result.total_trades = len(trades)
         result.winners = len(wins)
         result.losers = len(losses)
-        result.win_rate = len(wins) / len(trades) * 100 if trades else 0
-        result.avg_win = sum(t.pnl for t in wins) / len(wins) if wins else 0
-        result.avg_loss = sum(t.pnl for t in losses) / len(losses) if losses else 0
-        result.profit_factor = (
-            abs(sum(t.pnl for t in wins) / sum(t.pnl for t in losses))
-            if losses and sum(t.pnl for t in losses) != 0 else 999.0
-        )
-        result.risk_reward_ratio = (
-            abs(result.avg_win / result.avg_loss)
-            if result.avg_loss != 0 else 999.0
-        )
+        result.win_rate = round(len(wins) / len(trades) * 100, 1) if trades else 0
+        result.avg_win = round(sum(t.pnl for t in wins) / len(wins), 2) if wins else 0
+        result.avg_loss = round(sum(t.pnl for t in losses) / len(losses), 2) if losses else 0
+        result.profit_factor = round(
+            abs(sum(t.pnl for t in wins) / sum(t.pnl for t in losses)), 2
+        ) if losses and sum(t.pnl for t in losses) != 0 else 999.0
+        result.risk_reward_ratio = round(
+            abs(result.avg_win / result.avg_loss), 2
+        ) if result.avg_loss != 0 else 999.0
 
         final_eq = equity_curve[-1] if equity_curve else initial_capital
         result.final_equity = round(final_eq, 2)
@@ -272,46 +336,13 @@ class Backtester:
                     max_dd = dd
             result.max_drawdown_pct = round(max_dd * 100, 2)
 
-        # Sharpe ratio (annualised, bars-per-day scaled to interval)
-        _bars_per_day = {"1m": 390, "5m": 78, "15m": 26, "30m": 13, "1h": 7, "1d": 1}
+        # Sharpe ratio (annualised for 5min bars: 78 bars/day × 252 days)
         if len(equity_curve) > 1:
             returns = np.diff(equity_curve) / np.maximum(equity_curve[:-1], 1e-10)
             if returns.std() > 0:
-                bars_per_year = 252 * _bars_per_day.get(interval, 26)
+                bars_per_year = 252 * 78  # 5min: 78 bars/day
                 result.sharpe_ratio = round(
-                    float(returns.mean() / returns.std() * math.sqrt(bars_per_year)),
-                    2,
+                    float(returns.mean() / returns.std() * math.sqrt(bars_per_year)), 2
                 )
 
         return result
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Pretty printer
-# ═══════════════════════════════════════════════════════════════════════
-
-def print_result(r: BacktestResult) -> None:
-    """Print a backtest summary to stdout."""
-    print("\n" + "═" * 60)
-    print("  📊  MGC BACKTEST RESULTS")
-    print("═" * 60)
-    print(f"  Capital          : ${r.initial_capital:,.0f}")
-    print(f"  Final Equity     : ${r.final_equity:,.2f}")
-    print(f"  Total Return     : {r.total_return_pct:+.2f} %")
-    print(f"  Max Drawdown     : {r.max_drawdown_pct:.2f} %")
-    print(f"  Sharpe Ratio     : {r.sharpe_ratio}")
-    print("─" * 60)
-    print(f"  Total Trades     : {r.total_trades}")
-    print(f"  Winners          : {r.winners}")
-    print(f"  Losers           : {r.losers}")
-    print(f"  Win Rate         : {r.win_rate:.1f} %")
-    print(f"  Avg Win          : ${r.avg_win:,.2f}")
-    print(f"  Avg Loss         : ${r.avg_loss:,.2f}")
-    print(f"  Profit Factor    : {r.profit_factor:.2f}")
-    print(f"  Risk/Reward      : 1 : {r.risk_reward_ratio:.2f}")
-    print("═" * 60)
-    if r.params:
-        print("  Parameters:")
-        for k, v in r.params.items():
-            print(f"    {k:24s} = {v}")
-        print("═" * 60)

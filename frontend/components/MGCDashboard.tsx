@@ -10,9 +10,11 @@ import {
   fetchMGCBacktest,
   type MGCBacktestResponse,
   type MGCTrade,
+  type MGC5MinTrade,
 } from "../services/api";
 import MGCLiveChart from "./MGCLiveChart";
 import ScanTradePanel from "./ScanTradePanel";
+import Strategy5MinPanel from "./Strategy5MinPanel";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Helpers
@@ -54,10 +56,13 @@ function winRateColor(wr: number): string {
   return "text-rose-400";
 }
 
-function TradeRow({ t, idx }: Readonly<{ t: MGCTrade; idx: number }>) {
+function TradeRow({ t, idx, onClick }: Readonly<{ t: MGCTrade; idx: number; onClick?: (t: MGCTrade) => void }>) {
   const win = t.pnl >= 0;
   return (
-    <tr className={idx % 2 === 0 ? "bg-slate-900/30" : ""}>
+    <tr
+      className={`${idx % 2 === 0 ? "bg-slate-900/30" : ""} ${onClick ? "cursor-pointer hover:bg-amber-900/20 transition-colors" : ""}`}
+      onClick={() => onClick?.(t)}
+    >
       <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{t.entry_time.slice(5, 16)}</td>
       <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{t.exit_time.slice(5, 16)}</td>
       <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{n(t.entry_price).toFixed(2)}</td>
@@ -129,6 +134,22 @@ export default function MGCDashboard() {
   const [data, setData] = useState<MGCBacktestResponse | null>(null);
   const [chartInterval, setChartInterval] = useState("15m");
   const [period, setPeriod] = useState("60d");
+  const [btMode, setBtMode] = useState<"classic" | "5min">("classic");
+  const [focusTime, setFocusTime] = useState<number | null>(null);
+  const [focusInterval, setFocusInterval] = useState<string | null>(null);
+
+  // ── Trade click → scroll chart to candle ─────────────────────
+  const handleTradeClick5Min = useCallback((t: MGC5MinTrade) => {
+    const ts = Math.floor(new Date(t.entry_time).getTime() / 1000);
+    setFocusInterval("5m");
+    setFocusTime(ts);
+  }, []);
+
+  const handleTradeClickClassic = useCallback((t: MGCTrade) => {
+    const ts = Math.floor(new Date(t.entry_time).getTime() / 1000);
+    setFocusInterval(chartInterval);
+    setFocusTime(ts);
+  }, [chartInterval]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -159,6 +180,31 @@ export default function MGCDashboard() {
       {/* COL 2 — Backtest Workspace                                    */}
       {/* ═══════════════════════════════════════════════════════════════ */}
       <section className="w-full md:w-1/3 overflow-y-auto border-r border-slate-800/60">
+        {/* ── Mode Tabs ─────────────────────────────── */}
+        <div className="flex items-center border-b border-slate-800/60">
+          <button
+            onClick={() => setBtMode("classic")}
+            className={`flex-1 py-2 text-[11px] font-bold text-center transition ${
+              btMode === "classic"
+                ? "text-amber-400 border-b-2 border-amber-400 bg-slate-900/50"
+                : "text-slate-500 hover:text-slate-300"
+            }`}
+          >⚡ Classic</button>
+          <button
+            onClick={() => setBtMode("5min")}
+            className={`flex-1 py-2 text-[11px] font-bold text-center transition ${
+              btMode === "5min"
+                ? "text-cyan-400 border-b-2 border-cyan-400 bg-slate-900/50"
+                : "text-slate-500 hover:text-slate-300"
+            }`}
+          >🎯 5min Strategy</button>
+        </div>
+
+        {/* ── 5min Strategy Panel ────────────────────── */}
+        {btMode === "5min" && <Strategy5MinPanel onTradeClick={handleTradeClick5Min} />}
+
+        {/* ── Classic Backtest ────────────────────────── */}
+        {btMode === "classic" && (<>
         {/* ── Backtest Controls ────────────────────── */}
         <div className="flex items-center gap-2 px-3 py-2.5 border-b border-slate-800/60 flex-wrap">
           <span className="text-base">⚡</span>
@@ -166,7 +212,7 @@ export default function MGCDashboard() {
 
           {/* Interval selector */}
           <div className="flex gap-0.5 ml-2">
-            {["5m", "15m", "1h", "1d"].map((iv) => (
+            {["1m", "5m", "15m", "1h", "1d"].map((iv) => (
               <button
                 key={iv}
                 onClick={() => setChartInterval(iv)}
@@ -261,7 +307,7 @@ export default function MGCDashboard() {
                   </thead>
                   <tbody>
                     {data.trades.map((t, i) => (
-                      <TradeRow key={`${t.entry_time}-${i}`} t={t} idx={i} />
+                      <TradeRow key={`${t.entry_time}-${i}`} t={t} idx={i} onClick={handleTradeClickClassic} />
                     ))}
                     {data.trades.length === 0 && (
                       <tr><td colSpan={7} className="text-center text-[10px] text-slate-600 py-4">No trades</td></tr>
@@ -279,13 +325,14 @@ export default function MGCDashboard() {
             </div>
           </div>
         )}
+        </>)}
       </section>
 
       {/* ═══════════════════════════════════════════════════════════════ */}
       {/* COL 3 — Live Chart                                            */}
       {/* ═══════════════════════════════════════════════════════════════ */}
       <section className="hidden md:flex md:w-1/3 flex-col overflow-hidden">
-        <MGCLiveChart />
+        <MGCLiveChart focusTime={focusTime} focusInterval={focusInterval} />
       </section>
 
     </div>

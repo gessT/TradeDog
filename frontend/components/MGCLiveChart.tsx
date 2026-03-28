@@ -18,6 +18,8 @@ import { fetchMGCLive, type MGCLiveResponse } from "../services/api";
 
 type Props = {
   onPriceUpdate?: (price: number) => void;
+  focusTime?: number | null;
+  focusInterval?: string | null;
 };
 
 function rsiColorClass(rsi: number): string {
@@ -99,7 +101,7 @@ function RSIMini({ data }: Readonly<{ data: { time: UTCTimestamp; value: number 
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function MGCLiveChart({ onPriceUpdate }: Readonly<Props>) {
+export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }: Readonly<Props>) {
   const [chartInterval, setChartInterval] = useState("15m");
   const [live, setLive] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -238,6 +240,31 @@ export default function MGCLiveChart({ onPriceUpdate }: Readonly<Props>) {
     ro.observe(el);
     return () => { ro.disconnect(); chart.remove(); };
   }, [data]);
+
+  // ── Switch interval when a trade from a different timeframe is clicked ──
+  useEffect(() => {
+    if (focusInterval && focusInterval !== chartInterval) {
+      setChartInterval(focusInterval);
+    }
+  }, [focusInterval]);
+
+  // ── Scroll chart to focused trade candle ──────────────────────────
+  useEffect(() => {
+    if (!focusTime || !chartRef.current) return;
+    const ts = focusTime as UTCTimestamp;
+    // Center the chart around the focused time
+    const barSecMap: Record<string, number> = { "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600 };
+    const barSec = barSecMap[chartInterval] ?? 900;
+    const halfRange = 20 * barSec;
+    try {
+      chartRef.current.timeScale().setVisibleRange({
+        from: (ts - halfRange) as UTCTimestamp,
+        to: (ts + halfRange) as UTCTimestamp,
+      });
+    } catch {
+      chartRef.current.timeScale().scrollToRealTime();
+    }
+  }, [focusTime, data, chartInterval]);
 
   // RSI data for mini chart
   const rsiData = data

@@ -690,3 +690,181 @@ export async function scanTrade(
   }
   return (await response.json()) as ScanTradeResponse;
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// MGC 5-Minute Strategy
+// ═══════════════════════════════════════════════════════════════════════
+
+export type MGC5MinCandle = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  ema_fast: number | null;
+  ema_slow: number | null;
+  rsi: number | null;
+  macd_hist: number | null;
+  st_dir: number | null;
+  signal: number;
+};
+
+export type MGC5MinTrade = {
+  entry_time: string;
+  exit_time: string;
+  entry_price: number;
+  exit_price: number;
+  qty: number;
+  pnl: number;
+  pnl_pct: number;
+  reason: string;
+  signal_type: string;
+};
+
+export type MGC5MinMetrics = {
+  initial_capital: number;
+  final_equity: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  total_trades: number;
+  winners: number;
+  losers: number;
+  win_rate: number;
+  avg_win: number;
+  avg_loss: number;
+  profit_factor: number;
+  risk_reward_ratio: number;
+  oos_win_rate: number;
+  oos_total_trades: number;
+  oos_return_pct: number;
+};
+
+export type MGC5MinBacktestResponse = {
+  symbol: string;
+  interval: string;
+  period: string;
+  candles: MGC5MinCandle[];
+  trades: MGC5MinTrade[];
+  equity_curve: number[];
+  metrics: MGC5MinMetrics;
+  params: Record<string, unknown>;
+  timestamp: string;
+};
+
+export async function fetchMGC5MinBacktest(
+  period: string = "60d",
+  oos_split: number = 0.3,
+): Promise<MGC5MinBacktestResponse> {
+  const url = `${API_BASE}/mgc/backtest_5min?period=${encodeURIComponent(period)}&oos_split=${oos_split}`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as MGC5MinBacktestResponse;
+}
+
+
+// ── 5min Scan ───────────────────────────────────────────────────────
+
+export type Scan5MinSignal = {
+  found: boolean;
+  signal_type: string;
+  entry_price: number;
+  stop_loss: number;
+  take_profit: number;
+  risk_reward: number;
+  strength: number;
+  strength_detail: Record<string, { pts: number; [k: string]: unknown }>;
+  rsi: number;
+  atr: number;
+  ema_fast: number;
+  ema_slow: number;
+  macd_hist: number;
+  supertrend_dir: number;
+  volume_ratio: number;
+  bar_time: string;
+};
+
+export type Scan5MinResponse = {
+  opportunity: boolean;
+  signal: Scan5MinSignal;
+  timestamp: string;
+};
+
+export async function scan5Min(
+  useLive: boolean = false,
+): Promise<Scan5MinResponse> {
+  const endpoint = useLive ? "scan_5min_live" : "scan_5min";
+  const url = `${API_BASE}/mgc/${endpoint}`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Scan failed with ${response.status}`);
+  }
+  return (await response.json()) as Scan5MinResponse;
+}
+
+
+// ── 5min Trade Log ──────────────────────────────────────────────────
+
+export type TradeLog5MinResponse = {
+  trades: MGC5MinTrade[];
+  total: number;
+  win_rate: number;
+  total_pnl: number;
+  timestamp: string;
+};
+
+export async function fetchTradeLog5Min(
+  limit: number = 50,
+): Promise<TradeLog5MinResponse> {
+  const url = `${API_BASE}/mgc/trade_log_5min?limit=${limit}`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as TradeLog5MinResponse;
+}
+
+
+// ── 5min Optimize ───────────────────────────────────────────────────
+
+export type Optimize5MinResult = {
+  rank: number;
+  score: number;
+  win_rate: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  profit_factor: number;
+  risk_reward_ratio: number;
+  total_trades: number;
+  oos_win_rate: number;
+  oos_total_trades: number;
+  oos_return_pct: number;
+  params: Record<string, unknown>;
+};
+
+export type Optimize5MinResponse = {
+  total_combos: number;
+  passed_filter: number;
+  results: Optimize5MinResult[];
+  timestamp: string;
+};
+
+export async function optimize5Min(
+  quick: boolean = true,
+): Promise<Optimize5MinResponse> {
+  const url = `${API_BASE}/mgc/optimize_5min?quick=${quick}`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Optimize failed with ${response.status}`);
+  }
+  return (await response.json()) as Optimize5MinResponse;
+}
