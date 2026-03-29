@@ -125,7 +125,7 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetchMGCLive(chartInterval, 500);
+      const res = await fetchMGCLive(chartInterval, 2000);
       setData((prev) => {
         if (prev) setPrevPrice(prev.current_price);
         return res;
@@ -248,18 +248,15 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
     }
   }, [focusInterval]);
 
-  // ── Scroll chart to focused trade candle ──────────────────────────
+  // ── Scroll chart to focused trade candle (±1 week) ─────────────
   useEffect(() => {
     if (!focusTime || !chartRef.current) return;
     const ts = focusTime as UTCTimestamp;
-    // Center the chart around the focused time
-    const barSecMap: Record<string, number> = { "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600 };
-    const barSec = barSecMap[chartInterval] ?? 900;
-    const halfRange = 20 * barSec;
+    const oneWeek = 7 * 24 * 3600; // 1 week in seconds
     try {
       chartRef.current.timeScale().setVisibleRange({
-        from: (ts - halfRange) as UTCTimestamp,
-        to: (ts + halfRange) as UTCTimestamp,
+        from: (ts - oneWeek) as UTCTimestamp,
+        to: (ts + oneWeek) as UTCTimestamp,
       });
     } catch {
       chartRef.current.timeScale().scrollToRealTime();

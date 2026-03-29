@@ -1,12 +1,23 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createChart,
+  CandlestickSeries,
+  HistogramSeries,
+  LineSeries,
+  createSeriesMarkers,
+  type IChartApi,
+  type UTCTimestamp,
+} from "lightweight-charts";
+import { halfTrend, type HalfTrendPoint } from "../utils/indicators";
 import {
   fetchMGC5MinBacktest,
   scan5Min,
   execute5Min,
   fetchTradeLog5Min,
   type MGC5MinBacktestResponse,
+  type MGC5MinCandle,
   type Scan5MinResponse,
   type TradeLog5MinResponse,
   type MGC5MinTrade,
@@ -53,6 +64,7 @@ function strengthColor(s: number): string {
 function tabLabel(t: string): string {
   if (t === "backtest") return "Backtest";
   if (t === "scanner") return "Scanner";
+  if (t === "exam") return "🧪 Exam";
   return "Trade Log";
 }
 
@@ -106,7 +118,7 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
 // Sub-tabs
 // ═══════════════════════════════════════════════════════════════════════
 
-type Tab5Min = "backtest" | "scanner" | "tradelog";
+type Tab5Min = "backtest" | "scanner" | "tradelog" | "exam";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Scanner Sub-panel
@@ -301,6 +313,638 @@ function TradeLogTab({
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Exam Sub-panel — Random trade quiz
+// ═══════════════════════════════════════════════════════════════════════
+
+type ExamState = "idle" | "question" | "result" | "final";
+
+const EXAM_TOTAL = 10;
+
+// ── Mini chart showing bars up to entry time ─────────────────────────
+
+function ExamMiniChart({ candles, entryTime }: Readonly<{ candles: MGC5MinCandle[]; entryTime: string }>) {
+  const ref = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+
+  useEffect(() => {
+    if (!ref.current || candles.length === 0) return;
+    const el = ref.current;
+
+    // Find entry bar index
+    const entryTs = new Date(entryTime).getTime();
+    let entryIdx = candles.length - 1;
+    for (let i = 0; i < candles.length; i++) {
+      if (new Date(candles[i].time).getTime() >= entryTs) {
+        entryIdx = i;
+        break;
+      }
+    }
+
+    // Slice: 50 bars before entry, ending at entry
+    const barsToShow = 50;
+    const startIdx = Math.max(0, entryIdx - barsToShow);
+    const slice = candles.slice(startIdx, entryIdx + 1);
+    if (slice.length === 0) return;
+
+    // Clear previous
+    if (chartRef.current) {
+      chartRef.current.remove();
+      chartRef.current = null;
+    }
+
+    const chart = createChart(el, {
+      width: el.clientWidth,
+      height: 180,
+      layout: { background: { color: "#0f172a" }, textColor: "#64748b", fontSize: 9 },
+      grid: { vertLines: { color: "#1e293b" }, horzLines: { color: "#1e293b" } },
+      rightPriceScale: { borderVisible: false },
+      timeScale: { borderColor: "#334155", timeVisible: true, secondsVisible: false },
+      crosshair: { mode: 0 },
+    });
+    chartRef.current = chart;
+
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: "#22c55e",
+      downColor: "#ef4444",
+      borderUpColor: "#22c55e",
+      borderDownColor: "#ef4444",
+      wickUpColor: "#22c55e80",
+      wickDownColor: "#ef444480",
+    });
+
+    const volSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: "volume" },
+      priceScaleId: "vol",
+    });
+    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+
+    const seen = new Set<number>();
+    const ohlc: { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
+    const vol: { time: UTCTimestamp; value: number; color: string }[] = [];
+
+    for (const c of slice) {
+      const t = Math.floor(new Date(c.time).getTime() / 1000) as UTCTimestamp;
+      if (seen.has(t)) continue;
+      seen.add(t);
+      ohlc.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
+      vol.push({ time: t, value: c.volume, color: c.close >= c.open ? "#22c55e30" : "#ef444430" });
+    }
+
+    candleSeries.setData(ohlc);
+    volSeries.setData(vol);
+
+    // ── EMA lines ──
+    const emaFastData: { time: UTCTimestamp; value: number }[] = [];
+    const emaSlowData: { time: UTCTimestamp; value: number }[] = [];
+    let si = 0;
+    for (const c of slice) {
+      const t = ohlc[si]?.time;
+      if (!t) break;
+      if (c.ema_fast != null) emaFastData.push({ time: t, value: c.ema_fast });
+      if (c.ema_slow != null) emaSlowData.push({ time: t, value: c.ema_slow });
+      si++;
+    }
+    if (emaFastData.length > 0) {
+      const emaFastSeries = chart.addSeries(LineSeries, { color: "#06b6d4", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      emaFastSeries.setData(emaFastData);
+    }
+    if (emaSlowData.length > 0) {
+      const emaSlowSeries = chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      emaSlowSeries.setData(emaSlowData);
+    }
+
+    // ── HalfTrend overlay ──
+    const htPoints = halfTrend(slice, 2, 10);
+    const htUp: { time: UTCTimestamp; value: number }[] = [];
+    const htDown: { time: UTCTimestamp; value: number }[] = [];
+    for (let i = 0; i < htPoints.length && i < ohlc.length; i++) {
+      const pt = htPoints[i];
+      if (!pt) continue;
+      const d = { time: ohlc[i].time, value: pt.value };
+      if (pt.trend === 0) htUp.push(d);
+      else                htDown.push(d);
+    }
+    if (htUp.length > 0) {
+      const htUpSeries = chart.addSeries(LineSeries, { color: "#22c55e", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      htUpSeries.setData(htUp);
+    }
+    if (htDown.length > 0) {
+      const htDownSeries = chart.addSeries(LineSeries, { color: "#ef4444", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      htDownSeries.setData(htDown);
+    }
+
+    // Add entry marker on last bar
+    if (ohlc.length > 0) {
+      createSeriesMarkers(candleSeries, [{
+        time: ohlc[ohlc.length - 1].time,
+        position: "belowBar",
+        color: "#a78bfa",
+        shape: "arrowUp",
+        text: "ENTRY",
+      }]);
+    }
+
+    chart.timeScale().fitContent();
+
+    const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
+    ro.observe(el);
+    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
+  }, [candles, entryTime]);
+
+  return (
+    <div className="rounded-lg border border-slate-800/60 bg-slate-950 overflow-hidden">
+      <div className="px-2.5 py-1.5 border-b border-slate-800/40 flex items-center justify-between">
+        <span className="text-[9px] uppercase tracking-widest text-slate-500">Price Action (last 50 bars → entry)</span>
+      </div>
+      <div ref={ref} className="w-full" style={{ height: 180 }} />
+    </div>
+  );
+}
+
+// ── Result chart: 50 bars before + 50 bars after entry ──────────────
+
+function ExamResultChart({ candles, trade }: Readonly<{ candles: MGC5MinCandle[]; trade: MGC5MinTrade }>) {
+  const ref = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+
+  useEffect(() => {
+    if (!ref.current || candles.length === 0) return;
+    const el = ref.current;
+
+    const entryTs = new Date(trade.entry_time).getTime();
+    const exitTs = new Date(trade.exit_time).getTime();
+
+    // Find entry bar index
+    let entryIdx = candles.length - 1;
+    for (let i = 0; i < candles.length; i++) {
+      if (new Date(candles[i].time).getTime() >= entryTs) {
+        entryIdx = i;
+        break;
+      }
+    }
+
+    // Slice: 50 bars before entry + 50 bars after entry
+    const barsBefore = 50;
+    const barsAfter = 50;
+    const startIdx = Math.max(0, entryIdx - barsBefore);
+    const endIdx = Math.min(candles.length, entryIdx + barsAfter + 1);
+    const slice = candles.slice(startIdx, endIdx);
+    if (slice.length === 0) return;
+
+    if (chartRef.current) {
+      chartRef.current.remove();
+      chartRef.current = null;
+    }
+
+    const chart = createChart(el, {
+      width: el.clientWidth,
+      height: 200,
+      layout: { background: { color: "#0f172a" }, textColor: "#64748b", fontSize: 9 },
+      grid: { vertLines: { color: "#1e293b" }, horzLines: { color: "#1e293b" } },
+      rightPriceScale: { borderVisible: false },
+      timeScale: { borderColor: "#334155", timeVisible: true, secondsVisible: false },
+      crosshair: { mode: 0 },
+    });
+    chartRef.current = chart;
+
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: "#22c55e",
+      downColor: "#ef4444",
+      borderUpColor: "#22c55e",
+      borderDownColor: "#ef4444",
+      wickUpColor: "#22c55e80",
+      wickDownColor: "#ef444480",
+    });
+
+    const volSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: "volume" },
+      priceScaleId: "vol",
+    });
+    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+
+    const seen = new Set<number>();
+    const ohlc: { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
+    const vol: { time: UTCTimestamp; value: number; color: string }[] = [];
+
+    for (const c of slice) {
+      const t = Math.floor(new Date(c.time).getTime() / 1000) as UTCTimestamp;
+      if (seen.has(t)) continue;
+      seen.add(t);
+      ohlc.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
+      vol.push({ time: t, value: c.volume, color: c.close >= c.open ? "#22c55e30" : "#ef444430" });
+    }
+
+    candleSeries.setData(ohlc);
+    volSeries.setData(vol);
+
+    // ── EMA lines ──
+    const emaFastData: { time: UTCTimestamp; value: number }[] = [];
+    const emaSlowData: { time: UTCTimestamp; value: number }[] = [];
+    let si = 0;
+    for (const c of slice) {
+      const t = ohlc[si]?.time;
+      if (!t) break;
+      if (c.ema_fast != null) emaFastData.push({ time: t, value: c.ema_fast });
+      if (c.ema_slow != null) emaSlowData.push({ time: t, value: c.ema_slow });
+      si++;
+    }
+    if (emaFastData.length > 0) {
+      const emaFastSeries = chart.addSeries(LineSeries, { color: "#06b6d4", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      emaFastSeries.setData(emaFastData);
+    }
+    if (emaSlowData.length > 0) {
+      const emaSlowSeries = chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      emaSlowSeries.setData(emaSlowData);
+    }
+
+    // ── HalfTrend overlay ──
+    const htPoints = halfTrend(slice, 2, 10);
+    const htUp: { time: UTCTimestamp; value: number }[] = [];
+    const htDown: { time: UTCTimestamp; value: number }[] = [];
+    for (let i = 0; i < htPoints.length && i < ohlc.length; i++) {
+      const pt = htPoints[i];
+      if (!pt) continue;
+      const d = { time: ohlc[i].time, value: pt.value };
+      if (pt.trend === 0) htUp.push(d);
+      else                htDown.push(d);
+    }
+    if (htUp.length > 0) {
+      const htUpSeries = chart.addSeries(LineSeries, { color: "#22c55e", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      htUpSeries.setData(htUp);
+    }
+    if (htDown.length > 0) {
+      const htDownSeries = chart.addSeries(LineSeries, { color: "#ef4444", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      htDownSeries.setData(htDown);
+    }
+
+    // Find closest bar timestamps for entry & exit markers
+    const entryBarTs = Math.floor(entryTs / 1000) as UTCTimestamp;
+    const exitBarTs = Math.floor(exitTs / 1000) as UTCTimestamp;
+    const findClosest = (target: UTCTimestamp) => {
+      let best = ohlc[0]?.time ?? target;
+      let bestDiff = Math.abs((best as number) - (target as number));
+      for (const bar of ohlc) {
+        const diff = Math.abs((bar.time as number) - (target as number));
+        if (diff < bestDiff) { best = bar.time; bestDiff = diff; }
+      }
+      return best;
+    };
+
+    const win = trade.pnl >= 0;
+    const markers: { time: UTCTimestamp; position: "belowBar" | "aboveBar"; color: string; shape: "arrowUp" | "arrowDown"; text: string }[] = [
+      { time: findClosest(entryBarTs), position: "belowBar", color: "#a78bfa", shape: "arrowUp", text: "ENTRY" },
+      { time: findClosest(exitBarTs), position: "aboveBar", color: win ? "#22c55e" : "#ef4444", shape: "arrowDown", text: trade.reason },
+    ];
+    markers.sort((a, b) => (a.time as number) - (b.time as number));
+    createSeriesMarkers(candleSeries, markers);
+
+    chart.timeScale().fitContent();
+
+    const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
+    ro.observe(el);
+    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
+  }, [candles, trade]);
+
+  return (
+    <div className="rounded-lg border border-slate-800/60 bg-slate-950 overflow-hidden">
+      <div className="px-2.5 py-1.5 border-b border-slate-800/40 flex items-center justify-between">
+        <span className="text-[9px] uppercase tracking-widest text-slate-500">Result (50 bars before → entry → 50 bars after)</span>
+      </div>
+      <div ref={ref} className="w-full" style={{ height: 200 }} />
+    </div>
+  );
+}
+
+function ExamTab({
+  trades,
+  candles,
+  loading,
+  onLoadTrades,
+  onTradeClick,
+}: Readonly<{
+  trades: MGC5MinTrade[];
+  candles: MGC5MinCandle[];
+  loading: boolean;
+  onLoadTrades: () => void;
+  onTradeClick?: (t: MGC5MinTrade) => void;
+}>) {
+  const [examState, setExamState] = useState<ExamState>("idle");
+  const [pickedTrade, setPickedTrade] = useState<MGC5MinTrade | null>(null);
+  const [stats, setStats] = useState({ total: 0, correct: 0, pnl: 0 });
+  const [skipped, setSkipped] = useState(false);
+
+  const pickRandom = useCallback(() => {
+    if (trades.length === 0) return;
+    const idx = Math.floor(Math.random() * trades.length);
+    setPickedTrade(trades[idx]);
+    setExamState("question");
+  }, [trades]);
+
+  const handleContinue = useCallback(() => {
+    if (!pickedTrade) return;
+    const win = pickedTrade.pnl >= 0;
+    setSkipped(false);
+    setStats((s) => ({
+      total: s.total + 1,
+      correct: s.correct + (win ? 1 : 0),
+      pnl: s.pnl + pickedTrade.pnl,
+    }));
+    setExamState("result");
+  }, [pickedTrade]);
+
+  // After viewing result, either go to next trade or show final
+  const handleNext = useCallback(() => {
+    if (stats.total >= EXAM_TOTAL) {
+      setExamState("final");
+    } else {
+      pickRandom();
+    }
+  }, [stats.total, pickRandom]);
+
+  const handleRestart = useCallback(() => {
+    setStats({ total: 0, correct: 0, pnl: 0 });
+    setPickedTrade(null);
+    setSkipped(false);
+    setExamState("idle");
+  }, []);
+
+  const handleSkip = useCallback(() => {
+    setSkipped(true);
+    setExamState("result");
+  }, []);
+
+  const pnlPerPoint = 10; // MGC = $10 per point
+
+  return (
+    <div className="flex-1 overflow-y-auto p-3 space-y-3">
+      {/* Need trades first */}
+      {trades.length === 0 && (
+        <div className="flex flex-col items-center justify-center min-h-[300px] space-y-3">
+          <p className="text-4xl">🧪</p>
+          <p className="text-sm text-slate-400">Run a backtest first to load trade data</p>
+          <button
+            onClick={onLoadTrades}
+            disabled={loading}
+            className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${
+              loading ? "bg-slate-800 text-slate-500 cursor-wait" : "bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95 shadow-lg shadow-cyan-900/40"
+            }`}
+          >
+            {loading ? "Loading…" : "🎯 Run Backtest"}
+          </button>
+        </div>
+      )}
+
+      {/* Exam ready — idle */}
+      {trades.length > 0 && examState === "idle" && (
+        <div className="flex flex-col items-center justify-center min-h-[300px] space-y-4">
+          <p className="text-5xl">🧪</p>
+          <p className="text-lg font-bold text-slate-200">Trade Exam</p>
+          <p className="text-[11px] text-slate-500 text-center max-w-[240px]">
+            {EXAM_TOTAL} random trades. Take or skip — score 80% to pass!
+          </p>
+          <p className="text-[10px] text-slate-600">{trades.length} trades available</p>
+          <button
+            onClick={pickRandom}
+            className="px-6 py-3 text-sm font-bold rounded-xl bg-gradient-to-r from-violet-600 to-cyan-600 text-white hover:from-violet-500 hover:to-cyan-500 active:scale-95 shadow-lg shadow-violet-900/40 transition-all"
+          >
+            🎲 Start Exam
+          </button>
+
+          {stats.total > 0 && (
+            <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 px-4 py-2.5 text-center">
+              <p className="text-[9px] text-slate-500 uppercase tracking-widest mb-1">Session Score</p>
+              <p className="text-sm font-bold text-slate-200">{stats.correct}/{stats.total} wins · <span className={stats.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}>{stats.pnl >= 0 ? "+" : ""}${(stats.pnl * pnlPerPoint).toFixed(2)}</span></p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Question — show entry info, hide outcome */}
+      {trades.length > 0 && examState === "question" && pickedTrade && (
+        <div className="space-y-4">
+          <div className="text-center">
+            <p className="text-[9px] uppercase tracking-widest text-violet-400 mb-1">Trade Exam</p>
+            <p className="text-lg font-bold text-slate-200">Would you take this trade?</p>
+          </div>
+
+          {/* Entry card */}
+          <div className={`rounded-xl border p-4 ${
+            pickedTrade.direction === "PUT"
+              ? "border-rose-700/50 bg-rose-950/20"
+              : "border-emerald-700/50 bg-emerald-950/20"
+          }`}>
+            <div className="flex items-center justify-between mb-3">
+              <span className={`text-sm font-bold ${
+                pickedTrade.direction === "PUT" ? "text-rose-400" : "text-emerald-400"
+              }`}>
+                {pickedTrade.direction || "CALL"} Signal
+              </span>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                pickedTrade.signal_type === "PULLBACK" ? "bg-cyan-500/20 text-cyan-400" : "bg-amber-500/20 text-amber-400"
+              }`}>
+                {pickedTrade.signal_type}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg bg-slate-900/80 border border-slate-800/60 p-2.5 text-center">
+                <div className="text-[8px] text-slate-500 uppercase">Entry Price</div>
+                <div className="text-base font-bold text-slate-100 tabular-nums mt-0.5">${n(pickedTrade.entry_price).toFixed(2)}</div>
+              </div>
+              <button
+                onClick={() => onTradeClick?.(pickedTrade)}
+                className="rounded-lg bg-slate-900/80 border border-slate-800/60 p-2.5 text-center hover:bg-slate-800/80 hover:border-cyan-700/50 transition-colors cursor-pointer"
+              >
+                <div className="text-[8px] text-slate-500 uppercase">Entry Time</div>
+                <div className="text-[11px] font-bold text-cyan-400 mt-1">{fmtDateTime(pickedTrade.entry_time)} ↗</div>
+              </button>
+            </div>
+          </div>
+
+          {/* Mini chart — 50 bars up to entry */}
+          {candles.length > 0 && (
+            <ExamMiniChart candles={candles} entryTime={pickedTrade.entry_time} />
+          )}
+
+          {/* Hidden outcome hint */}
+          <div className="rounded-lg border border-dashed border-slate-700 bg-slate-900/30 p-4 text-center">
+            <p className="text-sm text-slate-500">🔒 Outcome hidden</p>
+            <p className="text-[10px] text-slate-600 mt-1">Click below to see the result</p>
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex gap-3">
+            <button
+              onClick={handleSkip}
+              className="flex-1 px-4 py-2.5 text-sm font-bold rounded-lg border border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-all"
+            >
+              ⏭️ Skip
+            </button>
+            <button
+              onClick={handleContinue}
+              className="flex-1 px-4 py-2.5 text-sm font-bold rounded-lg bg-gradient-to-r from-violet-600 to-cyan-600 text-white hover:from-violet-500 hover:to-cyan-500 active:scale-95 shadow-lg shadow-violet-900/40 transition-all"
+            >
+              ✅ Take Trade
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Result — reveal outcome */}
+      {trades.length > 0 && examState === "result" && pickedTrade && (() => {
+        const win = pickedTrade.pnl >= 0;
+        const dollarPnl = pickedTrade.pnl * pnlPerPoint;
+        return (
+          <div className={`space-y-4 rounded-xl p-3 ${skipped ? "border-2 border-dashed border-slate-600 bg-slate-900/30" : ""}`}>
+            <div className="text-center">
+              <p className="text-5xl mb-2">{skipped ? "⏭️" : win ? "🎉" : "💥"}</p>
+              <p className={`text-2xl font-bold ${skipped ? "text-slate-400" : win ? "text-emerald-400" : "text-rose-400"}`}>
+                {skipped ? "SKIPPED" : win ? "WIN!" : "LOSS"}
+              </p>
+              {skipped && <p className="text-[10px] text-slate-500 mt-1">Not counted toward score</p>}
+            </div>
+
+            {/* P&L card */}
+            <div className={`rounded-xl border p-5 text-center ${
+              skipped ? "border-slate-700/50 bg-slate-950/30" : win ? "border-emerald-700/50 bg-emerald-950/20" : "border-rose-700/50 bg-rose-950/20"
+            }`}>
+              <p className="text-[9px] text-slate-500 uppercase tracking-widest mb-1">{skipped ? "Would have been" : "Profit / Loss"}</p>
+              <p className={`text-3xl font-bold tabular-nums ${skipped ? "text-slate-400" : win ? "text-emerald-400" : "text-rose-400"}`}>
+                {dollarPnl >= 0 ? "+" : ""}${dollarPnl.toFixed(2)}
+              </p>
+              <p className={`text-sm font-bold mt-1 ${win ? "text-emerald-500/60" : "text-rose-500/60"}`}>
+                {pickedTrade.pnl >= 0 ? "+" : ""}{n(pickedTrade.pnl).toFixed(2)} pts
+              </p>
+            </div>
+
+            {/* Result chart — 50 bars before + 50 bars after entry */}
+            {candles.length > 0 && (
+              <ExamResultChart candles={candles} trade={pickedTrade} />
+            )}
+
+            {/* Trade details */}
+            <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-3">
+              <div className="grid grid-cols-2 gap-2 text-center">
+                <div>
+                  <div className="text-[8px] text-slate-500 uppercase">Direction</div>
+                  <div className={`text-[11px] font-bold ${pickedTrade.direction === "PUT" ? "text-rose-400" : "text-emerald-400"}`}>
+                    {pickedTrade.direction || "CALL"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[8px] text-slate-500 uppercase">Type</div>
+                  <div className="text-[11px] font-bold text-slate-300">{pickedTrade.signal_type}</div>
+                </div>
+                <div>
+                  <div className="text-[8px] text-slate-500 uppercase">Entry</div>
+                  <div className="text-[11px] font-bold text-slate-300">${n(pickedTrade.entry_price).toFixed(2)}</div>
+                </div>
+                <div>
+                  <div className="text-[8px] text-slate-500 uppercase">Exit</div>
+                  <div className="text-[11px] font-bold text-slate-300">${n(pickedTrade.exit_price).toFixed(2)}</div>
+                </div>
+                <button onClick={() => onTradeClick?.(pickedTrade)} className="hover:bg-slate-800/60 rounded transition-colors cursor-pointer">
+                  <div className="text-[8px] text-slate-500 uppercase">Entry Time</div>
+                  <div className="text-[11px] font-bold text-cyan-400">{fmtDateTime(pickedTrade.entry_time)} ↗</div>
+                </button>
+                <div>
+                  <div className="text-[8px] text-slate-500 uppercase">Exit Reason</div>
+                  <div className={`text-[11px] font-bold ${
+                    pickedTrade.reason === "TP" ? "text-emerald-400" : pickedTrade.reason === "SL" ? "text-rose-400" : "text-cyan-400"
+                  }`}>{pickedTrade.reason}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Session stats */}
+            <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 px-4 py-2.5 text-center">
+              <p className="text-[9px] text-slate-500 uppercase tracking-widest mb-1">Session Score</p>
+              <p className="text-sm font-bold text-slate-200">
+                {stats.correct}/{stats.total} wins ({stats.total > 0 ? ((stats.correct / stats.total) * 100).toFixed(0) : 0}%)
+                · <span className={stats.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                  {stats.pnl >= 0 ? "+" : ""}${(stats.pnl * pnlPerPoint).toFixed(2)}
+                </span>
+              </p>
+            </div>
+
+            {/* Next button */}
+            <button
+              onClick={handleNext}
+              className="w-full px-4 py-2.5 text-sm font-bold rounded-lg bg-gradient-to-r from-violet-600 to-cyan-600 text-white hover:from-violet-500 hover:to-cyan-500 active:scale-95 shadow-lg shadow-violet-900/40 transition-all"
+            >
+              {stats.total >= EXAM_TOTAL ? "📊 View Final Result" : `🎲 Next Trade (${stats.total}/${EXAM_TOTAL})`}
+            </button>
+          </div>
+        );
+      })()}
+
+      {/* Final — 10 trades completed, show pass/fail */}
+      {trades.length > 0 && examState === "final" && (() => {
+        const winRate = stats.total > 0 ? (stats.correct / stats.total) * 100 : 0;
+        const passed = winRate >= 80;
+        const dollarTotal = stats.pnl * pnlPerPoint;
+        return (
+          <div className="flex flex-col items-center justify-center min-h-[300px] space-y-5">
+            <p className="text-6xl">{passed ? "🏆" : "📉"}</p>
+            <p className={`text-3xl font-bold ${passed ? "text-emerald-400" : "text-rose-400"}`}>
+              {passed ? "PASSED!" : "FAILED"}
+            </p>
+            <p className="text-[11px] text-slate-500">
+              {passed ? "You met the 80% win-rate target" : "Target: 80% win rate — try again!"}
+            </p>
+
+            {/* Score card */}
+            <div className={`w-full rounded-xl border p-6 text-center ${
+              passed ? "border-emerald-700/50 bg-emerald-950/20" : "border-rose-700/50 bg-rose-950/20"
+            }`}>
+              <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-2">Final Score</p>
+              <p className="text-4xl font-bold text-slate-100 tabular-nums">{stats.correct}/{stats.total}</p>
+              <p className={`text-xl font-bold mt-1 ${passed ? "text-emerald-400" : "text-rose-400"}`}>
+                {winRate.toFixed(0)}% Win Rate
+              </p>
+            </div>
+
+            {/* P&L summary */}
+            <div className="w-full rounded-lg border border-slate-800/60 bg-slate-900/50 p-4 text-center">
+              <p className="text-[9px] text-slate-500 uppercase tracking-widest mb-1">Total P&L</p>
+              <p className={`text-2xl font-bold tabular-nums ${dollarTotal >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                {dollarTotal >= 0 ? "+" : ""}${dollarTotal.toFixed(2)}
+              </p>
+              <p className={`text-sm mt-0.5 ${stats.pnl >= 0 ? "text-emerald-500/60" : "text-rose-500/60"}`}>
+                {stats.pnl >= 0 ? "+" : ""}{n(stats.pnl).toFixed(2)} pts
+              </p>
+            </div>
+
+            {/* Breakdown */}
+            <div className="w-full grid grid-cols-3 gap-2">
+              <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-3 text-center">
+                <p className="text-[8px] text-slate-500 uppercase">Wins</p>
+                <p className="text-lg font-bold text-emerald-400">{stats.correct}</p>
+              </div>
+              <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-3 text-center">
+                <p className="text-[8px] text-slate-500 uppercase">Losses</p>
+                <p className="text-lg font-bold text-rose-400">{stats.total - stats.correct}</p>
+              </div>
+              <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-3 text-center">
+                <p className="text-[8px] text-slate-500 uppercase">Trades</p>
+                <p className="text-lg font-bold text-slate-300">{stats.total}</p>
+              </div>
+            </div>
+
+            <button
+              onClick={handleRestart}
+              className="w-full px-6 py-3 text-sm font-bold rounded-xl bg-gradient-to-r from-violet-600 to-cyan-600 text-white hover:from-violet-500 hover:to-cyan-500 active:scale-95 shadow-lg shadow-violet-900/40 transition-all"
+            >
+              🔄 Restart Exam
+            </button>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -413,7 +1057,7 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
 
         {/* Sub-tabs */}
         <div className="flex gap-0.5 ml-2">
-          {(["backtest", "scanner", "tradelog"] as Tab5Min[]).map((t) => (
+          {(["backtest", "scanner", "tradelog", "exam"] as Tab5Min[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -589,6 +1233,13 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
       {/* ═════════════════════════════════════════════════════ */}
       {tab === "tradelog" && (
         <TradeLogTab logData={logData} loading={loading} onLoad={loadTradeLog} onTradeClick={onTradeClick} />
+      )}
+
+      {/* ═════════════════════════════════════════════════════ */}
+      {/* TAB: Exam                                            */}
+      {/* ═════════════════════════════════════════════════════ */}
+      {tab === "exam" && (
+        <ExamTab trades={btData?.trades ?? []} candles={btData?.candles ?? []} loading={loading} onLoadTrades={runBacktest} onTradeClick={onTradeClick} />
       )}
     </div>
   );
