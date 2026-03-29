@@ -262,7 +262,7 @@ def _get_tiger_clients():
 @router.get("/live")
 async def mgc_live(
     interval: Annotated[str, Query()] = "15m",
-    limit: Annotated[int, Query(ge=50, le=1000)] = 500,
+    limit: Annotated[int, Query(ge=50, le=2000)] = 500,
 ) -> MGCLiveResponse:
     """Fetch real-time MGC bars from Tiger API with indicators."""
 
