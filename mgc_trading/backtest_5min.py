@@ -36,6 +36,7 @@ class Trade5Min:
     reason: str  # "TP", "SL", "TRAILING", "EOD"
     signal_type: str = ""  # "PULLBACK" / "BREAKOUT"
     direction: str = "CALL"  # "CALL" (long) / "PUT" (short)
+    mae: float = 0.0  # Max Adverse Excursion (worst unrealized loss in $)
 
 
 @dataclass
@@ -148,6 +149,7 @@ class Backtester5Min:
         consec_losses = 0
         daily_counts: dict[str, int] = {}
         extreme_since_entry = 0.0  # highest for CALL, lowest for PUT
+        worst_unrealized = 0.0  # worst unrealized P&L (most negative) during trade
 
         for i in range(1, len(df)):
             bar = df.iloc[i]
@@ -159,6 +161,14 @@ class Backtester5Min:
                 sl = position["sl"]
                 tp = position["tp"]
                 direction = position["direction"]  # 1 = CALL, -1 = PUT
+
+                # Track worst unrealized loss (MAE)
+                if direction == 1:
+                    adverse = (float(bar["low"]) - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                else:
+                    adverse = (position["entry_price"] - float(bar["high"])) * position["qty"] * CONTRACT_SIZE
+                if adverse < worst_unrealized:
+                    worst_unrealized = adverse
 
                 if direction == 1:
                     # ── CALL exit logic (long) ──
@@ -226,9 +236,11 @@ class Backtester5Min:
                         reason=reason,
                         signal_type=position.get("signal_type", ""),
                         direction="CALL" if direction == 1 else "PUT",
+                        mae=round(worst_unrealized, 2),
                     ))
                     consec_losses = consec_losses + 1 if pnl < 0 else 0
                     position = None
+                    worst_unrealized = 0.0
 
                 elif hit_tp:
                     exit_price = tp
@@ -246,9 +258,11 @@ class Backtester5Min:
                         reason="TP",
                         signal_type=position.get("signal_type", ""),
                         direction="CALL" if direction == 1 else "PUT",
+                        mae=round(worst_unrealized, 2),
                     ))
                     consec_losses = 0
                     position = None
+                    worst_unrealized = 0.0
 
             # ── 2. No position → consider entry ────────────────────
             sig_val = signals.iloc[i - 1] if i > 0 else 0
@@ -302,6 +316,7 @@ class Backtester5Min:
                     "direction": direction,
                 }
                 extreme_since_entry = entry_price
+                worst_unrealized = 0.0
                 daily_counts[bar_date] = daily_counts.get(bar_date, 0) + 1
 
             # ── 3. Record equity ───────────────────────────────────
@@ -330,6 +345,7 @@ class Backtester5Min:
                 reason="EOD",
                 signal_type=position.get("signal_type", ""),
                 direction="CALL" if d == 1 else "PUT",
+                mae=round(worst_unrealized, 2),
             ))
 
         return trades, equity_curve, equity

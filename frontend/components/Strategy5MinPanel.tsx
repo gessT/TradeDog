@@ -157,6 +157,9 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
       <td className={`px-2 py-1 text-right text-[10px] font-bold ${win ? "text-emerald-400" : "text-rose-400"}`}>
         {win ? "+" : ""}{n(t.pnl).toFixed(2)}
       </td>
+      <td className="px-2 py-1 text-right text-[10px] font-bold text-rose-400/80">
+        {n(t.mae) < 0 ? `${n(t.mae).toFixed(2)}` : "—"}
+      </td>
       <td className="px-2 py-1 text-center">
         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${t.direction === "PUT" ? "bg-rose-900/40 text-rose-400" : "bg-emerald-900/40 text-emerald-400"}`}>{t.direction || "CALL"}</span>
       </td>
@@ -343,6 +346,7 @@ function TradeLogTab({
                     <th className="px-2 py-1 text-right">In$</th>
                     <th className="px-2 py-1 text-right">Out$</th>
                     <th className="px-2 py-1 text-right">P&L</th>
+                    <th className="px-2 py-1 text-right">MAE$</th>
                     <th className="px-2 py-1 text-center">Dir</th>
                     <th className="px-2 py-1 text-center">Type</th>
                     <th className="px-2 py-1 text-center">Sig</th>
@@ -353,7 +357,7 @@ function TradeLogTab({
                     <TradeRow5Min key={`${t.entry_time}-${i}`} t={t} idx={i} onTradeClick={onTradeClick} />
                   ))}
                   {logData.trades.length === 0 && (
-                    <tr><td colSpan={8} className="text-center text-[10px] text-slate-600 py-4">No trades</td></tr>
+                    <tr><td colSpan={9} className="text-center text-[10px] text-slate-600 py-4">No trades</td></tr>
                   )}
                 </tbody>
               </table>
@@ -1285,6 +1289,7 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
                         <th className="px-2 py-1 text-right">In$</th>
                         <th className="px-2 py-1 text-right">Out$</th>
                         <th className="px-2 py-1 text-right">P&L</th>
+                        <th className="px-2 py-1 text-right">MAE$</th>
                         <th className="px-2 py-1 text-center">Dir</th>
                         <th className="px-2 py-1 text-center">Type</th>
                         <th className="px-2 py-1 text-center">Sig</th>
@@ -1295,7 +1300,7 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
                         <TradeRow5Min key={`${t.entry_time}-${i}`} t={t} idx={i} onTradeClick={onTradeClick} />
                       ))}
                       {btData.trades.length === 0 && (
-                        <tr><td colSpan={8} className="text-center text-[10px] text-slate-600 py-4">No trades generated</td></tr>
+                        <tr><td colSpan={9} className="text-center text-[10px] text-slate-600 py-4">No trades generated</td></tr>
                       )}
                     </tbody>
                   </table>

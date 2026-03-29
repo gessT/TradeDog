@@ -743,6 +743,7 @@ class MGC5MinTrade(BaseModel):
     reason: str
     signal_type: str = ""
     direction: str = "CALL"  # "CALL" or "PUT"
+    mae: float = 0.0  # Max Adverse Excursion (worst unrealized loss)
 
 
 class MGC5MinMetrics(BaseModel):
@@ -783,6 +784,8 @@ async def mgc_backtest_5min(
     period: Annotated[str, Query()] = "60d",
     capital: Annotated[float, Query()] = INITIAL_CAPITAL,
     oos_split: Annotated[float, Query(ge=0, le=0.5)] = 0.3,
+    atr_sl_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 4.0,
+    atr_tp_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 3.0,
 ) -> MGC5MinBacktestResponse:
     """Run 5-minute strategy backtest with out-of-sample validation."""
 
@@ -797,7 +800,8 @@ async def mgc_backtest_5min(
 
         df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
 
-        strategy = MGCStrategy5Min()
+        custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
+        strategy = MGCStrategy5Min({**DEFAULT_5MIN_PARAMS, **custom_params})
         df_ind = strategy.compute_indicators(
             df[["open", "high", "low", "close", "volume"]].copy()
         )
@@ -805,7 +809,7 @@ async def mgc_backtest_5min(
         df_ind["signal"] = signals
 
         bt = Backtester5Min(capital=capital)
-        result = bt.run(df, oos_split=oos_split)
+        result = bt.run(df, params=custom_params, oos_split=oos_split)
 
         # Build candle list
         candles = []
@@ -837,6 +841,7 @@ async def mgc_backtest_5min(
                 reason=t.reason,
                 signal_type=t.signal_type,
                 direction=t.direction,
+                mae=round(t.mae, 2),
             )
             for t in result.trades
         ]
@@ -909,6 +914,8 @@ class Scan5MinResponse(BaseModel):
 async def mgc_scan_5min(
     symbol: Annotated[str, Query()] = "MGC=F",
     period: Annotated[str, Query()] = "60d",
+    atr_sl_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 4.0,
+    atr_tp_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 3.0,
 ) -> Scan5MinResponse:
     """Scan for 5-minute entry signal using yfinance data."""
 
@@ -920,7 +927,8 @@ async def mgc_scan_5min(
             effective_period = "60d"
 
         df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
-        result = scan_5min(df)
+        custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
+        result = scan_5min(df, params=custom_params)
 
         sig = Scan5MinSignal(
             found=result.found,
@@ -955,7 +963,10 @@ async def mgc_scan_5min(
 # ── 5min Live Scan (Tiger API) ──────────────────────────────────────
 
 @router.get("/scan_5min_live")
-async def mgc_scan_5min_live() -> Scan5MinResponse:
+async def mgc_scan_5min_live(
+    atr_sl_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 4.0,
+    atr_tp_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 3.0,
+) -> Scan5MinResponse:
     """Scan for 5-minute entry signal using Tiger live data."""
 
     def _run():
@@ -980,7 +991,7 @@ async def mgc_scan_5min_live() -> Scan5MinResponse:
         df.index = pd.to_datetime(df_raw["time"], unit="ms")
         df = df.sort_index()
 
-        result = scan_5min(df)
+        result = scan_5min(df, params={"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult})
 
         sig = Scan5MinSignal(
             found=result.found,
@@ -1234,6 +1245,7 @@ async def mgc_trade_log_5min(
                 pnl_pct=round(t.pnl_pct, 2),
                 reason=t.reason,
                 signal_type=t.signal_type,
+                mae=round(t.mae, 2),
             )
             for t in recent
         ]

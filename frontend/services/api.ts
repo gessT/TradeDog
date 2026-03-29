@@ -745,6 +745,7 @@ export type MGC5MinTrade = {
   reason: string;
   signal_type: string;
   direction: string;
+  mae: number;
 };
 
 export type MGC5MinMetrics = {
