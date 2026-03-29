@@ -27,24 +27,22 @@ export default function MGCDashboard() {
     <div className="flex flex-1 overflow-hidden">
 
       {/* ═══════════════════════════════════════════════════════════════ */}
-      {/* COL 1 — Scan Trade (Discovery)                               */}
+      {/* COL 1 — 5min Strategy Workspace                              */}
       {/* ═══════════════════════════════════════════════════════════════ */}
-      <aside className="hidden md:flex md:w-1/3 flex-shrink-0 flex-col overflow-y-auto border-r border-slate-800/60 bg-slate-900/40">
-        <ScanTradePanel />
-      </aside>
-
-      {/* ═══════════════════════════════════════════════════════════════ */}
-      {/* COL 2 — 5min Strategy Workspace                              */}
-      {/* ═══════════════════════════════════════════════════════════════ */}
-      <section className="w-full md:w-1/3 overflow-y-auto border-r border-slate-800/60">
+      <section className="w-full md:w-1/2 overflow-y-auto border-r border-slate-800/60">
         <Strategy5MinPanel onTradeClick={handleTradeClick5Min} />
       </section>
 
       {/* ═══════════════════════════════════════════════════════════════ */}
-      {/* COL 3 — Live Chart                                            */}
+      {/* COL 2 — Live Chart (top) + Scan Trade (bottom)               */}
       {/* ═══════════════════════════════════════════════════════════════ */}
-      <section className="hidden md:flex md:w-1/3 flex-col overflow-hidden">
-        <MGCLiveChart focusTime={focusTime} focusInterval={focusInterval} />
+      <section className="hidden md:flex md:w-1/2 flex-col overflow-hidden">
+        <div className="h-1/2 border-b border-slate-800/60">
+          <MGCLiveChart focusTime={focusTime} focusInterval={focusInterval} />
+        </div>
+        <div className="h-1/2 overflow-y-auto bg-slate-900/40">
+          <ScanTradePanel />
+        </div>
       </section>
 
     </div>

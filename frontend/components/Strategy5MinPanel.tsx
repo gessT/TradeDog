@@ -48,17 +48,71 @@ function winRateColor(wr: number): string {
   return "text-rose-400";
 }
 
-function reasonStyle(reason: string): string {
-  if (reason === "TP") return "bg-emerald-500/20 text-emerald-400";
-  if (reason === "SL") return "bg-rose-500/20 text-rose-400";
-  if (reason === "TRAILING") return "bg-cyan-500/20 text-cyan-400";
-  return "bg-amber-500/20 text-amber-400";
+/** Compute signal strength 1-10 from candle data at entry (mirrors backend scoring) */
+function computeSignalStrength(candles: MGC5MinCandle[], entryTime: string): number {
+  const entryTs = new Date(entryTime).getTime();
+  // Find the candle just before entry
+  let idx = -1;
+  for (let i = 0; i < candles.length; i++) {
+    if (new Date(candles[i].time).getTime() >= entryTs) { idx = i > 0 ? i - 1 : i; break; }
+  }
+  if (idx < 0) idx = candles.length - 1;
+  const c = candles[idx];
+  let score = 0;
+
+  // Trend alignment (0-2): EMA fast > slow
+  const ef = n(c.ema_fast), es = n(c.ema_slow);
+  if (ef > 0 && es > 0 && ef > es) {
+    const gap = (ef - es) / es * 100;
+    score += gap > 0.1 ? 2 : gap > 0 ? 1 : 0;
+  }
+
+  // RSI sweet spot (0-2)
+  const rsi = n(c.rsi);
+  if (rsi >= 40 && rsi <= 60) score += 2;
+  else if ((rsi >= 30 && rsi < 40) || (rsi > 60 && rsi <= 70)) score += 1;
+
+  // Volume spike (0-2): compare to avg of previous 20 bars
+  const volStart = Math.max(0, idx - 20);
+  let volSum = 0, volCount = 0;
+  for (let j = volStart; j < idx; j++) { volSum += candles[j].volume; volCount++; }
+  const avgVol = volCount > 0 ? volSum / volCount : 1;
+  const volRatio = avgVol > 0 ? c.volume / avgVol : 0;
+  if (volRatio >= 2.0) score += 2;
+  else if (volRatio >= 1.2) score += 1;
+
+  // Candle body quality (0-2)
+  const body = Math.abs(c.close - c.open);
+  const range = c.high - c.low;
+  const bodyPct = range > 0 ? body / range : 0;
+  if (bodyPct > 0.6) score += 2;
+  else if (bodyPct > 0.4) score += 1;
+
+  // MACD momentum (0-2)
+  const macd = n(c.macd_hist);
+  if (Math.abs(macd) > 0.5) score += 2;
+  else if (Math.abs(macd) > 0.2) score += 1;
+
+  return Math.max(1, Math.min(10, score));
 }
 
 function strengthColor(s: number): string {
   if (s >= 8) return "text-emerald-400";
   if (s >= 5) return "text-amber-400";
   return "text-rose-400";
+}
+
+function strengthBg(s: number): string {
+  if (s >= 8) return "bg-emerald-500/20";
+  if (s >= 5) return "bg-amber-500/20";
+  return "bg-rose-500/20";
+}
+
+function reasonStyle(reason: string): string {
+  if (reason === "TP") return "bg-emerald-500/20 text-emerald-400";
+  if (reason === "SL") return "bg-rose-500/20 text-rose-400";
+  if (reason === "TRAILING") return "bg-cyan-500/20 text-cyan-400";
+  return "bg-amber-500/20 text-amber-400";
 }
 
 function tabLabel(t: string): string {
@@ -720,7 +774,9 @@ function ExamTab({
       )}
 
       {/* Question — show entry info, hide outcome */}
-      {trades.length > 0 && examState === "question" && pickedTrade && (
+      {trades.length > 0 && examState === "question" && pickedTrade && (() => {
+        const str = candles.length > 0 ? computeSignalStrength(candles, pickedTrade.entry_time) : 0;
+        return (
         <div className="space-y-4">
           <div className="text-center">
             <p className="text-[9px] uppercase tracking-widest text-violet-400 mb-1">Trade Exam</p>
@@ -739,11 +795,16 @@ function ExamTab({
               }`}>
                 {pickedTrade.direction || "CALL"} Signal
               </span>
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                pickedTrade.signal_type === "PULLBACK" ? "bg-cyan-500/20 text-cyan-400" : "bg-amber-500/20 text-amber-400"
-              }`}>
-                {pickedTrade.signal_type}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${strengthBg(str)} ${strengthColor(str)}`}>
+                  ⚡ {str}/10
+                </span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                  pickedTrade.signal_type === "PULLBACK" ? "bg-cyan-500/20 text-cyan-400" : "bg-amber-500/20 text-amber-400"
+                }`}>
+                  {pickedTrade.signal_type}
+                </span>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -788,12 +849,14 @@ function ExamTab({
             </button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Result — reveal outcome */}
       {trades.length > 0 && examState === "result" && pickedTrade && (() => {
         const win = pickedTrade.pnl >= 0;
         const dollarPnl = pickedTrade.pnl * pnlPerPoint;
+        const str = candles.length > 0 ? computeSignalStrength(candles, pickedTrade.entry_time) : 0;
         return (
           <div className={`space-y-4 rounded-xl p-3 ${skipped ? "border-2 border-dashed border-slate-600 bg-slate-900/30" : ""}`}>
             <div className="text-center">
@@ -824,7 +887,7 @@ function ExamTab({
 
             {/* Trade details */}
             <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-3">
-              <div className="grid grid-cols-2 gap-2 text-center">
+              <div className="grid grid-cols-3 gap-2 text-center">
                 <div>
                   <div className="text-[8px] text-slate-500 uppercase">Direction</div>
                   <div className={`text-[11px] font-bold ${pickedTrade.direction === "PUT" ? "text-rose-400" : "text-emerald-400"}`}>
@@ -836,6 +899,10 @@ function ExamTab({
                   <div className="text-[11px] font-bold text-slate-300">{pickedTrade.signal_type}</div>
                 </div>
                 <div>
+                  <div className="text-[8px] text-slate-500 uppercase">Strength</div>
+                  <div className={`text-[11px] font-bold ${strengthColor(str)}`}>⚡ {str}/10</div>
+                </div>
+                <div>
                   <div className="text-[8px] text-slate-500 uppercase">Entry</div>
                   <div className="text-[11px] font-bold text-slate-300">${n(pickedTrade.entry_price).toFixed(2)}</div>
                 </div>
@@ -843,16 +910,16 @@ function ExamTab({
                   <div className="text-[8px] text-slate-500 uppercase">Exit</div>
                   <div className="text-[11px] font-bold text-slate-300">${n(pickedTrade.exit_price).toFixed(2)}</div>
                 </div>
-                <button onClick={() => onTradeClick?.(pickedTrade)} className="hover:bg-slate-800/60 rounded transition-colors cursor-pointer">
-                  <div className="text-[8px] text-slate-500 uppercase">Entry Time</div>
-                  <div className="text-[11px] font-bold text-cyan-400">{fmtDateTime(pickedTrade.entry_time)} ↗</div>
-                </button>
                 <div>
                   <div className="text-[8px] text-slate-500 uppercase">Exit Reason</div>
                   <div className={`text-[11px] font-bold ${
                     pickedTrade.reason === "TP" ? "text-emerald-400" : pickedTrade.reason === "SL" ? "text-rose-400" : "text-cyan-400"
                   }`}>{pickedTrade.reason}</div>
                 </div>
+                <button onClick={() => onTradeClick?.(pickedTrade)} className="col-span-3 hover:bg-slate-800/60 rounded transition-colors cursor-pointer py-1">
+                  <div className="text-[8px] text-slate-500 uppercase">Entry Time</div>
+                  <div className="text-[11px] font-bold text-cyan-400">{fmtDateTime(pickedTrade.entry_time)} ↗</div>
+                </button>
               </div>
             </div>
 
