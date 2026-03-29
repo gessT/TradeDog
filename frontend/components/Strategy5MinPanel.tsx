@@ -1023,8 +1023,8 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
   // Backtest state
   const [btData, setBtData] = useState<MGC5MinBacktestResponse | null>(null);
   const [period, setPeriod] = useState("60d");
-  const [slMult, setSlMult] = useState(3.0);
-  const [tpMult, setTpMult] = useState(2.5);
+  const [slMult, setSlMult] = useState(4.0);
+  const [tpMult, setTpMult] = useState(3.0);
 
   // Scanner state
   const [scanData, setScanData] = useState<Scan5MinResponse | null>(null);
@@ -1052,14 +1052,14 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
     setLoading(true);
     setError(null);
     try {
-      const res = await scan5Min(false);
+      const res = await scan5Min(false, slMult, tpMult);
       setScanData(res);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Scan failed");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [slMult, tpMult]);
 
   // ── Execute Trade on Tiger ────────────────────────────
   const executeSignal = useCallback(async (sig?: Scan5MinSignal) => {
@@ -1099,7 +1099,7 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
     } finally {
       setExecuting(false);
     }
-  }, [scanData]);
+  }, [scanData, slMult, tpMult]);
 
   // ── Trade Log ─────────────────────────────────────────
   const loadTradeLog = useCallback(async () => {
@@ -1206,7 +1206,7 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
                 setLoading(true);
                 setError(null);
                 try {
-                  const res = await scan5Min(false);
+                  const res = await scan5Min(false, slMult, tpMult);
                   setScanData(res);
                   if (res.signal?.found) {
                     setTab("scanner");
