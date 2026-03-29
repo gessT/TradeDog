@@ -208,27 +208,23 @@ def halftrend(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
         prev_trend = trend[i - 1] if i > 0 else next_trend
 
         if next_trend == 1:
-            # Currently bearish, check for flip to bullish
+            # Looking for downtrend flip
             max_low_price = max(lowest_val, max_low_price)
             if high_ma < max_low_price and closes[i] < (lows[max(0, i - 1)] if i > 0 else lows[0]):
-                trend[i] = 0  # flip to bullish
+                trend[i] = 1  # flip to bearish (downtrend)
                 next_trend = 0
                 min_high_price = highest_val
-                # Set up line
-                up = max(max_low_price, up if i > 0 else max_low_price)
             else:
-                trend[i] = 1  # stay bearish
+                trend[i] = 0  # stay bullish (uptrend)
         else:
-            # Currently bullish, check for flip to bearish
+            # Looking for uptrend flip
             min_high_price = min(highest_val, min_high_price)
             if low_ma > min_high_price and closes[i] > (highs[max(0, i - 1)] if i > 0 else highs[0]):
-                trend[i] = 1  # flip to bearish
+                trend[i] = 0  # flip to bullish (uptrend)
                 next_trend = 1
                 max_low_price = lowest_val
-                # Set down line
-                down = min(min_high_price, down if (i > 0 and down > 0) else min_high_price)
             else:
-                trend[i] = 0  # stay bullish
+                trend[i] = 1  # stay bearish (downtrend)
 
         # Update HalfTrend line
         if trend[i] == 0:

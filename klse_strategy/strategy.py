@@ -1,24 +1,23 @@
 """
-strategy.py — HalfTrend + Weekly Supertrend Strategy Engine.
-
-Exact replica of TradingView Pine Script logic:
+strategy.py — Weekly Trend + HalfTrend Confirmation Strategy.
 
 INDICATORS:
   - HalfTrend (amplitude, channelDeviation, ATR deviation)
   - Weekly Supertrend (ATR period, factor)
 
 ENTRY (Long only):
-  Condition 1: bigTrendFlipUp + HalfTrend bullish + buyCount < 2  → LONG
-  Condition 2: miniBuySignal + big trend still bullish + buyCount < 2  → LONG (re-entry)
+  BUY when: Weekly Supertrend is green (bullish) AND HalfTrend turns green
+  on the same day. Both conditions must be true together.
+  Max 2 buy entries per weekly bullish cycle, then wait for next cycle.
 
 EXIT:
-  - miniSellSignal (HalfTrend turns bearish) → close ALL
+  - HalfTrend turns red (bearish) → close ALL
   - Stop Loss = entry - ATR * sl_atr_mult (hard safety)
   - Take Profit = entry + ATR * tp_atr_mult
 
 POSITION:
-  - Max 2 entries per trend cycle
-  - Reset on exit
+  - Max 2 entries per weekly bullish cycle
+  - Reset buy_count when weekly trend flips bearish then back to bullish
 """
 from __future__ import annotations
 
@@ -100,7 +99,14 @@ def compute_indicators(df: pd.DataFrame, p: StrategyParams) -> pd.DataFrame:
 
 def generate_signals(df: pd.DataFrame, p: StrategyParams) -> tuple[np.ndarray, np.ndarray]:
     """
-    Generate entry/exit signals matching Pine Script logic.
+    Generate entry/exit signals.
+
+    BUY:  Any day where Weekly Supertrend is green (wst_dir == -1)
+          AND HalfTrend is green (ht_trend == 0) → can buy.
+          Max 2 buys per weekly bullish cycle.
+
+    SELL: HalfTrend turns red (ht_sell) → close ALL (take profit / cut loss).
+          buy_count resets when a new weekly bullish cycle starts.
 
     Returns
     -------
@@ -113,37 +119,26 @@ def generate_signals(df: pd.DataFrame, p: StrategyParams) -> tuple[np.ndarray, n
 
     wst_dir = df["wst_dir"].values
     ht_trend = df["ht_trend"].values
-    ht_buy = df["ht_buy"].values
     ht_sell = df["ht_sell"].values
     big_flip_up = df["big_flip_up"].values
 
     buy_count = 0
-    big_trend_bullish = False
+    in_position = False
 
     for i in range(1, n):
-        # Track big trend state
+        # New weekly bullish cycle → reset buy_count
         if big_flip_up[i]:
-            big_trend_bullish = True
-            buy_count = 0  # Reset count on new big trend cycle
-
-        if wst_dir[i] == 1:  # Weekly Supertrend bearish
-            big_trend_bullish = False
             buy_count = 0
 
-        # EXIT: HalfTrend sells (bearish flip)
-        if ht_sell[i]:
+        # EXIT: HalfTrend turns red → close ALL (profit / cut)
+        if ht_sell[i] and in_position:
             exit_signals[i] = 1
-            buy_count = 0  # Reset for new entries
+            in_position = False
 
-        # ENTRY Condition 1: bigTrendFlipUp + HalfTrend already bullish
-        if big_flip_up[i] and ht_trend[i] == 0 and buy_count < p.max_entries:
+        # BUY: Weekly green + HalfTrend green + not already in position + within limit
+        if wst_dir[i] == -1 and ht_trend[i] == 0 and not in_position and buy_count < p.max_entries:
             entry_signals[i] = 1
             buy_count += 1
-            continue
-
-        # ENTRY Condition 2: HalfTrend buy signal (re-entry) + big trend still bullish
-        if ht_buy[i] and big_trend_bullish and buy_count < p.max_entries:
-            entry_signals[i] = 1
-            buy_count += 1
+            in_position = True
 
     return entry_signals, exit_signals

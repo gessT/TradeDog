@@ -74,10 +74,10 @@ export default function KLSEStrategyPanel({ symbol, period, onTradeClick }: Prop
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400 text-sm">📊</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <p className="text-[11px] font-bold uppercase tracking-widest text-amber-400 leading-none">KLSE Multi-Timeframe</p>
-            <span className="rounded bg-amber-500/20 px-1 py-[1px] text-[8px] font-extrabold tracking-wider text-amber-300 border border-amber-500/30">MTF</span>
+            <p className="text-[11px] font-bold uppercase tracking-widest text-amber-400 leading-none">Weekly Trend + HalfTrend</p>
+            <span className="rounded bg-amber-500/20 px-1 py-[1px] text-[8px] font-extrabold tracking-wider text-amber-300 border border-amber-500/30">WTH</span>
           </div>
-          <p className="mt-0.5 text-[9px] text-slate-500 truncate">HalfTrend(amp={5},chDev={2}) + Weekly Supertrend(3,10) · ATR SL/TP · Max 2 entries · {symbol}</p>
+          <p className="mt-0.5 text-[9px] text-slate-500 truncate">Buy: WST green + HT green · Sell: HT red · Max 2 per weekly cycle · {symbol}</p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <button
