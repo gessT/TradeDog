@@ -781,8 +781,10 @@ export type MGC5MinBacktestResponse = {
 export async function fetchMGC5MinBacktest(
   period: string = "60d",
   oos_split: number = 0.3,
+  atr_sl_mult: number = 3.0,
+  atr_tp_mult: number = 2.5,
 ): Promise<MGC5MinBacktestResponse> {
-  const url = `${API_BASE}/mgc/backtest_5min?period=${encodeURIComponent(period)}&oos_split=${oos_split}`;
+  const url = `${API_BASE}/mgc/backtest_5min?period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();

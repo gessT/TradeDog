@@ -1023,6 +1023,8 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
   // Backtest state
   const [btData, setBtData] = useState<MGC5MinBacktestResponse | null>(null);
   const [period, setPeriod] = useState("60d");
+  const [slMult, setSlMult] = useState(3.0);
+  const [tpMult, setTpMult] = useState(2.5);
 
   // Scanner state
   const [scanData, setScanData] = useState<Scan5MinResponse | null>(null);
@@ -1036,14 +1038,14 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchMGC5MinBacktest(period);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult);
       setBtData(res);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
       setLoading(false);
     }
-  }, [period]);
+  }, [period, slMult, tpMult]);
 
   // ── Scanner ───────────────────────────────────────────
   const runScan = useCallback(async () => {
@@ -1165,6 +1167,29 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
                 >{p}</button>
               ))}
             </div>
+
+            {/* SL / TP sliders */}
+            <div className="flex items-center gap-3 ml-2">
+              <label className="flex items-center gap-1 text-[10px]">
+                <span className="text-rose-400 font-bold">SL</span>
+                <input
+                  type="range" min="0.5" max="6" step="0.5" value={slMult}
+                  onChange={(e) => setSlMult(parseFloat(e.target.value))}
+                  className="w-14 h-1 accent-rose-500 cursor-pointer"
+                />
+                <span className="text-slate-400 tabular-nums w-8">{slMult}×</span>
+              </label>
+              <label className="flex items-center gap-1 text-[10px]">
+                <span className="text-emerald-400 font-bold">TP</span>
+                <input
+                  type="range" min="0.5" max="6" step="0.5" value={tpMult}
+                  onChange={(e) => setTpMult(parseFloat(e.target.value))}
+                  className="w-14 h-1 accent-emerald-500 cursor-pointer"
+                />
+                <span className="text-slate-400 tabular-nums w-8">{tpMult}×</span>
+              </label>
+            </div>
+
             <button
               onClick={runBacktest}
               disabled={loading}
