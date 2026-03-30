@@ -37,23 +37,16 @@ export default function FuturesDashboard() {
     <div className="flex flex-1 overflow-hidden">
 
       {/* ═══════════════════════════════════════════════════════════════ */}
-      {/* COL 1 — 5min Strategy Workspace                              */}
+      {/* COL 1 — Commodity Cards + Live Chart                          */}
       {/* ═══════════════════════════════════════════════════════════════ */}
-      <section className="w-full md:w-1/2 overflow-y-auto border-r border-slate-800/60">
-        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} symbol={selectedSymbol} symbolName={selectedName} />
-      </section>
-
-      {/* ═══════════════════════════════════════════════════════════════ */}
-      {/* COL 2 — Commodity Cards + Live Chart + Account                */}
-      {/* ═══════════════════════════════════════════════════════════════ */}
-      <section className="hidden md:flex md:w-1/2 flex-col overflow-hidden">
+      <section className="hidden md:flex md:w-1/3 flex-col overflow-hidden border-r border-slate-800/60">
         {/* Commodity selector cards */}
         <div className="shrink-0 border-b border-slate-800/60 bg-slate-950/80">
           <CommodityCards selected={selectedSymbol} onSelect={handleCommoditySelect} />
         </div>
 
         {/* Live chart */}
-        <div className="flex-1 min-h-0 border-b border-slate-800/60">
+        <div className="flex-1 min-h-0">
           <MGCLiveChart
             symbol={selectedSymbol}
             symbolName={selectedName}
@@ -62,11 +55,20 @@ export default function FuturesDashboard() {
             focusInterval={focusInterval}
           />
         </div>
+      </section>
 
-        {/* Account / Trade panel */}
-        <div className="h-[40%] overflow-y-auto bg-slate-900/40">
-          <ScanTradePanel />
-        </div>
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {/* COL 2 — 5min Strategy Workspace                              */}
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      <section className="w-full md:w-1/3 overflow-y-auto border-r border-slate-800/60">
+        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} symbol={selectedSymbol} symbolName={selectedName} />
+      </section>
+
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {/* COL 3 — Account / Trade panel                                */}
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      <section className="hidden md:flex md:w-1/3 flex-col overflow-y-auto bg-slate-900/40">
+        <ScanTradePanel />
       </section>
 
     </div>
