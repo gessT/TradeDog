@@ -11,7 +11,7 @@ import math
 from datetime import datetime, timezone
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
@@ -1113,6 +1113,18 @@ async def mgc_backtest_5min(
             # Include the full end day
             df = df[df.index < _pd.Timestamp(date_to, tz=df.index.tz) + _pd.Timedelta(days=1)]
 
+        if df.empty or len(df) < 20:
+            avail_from = "N/A"
+            avail_to = "N/A"
+            if not df.empty:
+                avail_from = str(df.index[0])[:10]
+                avail_to = str(df.index[-1])[:10]
+            raise ValueError(
+                f"Not enough data for selected date range. "
+                f"yfinance 5m data is only available for the last ~60 days. "
+                f"Available range: {avail_from} to {avail_to}"
+            )
+
         custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
         strategy = MGCStrategy5Min({**DEFAULT_5MIN_PARAMS, **custom_params})
         df_ind = strategy.compute_indicators(
@@ -1180,7 +1192,13 @@ async def mgc_backtest_5min(
 
         return candles, trades, result.equity_curve, metrics, result.params
 
-    candles, trades, eq_curve, metrics, params = await run_in_threadpool(_run)
+    try:
+        candles, trades, eq_curve, metrics, params = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("5min backtest failed")
+        raise HTTPException(status_code=500, detail=str(exc))
 
     return MGC5MinBacktestResponse(
         symbol=symbol,
