@@ -28,6 +28,11 @@ import {
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════
 
+/** Offset (seconds) to shift UTC epoch → browser local time for lightweight-charts */
+const TZ_OFFSET_SEC = -(new Date().getTimezoneOffset() * 60);
+
+const toLocal = (utcSec: number) => (utcSec + TZ_OFFSET_SEC) as UTCTimestamp;
+
 const n = (v: unknown): number =>
   typeof v === "number" && Number.isFinite(v) ? v : 0;
 
@@ -441,9 +446,9 @@ function ExamMiniChart({ candles, entryTime }: Readonly<{ candles: MGC5MinCandle
     const vol: { time: UTCTimestamp; value: number; color: string }[] = [];
 
     for (const c of slice) {
-      const t = Math.floor(new Date(c.time).getTime() / 1000) as UTCTimestamp;
-      if (seen.has(t)) continue;
-      seen.add(t);
+      const t = toLocal(Math.floor(new Date(c.time).getTime() / 1000));
+      if (seen.has(t as number)) continue;
+      seen.add(t as number);
       ohlc.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
       vol.push({ time: t, value: c.volume, color: c.close >= c.open ? "#22c55e30" : "#ef444430" });
     }
@@ -585,9 +590,9 @@ function ExamResultChart({ candles, trade }: Readonly<{ candles: MGC5MinCandle[]
     const vol: { time: UTCTimestamp; value: number; color: string }[] = [];
 
     for (const c of slice) {
-      const t = Math.floor(new Date(c.time).getTime() / 1000) as UTCTimestamp;
-      if (seen.has(t)) continue;
-      seen.add(t);
+      const t = toLocal(Math.floor(new Date(c.time).getTime() / 1000));
+      if (seen.has(t as number)) continue;
+      seen.add(t as number);
       ohlc.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
       vol.push({ time: t, value: c.volume, color: c.close >= c.open ? "#22c55e30" : "#ef444430" });
     }
@@ -636,8 +641,8 @@ function ExamResultChart({ candles, trade }: Readonly<{ candles: MGC5MinCandle[]
     }
 
     // Find closest bar timestamps for entry & exit markers
-    const entryBarTs = Math.floor(entryTs / 1000) as UTCTimestamp;
-    const exitBarTs = Math.floor(exitTs / 1000) as UTCTimestamp;
+    const entryBarTs = toLocal(Math.floor(entryTs / 1000));
+    const exitBarTs = toLocal(Math.floor(exitTs / 1000));
     const findClosest = (target: UTCTimestamp) => {
       let best = ohlc[0]?.time ?? target;
       let bestDiff = Math.abs((best as number) - (target as number));
@@ -1030,6 +1035,14 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
   const [slMult, setSlMult] = useState(4.0);
   const [tpMult, setTpMult] = useState(3.0);
 
+  // Date range filter (default: last 3 days)
+  const today = new Date();
+  const threeDaysAgo = new Date(today);
+  threeDaysAgo.setDate(today.getDate() - 3);
+  const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
+  const [dateFrom, setDateFrom] = useState(fmtDate(threeDaysAgo));
+  const [dateTo, setDateTo] = useState(fmtDate(today));
+
   // Scanner state
   const [scanData, setScanData] = useState<Scan5MinResponse | null>(null);
   const [executing, setExecuting] = useState(false);
@@ -1042,14 +1055,14 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined);
       setBtData(res);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
       setLoading(false);
     }
-  }, [period, slMult, tpMult]);
+  }, [period, slMult, tpMult, dateFrom, dateTo]);
 
   // ── Scanner ───────────────────────────────────────────
   const runScan = useCallback(async () => {
@@ -1170,6 +1183,23 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
                   }`}
                 >{p}</button>
               ))}
+            </div>
+
+            {/* Date range */}
+            <div className="flex items-center gap-1 ml-1">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="bg-slate-900 border border-slate-700 text-slate-300 text-[9px] rounded px-1 py-0.5 w-[100px]"
+              />
+              <span className="text-[9px] text-slate-600">→</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="bg-slate-900 border border-slate-700 text-slate-300 text-[9px] rounded px-1 py-0.5 w-[100px]"
+              />
             </div>
 
             {/* SL / TP sliders */}

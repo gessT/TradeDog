@@ -16,6 +16,10 @@ import { fetchMGCLive, type MGCLiveResponse } from "../services/api";
 // Props
 // ═══════════════════════════════════════════════════════════════════════
 
+/** Offset (seconds) to shift UTC epoch → browser local time for lightweight-charts */
+const TZ_OFFSET_SEC = -(new Date().getTimezoneOffset() * 60);
+const toLocal = (utcSec: number) => (utcSec + TZ_OFFSET_SEC) as UTCTimestamp;
+
 type Props = {
   onPriceUpdate?: (price: number) => void;
   focusTime?: number | null;
@@ -179,7 +183,7 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
     });
     candleSeries.setData(
       data.candles.map((c) => ({
-        time: (c.time / 1000) as UTCTimestamp,
+        time: toLocal(c.time / 1000),
         open: c.open,
         high: c.high,
         low: c.low,
@@ -195,7 +199,7 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
     chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
     volSeries.setData(
       data.candles.map((c) => ({
-        time: (c.time / 1000) as UTCTimestamp,
+        time: toLocal(c.time / 1000),
         value: c.volume,
         color: c.close >= c.open ? "#22c55e20" : "#ef444420",
       })),
@@ -203,7 +207,7 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
 
     // EMA fast (cyan)
     const emaFData = data.ema_fast
-      .map((v, i) => v !== null && v !== undefined ? { time: (data.candles[i].time / 1000) as UTCTimestamp, value: v } : null)
+      .map((v, i) => v !== null && v !== undefined ? { time: toLocal(data.candles[i].time / 1000), value: v } : null)
       .filter(Boolean) as { time: UTCTimestamp; value: number }[];
     if (emaFData.length > 0) {
       const emaF = chart.addSeries(LineSeries, { color: "#38bdf8", lineWidth: 1, priceLineVisible: false });
@@ -212,7 +216,7 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
 
     // EMA slow (orange)
     const emaSData = data.ema_slow
-      .map((v, i) => v !== null && v !== undefined ? { time: (data.candles[i].time / 1000) as UTCTimestamp, value: v } : null)
+      .map((v, i) => v !== null && v !== undefined ? { time: toLocal(data.candles[i].time / 1000), value: v } : null)
       .filter(Boolean) as { time: UTCTimestamp; value: number }[];
     if (emaSData.length > 0) {
       const emaS = chart.addSeries(LineSeries, { color: "#f97316", lineWidth: 1, priceLineVisible: false });
@@ -222,7 +226,7 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
     // Signal markers
     const signalMarkers = data.signals
       .map((s, i) => s === 1 ? {
-        time: (data.candles[i].time / 1000) as UTCTimestamp,
+        time: toLocal(data.candles[i].time / 1000),
         position: "belowBar" as const,
         color: "#22d3ee",
         shape: "arrowUp" as const,
@@ -251,7 +255,7 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
   // ── Scroll chart to focused trade candle (±1 week) ─────────────
   useEffect(() => {
     if (!focusTime || !chartRef.current) return;
-    const ts = focusTime as UTCTimestamp;
+    const ts = toLocal(focusTime);
     const oneWeek = 7 * 24 * 3600; // 1 week in seconds
     try {
       chartRef.current.timeScale().setVisibleRange({
@@ -266,7 +270,7 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
   // RSI data for mini chart
   const rsiData = data
     ? data.rsi
-        .map((v, i) => v !== null && v !== undefined ? { time: (data.candles[i].time / 1000) as UTCTimestamp, value: v } : null)
+        .map((v, i) => v !== null && v !== undefined ? { time: toLocal(data.candles[i].time / 1000), value: v } : null)
         .filter(Boolean) as { time: UTCTimestamp; value: number }[]
     : [];
 

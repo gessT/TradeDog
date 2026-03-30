@@ -784,8 +784,12 @@ export async function fetchMGC5MinBacktest(
   oos_split: number = 0.3,
   atr_sl_mult: number = 4.0,
   atr_tp_mult: number = 3.0,
+  date_from?: string,
+  date_to?: string,
 ): Promise<MGC5MinBacktestResponse> {
-  const url = `${API_BASE}/mgc/backtest_5min?period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  let url = `${API_BASE}/mgc/backtest_5min?period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  if (date_from) url += `&date_from=${date_from}`;
+  if (date_to) url += `&date_to=${date_to}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
