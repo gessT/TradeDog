@@ -15,11 +15,9 @@ import {
   fetchMGC5MinBacktest,
   scan5Min,
   execute5Min,
-  fetchTradeLog5Min,
   type MGC5MinBacktestResponse,
   type MGC5MinCandle,
   type Scan5MinResponse,
-  type TradeLog5MinResponse,
   type MGC5MinTrade,
   type Scan5MinSignal,
 } from "../services/api";
@@ -123,8 +121,7 @@ function reasonStyle(reason: string): string {
 function tabLabel(t: string): string {
   if (t === "backtest") return "Backtest";
   if (t === "scanner") return "Scanner";
-  if (t === "exam") return "🧪 Exam";
-  return "Trade Log";
+  return "🧪 Exam";
 }
 
 function strengthBgClass(s: number): string {
@@ -180,7 +177,7 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
 // Sub-tabs
 // ═══════════════════════════════════════════════════════════════════════
 
-type Tab5Min = "backtest" | "scanner" | "tradelog" | "exam";
+type Tab5Min = "backtest" | "scanner" | "exam";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Scanner Sub-panel
@@ -291,84 +288,6 @@ function ScannerTab({
           </div>
 
           <p className="text-[9px] text-slate-600 text-center">{scanData.timestamp}</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Trade Log Sub-panel
-// ═══════════════════════════════════════════════════════════════════════
-
-function TradeLogTab({
-  logData,
-  loading,
-  onLoad,
-  onTradeClick,
-}: Readonly<{
-  logData: TradeLog5MinResponse | null;
-  loading: boolean;
-  onLoad: () => void;
-  onTradeClick?: (t: MGC5MinTrade) => void;
-}>) {
-  return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-800/40">
-        <span className="text-[10px] text-slate-500">Last 50 trades from 5min backtest</span>
-        <button
-          onClick={onLoad}
-          disabled={loading}
-          className={`ml-auto px-3 py-1 text-[11px] font-bold rounded-lg transition-all ${
-            loading ? "bg-slate-800 text-slate-500 cursor-wait" : "bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95"
-          }`}
-        >
-          {loading ? "Loading..." : "Load"}
-        </button>
-      </div>
-
-      {!logData && !loading && (
-        <div className="flex items-center justify-center min-h-[200px]">
-          <p className="text-sm text-slate-500">Click Load to view recent trades</p>
-        </div>
-      )}
-
-      {logData && (
-        <div className="p-3 space-y-3">
-          <div className="grid grid-cols-3 gap-1.5">
-            <Metric label="Win Rate" value={`${n(logData.win_rate).toFixed(1)}%`} cls={winRateColor(logData.win_rate)} />
-            <Metric label="Total P&L" value={`${logData.total_pnl >= 0 ? "+" : ""}$${n(logData.total_pnl).toFixed(2)}`} cls={logData.total_pnl >= 0 ? "text-emerald-400" : "text-rose-400"} />
-            <Metric label="Total" value={`${logData.total} trades`} cls="text-slate-200" />
-          </div>
-
-          <div className="rounded-lg border border-slate-800/60 bg-slate-900/50">
-            <div className="max-h-[500px] overflow-y-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="text-[8px] text-slate-600 uppercase sticky top-0 bg-slate-900/95">
-                    <th className="px-2 py-1">Entry</th>
-                    <th className="px-2 py-1">Exit</th>
-                    <th className="px-2 py-1 text-right">In$</th>
-                    <th className="px-2 py-1 text-right">Out$</th>
-                    <th className="px-2 py-1 text-right">P&L</th>
-                    <th className="px-2 py-1 text-right">MAE$</th>
-                    <th className="px-2 py-1 text-center">Dir</th>
-                    <th className="px-2 py-1 text-center">Type</th>
-                    <th className="px-2 py-1 text-center">Sig</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...logData.trades].reverse().map((t, i) => (
-                    <TradeRow5Min key={`${t.entry_time}-${i}`} t={t} idx={i} onTradeClick={onTradeClick} />
-                  ))}
-                  {logData.trades.length === 0 && (
-                    <tr><td colSpan={9} className="text-center text-[10px] text-slate-600 py-4">No trades</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <p className="text-[9px] text-slate-600 text-center">{logData.timestamp}</p>
         </div>
       )}
     </div>
@@ -1047,8 +966,7 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
   const [scanData, setScanData] = useState<Scan5MinResponse | null>(null);
   const [executing, setExecuting] = useState(false);
 
-  // Trade log state
-  const [logData, setLogData] = useState<TradeLog5MinResponse | null>(null);
+
 
   // ── Backtest ──────────────────────────────────────────
   const runBacktest = useCallback(async () => {
@@ -1118,20 +1036,6 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
     }
   }, [scanData, slMult, tpMult]);
 
-  // ── Trade Log ─────────────────────────────────────────
-  const loadTradeLog = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetchTradeLog5Min(50);
-      setLogData(res);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   const m = btData?.metrics;
 
   return (
@@ -1143,7 +1047,7 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
 
         {/* Sub-tabs */}
         <div className="flex gap-0.5 ml-2">
-          {(["backtest", "scanner", "tradelog", "exam"] as Tab5Min[]).map((t) => (
+          {(["backtest", "scanner", "exam"] as Tab5Min[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -1353,13 +1257,6 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
       {/* ═════════════════════════════════════════════════════ */}
       {tab === "scanner" && (
         <ScannerTab scanData={scanData} loading={loading} onScan={runScan} onExecute={() => executeSignal()} executing={executing} />
-      )}
-
-      {/* ═════════════════════════════════════════════════════ */}
-      {/* TAB: Trade Log                                       */}
-      {/* ═════════════════════════════════════════════════════ */}
-      {tab === "tradelog" && (
-        <TradeLogTab logData={logData} loading={loading} onLoad={loadTradeLog} onTradeClick={onTradeClick} />
       )}
 
       {/* ═════════════════════════════════════════════════════ */}
