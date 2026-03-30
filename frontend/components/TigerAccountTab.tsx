@@ -11,6 +11,18 @@ import {
   type TigerOrderItem,
 } from "../services/api";
 
+const COMMODITY_NAMES: Record<string, string> = {
+  MGC: "Micro Gold",
+  BZ: "Brent Oil",
+  NG: "Natural Gas",
+  SI: "Silver",
+  CL: "Crude Oil WTI",
+  HG: "Copper",
+};
+
+/** Strip trailing digits from contract symbol (e.g. MGC2606 → MGC) */
+const baseSymbol = (s: string) => s.replace(/\d+$/, "");
+
 // ═══════════════════════════════════════════════════════════════════════
 // Quick Order
 // ═══════════════════════════════════════════════════════════════════════
@@ -177,6 +189,7 @@ function PositionRow({
           <span className="flex items-center gap-1">
             <span className={`text-[8px] transition-transform ${expanded ? "rotate-90" : ""}`}>▶</span>
             {p.symbol}
+            <span className="text-[9px] font-normal text-slate-500">{COMMODITY_NAMES[baseSymbol(p.symbol)] ?? ""}</span>
           </span>
         </td>
         <td className={`px-2 py-2 text-[11px] text-center font-bold ${p.quantity > 0 ? "text-emerald-400" : "text-rose-400"}`}>

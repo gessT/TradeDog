@@ -10,10 +10,10 @@ import ScanTradePanel from "./ScanTradePanel";
 import Strategy5MinPanel from "./Strategy5MinPanel";
 
 // ═══════════════════════════════════════════════════════════════════════
-// Dashboard — 3-column layout matching KLSE tab design
+// Futures Dashboard — multi-commodity trading workspace
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function MGCDashboard() {
+export default function FuturesDashboard() {
   const [focusTime, setFocusTime] = useState<number | null>(null);
   const [focusInterval, setFocusInterval] = useState<string | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState("MGC");
@@ -40,7 +40,7 @@ export default function MGCDashboard() {
       {/* COL 1 — 5min Strategy Workspace                              */}
       {/* ═══════════════════════════════════════════════════════════════ */}
       <section className="w-full md:w-1/2 overflow-y-auto border-r border-slate-800/60">
-        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} symbol={selectedSymbol} />
+        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} symbol={selectedSymbol} symbolName={selectedName} />
       </section>
 
       {/* ═══════════════════════════════════════════════════════════════ */}

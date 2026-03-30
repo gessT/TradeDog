@@ -295,10 +295,6 @@ class TigerTrader:
             logger.warning("OCA requires both SL and TP prices")
             return result
 
-        # Round to MGC tick size ($0.10)
-        stop_loss_price = round(round(stop_loss_price / 0.1) * 0.1, 1)
-        take_profit_price = round(round(take_profit_price / 0.1) * 0.1, 1)
-
         # Paper mode
         if self._client is None:
             sl_rec = OrderRecord(

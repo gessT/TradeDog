@@ -991,11 +991,13 @@ export async function execute5Min(
   entryPrice: number = 0,
   stopLoss: number = 0,
   takeProfit: number = 0,
+  symbol: string = "MGC",
 ): Promise<Execute5MinResponse> {
   const response = await fetch(`${API_BASE}/mgc/execute_5min`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      symbol,
       direction,
       qty,
       max_qty: maxQty,

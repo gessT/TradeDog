@@ -1259,7 +1259,7 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC" }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; symbol?: string }>) {
+export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbolName = "Micro Gold" }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; symbol?: string; symbolName?: string }>) {
   const [tab, setTab] = useState<Tab5Min>("backtest");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1354,6 +1354,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC" }: Read
         s.entry_price,
         s.stop_loss,
         s.take_profit,
+        symbol,
       );
       if (res.execution?.executed) {
         alert(`✅ Order Placed!\n\n${res.execution.reason}`);
@@ -1365,7 +1366,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC" }: Read
     } finally {
       setExecuting(false);
     }
-  }, [scanData, slMult, tpMult]);
+  }, [scanData, slMult, tpMult, symbol]);
 
   // ── Desktop notification with sound ───────────────────
   const notifyTrade = useCallback((direction: string, entry: number) => {
@@ -1432,7 +1433,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC" }: Read
           const side = dir === "PUT" ? "SELL" : "BUY";
           setExecuting(true);
           try {
-            const execRes = await execute5Min(dir, 1, 5, sig.entry_price, sig.stop_loss, sig.take_profit);
+            const execRes = await execute5Min(dir, 1, 5, sig.entry_price, sig.stop_loss, sig.take_profit, symbol);
             if (execRes.execution?.executed) {
               notifyTrade(side, sig.entry_price);
               setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} → ${execRes.execution?.order_id?.slice(0, 12)}`, ...prev.slice(0, 49)]);
@@ -1484,7 +1485,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC" }: Read
       <div className="px-3 pt-3 pb-0">
         <div className="flex items-center gap-2 mb-3">
           <span className="text-base">🎯</span>
-          <span className="text-sm font-bold text-cyan-400 tracking-wide">5MIN STRATEGY</span>
+          <span className="text-sm font-bold text-cyan-400 tracking-wide">{symbolName} · 5MIN STRATEGY</span>
           {autoExec && (
             <span className="ml-auto flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />

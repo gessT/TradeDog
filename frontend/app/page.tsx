@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import MGCDashboard from "../components/MGCDashboard";
+import FuturesDashboard from "../components/FuturesDashboard";
 import KLSEDashboard from "../components/klse/KLSEDashboard";
 import USDashboard from "../components/us/USDashboard";
 
 export default function Page() {
-  const [mode, setMode] = useState<"MY" | "US" | "MGC">("MY");
+  const [mode, setMode] = useState<"MY" | "US" | "FUTURES">("MY");
 
   return (
     <main className="h-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col">
@@ -29,18 +29,18 @@ export default function Page() {
           🇺🇸 US Stocks
         </button>
         <button
-          onClick={() => setMode("MGC")}
+          onClick={() => setMode("FUTURES")}
           className={`px-4 py-1.5 text-[11px] font-bold tracking-wide transition-colors ${
-            mode === "MGC" ? "text-amber-400 border-b-2 border-amber-400 bg-amber-500/5" : "text-slate-500 hover:text-slate-300"
+            mode === "FUTURES" ? "text-amber-400 border-b-2 border-amber-400 bg-amber-500/5" : "text-slate-500 hover:text-slate-300"
           }`}
         >
-          🥇 MGC Gold Futures
+          📈 Futures
         </button>
       </div>
 
       {mode === "MY" && <KLSEDashboard />}
       {mode === "US" && <USDashboard />}
-      {mode === "MGC" && <MGCDashboard />}
+      {mode === "FUTURES" && <FuturesDashboard />}
     </main>
   );
 }

@@ -207,12 +207,12 @@ def _isnan(v) -> bool:
 
 # yfinance symbols for commodities we track
 _COMMODITY_SYMBOLS = {
-    "MGC": {"yf": "MGC=F", "name": "Micro Gold", "icon": "🥇"},
-    "BZ": {"yf": "BZ=F", "name": "Brent Oil", "icon": "🛢️"},
-    "NG": {"yf": "NG=F", "name": "Natural Gas", "icon": "🔥"},
-    "SI": {"yf": "SI=F", "name": "Silver", "icon": "🪙"},
-    "CL": {"yf": "CL=F", "name": "Crude Oil WTI", "icon": "⛽"},
-    "HG": {"yf": "HG=F", "name": "Copper", "icon": "🔶"},
+    "MGC": {"yf": "MGC=F", "name": "Micro Gold", "icon": "🥇", "tiger": "MGC", "tick": 0.10},
+    "BZ":  {"yf": "BZ=F",  "name": "Brent Oil",    "icon": "🛢️", "tiger": "BZ",  "tick": 0.01},
+    "NG":  {"yf": "NG=F",  "name": "Natural Gas",  "icon": "🔥", "tiger": "NG",  "tick": 0.001},
+    "SI":  {"yf": "SI=F",  "name": "Silver",       "icon": "🪙", "tiger": "SI",  "tick": 0.005},
+    "CL":  {"yf": "CL=F",  "name": "Crude Oil WTI", "icon": "⛽", "tiger": "CL",  "tick": 0.01},
+    "HG":  {"yf": "HG=F",  "name": "Copper",       "icon": "🔶", "tiger": "HG",  "tick": 0.0005},
 }
 
 
@@ -1471,6 +1471,7 @@ async def mgc_scan_5min_live(
 
 class Execute5MinRequest(BaseModel):
     """Request body for /execute_5min endpoint."""
+    symbol: str = "MGC"            # commodity key (MGC, BZ, NG, SI, CL, HG)
     qty: int = 1
     max_qty: int = 5
     direction: str = "CALL"       # "CALL" or "PUT"
@@ -1495,10 +1496,15 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
     def _run():
         from mgc_trading.tiger_execution import TigerTrader
 
+        # Resolve commodity metadata
+        commodity = _COMMODITY_SYMBOLS.get(req.symbol, _COMMODITY_SYMBOLS["MGC"])
+        tiger_sym = commodity["tiger"]
+        tick_size = commodity["tick"]
+
         side = "BUY" if req.direction == "CALL" else "SELL"
 
         # Position check
-        current_pos = _get_tiger_position("MGC")
+        current_pos = _get_tiger_position(tiger_sym)
         at_max = current_pos >= req.max_qty
         position_info = {
             "current_qty": current_pos,
@@ -1518,14 +1524,18 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
             )
             return exec_result, position_info
 
+        # Round SL/TP to commodity tick size
+        sl_price = round(round(req.stop_loss / tick_size) * tick_size, 6)
+        tp_price = round(round(req.take_profit / tick_size) * tick_size, 6)
+
         trader = TigerTrader()
         trader.connect()
         bracket = trader.place_bracket_order(
-            symbol="MGC",
+            symbol=tiger_sym,
             qty=req.qty,
             side=side,
-            stop_loss_price=req.stop_loss,
-            take_profit_price=req.take_profit,
+            stop_loss_price=sl_price,
+            take_profit_price=tp_price,
         )
         if bracket.entry and bracket.entry.status != "FAILED":
             parts = [f"Entry {bracket.entry.order_id} {side}"]
