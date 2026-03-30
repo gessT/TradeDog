@@ -180,6 +180,112 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
 type Tab5Min = "backtest" | "scanner" | "exam";
 
 // ═══════════════════════════════════════════════════════════════════════
+// Scan Mini Chart (last 30 candles with entry/SL/TP lines)
+// ═══════════════════════════════════════════════════════════════════════
+
+import type { Scan5MinCandle } from "../services/api";
+
+function ScanMiniChart({
+  candles,
+  entry,
+  sl,
+  tp,
+  direction,
+}: Readonly<{
+  candles: Scan5MinCandle[];
+  entry?: number;
+  sl?: number;
+  tp?: number;
+  direction?: string;
+}>) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || candles.length === 0) return;
+
+    if (chartRef.current) {
+      chartRef.current.remove();
+      chartRef.current = null;
+    }
+
+    const chart = createChart(el, {
+      width: el.clientWidth,
+      height: 150,
+      layout: { background: { color: "#0f172a" }, textColor: "#64748b", fontSize: 9 },
+      grid: { vertLines: { color: "#1e293b" }, horzLines: { color: "#1e293b" } },
+      rightPriceScale: { borderVisible: false },
+      timeScale: { borderColor: "#334155", timeVisible: true, secondsVisible: false },
+      crosshair: { mode: 0 },
+    });
+    chartRef.current = chart;
+
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: "#22c55e",
+      downColor: "#ef4444",
+      borderUpColor: "#22c55e",
+      borderDownColor: "#ef4444",
+      wickUpColor: "#22c55e80",
+      wickDownColor: "#ef444480",
+    });
+
+    const seen = new Set<number>();
+    const ohlc: { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
+    for (const c of candles) {
+      const t = (Math.floor(new Date(c.time).getTime() / 1000) + TZ_OFFSET_SEC) as UTCTimestamp;
+      if (seen.has(t as number)) continue;
+      seen.add(t as number);
+      ohlc.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
+    }
+    candleSeries.setData(ohlc);
+
+    // Entry / SL / TP price lines
+    if (entry) {
+      candleSeries.createPriceLine({
+        price: entry, color: "#ffffff", lineWidth: 1, lineStyle: 2,
+        axisLabelVisible: true, title: "Entry",
+      });
+    }
+    if (sl) {
+      candleSeries.createPriceLine({
+        price: sl, color: "#ef4444", lineWidth: 1, lineStyle: 2,
+        axisLabelVisible: true, title: "SL",
+      });
+    }
+    if (tp) {
+      candleSeries.createPriceLine({
+        price: tp, color: "#22c55e", lineWidth: 1, lineStyle: 2,
+        axisLabelVisible: true, title: "TP",
+      });
+    }
+
+    // Signal marker on last bar
+    if (entry && ohlc.length > 0) {
+      const last = ohlc[ohlc.length - 1];
+      createSeriesMarkers(candleSeries, [{
+        time: last.time,
+        position: direction === "PUT" ? "aboveBar" : "belowBar",
+        color: direction === "PUT" ? "#ef4444" : "#22c55e",
+        shape: direction === "PUT" ? "arrowDown" : "arrowUp",
+        text: direction === "PUT" ? "SELL" : "BUY",
+      }]);
+    }
+
+    chart.timeScale().fitContent();
+
+    const ro = new ResizeObserver(() => {
+      if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth });
+    });
+    ro.observe(el);
+
+    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
+  }, [candles, entry, sl, tp, direction]);
+
+  return <div ref={containerRef} className="w-full rounded-lg overflow-hidden" />;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Scanner Sub-panel
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -292,6 +398,17 @@ function ScannerTab({
                   </div>
                 )}
               </div>
+
+              {/* Mini chart */}
+              {scanData.candles && scanData.candles.length > 0 && (
+                <ScanMiniChart
+                  candles={scanData.candles}
+                  entry={sig.found ? sig.entry_price : undefined}
+                  sl={sig.found ? sig.stop_loss : undefined}
+                  tp={sig.found ? sig.take_profit : undefined}
+                  direction={sig.found ? sig.direction : undefined}
+                />
+              )}
 
               {/* Strength */}
               <div className="flex items-center gap-3">

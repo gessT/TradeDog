@@ -128,34 +128,141 @@ function QuickOrder({ onDone }: Readonly<{ onDone: () => void }>) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Position Row
+// Position Row (expandable with trade controls)
 // ═══════════════════════════════════════════════════════════════════════
 
 function PositionRow({
   p,
   onClose,
-}: Readonly<{ p: TigerPositionItem; onClose: (sym: string) => void }>) {
+  onTrade,
+}: Readonly<{ p: TigerPositionItem; onClose: (sym: string) => void; onTrade: () => void }>) {
+  const [expanded, setExpanded] = useState(false);
+  const [qty, setQty] = useState(1);
+  const [orderType, setOrderType] = useState<"MKT" | "LMT">("MKT");
+  const [limitPrice, setLimitPrice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
   const pnlColor = p.unrealized_pnl >= 0 ? "text-emerald-400" : "text-rose-400";
+
+  const handleOrder = useCallback(async (side: "BUY" | "SELL") => {
+    if (busy) return;
+    const priceStr = orderType === "LMT" ? ` @ $${limitPrice}` : "";
+    if (!confirm(`${side} ${qty}x ${p.symbol} ${orderType}${priceStr}?`)) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await placeSimpleOrder(
+        p.symbol, side, qty, orderType,
+        orderType === "LMT" ? parseFloat(limitPrice) : undefined,
+      );
+      setResult(res.success ? `✅ ${res.message}` : `❌ ${res.message}`);
+      if (res.success) onTrade();
+    } catch (e) {
+      setResult(`❌ ${e instanceof Error ? e.message : "Failed"}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, qty, orderType, limitPrice, p.symbol, onTrade]);
+
   return (
-    <tr className="border-b border-slate-800/40 hover:bg-slate-800/30 transition-colors">
-      <td className="px-2 py-2 text-[11px] font-bold text-slate-200">{p.symbol}</td>
-      <td className={`px-2 py-2 text-[11px] text-center font-bold ${p.quantity > 0 ? "text-emerald-400" : "text-rose-400"}`}>
-        {p.quantity > 0 ? "+" : ""}{p.quantity}
-      </td>
-      <td className="px-2 py-2 text-[11px] text-right text-slate-300 tabular-nums">${p.average_cost.toFixed(2)}</td>
-      <td className="px-2 py-2 text-[11px] text-right text-slate-300 tabular-nums">${p.market_value.toFixed(2)}</td>
-      <td className={`px-2 py-2 text-[11px] text-right font-bold tabular-nums ${pnlColor}`}>
-        {p.unrealized_pnl >= 0 ? "+" : ""}${p.unrealized_pnl.toFixed(2)}
-      </td>
-      <td className="px-2 py-2 text-center">
-        <button
-          onClick={() => onClose(p.symbol)}
-          className="text-[9px] font-bold px-2 py-0.5 rounded bg-rose-600/20 text-rose-400 hover:bg-rose-600/40 transition-colors"
-        >
-          CLOSE
-        </button>
-      </td>
-    </tr>
+    <>
+      <tr
+        onClick={() => setExpanded((v) => !v)}
+        className={`border-b border-slate-800/40 cursor-pointer transition-colors ${
+          expanded ? "bg-slate-800/50" : "hover:bg-slate-800/30"
+        }`}
+      >
+        <td className="px-2 py-2 text-[11px] font-bold text-slate-200">
+          <span className="flex items-center gap-1">
+            <span className={`text-[8px] transition-transform ${expanded ? "rotate-90" : ""}`}>▶</span>
+            {p.symbol}
+          </span>
+        </td>
+        <td className={`px-2 py-2 text-[11px] text-center font-bold ${p.quantity > 0 ? "text-emerald-400" : "text-rose-400"}`}>
+          {p.quantity > 0 ? "+" : ""}{p.quantity}
+        </td>
+        <td className="px-2 py-2 text-[11px] text-right text-slate-300 tabular-nums">${p.average_cost.toFixed(2)}</td>
+        <td className="px-2 py-2 text-[11px] text-right text-slate-300 tabular-nums">${p.market_value.toFixed(2)}</td>
+        <td className={`px-2 py-2 text-[11px] text-right font-bold tabular-nums ${pnlColor}`}>
+          {p.unrealized_pnl >= 0 ? "+" : ""}${p.unrealized_pnl.toFixed(2)}
+        </td>
+        <td className="px-2 py-2 text-center">
+          <button
+            onClick={(e) => { e.stopPropagation(); onClose(p.symbol); }}
+            className="text-[9px] font-bold px-2 py-0.5 rounded bg-rose-600/20 text-rose-400 hover:bg-rose-600/40 transition-colors"
+          >
+            CLOSE
+          </button>
+        </td>
+      </tr>
+      {expanded && (
+        <tr>
+          <td colSpan={6} className="p-0">
+            <div className="px-3 py-2.5 bg-slate-900/80 border-b border-slate-700/40 space-y-2">
+              {/* Controls row */}
+              <div className="flex items-end gap-2 flex-wrap">
+                {/* Qty */}
+                <div>
+                  <label className="text-[7px] text-slate-600 uppercase block">Qty</label>
+                  <input
+                    type="number" min={1} max={99} value={qty}
+                    onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-12 px-1.5 py-1 text-[10px] bg-slate-800 border border-slate-700 rounded text-center text-slate-200 tabular-nums"
+                  />
+                </div>
+                {/* Type */}
+                <div>
+                  <label className="text-[7px] text-slate-600 uppercase block">Type</label>
+                  <div className="flex">
+                    {(["MKT", "LMT"] as const).map((t) => (
+                      <button
+                        key={t}
+                        onClick={(e) => { e.stopPropagation(); setOrderType(t); }}
+                        className={`px-2 py-1 text-[9px] font-bold first:rounded-l last:rounded-r transition-all ${
+                          orderType === t ? "bg-cyan-600 text-white" : "bg-slate-800 text-slate-500 hover:text-slate-300"
+                        }`}
+                      >{t}</button>
+                    ))}
+                  </div>
+                </div>
+                {/* Limit price */}
+                {orderType === "LMT" && (
+                  <div>
+                    <label className="text-[7px] text-slate-600 uppercase block">Price</label>
+                    <input
+                      type="number" step="0.1" value={limitPrice}
+                      onChange={(e) => setLimitPrice(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      placeholder="0.00"
+                      className="w-20 px-1.5 py-1 text-[10px] bg-slate-800 border border-slate-700 rounded text-center text-slate-200 tabular-nums"
+                    />
+                  </div>
+                )}
+                {/* Buy / Sell buttons */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleOrder("BUY"); }}
+                  disabled={busy}
+                  className={`px-4 py-1 text-[10px] font-bold rounded transition-all ${
+                    busy ? "bg-slate-800 text-slate-500 cursor-wait" : "bg-emerald-600 text-white hover:bg-emerald-500 active:scale-95"
+                  }`}
+                >{busy ? "…" : `BUY ${qty}x`}</button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleOrder("SELL"); }}
+                  disabled={busy}
+                  className={`px-4 py-1 text-[10px] font-bold rounded transition-all ${
+                    busy ? "bg-slate-800 text-slate-500 cursor-wait" : "bg-rose-600 text-white hover:bg-rose-500 active:scale-95"
+                  }`}
+                >{busy ? "…" : `SELL ${qty}x`}</button>
+              </div>
+              {/* Result */}
+              {result && <p className="text-[9px] text-slate-300">{result}</p>}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -321,7 +428,7 @@ export default function TigerAccountTab() {
               </thead>
               <tbody>
                 {data.positions.map((p) => (
-                  <PositionRow key={p.symbol} p={p} onClose={handleClose} />
+                  <PositionRow key={p.symbol} p={p} onClose={handleClose} onTrade={refresh} />
                 ))}
               </tbody>
             </table>

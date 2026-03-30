@@ -899,9 +899,19 @@ export type Scan5MinSignal = {
   bar_time: string;
 };
 
+export type Scan5MinCandle = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
 export type Scan5MinResponse = {
   opportunity: boolean;
   signal: Scan5MinSignal;
+  candles: Scan5MinCandle[];
   timestamp: string;
 };
 

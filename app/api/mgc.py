@@ -625,14 +625,18 @@ async def place_simple_order(req: SimpleOrderRequest) -> SimpleOrderResponse:
     """Place a simple BUY or SELL market/limit order on Tiger."""
 
     def _run():
+        import re
         from tigeropen.common.util.order_utils import market_order, limit_order
 
         _, trade_client = _get_tiger_clients()
 
+        # Strip expiry digits (e.g. MGC2606 → MGC) for contract lookup
+        base_symbol = re.sub(r"\d+$", "", req.symbol) or req.symbol
+
         # Resolve contract
-        contracts = trade_client.get_contracts(req.symbol, sec_type="FUT")
+        contracts = trade_client.get_contracts(base_symbol, sec_type="FUT")
         if not contracts:
-            return SimpleOrderResponse(success=False, message=f"No contract found for {req.symbol}")
+            return SimpleOrderResponse(success=False, message=f"No contract found for {req.symbol} (base={base_symbol})")
         contract = contracts[0]
         contract.expiry = None  # SDK v3.5.7
 
@@ -686,15 +690,19 @@ async def close_position(symbol: str = "MGC"):
     """Close all positions for a symbol by placing a market order in the opposite direction."""
 
     def _run():
+        import re
         from tigeropen.common.util.order_utils import market_order
 
         _, trade_client = _get_tiger_clients()
+
+        # Strip expiry digits (e.g. MGC2606 → MGC)
+        base_symbol = re.sub(r"\d+$", "", symbol) or symbol
 
         # Get current position
         positions = trade_client.get_positions(account=TIGER_ACCOUNT, sec_type="FUT")
         total_qty = 0
         for p in (positions or []):
-            if p.contract and p.contract.symbol and p.contract.symbol.startswith(symbol):
+            if p.contract and p.contract.symbol and p.contract.symbol.startswith(base_symbol):
                 total_qty += int(p.quantity)
 
         if total_qty == 0:
@@ -704,7 +712,7 @@ async def close_position(symbol: str = "MGC"):
         close_side = "SELL" if total_qty > 0 else "BUY"
         close_qty = abs(total_qty)
 
-        contracts = trade_client.get_contracts(symbol, sec_type="FUT")
+        contracts = trade_client.get_contracts(base_symbol, sec_type="FUT")
         if not contracts:
             return {"success": False, "message": f"No contract for {symbol}"}
         contract = contracts[0]
@@ -1212,6 +1220,7 @@ class Scan5MinSignal(BaseModel):
 class Scan5MinResponse(BaseModel):
     opportunity: bool
     signal: Scan5MinSignal
+    candles: list[dict] = []
     timestamp: str
 
 
@@ -1235,6 +1244,20 @@ async def mgc_scan_5min(
         custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
         result = scan_5min(df, params=custom_params)
 
+        # Last 30 candles for mini chart
+        tail = df.tail(30)
+        candles_out = []
+        for idx, row in tail.iterrows():
+            t = str(idx)
+            candles_out.append({
+                "time": t[:16] if len(t) > 16 else t,
+                "open": round(float(row.get("Open", row.get("open", 0))), 2),
+                "high": round(float(row.get("High", row.get("high", 0))), 2),
+                "low": round(float(row.get("Low", row.get("low", 0))), 2),
+                "close": round(float(row.get("Close", row.get("close", 0))), 2),
+                "volume": int(row.get("Volume", row.get("volume", 0))),
+            })
+
         sig = Scan5MinSignal(
             found=result.found,
             direction=result.direction,
@@ -1254,13 +1277,14 @@ async def mgc_scan_5min(
             volume_ratio=result.volume_ratio,
             bar_time=result.bar_time,
         )
-        return result.found, sig
+        return result.found, sig, candles_out
 
-    found, sig = await run_in_threadpool(_run)
+    found, sig, candles_out = await run_in_threadpool(_run)
 
     return Scan5MinResponse(
         opportunity=found,
         signal=sig,
+        candles=candles_out,
         timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
 
