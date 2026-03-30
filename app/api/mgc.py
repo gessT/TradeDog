@@ -264,35 +264,51 @@ async def mgc_live(
     interval: Annotated[str, Query()] = "15m",
     limit: Annotated[int, Query(ge=50, le=2000)] = 500,
 ) -> MGCLiveResponse:
-    """Fetch real-time MGC bars from Tiger API with indicators."""
+    """Fetch real-time MGC bars from Tiger API with yfinance fallback."""
 
     def _run():
         import pandas as pd
         from mgc_trading import indicators as ind
 
-        if not _tiger_quote_ok:
-            raise ValueError("Tiger SDK not available")
+        identifier = "MGC"
+        use_tiger = False
 
-        quote_client, trade_client = _get_tiger_clients()
+        # ── Try Tiger API first ──────────────────────────────────
+        if _tiger_quote_ok:
+            try:
+                quote_client, trade_client = _get_tiger_clients()
+                contracts = trade_client.get_contracts("MGC", sec_type="FUT")
+                identifier = contracts[0].identifier if contracts else "MGC"
 
-        # Resolve contract
-        contracts = trade_client.get_contracts("MGC", sec_type="FUT")
-        identifier = contracts[0].identifier if contracts else "MGC"
+                period = _BAR_PERIOD_MAP.get(interval)
+                if period is None:
+                    raise ValueError(f"Unsupported interval: {interval}")
 
-        period = _BAR_PERIOD_MAP.get(interval)
-        if period is None:
-            raise ValueError(f"Unsupported interval: {interval}")
+                df_raw = quote_client.get_future_bars(identifier, period=period, limit=limit)
+                if df_raw is not None and not df_raw.empty:
+                    times = df_raw["time"].tolist()
+                    df = df_raw[["open", "high", "low", "close", "volume"]].copy()
+                    df.index = pd.to_datetime(df_raw["time"], unit="ms")
+                    df["_time_ms"] = times
+                    df = df.sort_index()
+                    use_tiger = True
+            except Exception:
+                logger.warning("Tiger API unavailable, falling back to yfinance")
 
-        df = quote_client.get_future_bars(identifier, period=period, limit=limit)
-        if df is None or df.empty:
-            raise ValueError("No data returned from Tiger")
-
-        # Build DataFrame
-        times = df["time"].tolist()
-        df.index = pd.to_datetime(df["time"], unit="ms")
-        df = df[["open", "high", "low", "close", "volume"]].copy()
-        df["_time_ms"] = times
-        df = df.sort_index()
+        # ── Fallback: yfinance ───────────────────────────────────
+        if not use_tiger:
+            # yfinance caps: 1m→7d, 5m/15m→60d
+            yf_period = "60d"
+            if interval == "1m":
+                yf_period = "7d"
+            df = load_yfinance(symbol="MGC=F", interval=interval, period=yf_period)
+            if df is None or df.empty:
+                raise ValueError("No data from yfinance for MGC=F")
+            # Trim to requested limit
+            if len(df) > limit:
+                df = df.iloc[-limit:]
+            # Add epoch-ms column
+            df["_time_ms"] = [int(ts.timestamp() * 1000) for ts in df.index]
 
         # Compute indicators
         p = DEFAULT_PARAMS
@@ -464,30 +480,38 @@ async def scan_trade(req: ScanTradeRequest) -> ScanTradeResponse:
         from mgc_trading.config import CONTRACT_SIZE, RISK_PER_TRADE
         from mgc_trading.tiger_execution import TigerTrader
 
-        if not _tiger_quote_ok:
-            raise ValueError("Tiger SDK not available")
-
-        quote_client, trade_client = _get_tiger_clients()
-
-        # Resolve contract
         symbol = req.symbols[0] if req.symbols else "MGC"
-        contracts = trade_client.get_contracts(symbol, sec_type="FUT")
-        if not contracts:
-            raise ValueError(f"No contract found for {symbol}")
-        identifier = contracts[0].identifier
+        identifier = symbol
+        use_tiger = False
 
-        period = _BAR_PERIOD_MAP.get(req.interval, _BAR_PERIOD_MAP.get("5m"))
+        # ── 1. Fetch real-time data (Tiger first, yfinance fallback)
+        if _tiger_quote_ok:
+            try:
+                quote_client, trade_client = _get_tiger_clients()
+                contracts = trade_client.get_contracts(symbol, sec_type="FUT")
+                if not contracts:
+                    raise ValueError(f"No contract found for {symbol}")
+                identifier = contracts[0].identifier
 
-        # ── 1. Fetch real-time data ──────────────────────────────
-        df_raw = quote_client.get_future_bars(identifier, period=period, limit=500)
-        if df_raw is None or df_raw.empty:
-            raise ValueError("No data from Tiger API")
+                period = _BAR_PERIOD_MAP.get(req.interval, _BAR_PERIOD_MAP.get("5m"))
+                df_raw = quote_client.get_future_bars(identifier, period=period, limit=500)
+                if df_raw is not None and not df_raw.empty:
+                    times_ms = df_raw["time"].tolist()
+                    df = df_raw[["open", "high", "low", "close", "volume"]].copy()
+                    df.index = pd.to_datetime(df_raw["time"], unit="ms")
+                    df = df.sort_index()
+                    df["_time_ms"] = sorted(times_ms)
+                    use_tiger = True
+            except Exception:
+                logger.warning("Tiger API unavailable for scan_trade, falling back to yfinance")
 
-        times_ms = df_raw["time"].tolist()
-        df = df_raw[["open", "high", "low", "close", "volume"]].copy()
-        df.index = pd.to_datetime(df_raw["time"], unit="ms")
-        df = df.sort_index()
-        df["_time_ms"] = sorted(times_ms)
+        if not use_tiger:
+            yf_symbol = "MGC=F"
+            yf_period = "7d" if req.interval == "1m" else "60d"
+            df = load_yfinance(symbol=yf_symbol, interval=req.interval, period=yf_period)
+            if df is None or df.empty:
+                raise ValueError(f"No data from yfinance for {yf_symbol}")
+            df["_time_ms"] = [int(ts.timestamp() * 1000) for ts in df.index]
 
         # ── 2. Compute indicators ────────────────────────────────
         p = {**DEFAULT_PARAMS, "ema_fast": 20, "ema_slow": 50}
