@@ -1621,8 +1621,9 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
                 <Metric label="R:R" value={`1:${n(m.risk_reward_ratio).toFixed(2)}`} cls="text-cyan-400" />
               </div>
 
-              {/* Last 5 days P&L card */}
+              {/* Daily P&L card (matches selected period) */}
               {(() => {
+                const numDays = parseInt(period) || 5;
                 const dailyMap: Record<string, { pnl: number; count: number }> = {};
                 for (const t of btData.trades) {
                   const day = t.exit_time.slice(0, 10);
@@ -1632,15 +1633,15 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
                 }
                 const days = Object.entries(dailyMap)
                   .sort(([a], [b]) => b.localeCompare(a))
-                  .slice(0, 5);
+                  .slice(0, numDays);
                 if (days.length === 0) return null;
-                const total5d = days.reduce((s, [, d]) => s + d.pnl, 0);
+                const totalPnl = days.reduce((s, [, d]) => s + d.pnl, 0);
                 return (
                   <div className="rounded-xl border border-slate-800/60 bg-slate-900/40 p-3">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-[9px] uppercase tracking-widest text-slate-500">Last {days.length} Day P&L</span>
-                      <span className={`text-sm font-bold ${total5d >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                        {total5d >= 0 ? "+" : ""}${n(total5d).toFixed(2)}
+                      <span className="text-[9px] uppercase tracking-widest text-slate-500">{period} Daily P&L · {days.length} trading day{days.length > 1 ? "s" : ""}</span>
+                      <span className={`text-sm font-bold ${totalPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                        {totalPnl >= 0 ? "+" : ""}${n(totalPnl).toFixed(2)}
                       </span>
                     </div>
                     <div className="space-y-1">
