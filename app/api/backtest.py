@@ -1104,11 +1104,11 @@ class KLSEOptimizeRequest(BaseModel):
 
 @router.post("/strategy/klse/optimize")
 async def optimize_klse_strategy(payload: KLSEOptimizeRequest) -> dict[str, object]:
-    """Run parameter grid optimization for HalfTrend + Weekly Supertrend."""
-    import itertools
-    from klse_strategy.strategy import StrategyParams
-    from klse_strategy.backtest import run_backtest as klse_backtest
-    from klse_strategy.optimizer import composite_score, DEFAULT_GRID
+    """Run EMA Trend-Pullback + Supertrend + RSI grid optimisation (strategy_v2)."""
+    from klse_strategy.strategy_v2 import (
+        build_indicators, generate_signals, backtest as v2_backtest,
+        calc_metrics, optimize as v2_optimize, DEFAULT_GRID,
+    )
 
     frame = await run_in_threadpool(fetch_stock, payload.symbol, payload.period)
     if "Close" not in frame.columns:
@@ -1120,102 +1120,118 @@ async def optimize_klse_strategy(payload: KLSEOptimizeRequest) -> dict[str, obje
     normalized["Date"] = pd.to_datetime(normalized["Date"], errors="coerce")
     normalized = normalized.dropna(subset=["Date", "Close"]).reset_index(drop=True)
 
+    # Build DataFrame with DatetimeIndex expected by strategy_v2
+    dt_index = pd.to_datetime(normalized["Date"])
     df = pd.DataFrame({
-        "date": pd.to_datetime(normalized["Date"]),
-        "open": normalized.get("Open", normalized["Close"]).astype(float),
-        "high": normalized.get("High", normalized["Close"]).astype(float),
-        "low": normalized.get("Low", normalized["Close"]).astype(float),
-        "close": normalized["Close"].astype(float),
-        "volume": normalized.get("Volume", 0).astype(float),
-    })
+        "open": normalized.get("Open", normalized["Close"]).astype(float).values,
+        "high": normalized.get("High", normalized["Close"]).astype(float).values,
+        "low": normalized.get("Low", normalized["Close"]).astype(float).values,
+        "close": normalized["Close"].astype(float).values,
+        "volume": normalized.get("Volume", pd.Series(1, index=normalized.index)).astype(float).values,
+    }, index=dt_index)
+    # Fill zero-volume bars with 1 to avoid dropping valid trading days
+    df.loc[df["volume"] <= 0, "volume"] = 1.0
 
-    if len(df) < 200:
-        raise HTTPException(status_code=400, detail="Need at least 200 bars")
+    if len(df) < 120:
+        raise HTTPException(status_code=400, detail=f"Need at least 120 bars, got {len(df)}")
 
     def _optimize():
-        grid = DEFAULT_GRID
-        keys = list(grid.keys())
-        combos = list(itertools.product(*[grid[k] for k in keys]))
-        results = []
-        for vals in combos:
-            pdict = dict(zip(keys, vals))
-            params = StrategyParams(**pdict)
-            try:
-                r = klse_backtest(df, params, payload.capital)
-            except Exception:
-                continue
-            score = composite_score(r)
-            if r.total_trades >= 1:
-                results.append((pdict, r, score))
-        results.sort(key=lambda x: x[2], reverse=True)
-        return results[:10]
+        from klse_strategy.strategy_v2 import QUICK_GRID
+        # Use quick grid for shorter datasets, full grid for longer ones
+        grid = DEFAULT_GRID if len(df) >= 500 else QUICK_GRID
+        return v2_optimize(df, capital=payload.capital, grid=grid, top_n=10)
 
     top = await run_in_threadpool(_optimize)
 
     if not top:
         raise HTTPException(status_code=400, detail="No parameter combinations met criteria")
 
-    best_params, best_result, best_score = top[0]
-    best_p = StrategyParams(**best_params)
+    best_params, best_trades, best_eq, best_m, best_score = top[0]
 
-    dates = df["date"].astype(str).tolist()
+    # Build equity curve
+    dates = [str(d)[:10] for d in best_eq.index]
     curve = []
-    for i, val in enumerate(best_result.equity_curve):
-        d = dates[i] if i < len(dates) else dates[-1]
-        curve.append({"date": d[:10], "equity": round(val, 2)})
+    step = max(1, len(best_eq) // 500)
+    for i in range(0, len(best_eq), step):
+        curve.append({"date": dates[i], "equity": round(float(best_eq.iloc[i]), 2)})
+    if len(best_eq) - 1 not in range(0, len(best_eq), step):
+        curve.append({"date": dates[-1], "equity": round(float(best_eq.iloc[-1]), 2)})
 
+    # Top results table
     top_list = []
-    for rank, (p, r, s) in enumerate(top):
+    for rank, (p, t_df, eq, m, s) in enumerate(top):
         top_list.append({
             "rank": rank + 1,
             "params": p,
-            "win_rate": r.win_rate,
-            "total_return_pct": r.total_return_pct,
-            "max_drawdown_pct": r.max_drawdown_pct,
-            "profit_factor": r.profit_factor,
-            "total_trades": r.total_trades,
-            "sharpe": r.sharpe_ratio,
+            "win_rate": m["win_rate"],
+            "total_return_pct": m["roi"],
+            "max_drawdown_pct": m["max_dd"],
+            "profit_factor": m["profit_factor"],
+            "total_trades": m["n"],
+            "sharpe": m["sharpe"],
             "score": round(s, 1),
         })
+
+    # Trade list
+    trade_list = []
+    for _, row in best_trades.iterrows():
+        risk = row["entry"] - row["sl"] if row["entry"] > row["sl"] else 0.01
+        rr = (row["exit"] - row["entry"]) / risk if risk > 0 else 0.0
+        # Estimate bars held from dates
+        try:
+            entry_dt = pd.to_datetime(row["entry_date"])
+            exit_dt = pd.to_datetime(row["exit_date"])
+            bars = max(1, (exit_dt - entry_dt).days)
+        except Exception:
+            bars = 1
+        trade_list.append({
+            "entry_date": str(row["entry_date"])[:10],
+            "exit_date": str(row["exit_date"])[:10],
+            "entry_price": row["entry"],
+            "exit_price": row["exit"],
+            "sl_price": row["sl"],
+            "tp_price": row["tp"],
+            "pnl_pct": row["pnl_pct"],
+            "pnl_dollar": round(row["pnl_pct"] * payload.capital / 100, 2),
+            "rr": round(rr, 2),
+            "bars_held": bars,
+            "exit_reason": row["reason"],
+            "strategy": "EMA+ST+RSI",
+        })
+
+    # Average bars held
+    avg_bars = (
+        sum(t["bars_held"] for t in trade_list) / max(len(trade_list), 1)
+    ) if trade_list else 0
+
+    # Count grid combos
+    keys = list(DEFAULT_GRID.keys())
+    from itertools import product as iproduct
+    total_combos = sum(1 for vals in iproduct(*DEFAULT_GRID.values())
+                       if vals[0] < vals[1])  # ef < es filter
 
     return {
         "symbol": payload.symbol.upper(),
         "best_params": best_params,
         "metrics": {
-            "total_trades": best_result.total_trades,
-            "wins": best_result.winners,
-            "losses": best_result.losers,
-            "win_rate": best_result.win_rate,
-            "total_return_pct": best_result.total_return_pct,
-            "max_drawdown_pct": best_result.max_drawdown_pct,
-            "avg_win_pct": best_result.avg_win_pct,
-            "avg_loss_pct": best_result.avg_loss_pct,
-            "risk_reward": best_result.risk_reward,
-            "sharpe": best_result.sharpe_ratio,
-            "profit_factor": best_result.profit_factor,
-            "final_equity": best_result.final_equity,
-            "avg_bars_held": round(
-                sum(t.bars_held for t in best_result.trades) / max(len(best_result.trades), 1), 1
-            ),
+            "total_trades": best_m["n"],
+            "wins": int(best_trades["win"].sum()) if not best_trades.empty else 0,
+            "losses": int((~best_trades["win"]).sum()) if not best_trades.empty else 0,
+            "win_rate": best_m["win_rate"],
+            "total_return_pct": best_m["roi"],
+            "max_drawdown_pct": best_m["max_dd"],
+            "avg_win_pct": best_m["avg_win"],
+            "avg_loss_pct": best_m["avg_loss"],
+            "risk_reward": round(
+                abs(best_m["avg_win"] / best_m["avg_loss"]), 2
+            ) if best_m["avg_loss"] != 0 else 0.0,
+            "sharpe": best_m["sharpe"],
+            "profit_factor": best_m["profit_factor"],
+            "final_equity": best_m["final_equity"],
+            "avg_bars_held": round(avg_bars, 1),
         },
-        "trades": [
-            {
-                "entry_date": t.entry_date,
-                "exit_date": t.exit_date,
-                "entry_price": t.entry_price,
-                "exit_price": t.exit_price,
-                "sl_price": t.sl_price,
-                "tp_price": t.tp_price,
-                "pnl_pct": t.return_pct,
-                "pnl_dollar": t.pnl,
-                "rr": t.rr,
-                "bars_held": t.bars_held,
-                "exit_reason": t.exit_reason,
-                "strategy": "OPTIMIZED",
-            }
-            for t in best_result.trades
-        ],
+        "trades": trade_list,
         "equity_curve": curve,
         "top_results": top_list,
-        "combos_tested": 1728,
+        "combos_tested": total_combos,
     }

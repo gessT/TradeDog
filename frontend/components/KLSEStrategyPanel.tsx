@@ -71,13 +71,13 @@ export default function KLSEStrategyPanel({ symbol, period, onTradeClick }: Prop
     <div className="rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900/90 to-slate-900/60 overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-3 border-b border-slate-800/60 px-4 py-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400 text-sm">📊</div>
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400 text-sm">�</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <p className="text-[11px] font-bold uppercase tracking-widest text-amber-400 leading-none">Weekly Trend + HalfTrend</p>
-            <span className="rounded bg-amber-500/20 px-1 py-[1px] text-[8px] font-extrabold tracking-wider text-amber-300 border border-amber-500/30">WTH</span>
+            <p className="text-[11px] font-bold uppercase tracking-widest text-amber-400 leading-none">EMA Trend-Pullback + Supertrend</p>
+            <span className="rounded bg-amber-500/20 px-1 py-[1px] text-[8px] font-extrabold tracking-wider text-amber-300 border border-amber-500/30">V2</span>
           </div>
-          <p className="mt-0.5 text-[9px] text-slate-500 truncate">Buy: WST green + HT green · Sell: HT red · Max 2 per weekly cycle · {symbol}</p>
+          <p className="mt-0.5 text-[9px] text-slate-500 truncate">EMA bounce/cross + ST flip · RSI filter · ATR SL/TP · {symbol}</p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <button
@@ -98,7 +98,7 @@ export default function KLSEStrategyPanel({ symbol, period, onTradeClick }: Prop
                 Optimizing…
               </span>
             ) : (
-              "⚡ Optimize"
+              "🚀 Let Go"
             )}
           </button>
         </div>
@@ -241,9 +241,9 @@ export default function KLSEStrategyPanel({ symbol, period, onTradeClick }: Prop
                   {result.top_results.map((tr: Record<string, unknown>, i: number) => {
                     const params = (tr.params ?? {}) as Record<string, number | string>;
                     const paramStr = params
-                      ? `HT(${String(params.ht_amplitude ?? "")}/{String(params.ht_channel_deviation ?? "")}) WST(${String(params.wst_atr_period ?? "")}/${String(params.wst_multiplier ?? "")}) SL/TP(${String(params.sl_atr_mult ?? "")}/${String(params.tp_atr_mult ?? "")})`
+                      ? `EMA(${String(params.ef ?? "")}/${String(params.es ?? "")}) ST×${String(params.stm ?? "")} SL/TP(${String(params.slk ?? "")}/${String(params.tpk ?? "")}) RSI≥${String(params.rlo ?? "")}`
                       : "";
-                    const key = `opt-${String(params.ht_amplitude)}-${String(params.wst_atr_period)}-${String(params.sl_atr_mult)}-${i}`;
+                    const key = `opt-${String(params.ef)}-${String(params.es)}-${String(params.slk)}-${i}`;
                     return (
                       <tr key={key} className={`border-b border-slate-800/30 ${i === 0 ? "bg-violet-950/30" : "hover:bg-slate-800/20"}`}>
                         <td className="px-2 py-1 text-violet-400 font-bold">{i === 0 ? "🥇" : i + 1}</td>
@@ -347,6 +347,12 @@ function MiniStat({ label, value, className = "text-slate-200" }: Readonly<{ lab
 
 function fmtParamShort(key: string): string {
   const shorts: Record<string, string> = {
+    ef: "EMA.F",
+    es: "EMA.S",
+    slk: "SL×",
+    tpk: "TP×",
+    rlo: "RSI.Lo",
+    stm: "ST.M",
     wst_atr_period: "WST.P",
     wst_multiplier: "WST.M",
     ht_amplitude: "HT.A",
