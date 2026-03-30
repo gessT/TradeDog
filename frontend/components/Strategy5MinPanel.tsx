@@ -189,107 +189,306 @@ function ScannerTab({
   onScan,
   onExecute,
   executing,
+  autoExec,
+  autoFilled,
+  onToggleAuto,
+  autoLog,
 }: Readonly<{
   scanData: Scan5MinResponse | null;
   loading: boolean;
   onScan: () => void;
   onExecute: () => void;
   executing: boolean;
+  autoExec: boolean;
+  autoFilled: boolean;
+  onToggleAuto: () => void;
+  autoLog: string[];
 }>) {
   const sig = scanData?.signal;
+  const [mode, setMode] = useState<"manual" | "auto">("manual");
+
   return (
-    <div className="flex-1 overflow-y-auto p-3 space-y-3">
-      <button
-        onClick={onScan}
-        disabled={loading}
-        className={`w-full px-4 py-2.5 text-sm font-bold rounded-lg transition-all ${
-          loading
-            ? "bg-slate-800 text-slate-500 cursor-wait"
-            : "bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95 shadow-lg shadow-cyan-900/40"
-        }`}
-      >
-        {loading ? "Scanning..." : "Scan 5min Signal"}
-      </button>
+    <div className="flex-1 overflow-y-auto">
+      {/* ── Mode switcher ─────────────────────────────── */}
+      <div className="flex border-b border-slate-800/60">
+        {(["manual", "auto"] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            className={`flex-1 px-4 py-2.5 text-[11px] font-bold uppercase tracking-wider transition-all border-b-2 ${
+              mode === m
+                ? m === "auto"
+                  ? "border-emerald-500 text-emerald-400 bg-emerald-950/20"
+                  : "border-cyan-500 text-cyan-400 bg-cyan-950/20"
+                : "border-transparent text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            {m === "manual" ? "🎯 Manual Scan & Execute" : (
+              <span className="flex items-center justify-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${autoExec ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`} />
+                🤖 Auto Trigger
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
 
-      {/* Execute button — only when signal found */}
-      {scanData?.signal?.found && (
-        <button
-          onClick={onExecute}
-          disabled={executing}
-          className={`w-full px-4 py-2.5 text-sm font-bold rounded-lg transition-all ${
-            executing
-              ? "bg-slate-800 text-slate-500 cursor-wait"
-              : scanData.signal.direction === "PUT"
-                ? "bg-rose-600 text-white hover:bg-rose-500 active:scale-95 shadow-lg shadow-rose-900/40"
-                : "bg-emerald-600 text-white hover:bg-emerald-500 active:scale-95 shadow-lg shadow-emerald-900/40"
-          }`}
-        >
-          {executing
-            ? "Executing..."
-            : `🐯 Execute ${scanData.signal.direction} @ Tiger`}
-        </button>
-      )}
-
-      {!scanData && !loading && (
-        <div className="text-center py-10">
-          <p className="text-sm text-slate-400">Scan for real-time 5min entry signals</p>
-          <p className="text-[9px] text-slate-600 mt-1">Checks all 8 conditions: Trend + Pullback/Breakout + RSI + Supertrend + MACD + Volume + Session + ATR</p>
-        </div>
-      )}
-
-      {scanData && sig && (
-        <div className="space-y-3">
-          <div className={`rounded-xl p-4 text-center border ${
-            sig.found ? (sig.direction === "PUT" ? "border-rose-700/60 bg-rose-950/30" : "border-emerald-700/60 bg-emerald-950/30") : "border-slate-700/60 bg-slate-900/50"
-          }`}>
-            <p className={`text-lg font-bold ${sig.found ? (sig.direction === "PUT" ? "text-rose-400" : "text-emerald-400") : "text-slate-400"}`}>
-              {sig.found ? `${sig.direction || "CALL"} · ${sig.signal_type} SIGNAL` : "NO SIGNAL"}
-            </p>
-            {sig.found && (
-              <div className="mt-2 flex justify-center gap-4">
-                <span className="text-[10px] text-slate-400">Entry: <span className="text-white font-bold">${sig.entry_price}</span></span>
-                <span className="text-[10px] text-slate-400">SL: <span className="text-rose-400 font-bold">${sig.stop_loss}</span></span>
-                <span className="text-[10px] text-slate-400">TP: <span className="text-emerald-400 font-bold">${sig.take_profit}</span></span>
-              </div>
+      {/* ═══════════════════════════════════════════════════ */}
+      {/* MANUAL MODE                                        */}
+      {/* ═══════════════════════════════════════════════════ */}
+      {mode === "manual" && (
+        <div className="p-3 space-y-3">
+          {/* Step 1: Scan */}
+          <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-cyan-600 text-white text-[10px] font-bold flex items-center justify-center">1</span>
+              <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Scan Market</span>
+            </div>
+            <button
+              onClick={onScan}
+              disabled={loading || autoExec}
+              className={`w-full px-4 py-2.5 text-sm font-bold rounded-lg transition-all ${
+                loading
+                  ? "bg-slate-800 text-slate-500 cursor-wait"
+                  : autoExec
+                    ? "bg-slate-800 text-slate-500 cursor-not-allowed"
+                    : "bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95 shadow-lg shadow-cyan-900/40"
+              }`}
+            >
+              {loading ? "Scanning…" : "🔍 Scan 5min Signal"}
+            </button>
+            {!scanData && !loading && (
+              <p className="text-[9px] text-slate-600 text-center">
+                Checks 8 conditions: Trend · Pullback/Breakout · RSI · Supertrend · MACD · Volume · Session · ATR
+              </p>
             )}
           </div>
 
-          <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-3">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[9px] uppercase tracking-widest text-slate-500">Signal Strength</span>
-              <span className={`text-lg font-bold ${strengthColor(sig.strength)}`}>{sig.strength}/10</span>
-            </div>
-            <div className="w-full bg-slate-800 rounded-full h-2">
-              <div
-                className={`h-2 rounded-full transition-all ${strengthBgClass(sig.strength)}`}
-                style={{ width: `${sig.strength * 10}%` }}
-              />
-            </div>
-            <div className="grid grid-cols-5 gap-1 mt-3">
-              {Object.entries(sig.strength_detail).map(([key, detail]) => (
-                <div key={key} className="text-center">
-                  <div className="text-[8px] text-slate-600 uppercase">{key}</div>
-                  <div className={`text-[11px] font-bold ${ptsColor(detail.pts)}`}>{detail.pts}/2</div>
+          {/* Step 2: Signal result */}
+          {scanData && sig && (
+            <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className={`w-5 h-5 rounded-full text-white text-[10px] font-bold flex items-center justify-center ${sig.found ? "bg-emerald-600" : "bg-slate-600"}`}>2</span>
+                <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Signal Result</span>
+                <span className="text-[9px] text-slate-600 ml-auto">{scanData.timestamp}</span>
+              </div>
+
+              {/* Signal banner */}
+              <div className={`rounded-lg p-3 text-center border ${
+                sig.found
+                  ? sig.direction === "PUT" ? "border-rose-700/60 bg-rose-950/30" : "border-emerald-700/60 bg-emerald-950/30"
+                  : "border-slate-700/60 bg-slate-900/50"
+              }`}>
+                <p className={`text-base font-bold ${
+                  sig.found ? (sig.direction === "PUT" ? "text-rose-400" : "text-emerald-400") : "text-slate-400"
+                }`}>
+                  {sig.found ? `${sig.direction || "CALL"} · ${sig.signal_type}` : "NO SIGNAL FOUND"}
+                </p>
+                {sig.found && (
+                  <div className="mt-1.5 flex justify-center gap-4">
+                    <span className="text-[10px] text-slate-400">Entry <span className="text-white font-bold">${n(sig.entry_price).toFixed(2)}</span></span>
+                    <span className="text-[10px] text-slate-400">SL <span className="text-rose-400 font-bold">${n(sig.stop_loss).toFixed(2)}</span></span>
+                    <span className="text-[10px] text-slate-400">TP <span className="text-emerald-400 font-bold">${n(sig.take_profit).toFixed(2)}</span></span>
+                  </div>
+                )}
+              </div>
+
+              {/* Strength */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 bg-slate-800 rounded-full h-2">
+                  <div
+                    className={`h-2 rounded-full transition-all ${strengthBgClass(sig.strength)}`}
+                    style={{ width: `${sig.strength * 10}%` }}
+                  />
                 </div>
-              ))}
+                <span className={`text-sm font-bold ${strengthColor(sig.strength)}`}>{sig.strength}/10</span>
+              </div>
+
+              {/* Score chips */}
+              <div className="flex flex-wrap gap-1">
+                {Object.entries(sig.strength_detail).map(([key, detail]) => (
+                  <span key={key} className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                    detail.pts >= 2 ? "bg-emerald-500/20 text-emerald-400"
+                    : detail.pts >= 1 ? "bg-amber-500/20 text-amber-400"
+                    : "bg-slate-800 text-slate-500"
+                  }`}>
+                    {key.toUpperCase()} +{detail.pts}
+                  </span>
+                ))}
+              </div>
+
+              {/* Indicators */}
+              <div className="grid grid-cols-3 gap-1">
+                <MiniMetric label="RSI" value={`${n(sig.rsi).toFixed(1)}`} cls={sig.rsi >= 40 && sig.rsi <= 60 ? "text-emerald-400" : "text-slate-300"} />
+                <MiniMetric label="R:R" value={`1:${n(sig.risk_reward).toFixed(1)}`} cls="text-cyan-400" />
+                <MiniMetric label="Vol" value={`${n(sig.volume_ratio).toFixed(1)}x`} cls={sig.volume_ratio >= 1.5 ? "text-emerald-400" : "text-slate-300"} />
+                <MiniMetric label="MACD" value={`${n(sig.macd_hist).toFixed(3)}`} cls={sig.macd_hist > 0 ? "text-emerald-400" : "text-rose-400"} />
+                <MiniMetric label="ATR" value={`${n(sig.atr).toFixed(2)}`} cls="text-slate-300" />
+                <MiniMetric label="ST" value={sig.supertrend_dir === 1 ? "BULL" : "BEAR"} cls={sig.supertrend_dir === 1 ? "text-emerald-400" : "text-rose-400"} />
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="grid grid-cols-3 gap-1.5">
-            <Metric label="RSI" value={`${sig.rsi}`} cls={sig.rsi >= 40 && sig.rsi <= 60 ? "text-emerald-400" : "text-slate-300"} />
-            <Metric label="ATR" value={`${sig.atr}`} cls="text-slate-300" />
-            <Metric label="R:R" value={`1:${sig.risk_reward}`} cls="text-cyan-400" />
-            <Metric label="EMA20" value={`${sig.ema_fast}`} cls="text-slate-300" />
-            <Metric label="EMA50" value={`${sig.ema_slow}`} cls="text-slate-300" />
-            <Metric label="MACD H" value={`${sig.macd_hist}`} cls={sig.macd_hist > 0 ? "text-emerald-400" : "text-rose-400"} />
-            <Metric label="Supertrend" value={sig.supertrend_dir === 1 ? "BULL" : "BEAR"} cls={sig.supertrend_dir === 1 ? "text-emerald-400" : "text-rose-400"} />
-            <Metric label="Vol Ratio" value={`${sig.volume_ratio}x`} cls={sig.volume_ratio >= 1.5 ? "text-emerald-400" : "text-slate-300"} />
-            <Metric label="Bar Time" value={sig.bar_time.slice(11, 16)} cls="text-slate-400" />
-          </div>
-
-          <p className="text-[9px] text-slate-600 text-center">{scanData.timestamp}</p>
+          {/* Step 3: Execute */}
+          {scanData?.signal?.found && (
+            <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-amber-600 text-white text-[10px] font-bold flex items-center justify-center">3</span>
+                <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Execute Order</span>
+              </div>
+              <button
+                onClick={onExecute}
+                disabled={executing || autoExec}
+                className={`w-full px-4 py-3 text-sm font-bold rounded-lg transition-all ${
+                  executing
+                    ? "bg-slate-800 text-slate-500 cursor-wait"
+                    : scanData.signal.direction === "PUT"
+                      ? "bg-gradient-to-r from-rose-600 to-pink-600 text-white hover:from-rose-500 hover:to-pink-500 active:scale-95 shadow-lg shadow-rose-900/40"
+                      : "bg-gradient-to-r from-emerald-600 to-cyan-600 text-white hover:from-emerald-500 hover:to-cyan-500 active:scale-95 shadow-lg shadow-emerald-900/40"
+                }`}
+              >
+                {executing
+                  ? "Placing Order…"
+                  : `🐯 Execute ${scanData.signal.direction} @ Tiger`}
+              </button>
+              <p className="text-[8px] text-amber-400/60 text-center">
+                ⚠️ Places a REAL bracket order (Entry MKT + OCA SL/TP) on your Tiger account
+              </p>
+            </div>
+          )}
         </div>
       )}
+
+      {/* ═══════════════════════════════════════════════════ */}
+      {/* AUTO MODE                                          */}
+      {/* ═══════════════════════════════════════════════════ */}
+      {mode === "auto" && (
+        <div className="p-3 space-y-3">
+          {/* Status card */}
+          <div className={`rounded-xl border p-4 text-center space-y-3 ${
+            autoExec
+              ? "border-emerald-700/60 bg-emerald-950/20"
+              : autoFilled
+                ? "border-amber-700/60 bg-amber-950/20"
+                : "border-slate-700/60 bg-slate-900/40"
+          }`}>
+            {/* Big status indicator */}
+            <div className="flex flex-col items-center gap-2">
+              <span className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${
+                autoExec
+                  ? "bg-emerald-600 shadow-[0_0_20px_rgba(52,211,153,0.3)]"
+                  : autoFilled
+                    ? "bg-amber-600 shadow-[0_0_20px_rgba(245,158,11,0.2)]"
+                    : "bg-slate-800"
+              }`}>
+                {autoExec ? "🟢" : autoFilled ? "✅" : "⚫"}
+              </span>
+              <p className={`text-lg font-bold ${
+                autoExec ? "text-emerald-400" : autoFilled ? "text-amber-400" : "text-slate-400"
+              }`}>
+                {autoExec ? "AUTO-TRADING ACTIVE" : autoFilled ? "TRADE COMPLETED" : "AUTO-TRADING OFF"}
+              </p>
+              <p className="text-[10px] text-slate-500">
+                {autoExec
+                  ? "Scanning every 30s · Executes on signal · Desktop alerts enabled"
+                  : autoFilled
+                    ? "1 trade executed successfully · Auto-trading stopped"
+                    : "Toggle to start automatic scanning and execution"}
+              </p>
+            </div>
+
+            {/* Toggle button */}
+            <button
+              onClick={onToggleAuto}
+              disabled={executing}
+              className={`w-full px-5 py-3 text-sm font-bold rounded-xl transition-all ${
+                autoExec
+                  ? "bg-rose-600 text-white hover:bg-rose-500 active:scale-95 shadow-lg"
+                  : "bg-emerald-600 text-white hover:bg-emerald-500 active:scale-95 shadow-lg shadow-emerald-900/40"
+              }`}
+            >
+              {autoExec ? "⏹ Stop Auto-Trading" : autoFilled ? "🔄 Restart Auto-Trading" : "▶ Start Auto-Trading"}
+            </button>
+          </div>
+
+          {/* How it works */}
+          {!autoExec && (
+            <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">How it works</p>
+              <div className="space-y-1.5">
+                {[
+                  { icon: "🔍", text: "Scans MGC 5min bars every 30 seconds" },
+                  { icon: "📊", text: "Checks all 8 entry conditions (Trend, RSI, MACD, etc.)" },
+                  { icon: "🐯", text: "Auto-places bracket order on Tiger when signal found" },
+                  { icon: "🔔", text: "Desktop notification + alert sound on execution" },
+                  { icon: "🛡️", text: "Protected by 30s cooldown + 10/day max cap" },
+                ].map((item, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="text-sm">{item.icon}</span>
+                    <span className="text-[10px] text-slate-400">{item.text}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Live log */}
+          {autoLog.length > 0 && (
+            <div className={`rounded-xl border p-3 space-y-1 ${
+              autoExec ? "border-emerald-800/40 bg-emerald-950/10" : "border-slate-800/60 bg-slate-900/30"
+            }`}>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  {autoExec && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
+                  <span className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Activity Log</span>
+                </div>
+                <span className="text-[9px] text-slate-600">{autoLog.length} entries</span>
+              </div>
+              <div className="max-h-[200px] overflow-y-auto space-y-0.5">
+                {autoLog.map((line, i) => (
+                  <p key={i} className={`text-[9px] font-mono leading-relaxed ${
+                    line.includes("✅") ? "text-emerald-400"
+                    : line.includes("🟢") ? "text-cyan-300"
+                    : line.includes("❌") || line.includes("⚠️") ? "text-rose-400"
+                    : "text-slate-500"
+                  }`}>{line}</p>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Last signal preview (if scan data exists) */}
+          {scanData && sig && (
+            <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
+              <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Last Scan Result</p>
+              <div className="flex items-center justify-between">
+                <span className={`text-sm font-bold ${
+                  sig.found ? (sig.direction === "PUT" ? "text-rose-400" : "text-emerald-400") : "text-slate-500"
+                }`}>
+                  {sig.found ? `${sig.direction} · ${sig.signal_type}` : "No Signal"}
+                </span>
+                <span className={`text-sm font-bold ${strengthColor(sig.strength)}`}>{sig.strength}/10</span>
+              </div>
+              {sig.found && (
+                <div className="flex gap-3 text-[9px]">
+                  <span className="text-slate-400">Entry <span className="text-white font-bold">${n(sig.entry_price).toFixed(2)}</span></span>
+                  <span className="text-slate-400">SL <span className="text-rose-400 font-bold">${n(sig.stop_loss).toFixed(2)}</span></span>
+                  <span className="text-slate-400">TP <span className="text-emerald-400 font-bold">${n(sig.take_profit).toFixed(2)}</span></span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniMetric({ label, value, cls = "" }: Readonly<{ label: string; value: string; cls?: string }>) {
+  return (
+    <div className="rounded bg-slate-800/60 px-2 py-1 text-center">
+      <div className="text-[7px] text-slate-600 uppercase">{label}</div>
+      <div className={`text-[10px] font-bold tabular-nums ${cls}`}>{value}</div>
     </div>
   );
 }
@@ -950,23 +1149,31 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
 
   // Backtest state
   const [btData, setBtData] = useState<MGC5MinBacktestResponse | null>(null);
-  const [period, setPeriod] = useState("60d");
+  const [period, setPeriod] = useState("3d");
   const [slMult, setSlMult] = useState(4.0);
   const [tpMult, setTpMult] = useState(3.0);
 
-  // Date range filter (default: last 3 days)
-  const today = new Date();
-  const threeDaysAgo = new Date(today);
-  threeDaysAgo.setDate(today.getDate() - 3);
+  // Date range filter
   const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
-  const [dateFrom, setDateFrom] = useState(fmtDate(threeDaysAgo));
-  const [dateTo, setDateTo] = useState(fmtDate(today));
+  const calcFrom = (p: string) => {
+    const d = new Date();
+    d.setDate(d.getDate() - parseInt(p));
+    return fmtDate(d);
+  };
+  const [dateFrom, setDateFrom] = useState(() => calcFrom("3"));
+  const [dateTo, setDateTo] = useState(() => fmtDate(new Date()));
 
   // Scanner state
   const [scanData, setScanData] = useState<Scan5MinResponse | null>(null);
   const [executing, setExecuting] = useState(false);
 
-
+  // Auto-execute state
+  const [autoExec, setAutoExec] = useState(false);
+  const [autoFilled, setAutoFilled] = useState(false); // true after auto-trade completes
+  const [autoLog, setAutoLog] = useState<string[]>([]);
+  const autoRef = useRef(false);     // stable ref for interval closure
+  const busyRef = useRef(false);     // prevent overlapping polls
+  autoRef.current = autoExec;
 
   // ── Backtest ──────────────────────────────────────────
   const runBacktest = useCallback(async () => {
@@ -1036,28 +1243,150 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
     }
   }, [scanData, slMult, tpMult]);
 
+  // ── Desktop notification with sound ───────────────────
+  const notifyTrade = useCallback((direction: string, entry: number) => {
+    // Play alert sound
+    try {
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = direction === "BUY" ? 880 : 440;
+      osc.type = "square";
+      gain.gain.value = 0.3;
+      osc.start();
+      osc.stop(ctx.currentTime + 0.4);
+      // second beep
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.frequency.value = direction === "BUY" ? 1100 : 550;
+      osc2.type = "square";
+      gain2.gain.value = 0.3;
+      osc2.start(ctx.currentTime + 0.5);
+      osc2.stop(ctx.currentTime + 0.9);
+    } catch { /* audio not available */ }
+
+    // Desktop notification
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      new Notification(`🐯 Auto-Trade: ${direction}`, {
+        body: `MGC ${direction} executed @ $${entry.toFixed(2)}`,
+        icon: "/favicon.ico",
+        requireInteraction: true,
+      });
+    }
+  }, []);
+
+  // ── Auto-execute polling (every 30s when ON) ──────────
+  useEffect(() => {
+    // Request notification permission on first toggle
+    if (autoExec && typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+
+    if (!autoExec) return;
+
+    const ts = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+    setAutoLog((prev) => [`[${ts()}] Auto-execute ON — polling every 30s`, ...prev.slice(0, 49)]);
+
+    const poll = async () => {
+      if (!autoRef.current || busyRef.current) return;
+      busyRef.current = true;
+      try {
+        const res = await scan5Min(false, slMult, tpMult);
+        setScanData(res);
+        const sig = res.signal;
+
+        if (sig?.found) {
+          setAutoLog((prev) => [`[${ts()}] 🟢 SIGNAL: ${sig.direction} @ $${sig.entry_price}`, ...prev.slice(0, 49)]);
+
+          // Auto-execute
+          const dir = sig.direction || "CALL";
+          const side = dir === "PUT" ? "SELL" : "BUY";
+          setExecuting(true);
+          try {
+            const execRes = await execute5Min(dir, 1, 5, sig.entry_price, sig.stop_loss, sig.take_profit);
+            if (execRes.execution?.executed) {
+              notifyTrade(side, sig.entry_price);
+              setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} → ${execRes.execution?.order_id?.slice(0, 12)}`, ...prev.slice(0, 49)]);
+              // Auto-stop after 1 successful trade
+              autoRef.current = false;
+              setAutoExec(false);
+              setAutoFilled(true);
+              setAutoLog((prev) => [`[${ts()}] 🛑 Auto-trading stopped (1 trade filled)`, ...prev.slice(0, 49)]);
+            } else {
+              const reason = execRes.execution?.reason || "Unknown";
+              setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${reason}`, ...prev.slice(0, 49)]);
+              // Stop auto-trading if at max position limit
+              if (reason.toLowerCase().includes("max") || reason.toLowerCase().includes("position")) {
+                autoRef.current = false;
+                setAutoExec(false);
+                setAutoFilled(true);
+                setAutoLog((prev) => [`[${ts()}] 🛑 Auto-trading stopped (position limit reached)`, ...prev.slice(0, 49)]);
+              }
+            }
+          } catch (e) {
+            setAutoLog((prev) => [`[${ts()}] ❌ ERROR: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]);
+          } finally {
+            setExecuting(false);
+          }
+        } else {
+          setAutoLog((prev) => [`[${ts()}] ⏳ No signal`, ...prev.slice(0, 49)]);
+        }
+      } catch (e) {
+        setAutoLog((prev) => [`[${ts()}] ⚠️ Scan error: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]);
+      } finally {
+        busyRef.current = false;
+      }
+    };
+
+    // Run immediately, then every 30s
+    poll();
+    const id = setInterval(poll, 30_000);
+    return () => {
+      clearInterval(id);
+      setAutoLog((prev) => [`[${ts()}] Auto-execute OFF`, ...prev.slice(0, 49)]);
+    };
+  }, [autoExec, slMult, tpMult, notifyTrade]);
+
   const m = btData?.metrics;
 
   return (
     <div className="flex flex-col h-full">
       {/* ── Header ───────────────────────────────────────── */}
-      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-slate-800/60 flex-wrap">
-        <span className="text-base">🎯</span>
-        <span className="text-sm font-bold text-cyan-400">5MIN STRATEGY</span>
+      <div className="px-3 pt-3 pb-0">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-base">🎯</span>
+          <span className="text-sm font-bold text-cyan-400 tracking-wide">5MIN STRATEGY</span>
+          {autoExec && (
+            <span className="ml-auto flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[8px] font-bold text-emerald-400 uppercase">Auto Live</span>
+            </span>
+          )}
+        </div>
 
-        {/* Sub-tabs */}
-        <div className="flex gap-0.5 ml-2">
-          {(["backtest", "scanner", "exam"] as Tab5Min[]).map((t) => (
+        {/* Tab bar */}
+        <div className="flex rounded-lg bg-slate-900/80 p-0.5 border border-slate-800/60">
+          {([
+            { key: "backtest" as Tab5Min, icon: "📊", label: "Backtest" },
+            { key: "scanner" as Tab5Min, icon: "🔍", label: "Scanner" },
+            { key: "exam" as Tab5Min, icon: "🧪", label: "Exam" },
+          ]).map(({ key, icon, label }) => (
             <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-2 py-0.5 text-[10px] font-bold rounded transition ${
-                tab === t
-                  ? "bg-cyan-700 text-white"
-                  : "bg-slate-800 text-slate-400 hover:text-slate-200"
+              key={key}
+              onClick={() => setTab(key)}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-md transition-all ${
+                tab === key
+                  ? "bg-gradient-to-b from-cyan-600 to-cyan-700 text-white shadow-md shadow-cyan-900/40"
+                  : "text-slate-500 hover:text-slate-300 hover:bg-slate-800/50"
               }`}
             >
-              {tabLabel(t)}
+              <span className="text-xs">{icon}</span>
+              {label}
             </button>
           ))}
         </div>
@@ -1078,10 +1407,17 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
           {/* Controls */}
           <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-800/40">
             <div className="flex gap-0.5">
-              {["7d", "30d", "60d"].map((p) => (
+              {["3d", "7d", "30d", "60d"].map((p) => (
                 <button
                   key={p}
-                  onClick={() => setPeriod(p)}
+                  onClick={() => {
+                    setPeriod(p);
+                    const now = new Date();
+                    setDateTo(fmtDate(now));
+                    const from = new Date(now);
+                    from.setDate(now.getDate() - parseInt(p));
+                    setDateFrom(fmtDate(from));
+                  }}
                   className={`px-2 py-0.5 text-[10px] font-bold rounded transition ${
                     period === p ? "bg-cyan-700 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"
                   }`}
@@ -1139,35 +1475,6 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
             >
               {loading ? "Running…" : "🎯 Run 5min"}
             </button>
-            <button
-              onClick={async () => {
-                setLoading(true);
-                setError(null);
-                try {
-                  const res = await scan5Min(false, slMult, tpMult);
-                  setScanData(res);
-                  if (res.signal?.found) {
-                    setTab("scanner");
-                    await executeSignal(res.signal);
-                  } else {
-                    setTab("scanner");
-                    alert("No signal found — cannot execute.");
-                  }
-                } catch (e: unknown) {
-                  setError(e instanceof Error ? e.message : "Failed");
-                } finally {
-                  setLoading(false);
-                }
-              }}
-              disabled={loading || executing}
-              className={`px-3 py-1 text-[11px] font-bold rounded-lg transition-all ${
-                loading || executing
-                  ? "bg-slate-800 text-slate-500 cursor-wait"
-                  : "bg-amber-600 text-white hover:bg-amber-500 active:scale-95 shadow-md shadow-amber-900/40"
-              }`}
-            >
-              {executing ? "Executing…" : "🐯 Execute"}
-            </button>
           </div>
 
           {/* Idle state */}
@@ -1196,6 +1503,50 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
                 <Metric label="PF" value={`${n(m.profit_factor).toFixed(2)}`} cls={m.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400"} />
                 <Metric label="R:R" value={`1:${n(m.risk_reward_ratio).toFixed(2)}`} cls="text-cyan-400" />
               </div>
+
+              {/* Last 5 days P&L card */}
+              {(() => {
+                const dailyMap: Record<string, { pnl: number; count: number }> = {};
+                for (const t of btData.trades) {
+                  const day = t.exit_time.slice(0, 10);
+                  if (!dailyMap[day]) dailyMap[day] = { pnl: 0, count: 0 };
+                  dailyMap[day].pnl += t.pnl;
+                  dailyMap[day].count += 1;
+                }
+                const days = Object.entries(dailyMap)
+                  .sort(([a], [b]) => b.localeCompare(a))
+                  .slice(0, 5);
+                if (days.length === 0) return null;
+                const total5d = days.reduce((s, [, d]) => s + d.pnl, 0);
+                return (
+                  <div className="rounded-xl border border-slate-800/60 bg-slate-900/40 p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[9px] uppercase tracking-widest text-slate-500">Last {days.length} Day P&L</span>
+                      <span className={`text-sm font-bold ${total5d >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                        {total5d >= 0 ? "+" : ""}${n(total5d).toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      {days.map(([day, d]) => (
+                        <div key={day} className="flex items-center gap-2">
+                          <span className="text-[9px] text-slate-500 tabular-nums w-[70px]">{day.slice(5)}</span>
+                          <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                            {d.pnl >= 0 ? (
+                              <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.min(100, (d.pnl / Math.max(...days.map(([,x]) => Math.abs(x.pnl)))) * 100)}%` }} />
+                            ) : (
+                              <div className="h-full bg-rose-500 rounded-full ml-auto" style={{ width: `${Math.min(100, (Math.abs(d.pnl) / Math.max(...days.map(([,x]) => Math.abs(x.pnl)))) * 100)}%` }} />
+                            )}
+                          </div>
+                          <span className={`text-[10px] font-bold tabular-nums w-[60px] text-right ${d.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                            {d.pnl >= 0 ? "+" : ""}${n(d.pnl).toFixed(0)}
+                          </span>
+                          <span className="text-[8px] text-slate-600 tabular-nums w-[20px] text-right">{d.count}t</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* OOS validation */}
               {m.oos_total_trades > 0 && (
@@ -1256,7 +1607,17 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
       {/* TAB: Scanner                                         */}
       {/* ═════════════════════════════════════════════════════ */}
       {tab === "scanner" && (
-        <ScannerTab scanData={scanData} loading={loading} onScan={runScan} onExecute={() => executeSignal()} executing={executing} />
+        <ScannerTab
+          scanData={scanData}
+          loading={loading}
+          onScan={runScan}
+          onExecute={() => executeSignal()}
+          executing={executing}
+          autoExec={autoExec}
+          autoFilled={autoFilled}
+          onToggleAuto={() => { setAutoFilled(false); setAutoExec((v) => !v); }}
+          autoLog={autoLog}
+        />
       )}
 
       {/* ═════════════════════════════════════════════════════ */}
