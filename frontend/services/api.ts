@@ -633,6 +633,84 @@ export async function fetchMGCLive(
 }
 
 
+// ── Tiger Account ───────────────────────────────────────────────────
+
+export type TigerPositionItem = {
+  symbol: string;
+  quantity: number;
+  average_cost: number;
+  market_value: number;
+  unrealized_pnl: number;
+  realized_pnl: number;
+  currency: string;
+};
+
+export type TigerOrderItem = {
+  order_id: string;
+  symbol: string;
+  action: string;
+  order_type: string;
+  quantity: number;
+  filled_quantity: number;
+  limit_price: number;
+  avg_fill_price: number;
+  status: string;
+  trade_time: string;
+};
+
+export type TigerAccountInfo = {
+  net_liquidation: number;
+  cash: number;
+  unrealized_pnl: number;
+  realized_pnl: number;
+  buying_power: number;
+  currency: string;
+};
+
+export type TigerAccountResponse = {
+  account: TigerAccountInfo;
+  positions: TigerPositionItem[];
+  open_orders: TigerOrderItem[];
+  filled_orders: TigerOrderItem[];
+  timestamp: string;
+};
+
+export async function fetchTigerAccount(): Promise<TigerAccountResponse> {
+  const res = await fetch(`${API_BASE}/mgc/account`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Account fetch failed: ${res.status}`);
+  return (await res.json()) as TigerAccountResponse;
+}
+
+export async function placeSimpleOrder(
+  symbol: string,
+  side: string,
+  qty: number,
+  orderType: string = "MKT",
+  limitPrice?: number,
+): Promise<{ success: boolean; order_id: string; message: string }> {
+  const res = await fetch(`${API_BASE}/mgc/order`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol, side, qty, order_type: orderType, limit_price: limitPrice }),
+  });
+  return res.json();
+}
+
+export async function cancelOrder(orderId: string): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/mgc/cancel_order?order_id=${encodeURIComponent(orderId)}`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
+export async function closePosition(symbol: string = "MGC"): Promise<{ success: boolean; order_id?: string; message: string }> {
+  const res = await fetch(`${API_BASE}/mgc/close_position?symbol=${encodeURIComponent(symbol)}`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
+
 // ── MGC Scan Trade (One-Click) ──────────────────────────────────────
 
 export type ScanSignal = {

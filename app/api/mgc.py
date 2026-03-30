@@ -460,6 +460,274 @@ async def get_position(symbol: str = "MGC"):
     return {"current_qty": qty, "symbol": symbol}
 
 
+# ── Tiger Account: Positions, Orders, Assets, Buy/Sell, Cancel ──────
+
+
+class TigerPositionItem(BaseModel):
+    symbol: str
+    quantity: int
+    average_cost: float
+    market_value: float
+    unrealized_pnl: float
+    realized_pnl: float
+    currency: str = "USD"
+
+
+class TigerOrderItem(BaseModel):
+    order_id: str
+    symbol: str
+    action: str          # BUY / SELL
+    order_type: str      # MKT / LMT / STP
+    quantity: int
+    filled_quantity: int
+    limit_price: float
+    avg_fill_price: float
+    status: str
+    trade_time: str
+
+
+class TigerAccountInfo(BaseModel):
+    net_liquidation: float
+    cash: float
+    unrealized_pnl: float
+    realized_pnl: float
+    buying_power: float
+    currency: str = "USD"
+
+
+class TigerAccountResponse(BaseModel):
+    account: TigerAccountInfo
+    positions: list[TigerPositionItem]
+    open_orders: list[TigerOrderItem]
+    filled_orders: list[TigerOrderItem]
+    timestamp: str
+
+
+class SimpleOrderRequest(BaseModel):
+    symbol: str = "MGC"
+    side: str = "BUY"          # BUY or SELL
+    qty: int = 1
+    order_type: str = "MKT"   # MKT or LMT
+    limit_price: Optional[float] = None
+
+
+class SimpleOrderResponse(BaseModel):
+    success: bool
+    order_id: str = ""
+    message: str = ""
+
+
+@router.get("/account")
+async def tiger_account() -> TigerAccountResponse:
+    """Retrieve full Tiger account: assets + positions + orders."""
+
+    def _run():
+        _, trade_client = _get_tiger_clients()
+
+        # Assets
+        account_info = TigerAccountInfo(
+            net_liquidation=0, cash=0, unrealized_pnl=0,
+            realized_pnl=0, buying_power=0,
+        )
+        try:
+            assets = trade_client.get_assets(account=TIGER_ACCOUNT)
+            if assets:
+                a = assets[0]
+                # Summary has the aggregated values
+                s = getattr(a, "summary", None) or a
+                # Commodity segment for futures-specific cash
+                segs = getattr(a, "segments", {})
+                comm = segs.get("C", None)
+
+                account_info = TigerAccountInfo(
+                    net_liquidation=float(getattr(s, "net_liquidation", 0) or 0),
+                    cash=float(getattr(comm, "cash", 0) or getattr(s, "cash", 0) or 0),
+                    unrealized_pnl=float(getattr(s, "unrealized_pnl", 0) or 0),
+                    realized_pnl=float(getattr(s, "realized_pnl", 0) or 0),
+                    buying_power=float(getattr(s, "buying_power", 0) or getattr(comm, "available_funds", 0) or 0),
+                )
+        except Exception:
+            logger.exception("Failed to get Tiger assets")
+
+        # Positions
+        positions: list[TigerPositionItem] = []
+        try:
+            raw_pos = trade_client.get_positions(account=TIGER_ACCOUNT, sec_type="FUT")
+            for p in (raw_pos or []):
+                sym = ""
+                if p.contract and p.contract.symbol:
+                    sym = p.contract.symbol
+                positions.append(TigerPositionItem(
+                    symbol=sym,
+                    quantity=int(getattr(p, "quantity", 0) or 0),
+                    average_cost=float(getattr(p, "average_cost", 0) or 0),
+                    market_value=float(getattr(p, "market_value", 0) or 0),
+                    unrealized_pnl=float(getattr(p, "unrealized_pnl", 0) or 0),
+                    realized_pnl=float(getattr(p, "realized_pnl", 0) or 0),
+                ))
+        except Exception:
+            logger.exception("Failed to get Tiger positions")
+
+        # Open orders
+        open_orders: list[TigerOrderItem] = []
+        try:
+            raw_open = trade_client.get_open_orders(account=TIGER_ACCOUNT, sec_type="FUT")
+            for o in (raw_open or []):
+                open_orders.append(_order_to_item(o))
+        except Exception:
+            logger.exception("Failed to get Tiger open orders")
+
+        # Recent filled orders (last 20)
+        filled_orders: list[TigerOrderItem] = []
+        try:
+            raw_filled = trade_client.get_filled_orders(account=TIGER_ACCOUNT, sec_type="FUT")
+            for o in (raw_filled or [])[-20:]:
+                filled_orders.append(_order_to_item(o))
+        except Exception:
+            logger.exception("Failed to get Tiger filled orders")
+
+        return TigerAccountResponse(
+            account=account_info,
+            positions=positions,
+            open_orders=open_orders,
+            filled_orders=filled_orders,
+            timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        )
+
+    return await run_in_threadpool(_run)
+
+
+def _order_to_item(o) -> TigerOrderItem:
+    """Convert a Tiger SDK order object to our serialisable model."""
+    sym = ""
+    if hasattr(o, "contract") and o.contract and hasattr(o.contract, "symbol"):
+        sym = o.contract.symbol or ""
+    status_raw = str(getattr(o, "status", "") or "")
+    # Strip "OrderStatus." prefix from SDK enum repr
+    if "." in status_raw:
+        status_raw = status_raw.rsplit(".", 1)[-1]
+    return TigerOrderItem(
+        order_id=str(getattr(o, "order_id", "") or getattr(o, "id", "") or ""),
+        symbol=sym,
+        action=str(getattr(o, "action", "") or ""),
+        order_type=str(getattr(o, "order_type", "") or ""),
+        quantity=int(getattr(o, "quantity", 0) or 0),
+        filled_quantity=int(getattr(o, "filled", 0) or getattr(o, "filled_quantity", 0) or 0),
+        limit_price=float(getattr(o, "limit_price", 0) or 0),
+        avg_fill_price=float(getattr(o, "avg_fill_price", 0) or 0),
+        status=status_raw,
+        trade_time=str(getattr(o, "trade_time", "") or getattr(o, "order_time", "") or ""),
+    )
+
+
+@router.post("/order")
+async def place_simple_order(req: SimpleOrderRequest) -> SimpleOrderResponse:
+    """Place a simple BUY or SELL market/limit order on Tiger."""
+
+    def _run():
+        from tigeropen.common.util.order_utils import market_order, limit_order
+
+        _, trade_client = _get_tiger_clients()
+
+        # Resolve contract
+        contracts = trade_client.get_contracts(req.symbol, sec_type="FUT")
+        if not contracts:
+            return SimpleOrderResponse(success=False, message=f"No contract found for {req.symbol}")
+        contract = contracts[0]
+        contract.expiry = None  # SDK v3.5.7
+
+        side = req.side.upper()
+        if side not in ("BUY", "SELL"):
+            return SimpleOrderResponse(success=False, message=f"Invalid side: {side}")
+
+        if req.order_type == "LMT" and req.limit_price:
+            order = limit_order(
+                account=TIGER_ACCOUNT, contract=contract,
+                action=side, quantity=req.qty, limit_price=req.limit_price,
+            )
+        else:
+            order = market_order(
+                account=TIGER_ACCOUNT, contract=contract,
+                action=side, quantity=req.qty,
+            )
+
+        result = trade_client.place_order(order)
+        return SimpleOrderResponse(
+            success=True,
+            order_id=str(result),
+            message=f"{side} {req.qty}x {req.symbol} → {result}",
+        )
+
+    try:
+        return await run_in_threadpool(_run)
+    except Exception as exc:
+        logger.exception("Order placement failed")
+        return SimpleOrderResponse(success=False, message=str(exc))
+
+
+@router.post("/cancel_order")
+async def cancel_order(order_id: str):
+    """Cancel an open order by ID."""
+
+    def _run():
+        _, trade_client = _get_tiger_clients()
+        try:
+            # Tiger SDK cancel_order expects int order_id
+            trade_client.cancel_order(id=int(order_id))
+            return {"success": True, "message": f"Cancelled {order_id}"}
+        except Exception as exc:
+            return {"success": False, "message": str(exc)}
+
+    return await run_in_threadpool(_run)
+
+
+@router.post("/close_position")
+async def close_position(symbol: str = "MGC"):
+    """Close all positions for a symbol by placing a market order in the opposite direction."""
+
+    def _run():
+        from tigeropen.common.util.order_utils import market_order
+
+        _, trade_client = _get_tiger_clients()
+
+        # Get current position
+        positions = trade_client.get_positions(account=TIGER_ACCOUNT, sec_type="FUT")
+        total_qty = 0
+        for p in (positions or []):
+            if p.contract and p.contract.symbol and p.contract.symbol.startswith(symbol):
+                total_qty += int(p.quantity)
+
+        if total_qty == 0:
+            return {"success": False, "message": "No open position to close"}
+
+        # Determine close direction
+        close_side = "SELL" if total_qty > 0 else "BUY"
+        close_qty = abs(total_qty)
+
+        contracts = trade_client.get_contracts(symbol, sec_type="FUT")
+        if not contracts:
+            return {"success": False, "message": f"No contract for {symbol}"}
+        contract = contracts[0]
+        contract.expiry = None
+
+        order = market_order(
+            account=TIGER_ACCOUNT, contract=contract,
+            action=close_side, quantity=close_qty,
+        )
+        result = trade_client.place_order(order)
+        return {
+            "success": True,
+            "order_id": str(result),
+            "message": f"Closed {close_qty}x {symbol} ({close_side}) → {result}",
+        }
+
+    try:
+        return await run_in_threadpool(_run)
+    except Exception as exc:
+        logger.exception("Close position failed")
+        return {"success": False, "message": str(exc)}
+
+
 @router.post("/scan_trade")
 async def scan_trade(req: ScanTradeRequest) -> ScanTradeResponse:
     """One-click: Scan market → Find opportunity → Validate → Execute.
