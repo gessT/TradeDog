@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createChart,
-  createSeriesMarkers,
   CandlestickSeries,
   LineSeries,
   HistogramSeries,
@@ -21,16 +20,13 @@ const TZ_OFFSET_SEC = -(new Date().getTimezoneOffset() * 60);
 const toLocal = (utcSec: number) => (utcSec + TZ_OFFSET_SEC) as UTCTimestamp;
 
 type Props = {
+  symbol?: string;
+  symbolName?: string;
+  symbolIcon?: string;
   onPriceUpdate?: (price: number) => void;
   focusTime?: number | null;
   focusInterval?: string | null;
 };
-
-function rsiColorClass(rsi: number): string {
-  if (rsi >= 70) return "bg-rose-500/20 text-rose-400";
-  if (rsi <= 30) return "bg-emerald-500/20 text-emerald-400";
-  return "bg-slate-800 text-slate-400";
-}
 
 // ═══════════════════════════════════════════════════════════════════════
 // Price Badge
@@ -53,59 +49,10 @@ function PriceBadge({ price, prevPrice }: Readonly<{ price: number; prevPrice: n
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// RSI Mini Chart
-// ═══════════════════════════════════════════════════════════════════════
-
-function RSIMini({ data }: Readonly<{ data: { time: UTCTimestamp; value: number }[] }>) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!ref.current || data.length === 0) return;
-    const el = ref.current;
-    el.innerHTML = "";
-
-    const chart = createChart(el, {
-      width: el.clientWidth,
-      height: 60,
-      layout: { background: { color: "transparent" }, textColor: "#64748b", fontSize: 9 },
-      grid: { vertLines: { visible: false }, horzLines: { color: "#1e293b" } },
-      rightPriceScale: { visible: true, borderVisible: false, scaleMargins: { top: 0.05, bottom: 0.05 } },
-      timeScale: { visible: false },
-      crosshair: { mode: 0 },
-    });
-
-    const rsiLine = chart.addSeries(LineSeries, {
-      color: "#a78bfa",
-      lineWidth: 1,
-      priceLineVisible: false,
-    });
-    rsiLine.setData(data);
-
-    // Overbought / oversold lines
-    const ob = chart.addSeries(LineSeries, { color: "#ef444440", lineWidth: 1, priceLineVisible: false, lineStyle: 2 });
-    const os = chart.addSeries(LineSeries, { color: "#22c55e40", lineWidth: 1, priceLineVisible: false, lineStyle: 2 });
-    if (data.length >= 2) {
-      const t0 = data[0].time;
-      const t1 = data.at(-1)?.time ?? data[0].time;
-      ob.setData([{ time: t0, value: 70 }, { time: t1, value: 70 }]);
-      os.setData([{ time: t0, value: 30 }, { time: t1, value: 30 }]);
-    }
-
-    chart.timeScale().fitContent();
-
-    const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
-    ro.observe(el);
-    return () => { ro.disconnect(); chart.remove(); };
-  }, [data]);
-
-  return <div ref={ref} className="w-full h-[60px]" />;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }: Readonly<Props>) {
+export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold", symbolIcon = "🥇", onPriceUpdate, focusTime, focusInterval }: Readonly<Props>) {
   const [chartInterval, setChartInterval] = useState("15m");
   const [live, setLive] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -129,7 +76,7 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetchMGCLive(chartInterval, 2000);
+      const res = await fetchMGCLive(chartInterval, 2000, symbol);
       setData((prev) => {
         if (prev) setPrevPrice(prev.current_price);
         return res;
@@ -142,7 +89,7 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
     } finally {
       setLoading(false);
     }
-  }, [chartInterval, onPriceUpdate]);
+  }, [chartInterval, onPriceUpdate, symbol]);
 
   // Initial load
   useEffect(() => { void fetchData(); }, [fetchData]);
@@ -223,22 +170,8 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
       emaS.setData(emaSData);
     }
 
-    // Signal markers
-    const signalMarkers = data.signals
-      .map((s, i) => s === 1 ? {
-        time: toLocal(data.candles[i].time / 1000),
-        position: "belowBar" as const,
-        color: "#22d3ee",
-        shape: "arrowUp" as const,
-        text: "BUY",
-      } : null)
-      .filter(Boolean);
-    if (signalMarkers.length > 0) {
-      createSeriesMarkers(candleSeries, signalMarkers);
-    }
-
-    // Scroll to right (latest data)
-    chart.timeScale().scrollToRealTime();
+    // Centre the last bar
+    chart.timeScale().scrollToPosition(20, false);
 
     const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
     ro.observe(el);
@@ -267,26 +200,15 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
     }
   }, [focusTime, data, chartInterval]);
 
-  // RSI data for mini chart
-  const rsiData = data
-    ? data.rsi
-        .map((v, i) => v !== null && v !== undefined ? { time: toLocal(data.candles[i].time / 1000), value: v } : null)
-        .filter(Boolean) as { time: UTCTimestamp; value: number }[]
-    : [];
-
-  const currentRSI = data?.rsi ? data.rsi.findLast((v) => v !== null && v !== undefined) ?? 0 : 0;
-
   return (
     <div className="flex flex-col h-full bg-slate-950">
       {/* ── Header ──────────────────────────────────── */}
       <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-800/60 shrink-0 flex-wrap">
         <div className="flex items-center gap-2">
-          <span className="text-base">🥇</span>
+          <span className="text-base">{symbolIcon}</span>
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-amber-400">MGC LIVE</span>
-              {data && <span className="text-[9px] text-slate-500">{data.identifier}</span>}
-            </div>
+            <span className="text-xs font-bold text-amber-400">{symbol}</span>
+            <span className="text-[9px] text-slate-500 ml-1.5">{symbolName}</span>
             {data && <PriceBadge price={data.current_price} prevPrice={prevPrice || data.current_price} />}
           </div>
         </div>
@@ -325,14 +247,7 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
           {loading ? "…" : "↻"}
         </button>
 
-        {/* RSI badge */}
-        {currentRSI > 0 && (
-          <div className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded ${rsiColorClass(currentRSI)}`}>
-            RSI {currentRSI.toFixed(1)}
-          </div>
-        )}
-
-        <span className="text-[9px] text-slate-600">{lastUpdate}</span>
+        <span className="ml-auto text-[9px] text-slate-600">{lastUpdate}</span>
       </div>
 
       {/* ── Error ──────────────────────────────────── */}
@@ -342,15 +257,6 @@ export default function MGCLiveChart({ onPriceUpdate, focusTime, focusInterval }
 
       {/* ── Candlestick Chart ──────────────────────── */}
       <div ref={containerRef} className="flex-1 min-h-[200px]" />
-
-      {/* ── RSI Mini ───────────────────────────────── */}
-      <div className="shrink-0 border-t border-slate-800/60 px-3 py-1">
-        <div className="flex items-center gap-2 mb-0.5">
-          <span className="text-[8px] uppercase tracking-widest text-slate-600">RSI ({currentRSI.toFixed(1)})</span>
-          <span className="text-[8px] text-slate-700">70 overbought · 30 oversold</span>
-        </div>
-        <RSIMini data={rsiData} />
-      </div>
     </div>
   );
 }

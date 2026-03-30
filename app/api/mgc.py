@@ -202,6 +202,98 @@ def _isnan(v) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Multi-commodity quotes endpoint
+# ═══════════════════════════════════════════════════════════════════════
+
+# yfinance symbols for commodities we track
+_COMMODITY_SYMBOLS = {
+    "MGC": {"yf": "MGC=F", "name": "Micro Gold", "icon": "🥇"},
+    "BZ": {"yf": "BZ=F", "name": "Brent Oil", "icon": "🛢️"},
+    "NG": {"yf": "NG=F", "name": "Natural Gas", "icon": "🔥"},
+    "SI": {"yf": "SI=F", "name": "Silver", "icon": "🪙"},
+    "CL": {"yf": "CL=F", "name": "Crude Oil WTI", "icon": "⛽"},
+    "HG": {"yf": "HG=F", "name": "Copper", "icon": "🔶"},
+}
+
+
+class CommodityQuote(BaseModel):
+    symbol: str
+    name: str
+    icon: str
+    price: float
+    prev_close: float
+    change: float
+    change_pct: float
+    high: float
+    low: float
+    volume: int
+    updated: str
+
+
+class CommodityQuotesResponse(BaseModel):
+    quotes: list[CommodityQuote]
+    timestamp: str
+
+
+@router.get("/quotes")
+async def commodity_quotes() -> CommodityQuotesResponse:
+    """Fetch latest quotes for multiple commodity futures via yfinance."""
+
+    def _run():
+        import yfinance as yf
+
+        quotes: list[CommodityQuote] = []
+        symbols = list(_COMMODITY_SYMBOLS.keys())
+        yf_tickers = [_COMMODITY_SYMBOLS[s]["yf"] for s in symbols]
+
+        tickers = yf.Tickers(" ".join(yf_tickers))
+
+        for sym_key, yf_sym in zip(symbols, yf_tickers):
+            meta = _COMMODITY_SYMBOLS[sym_key]
+            try:
+                info = tickers.tickers[yf_sym].fast_info
+                price = float(info.last_price or 0)
+                prev = float(info.previous_close or 0)
+                change = price - prev
+                change_pct = (change / prev * 100) if prev else 0.0
+
+                # Get today's high/low/volume from 1d history
+                hist = tickers.tickers[yf_sym].history(period="1d", interval="1m")
+                day_high = float(hist["High"].max()) if not hist.empty else price
+                day_low = float(hist["Low"].min()) if not hist.empty else price
+                day_vol = int(hist["Volume"].sum()) if not hist.empty else 0
+
+                quotes.append(CommodityQuote(
+                    symbol=sym_key,
+                    name=meta["name"],
+                    icon=meta["icon"],
+                    price=round(price, 2),
+                    prev_close=round(prev, 2),
+                    change=round(change, 2),
+                    change_pct=round(change_pct, 2),
+                    high=round(day_high, 2),
+                    low=round(day_low, 2),
+                    volume=day_vol,
+                    updated=datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                ))
+            except Exception as exc:
+                logger.warning("Quote fetch failed for %s: %s", sym_key, exc)
+                quotes.append(CommodityQuote(
+                    symbol=sym_key, name=meta["name"], icon=meta["icon"],
+                    price=0, prev_close=0, change=0, change_pct=0,
+                    high=0, low=0, volume=0, updated="--:--:--",
+                ))
+
+        return quotes
+
+    quotes = await run_in_threadpool(_run)
+    return CommodityQuotesResponse(
+        quotes=quotes,
+        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Live data endpoint  (Tiger API — real-time)
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -261,20 +353,25 @@ def _get_tiger_clients():
 
 @router.get("/live")
 async def mgc_live(
+    symbol: Annotated[str, Query()] = "MGC",
     interval: Annotated[str, Query()] = "15m",
     limit: Annotated[int, Query(ge=50, le=2000)] = 500,
 ) -> MGCLiveResponse:
-    """Fetch real-time MGC bars from Tiger API with yfinance fallback."""
+    """Fetch real-time bars from Tiger API with yfinance fallback."""
 
     def _run():
         import pandas as pd
         from mgc_trading import indicators as ind
 
-        identifier = "MGC"
+        # Resolve yfinance symbol from commodity map
+        commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": "MGC=F"})
+        yf_symbol = commodity["yf"]
+
+        identifier = symbol
         use_tiger = False
 
-        # ── Try Tiger API first ──────────────────────────────────
-        if _tiger_quote_ok:
+        # ── Try Tiger API first (only for MGC) ───────────────────
+        if _tiger_quote_ok and symbol == "MGC":
             try:
                 quote_client, trade_client = _get_tiger_clients()
                 contracts = trade_client.get_contracts("MGC", sec_type="FUT")
@@ -301,9 +398,9 @@ async def mgc_live(
             yf_period = "60d"
             if interval == "1m":
                 yf_period = "7d"
-            df = load_yfinance(symbol="MGC=F", interval=interval, period=yf_period)
+            df = load_yfinance(symbol=yf_symbol, interval=interval, period=yf_period)
             if df is None or df.empty:
-                raise ValueError("No data from yfinance for MGC=F")
+                raise ValueError(f"No data from yfinance for {yf_symbol}")
             # Trim to requested limit
             if len(df) > limit:
                 df = df.iloc[-limit:]

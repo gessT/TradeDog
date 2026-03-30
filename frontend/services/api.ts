@@ -622,14 +622,46 @@ export type MGCLiveResponse = {
 export async function fetchMGCLive(
   interval: string = "15m",
   limit: number = 500,
+  symbol: string = "MGC",
 ): Promise<MGCLiveResponse> {
-  const url = `${API_BASE}/mgc/live?interval=${encodeURIComponent(interval)}&limit=${limit}`;
+  const url = `${API_BASE}/mgc/live?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Request failed with ${response.status}`);
   }
   return (await response.json()) as MGCLiveResponse;
+}
+
+// ── Commodity Quotes ────────────────────────────────────────────────
+
+export type CommodityQuote = {
+  symbol: string;
+  name: string;
+  icon: string;
+  price: number;
+  prev_close: number;
+  change: number;
+  change_pct: number;
+  high: number;
+  low: number;
+  volume: number;
+  updated: string;
+};
+
+export type CommodityQuotesResponse = {
+  quotes: CommodityQuote[];
+  timestamp: string;
+};
+
+export async function fetchCommodityQuotes(): Promise<CommodityQuotesResponse> {
+  const url = `${API_BASE}/mgc/quotes`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Quotes failed with ${response.status}`);
+  }
+  return (await response.json()) as CommodityQuotesResponse;
 }
 
 
