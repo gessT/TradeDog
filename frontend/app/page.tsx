@@ -38,9 +38,16 @@ export default function Page() {
         </button>
       </div>
 
-      {mode === "MY" && <KLSEDashboard />}
-      {mode === "US" && <USDashboard />}
-      {mode === "FUTURES" && <FuturesDashboard />}
+      {/* Keep all tabs mounted, hide inactive ones to preserve state */}
+      <div className={`flex-1 overflow-hidden ${mode === "MY" ? "flex" : "hidden"}`}>
+        <KLSEDashboard />
+      </div>
+      <div className={`flex-1 overflow-hidden ${mode === "US" ? "flex" : "hidden"}`}>
+        <USDashboard />
+      </div>
+      <div className={`flex-1 overflow-hidden ${mode === "FUTURES" ? "flex" : "hidden"}`}>
+        <FuturesDashboard />
+      </div>
     </main>
   );
 }
