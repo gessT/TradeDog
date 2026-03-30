@@ -678,7 +678,7 @@ async def tiger_account() -> TigerAccountResponse:
         filled_orders: list[TigerOrderItem] = []
         try:
             raw_filled = trade_client.get_filled_orders(account=TIGER_ACCOUNT, sec_type="FUT")
-            for o in (raw_filled or [])[-20:]:
+            for o in (raw_filled or [])[-50:]:
                 filled_orders.append(_order_to_item(o))
         except Exception:
             logger.exception("Failed to get Tiger filled orders")
@@ -713,8 +713,19 @@ def _order_to_item(o) -> TigerOrderItem:
         limit_price=float(getattr(o, "limit_price", 0) or 0),
         avg_fill_price=float(getattr(o, "avg_fill_price", 0) or 0),
         status=status_raw,
-        trade_time=str(getattr(o, "trade_time", "") or getattr(o, "order_time", "") or ""),
+        trade_time=_fmt_tiger_time(getattr(o, "trade_time", None) or getattr(o, "order_time", None)),
     )
+
+
+def _fmt_tiger_time(raw) -> str:
+    """Convert Tiger SDK time (ms timestamp or string) to ISO format."""
+    if not raw:
+        return ""
+    if isinstance(raw, (int, float)):
+        # Millisecond timestamp
+        ts = raw / 1000 if raw > 1e12 else raw
+        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return str(raw)
 
 
 @router.post("/order")
@@ -831,6 +842,61 @@ async def close_position(symbol: str = "MGC"):
     except Exception as exc:
         logger.exception("Close position failed")
         return {"success": False, "message": str(exc)}
+
+
+# ── Orphan order cleanup ────────────────────────────────────────────
+
+@router.post("/cleanup_orders")
+async def cleanup_orders():
+    """Cancel open SL/TP orders for symbols with no position (orphaned OCA legs).
+
+    This prevents stale stop-loss or take-profit orders from triggering
+    unintended trades after a position has already been closed.
+    """
+
+    def _run():
+        import re
+        _, trade_client = _get_tiger_clients()
+
+        # Get current positions → set of symbols that have a position
+        positions = trade_client.get_positions(account=TIGER_ACCOUNT, sec_type="FUT")
+        held_symbols: set[str] = set()
+        for p in (positions or []):
+            if p.contract and p.contract.symbol:
+                base = re.sub(r"\d+$", "", p.contract.symbol)
+                if int(getattr(p, "quantity", 0) or 0) != 0:
+                    held_symbols.add(base)
+
+        # Get open orders
+        open_orders = trade_client.get_open_orders(account=TIGER_ACCOUNT, sec_type="FUT")
+        cancelled = []
+        for o in (open_orders or []):
+            sym = ""
+            if hasattr(o, "contract") and o.contract and hasattr(o.contract, "symbol"):
+                sym = o.contract.symbol or ""
+            base = re.sub(r"\d+$", "", sym)
+
+            # If no position held for this symbol, cancel the order
+            if base and base not in held_symbols:
+                oid = str(getattr(o, "order_id", "") or getattr(o, "id", "") or "")
+                try:
+                    trade_client.cancel_order(id=int(oid))
+                    cancelled.append(oid)
+                    logger.info("🧹 Cancelled orphaned order %s for %s (no position)", oid, sym)
+                except Exception:
+                    logger.warning("Failed to cancel orphaned order %s", oid)
+
+        return {
+            "success": True,
+            "cancelled": cancelled,
+            "message": f"Cancelled {len(cancelled)} orphaned order(s)" if cancelled else "No orphaned orders",
+        }
+
+    try:
+        return await run_in_threadpool(_run)
+    except Exception as exc:
+        logger.exception("Cleanup failed")
+        return {"success": False, "cancelled": [], "message": str(exc)}
 
 
 @router.post("/scan_trade")

@@ -6,6 +6,7 @@ import {
   placeSimpleOrder,
   cancelOrder,
   closePosition,
+  cleanupOrders,
   type TigerAccountResponse,
   type TigerPositionItem,
   type TigerOrderItem,
@@ -22,6 +23,18 @@ const COMMODITY_NAMES: Record<string, string> = {
 
 /** Strip trailing digits from contract symbol (e.g. MGC2606 → MGC) */
 const baseSymbol = (s: string) => s.replace(/\d+$/, "");
+
+/** Format trade_time string for display */
+function fmtTime(raw: string): string {
+  if (!raw) return "";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw.slice(0, 16);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const HH = String(d.getHours()).padStart(2, "0");
+  const MM = String(d.getMinutes()).padStart(2, "0");
+  return `${dd}/${mm} ${HH}:${MM}`;
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // Quick Order
@@ -288,10 +301,14 @@ function OrderRow({
   canCancel,
   onCancel,
 }: Readonly<{ o: TigerOrderItem; canCancel: boolean; onCancel: (id: string) => void }>) {
+  const name = COMMODITY_NAMES[baseSymbol(o.symbol)] ?? "";
   return (
     <tr className="border-b border-slate-800/40 hover:bg-slate-800/30 transition-colors">
       <td className="px-2 py-1.5 text-[10px] text-slate-400">{o.order_id.slice(0, 12)}{o.order_id.length > 12 ? "…" : ""}</td>
-      <td className="px-2 py-1.5 text-[10px] font-bold text-slate-200">{o.symbol}</td>
+      <td className="px-2 py-1.5 text-[10px] font-bold text-slate-200">
+        {o.symbol}
+        {name && <span className="text-[9px] font-normal text-slate-500 ml-1">{name}</span>}
+      </td>
       <td className={`px-2 py-1.5 text-[10px] font-bold ${o.action === "BUY" ? "text-emerald-400" : "text-rose-400"}`}>
         {o.action}
       </td>
@@ -300,6 +317,7 @@ function OrderRow({
       <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">
         {o.avg_fill_price > 0 ? `$${o.avg_fill_price.toFixed(2)}` : o.limit_price > 0 ? `$${o.limit_price.toFixed(2)}` : "MKT"}
       </td>
+      <td className="px-2 py-1.5 text-[10px] text-slate-500">{o.trade_time ? fmtTime(o.trade_time) : ""}</td>
       <td className="px-2 py-1.5 text-[10px]">
         <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
           o.status.includes("FILL") ? "bg-emerald-900/40 text-emerald-400"
@@ -329,7 +347,7 @@ export default function TigerAccountTab() {
   const [data, setData] = useState<TigerAccountResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [orderTab, setOrderTab] = useState<"open" | "filled">("open");
+  const [orderTab, setOrderTab] = useState<"open" | "today" | "filled">("today");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -373,6 +391,25 @@ export default function TigerAccountTab() {
     }
   }, [refresh]);
 
+  const handleCleanup = useCallback(async () => {
+    try {
+      const res = await cleanupOrders();
+      if (res.cancelled.length > 0) {
+        alert(`🧹 ${res.message}`);
+        refresh();
+      }
+    } catch {
+      // silent
+    }
+  }, [refresh]);
+
+  // Auto-cleanup: when positions change, cancel orphaned SL/TP
+  useEffect(() => {
+    if (data?.positions) {
+      void handleCleanup();
+    }
+  }, [data?.positions?.length]);
+
   const acct = data?.account;
 
   return (
@@ -383,13 +420,20 @@ export default function TigerAccountTab() {
           <span className="text-base">🐯</span>
           <span className="text-sm font-bold text-amber-400">Tiger Account</span>
         </div>
-        <button
-          onClick={refresh}
-          disabled={loading}
-          className={`px-3 py-1 text-[10px] font-bold rounded transition-all ${
-            loading ? "bg-slate-800 text-slate-500 cursor-wait" : "bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700"
-          }`}
-        >{loading ? "Loading…" : "↻ Refresh"}</button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={refresh}
+            disabled={loading}
+            className={`px-3 py-1 text-[10px] font-bold rounded transition-all ${
+              loading ? "bg-slate-800 text-slate-500 cursor-wait" : "bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700"
+            }`}
+          >{loading ? "Loading…" : "↻ Refresh"}</button>
+          <button
+            onClick={handleCleanup}
+            className="px-3 py-1 text-[10px] font-bold rounded bg-slate-800 text-slate-400 hover:text-amber-400 hover:bg-slate-700 transition-all"
+            title="Cancel orphaned SL/TP orders for closed positions"
+          >🧹 Cleanup</button>
+        </div>
       </div>
 
       {error && (
@@ -456,18 +500,32 @@ export default function TigerAccountTab() {
       {/* Orders */}
       <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 overflow-hidden">
         <div className="px-3 py-2 border-b border-slate-800/40 flex items-center gap-2">
-          {(["open", "filled"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setOrderTab(t)}
-              className={`px-2.5 py-0.5 text-[10px] font-bold rounded transition-all ${
-                orderTab === t ? "bg-cyan-600 text-white" : "bg-slate-800 text-slate-500 hover:text-slate-300"
-              }`}
-            >{t === "open" ? `Open Orders (${data?.open_orders?.length ?? 0})` : `Filled (${data?.filled_orders?.length ?? 0})`}</button>
-          ))}
+          {(["today", "open", "filled"] as const).map((t) => {
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const todayFilled = data?.filled_orders?.filter((o) => o.trade_time && o.trade_time.slice(0, 10) === todayStr) ?? [];
+            const label = t === "today"
+              ? `Today (${todayFilled.length})`
+              : t === "open"
+                ? `Open (${data?.open_orders?.length ?? 0})`
+                : `All Filled (${data?.filled_orders?.length ?? 0})`;
+            return (
+              <button
+                key={t}
+                onClick={() => setOrderTab(t)}
+                className={`px-2.5 py-0.5 text-[10px] font-bold rounded transition-all ${
+                  orderTab === t ? "bg-cyan-600 text-white" : "bg-slate-800 text-slate-500 hover:text-slate-300"
+                }`}
+              >{label}</button>
+            );
+          })}
         </div>
         {(() => {
-          const orders = orderTab === "open" ? data?.open_orders : data?.filled_orders;
+          const todayStr = new Date().toISOString().slice(0, 10);
+          const orders = orderTab === "open"
+            ? data?.open_orders
+            : orderTab === "today"
+              ? data?.filled_orders?.filter((o) => o.trade_time && o.trade_time.slice(0, 10) === todayStr)
+              : data?.filled_orders;
           if (!orders || orders.length === 0) {
             return (
               <div className="px-3 py-6 text-center text-[11px] text-slate-600">
@@ -486,6 +544,7 @@ export default function TigerAccountTab() {
                     <th className="px-2 py-1.5">Type</th>
                     <th className="px-2 py-1.5 text-center">Fill</th>
                     <th className="px-2 py-1.5 text-right">Price</th>
+                    <th className="px-2 py-1.5">Time</th>
                     <th className="px-2 py-1.5">Status</th>
                     <th className="px-2 py-1.5 text-center"></th>
                   </tr>

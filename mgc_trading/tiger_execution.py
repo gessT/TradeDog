@@ -324,8 +324,8 @@ class TigerTrader:
             contract = contracts[0]
             contract.expiry = None
 
-            sl_leg = order_leg("STP", price=stop_loss_price, time_in_force="DAY")
-            tp_leg = order_leg("LMT", limit_price=take_profit_price, time_in_force="DAY")
+            sl_leg = order_leg("STP", price=stop_loss_price, time_in_force="GTC")
+            tp_leg = order_leg("LMT", limit_price=take_profit_price, time_in_force="GTC")
 
             oca = oca_order(
                 account=self.account,

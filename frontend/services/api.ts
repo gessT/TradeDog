@@ -742,6 +742,11 @@ export async function closePosition(symbol: string = "MGC"): Promise<{ success: 
   return res.json();
 }
 
+export async function cleanupOrders(): Promise<{ success: boolean; cancelled: string[]; message: string }> {
+  const res = await fetch(`${API_BASE}/mgc/cleanup_orders`, { method: "POST" });
+  return res.json();
+}
+
 
 // ── MGC Scan Trade (One-Click) ──────────────────────────────────────
 
