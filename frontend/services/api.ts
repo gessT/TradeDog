@@ -889,6 +889,17 @@ export type MGC5MinBacktestResponse = {
   timestamp: string;
 };
 
+/** Map short commodity key → yfinance ticker */
+const YF_SYMBOL_MAP: Record<string, string> = {
+  MGC: "MGC=F",
+  BZ: "BZ=F",
+  NG: "NG=F",
+  SI: "SI=F",
+  CL: "CL=F",
+  HG: "HG=F",
+};
+const toYF = (s: string) => YF_SYMBOL_MAP[s] ?? `${s}=F`;
+
 export async function fetchMGC5MinBacktest(
   period: string = "60d",
   oos_split: number = 0.3,
@@ -896,8 +907,9 @@ export async function fetchMGC5MinBacktest(
   atr_tp_mult: number = 3.0,
   date_from?: string,
   date_to?: string,
+  symbol: string = "MGC",
 ): Promise<MGC5MinBacktestResponse> {
-  let url = `${API_BASE}/mgc/backtest_5min?period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  let url = `${API_BASE}/mgc/backtest_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
   if (date_from) url += `&date_from=${date_from}`;
   if (date_to) url += `&date_to=${date_to}`;
   const response = await fetch(url, { cache: "no-store" });
@@ -951,9 +963,10 @@ export async function scan5Min(
   useLive: boolean = false,
   atr_sl_mult: number = 4.0,
   atr_tp_mult: number = 3.0,
+  symbol: string = "MGC",
 ): Promise<Scan5MinResponse> {
   const endpoint = useLive ? "scan_5min_live" : "scan_5min";
-  const url = `${API_BASE}/mgc/${endpoint}?atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  const url = `${API_BASE}/mgc/${endpoint}?symbol=${encodeURIComponent(toYF(symbol))}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();

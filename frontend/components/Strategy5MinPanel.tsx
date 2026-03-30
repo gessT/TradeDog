@@ -1259,7 +1259,7 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void }>) {
+export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC" }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; symbol?: string }>) {
   const [tab, setTab] = useState<Tab5Min>("backtest");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1292,33 +1292,40 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
   const busyRef = useRef(false);     // prevent overlapping polls
   autoRef.current = autoExec;
 
+  // ── Clear data when symbol changes ────────────────────
+  useEffect(() => {
+    setBtData(null);
+    setScanData(null);
+    setError(null);
+  }, [symbol]);
+
   // ── Backtest ──────────────────────────────────────────
   const runBacktest = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol);
       setBtData(res);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
       setLoading(false);
     }
-  }, [period, slMult, tpMult, dateFrom, dateTo]);
+  }, [period, slMult, tpMult, dateFrom, dateTo, symbol]);
 
   // ── Scanner ───────────────────────────────────────────
   const runScan = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await scan5Min(false, slMult, tpMult);
+      const res = await scan5Min(false, slMult, tpMult, symbol);
       setScanData(res);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Scan failed");
     } finally {
       setLoading(false);
     }
-  }, [slMult, tpMult]);
+  }, [slMult, tpMult, symbol]);
 
   // ── Execute Trade on Tiger ────────────────────────────
   const executeSignal = useCallback(async (sig?: Scan5MinSignal) => {
@@ -1413,7 +1420,7 @@ export default function Strategy5MinPanel({ onTradeClick }: Readonly<{ onTradeCl
       if (!autoRef.current || busyRef.current) return;
       busyRef.current = true;
       try {
-        const res = await scan5Min(false, slMult, tpMult);
+        const res = await scan5Min(false, slMult, tpMult, symbol);
         setScanData(res);
         const sig = res.signal;
 

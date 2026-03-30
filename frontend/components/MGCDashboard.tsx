@@ -40,7 +40,7 @@ export default function MGCDashboard() {
       {/* COL 1 — 5min Strategy Workspace                              */}
       {/* ═══════════════════════════════════════════════════════════════ */}
       <section className="w-full md:w-1/2 overflow-y-auto border-r border-slate-800/60">
-        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} />
+        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} symbol={selectedSymbol} />
       </section>
 
       {/* ═══════════════════════════════════════════════════════════════ */}
