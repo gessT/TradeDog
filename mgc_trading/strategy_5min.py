@@ -159,8 +159,13 @@ class MGCStrategy5Min:
 
         return df
 
-    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+    def generate_signals(self, df: pd.DataFrame, disabled: set[str] | None = None) -> pd.Series:
         """Generate entry signals: +1 = CALL (long), -1 = PUT (short), 0 = no signal.
+
+        *disabled* is an optional set of condition keys to skip (treat as always True).
+        Valid keys: ema_trend, ema_slope, pullback, breakout, supertrend,
+                    macd_momentum, rsi_momentum, volume_spike, atr_range,
+                    session_ok, adx_ok.
 
         CALL conditions (ALL must be True):
           1. EMA fast > EMA slow AND EMA fast rising
@@ -179,33 +184,46 @@ class MGCStrategy5Min:
           - ADX / HTF (if enabled)
         """
         p = self.p
+        off = disabled or set()
+        _true = pd.Series(True, index=df.index)
+
         # ── Common filters ──────────────────────────────────────
-        cond_vol = df["vol_spike"] == 1
-        cond_session = df["in_session"] == 1
-        cond_atr = df["atr_ok"] == 1
-        cond_adx = df["adx"] >= p.get("adx_min", 0)
+        cond_vol = _true if "volume_spike" in off else (df["vol_spike"] == 1)
+        cond_session = _true if "session_ok" in off else (df["in_session"] == 1)
+        cond_atr = _true if "atr_range" in off else (df["atr_ok"] == 1)
+        cond_adx = _true if "adx_ok" in off else (df["adx"] >= p.get("adx_min", 0))
 
         filters = cond_vol & cond_session & cond_atr & cond_adx
 
         # ── CALL (long) ────────────────────────────────────────
-        call_trend = (df["ema_fast"] > df["ema_slow"]) & (df["ema_slope"] == 1)
-        call_entry = (df["pullback"] == 1) | (df["breakout"] == 1)
-        call_st = df["st_dir"] == 1
-        call_mom = (df["macd_mom"] == 1) | (df["rsi_rising"] == 1)
+        call_trend = _true if "ema_trend" in off else (df["ema_fast"] > df["ema_slow"])
+        call_slope = _true if "ema_slope" in off else (df["ema_slope"] == 1)
+        call_pullback = _true if "pullback" in off else (df["pullback"] == 1)
+        call_breakout = _true if "breakout" in off else (df["breakout"] == 1)
+        call_entry = call_pullback | call_breakout
+        call_st = _true if "supertrend" in off else (df["st_dir"] == 1)
+        call_macd = _true if "macd_momentum" in off else (df["macd_mom"] == 1)
+        call_rsi = _true if "rsi_momentum" in off else (df["rsi_rising"] == 1)
+        call_mom = call_macd | call_rsi
         htf_ema_period = p.get("htf_ema_period", 999)
         call_htf = df["htf_trend"] == 1 if htf_ema_period < 500 else True
 
-        call_signal = call_trend & call_entry & call_st & call_mom & filters
+        call_signal = call_trend & call_slope & call_entry & call_st & call_mom & filters
         if htf_ema_period < 500:
             call_signal = call_signal & call_htf
 
         # ── PUT (short) ────────────────────────────────────────
-        put_trend = (df["ema_fast"] < df["ema_slow"]) & (df["ema_slope_falling"] == 1)
-        put_entry = (df["pullback"] == 1) | (df["breakout_low"] == 1)
-        put_st = df["st_dir"] == -1
-        put_mom = (df["macd_mom_bear"] == 1) | (df["rsi_falling"] == 1)
+        put_trend = _true if "ema_trend" in off else (df["ema_fast"] < df["ema_slow"])
+        put_slope = _true if "ema_slope" in off else (df["ema_slope_falling"] == 1)
+        put_pullback = _true if "pullback" in off else (df["pullback"] == 1)
+        put_breakout = _true if "breakout" in off else (df["breakout_low"] == 1)
+        put_entry = put_pullback | put_breakout
+        put_st = _true if "supertrend" in off else (df["st_dir"] == -1)
+        put_macd = _true if "macd_momentum" in off else (df["macd_mom_bear"] == 1)
+        put_rsi = _true if "rsi_momentum" in off else (df["rsi_falling"] == 1)
+        put_mom = put_macd | put_rsi
 
-        put_signal = put_trend & put_entry & put_st & put_mom & filters
+        put_signal = put_trend & put_slope & put_entry & put_st & put_mom & filters
 
         # ── Combine: +1 = CALL, -1 = PUT ──────────────────────
         signal = pd.Series(0, index=df.index, dtype=int)

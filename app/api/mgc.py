@@ -1303,11 +1303,19 @@ async def mgc_backtest_5min(
     atr_tp_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 3.0,
     date_from: Annotated[Optional[str], Query()] = None,
     date_to: Annotated[Optional[str], Query()] = None,
+    disabled_conditions: Annotated[Optional[str], Query()] = None,
 ) -> MGC5MinBacktestResponse:
     """Run 5-minute strategy backtest with out-of-sample validation.
 
     Optional date_from / date_to to slice data (format: YYYY-MM-DD).
+    disabled_conditions: comma-separated condition keys to skip (e.g. "volume_spike,adx_ok").
     """
+    # Parse disabled conditions from comma-separated string
+    _disabled: set[str] = set()
+    if disabled_conditions:
+        _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
+                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok"}
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
 
     def _run():
         import pandas as _pd
@@ -1329,7 +1337,7 @@ async def mgc_backtest_5min(
         # ── Run full 60d simulation for consistent results ──────
         custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
         bt = Backtester5Min(capital=capital)
-        result = bt.run(df, params=custom_params, oos_split=oos_split)
+        result = bt.run(df, params=custom_params, oos_split=oos_split, disabled_conditions=_disabled or None)
 
         # ── Determine display window ────────────────────────────
         display_start: str | None = None

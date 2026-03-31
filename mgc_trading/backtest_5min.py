@@ -89,6 +89,7 @@ class Backtester5Min:
         df: pd.DataFrame,
         params: dict | None = None,
         oos_split: float = 0.0,
+        disabled_conditions: set[str] | None = None,
     ) -> BacktestResult5Min:
         """Execute 5min backtest.
 
@@ -96,6 +97,7 @@ class Backtester5Min:
         up regardless of which date range the caller later displays.
         If *oos_split* > 0 (e.g. 0.3), split data 70/30 and report
         out-of-sample metrics separately.
+        *disabled_conditions*: condition keys to skip (treat as always True).
         """
         full_params = {**DEFAULT_5MIN_PARAMS, **(params or {})}
         strategy = MGCStrategy5Min(full_params)
@@ -104,7 +106,7 @@ class Backtester5Min:
         df_ind = strategy.compute_indicators(
             df[["open", "high", "low", "close", "volume"]].copy()
         )
-        signals = strategy.generate_signals(df_ind)
+        signals = strategy.generate_signals(df_ind, disabled=disabled_conditions)
 
         # In-sample run (full data or first portion)
         if oos_split > 0:

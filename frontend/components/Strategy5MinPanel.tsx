@@ -259,25 +259,25 @@ function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrad
 // ═══════════════════════════════════════════════════════════════════════
 
 /** All conditions that gate auto-execution. User can toggle each. */
-const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m" | "15m" | "1h" }[] = [
+const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m" | "15m" | "1h"; desc: string }[] = [
   // 5m core
-  { key: "ema_trend", label: "EMA Trend", group: "5m" },
-  { key: "ema_slope", label: "EMA Slope", group: "5m" },
-  { key: "pullback", label: "Pullback", group: "5m" },
-  { key: "breakout", label: "Breakout", group: "5m" },
-  { key: "supertrend", label: "Supertrend", group: "5m" },
-  { key: "macd_momentum", label: "MACD Momentum", group: "5m" },
-  { key: "rsi_momentum", label: "RSI Momentum", group: "5m" },
-  { key: "volume_spike", label: "Volume Spike", group: "5m" },
-  { key: "atr_range", label: "ATR Range", group: "5m" },
-  { key: "session_ok", label: "Session Hours", group: "5m" },
-  { key: "adx_ok", label: "ADX Filter", group: "5m" },
+  { key: "ema_trend", label: "EMA Trend", group: "5m", desc: "Price is above fast EMA for CALL or below for PUT, confirming trend direction." },
+  { key: "ema_slope", label: "EMA Slope", group: "5m", desc: "Fast EMA is sloping upward (CALL) or downward (PUT), showing momentum." },
+  { key: "pullback", label: "Pullback", group: "5m", desc: "Price pulled back near the fast EMA then bounced, providing a low-risk entry." },
+  { key: "breakout", label: "Breakout", group: "5m", desc: "Price broke above recent resistance (CALL) or below support (PUT) with momentum." },
+  { key: "supertrend", label: "Supertrend", group: "5m", desc: "Supertrend indicator is bullish (CALL) or bearish (PUT), confirming trend." },
+  { key: "macd_momentum", label: "MACD Momentum", group: "5m", desc: "MACD histogram is positive and rising (CALL) or negative and falling (PUT)." },
+  { key: "rsi_momentum", label: "RSI Momentum", group: "5m", desc: "RSI is in bullish zone 40-70 (CALL) or bearish zone 30-60 (PUT), not overbought/sold." },
+  { key: "volume_spike", label: "Volume Spike", group: "5m", desc: "Current volume exceeds the recent average, validating price movement." },
+  { key: "atr_range", label: "ATR Range", group: "5m", desc: "ATR is within acceptable range — not too flat (no movement) or too volatile (choppy)." },
+  { key: "session_ok", label: "Session Hours", group: "5m", desc: "Current time is within active trading hours (US market session)." },
+  { key: "adx_ok", label: "ADX Filter", group: "5m", desc: "ADX is above threshold, confirming the market is trending (not ranging)." },
   // 15m confirmation
-  { key: "htf_15m_trend", label: "15m EMA Trend", group: "15m" },
-  { key: "htf_15m_supertrend", label: "15m Supertrend", group: "15m" },
+  { key: "htf_15m_trend", label: "15m EMA Trend", group: "15m", desc: "15-minute EMA trend aligns with the 5m signal direction." },
+  { key: "htf_15m_supertrend", label: "15m Supertrend", group: "15m", desc: "15-minute Supertrend confirms the same bias as the 5m signal." },
   // 1h confirmation
-  { key: "htf_1h_trend", label: "1h EMA Trend", group: "1h" },
-  { key: "htf_1h_supertrend", label: "1h Supertrend", group: "1h" },
+  { key: "htf_1h_trend", label: "1h EMA Trend", group: "1h", desc: "1-hour EMA trend aligns with the trade direction for higher conviction." },
+  { key: "htf_1h_supertrend", label: "1h Supertrend", group: "1h", desc: "1-hour Supertrend confirms the macro trend supports the trade." },
 ];
 
 /** Default: all core 5m conditions ON, HTF optional off */
@@ -435,8 +435,6 @@ function ScannerTab({
   pendingSecsLeft,
   onApprovePending,
   onRejectPending,
-  conditionToggles,
-  onToggleCondition,
   countdown,
 }: Readonly<{
   scanData: Scan5MinResponse | null;
@@ -453,13 +451,10 @@ function ScannerTab({
   pendingSecsLeft: number;
   onApprovePending: () => void;
   onRejectPending: () => void;
-  conditionToggles: Record<string, boolean>;
-  onToggleCondition: (key: string) => void;
   countdown: string;
 }>) {
   const sig = scanData?.signal;
   const allSignals = scanData?.signals ?? [];
-  const conds = scanData?.conditions;
   const [mode, setMode] = useState<"manual" | "auto">("manual");
   const [selectedIdx, setSelectedIdx] = useState<number>(0);
 
@@ -743,106 +738,6 @@ function ScannerTab({
                 {verified ? "🔓 Verified — auto-executing signals" : "🔒 Awaiting first-signal verification"}
               </div>
             )}
-          </div>
-
-          {/* ── Condition Toggles + Live Status ───────────────── */}
-          <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
-            <div className="flex items-center justify-between mb-1">
-              <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Execution Conditions</p>
-              {conds && (
-                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                  scanData?.conditions_met === scanData?.conditions_total ? "bg-emerald-900/40 text-emerald-400"
-                  : (scanData?.conditions_met ?? 0) >= 6 ? "bg-amber-900/40 text-amber-400"
-                  : "bg-rose-900/40 text-rose-400"
-                }`}>
-                  {scanData?.conditions_met}/{scanData?.conditions_total} met
-                </span>
-              )}
-            </div>
-
-            {/* 5m conditions */}
-            <p className="text-[8px] text-slate-600 uppercase tracking-wider mt-1">5-Minute (Execution)</p>
-            <div className="grid grid-cols-2 gap-1">
-              {CONDITION_DEFS.filter((d) => d.group === "5m").map((def) => {
-                const on = conditionToggles[def.key];
-                const live = conds?.[def.key] ?? false;
-                return (
-                  <button
-                    key={def.key}
-                    onClick={() => onToggleCondition(def.key)}
-                    className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
-                      on ? "border border-slate-700/60 bg-slate-800/50" : "border border-slate-800/30 bg-slate-900/30 opacity-50"
-                    }`}
-                  >
-                    <span className={`w-3 h-3 rounded-sm flex items-center justify-center text-[7px] font-bold ${
-                      on ? (live ? "bg-emerald-600 text-white" : "bg-slate-600 text-slate-300") : "bg-slate-800 text-slate-600"
-                    }`}>
-                      {on ? (live ? "✓" : "✗") : "—"}
-                    </span>
-                    <span className={on ? "text-slate-300" : "text-slate-600"}>{def.label}</span>
-                    {on && conds && (
-                      <span className={`ml-auto w-1.5 h-1.5 rounded-full ${live ? "bg-emerald-400" : "bg-rose-400"}`} />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* 15m conditions */}
-            <p className="text-[8px] text-slate-600 uppercase tracking-wider mt-2">15-Minute (Confirmation)</p>
-            <div className="grid grid-cols-2 gap-1">
-              {CONDITION_DEFS.filter((d) => d.group === "15m").map((def) => {
-                const on = conditionToggles[def.key];
-                const live = conds?.[def.key] ?? false;
-                return (
-                  <button
-                    key={def.key}
-                    onClick={() => onToggleCondition(def.key)}
-                    className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
-                      on ? "border border-cyan-700/40 bg-cyan-950/20" : "border border-slate-800/30 bg-slate-900/30 opacity-50"
-                    }`}
-                  >
-                    <span className={`w-3 h-3 rounded-sm flex items-center justify-center text-[7px] font-bold ${
-                      on ? (live ? "bg-emerald-600 text-white" : "bg-slate-600 text-slate-300") : "bg-slate-800 text-slate-600"
-                    }`}>
-                      {on ? (live ? "✓" : "✗") : "—"}
-                    </span>
-                    <span className={on ? "text-cyan-300" : "text-slate-600"}>{def.label}</span>
-                    {on && conds && (
-                      <span className={`ml-auto w-1.5 h-1.5 rounded-full ${live ? "bg-emerald-400" : "bg-rose-400"}`} />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* 1h conditions */}
-            <p className="text-[8px] text-slate-600 uppercase tracking-wider mt-2">1-Hour (Trend)</p>
-            <div className="grid grid-cols-2 gap-1">
-              {CONDITION_DEFS.filter((d) => d.group === "1h").map((def) => {
-                const on = conditionToggles[def.key];
-                const live = conds?.[def.key] ?? false;
-                return (
-                  <button
-                    key={def.key}
-                    onClick={() => onToggleCondition(def.key)}
-                    className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
-                      on ? "border border-amber-700/40 bg-amber-950/20" : "border border-slate-800/30 bg-slate-900/30 opacity-50"
-                    }`}
-                  >
-                    <span className={`w-3 h-3 rounded-sm flex items-center justify-center text-[7px] font-bold ${
-                      on ? (live ? "bg-emerald-600 text-white" : "bg-slate-600 text-slate-300") : "bg-slate-800 text-slate-600"
-                    }`}>
-                      {on ? (live ? "✓" : "✗") : "—"}
-                    </span>
-                    <span className={on ? "text-amber-300" : "text-slate-600"}>{def.label}</span>
-                    {on && conds && (
-                      <span className={`ml-auto w-1.5 h-1.5 rounded-full ${live ? "bg-emerald-400" : "bg-rose-400"}`} />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
           </div>
 
           {/* ── Pending Signal Verification Card (2-min approval) ── */}
@@ -1683,6 +1578,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
 
   // ── Condition toggles for auto-execution ──────────────
   const [conditionToggles, setConditionToggles] = useState<Record<string, boolean>>({ ...DEFAULT_CONDITION_TOGGLES });
+  const [conditionsOpen, setConditionsOpen] = useState(false);
 
   // ── Candle-close timer state ──────────────────────────
   const [nextCandle, setNextCandle] = useState<number>(nextCandleClose5m());
@@ -1707,14 +1603,18 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol);
+      // Compute disabled conditions from toggles (OFF = disabled)
+      const disabled = CONDITION_DEFS
+        .filter((d) => d.group === "5m" && !conditionToggles[d.key])
+        .map((d) => d.key);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol, disabled.length > 0 ? disabled : undefined);
       setBtData(res);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
       setLoading(false);
     }
-  }, [period, slMult, tpMult, dateFrom, dateTo, symbol]);
+  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles]);
 
   // ── Scanner ───────────────────────────────────────────
   const runScan = useCallback(async () => {
@@ -2075,6 +1975,162 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       )}
 
       {/* ═════════════════════════════════════════════════════ */}
+      {/* GLOBAL: Execution Conditions (shared across all tabs)*/}
+      {/* ═════════════════════════════════════════════════════ */}
+      {(() => {
+        const conds = scanData?.conditions ?? null;
+        const enabledCount = Object.values(conditionToggles).filter(Boolean).length;
+        return (
+          <div className="mx-3 mt-2">
+            {/* Collapsed header bar — always visible */}
+            <button
+              onClick={() => setConditionsOpen((v) => !v)}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-800/60 bg-slate-900/40 hover:bg-slate-900/70 transition-all"
+            >
+              <span className="text-[10px]">⚙️</span>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Conditions</span>
+
+              {/* Compact inline pills when collapsed */}
+              {!conditionsOpen && (
+                <span className="flex items-center gap-1 ml-1">
+                  {CONDITION_DEFS.map((def) => {
+                    const on = conditionToggles[def.key];
+                    const live = conds?.[def.key] ?? false;
+                    return (
+                      <span
+                        key={def.key}
+                        title={`${def.label}: ${on ? (conds ? (live ? "PASS" : "FAIL") : "ON") : "OFF"}`}
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          !on ? "bg-slate-700"
+                          : !conds ? "bg-cyan-600"
+                          : live ? "bg-emerald-400" : "bg-rose-400"
+                        }`}
+                      />
+                    );
+                  })}
+                </span>
+              )}
+
+              <span className="ml-auto flex items-center gap-2">
+                {conds && (
+                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                    scanData?.conditions_met === scanData?.conditions_total ? "bg-emerald-900/40 text-emerald-400"
+                    : (scanData?.conditions_met ?? 0) >= 6 ? "bg-amber-900/40 text-amber-400"
+                    : "bg-rose-900/40 text-rose-400"
+                  }`}>
+                    {scanData?.conditions_met}/{scanData?.conditions_total} met
+                  </span>
+                )}
+                <span className="text-[9px] text-slate-500">{enabledCount}/{CONDITION_DEFS.length} on</span>
+                <svg className={`w-3 h-3 text-slate-500 transition-transform ${conditionsOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path d="M19 9l-7 7-7-7"/></svg>
+              </span>
+            </button>
+
+            {/* Expanded condition toggles */}
+            {conditionsOpen && (
+              <div className="mt-1 rounded-lg border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
+                {/* 5m conditions */}
+                <p className="text-[8px] text-slate-600 uppercase tracking-wider">5-Minute (Execution)</p>
+                <div className="grid grid-cols-2 gap-1">
+                  {CONDITION_DEFS.filter((d) => d.group === "5m").map((def) => {
+                    const on = conditionToggles[def.key];
+                    const live = conds?.[def.key] ?? false;
+                    return (
+                      <button
+                        key={def.key}
+                        onClick={() => setConditionToggles((prev) => ({ ...prev, [def.key]: !prev[def.key] }))}
+                        className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
+                          on ? "border border-slate-700/60 bg-slate-800/50" : "border border-slate-800/30 bg-slate-900/30 opacity-50"
+                        }`}
+                      >
+                        <span className={`w-3 h-3 rounded-sm flex items-center justify-center text-[7px] font-bold ${
+                          on ? (live ? "bg-emerald-600 text-white" : "bg-slate-600 text-slate-300") : "bg-slate-800 text-slate-600"
+                        }`}>
+                          {on ? (live ? "✓" : "✗") : "—"}
+                        </span>
+                        <span className={on ? "text-slate-300" : "text-slate-600"}>{def.label}</span>
+                        <span className="relative ml-auto group/tip">
+                          <svg className="w-3 h-3 text-slate-500 hover:text-slate-300 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 16v0m0-8a2.5 2.5 0 011.5 4.5L12 14"/></svg>
+                          <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/tip:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">{def.desc}</span>
+                        </span>
+                        {on && conds && (
+                          <span className={`w-1.5 h-1.5 rounded-full ${live ? "bg-emerald-400" : "bg-rose-400"}`} />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* 15m conditions */}
+                <p className="text-[8px] text-slate-600 uppercase tracking-wider mt-2">15-Minute (Confirmation)</p>
+                <div className="grid grid-cols-2 gap-1">
+                  {CONDITION_DEFS.filter((d) => d.group === "15m").map((def) => {
+                    const on = conditionToggles[def.key];
+                    const live = conds?.[def.key] ?? false;
+                    return (
+                      <button
+                        key={def.key}
+                        onClick={() => setConditionToggles((prev) => ({ ...prev, [def.key]: !prev[def.key] }))}
+                        className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
+                          on ? "border border-cyan-700/40 bg-cyan-950/20" : "border border-slate-800/30 bg-slate-900/30 opacity-50"
+                        }`}
+                      >
+                        <span className={`w-3 h-3 rounded-sm flex items-center justify-center text-[7px] font-bold ${
+                          on ? (live ? "bg-emerald-600 text-white" : "bg-slate-600 text-slate-300") : "bg-slate-800 text-slate-600"
+                        }`}>
+                          {on ? (live ? "✓" : "✗") : "—"}
+                        </span>
+                        <span className={on ? "text-cyan-300" : "text-slate-600"}>{def.label}</span>
+                        <span className="relative ml-auto group/tip">
+                          <svg className="w-3 h-3 text-slate-500 hover:text-cyan-300 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 16v0m0-8a2.5 2.5 0 011.5 4.5L12 14"/></svg>
+                          <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/tip:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">{def.desc}</span>
+                        </span>
+                        {on && conds && (
+                          <span className={`w-1.5 h-1.5 rounded-full ${live ? "bg-emerald-400" : "bg-rose-400"}`} />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* 1h conditions */}
+                <p className="text-[8px] text-slate-600 uppercase tracking-wider mt-2">1-Hour (Trend)</p>
+                <div className="grid grid-cols-2 gap-1">
+                  {CONDITION_DEFS.filter((d) => d.group === "1h").map((def) => {
+                    const on = conditionToggles[def.key];
+                    const live = conds?.[def.key] ?? false;
+                    return (
+                      <button
+                        key={def.key}
+                        onClick={() => setConditionToggles((prev) => ({ ...prev, [def.key]: !prev[def.key] }))}
+                        className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
+                          on ? "border border-amber-700/40 bg-amber-950/20" : "border border-slate-800/30 bg-slate-900/30 opacity-50"
+                        }`}
+                      >
+                        <span className={`w-3 h-3 rounded-sm flex items-center justify-center text-[7px] font-bold ${
+                          on ? (live ? "bg-emerald-600 text-white" : "bg-slate-600 text-slate-300") : "bg-slate-800 text-slate-600"
+                        }`}>
+                          {on ? (live ? "✓" : "✗") : "—"}
+                        </span>
+                        <span className={on ? "text-amber-300" : "text-slate-600"}>{def.label}</span>
+                        <span className="relative ml-auto group/tip">
+                          <svg className="w-3 h-3 text-slate-500 hover:text-amber-300 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 16v0m0-8a2.5 2.5 0 011.5 4.5L12 14"/></svg>
+                          <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/tip:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">{def.desc}</span>
+                        </span>
+                        {on && conds && (
+                          <span className={`w-1.5 h-1.5 rounded-full ${live ? "bg-emerald-400" : "bg-rose-400"}`} />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ═════════════════════════════════════════════════════ */}
       {/* TAB: Backtest                                        */}
       {/* ═════════════════════════════════════════════════════ */}
       {tab === "backtest" && (
@@ -2270,8 +2326,6 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           pendingSecsLeft={pendingSecsLeft}
           onApprovePending={approvePending}
           onRejectPending={rejectPending}
-          conditionToggles={conditionToggles}
-          onToggleCondition={(key) => setConditionToggles((prev) => ({ ...prev, [key]: !prev[key] }))}
           countdown={countdown}
         />
       )}
