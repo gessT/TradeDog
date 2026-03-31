@@ -187,6 +187,15 @@ class MGCStrategy5Min:
         off = disabled or set()
         _true = pd.Series(True, index=df.index)
 
+        def _or_group(parts: list) -> pd.Series:
+            """OR only enabled conditions; if all disabled → always True."""
+            if not parts:
+                return _true
+            result = parts[0]
+            for p2 in parts[1:]:
+                result = result | p2
+            return result
+
         # ── Common filters ──────────────────────────────────────
         cond_vol = _true if "volume_spike" in off else (df["vol_spike"] == 1)
         cond_session = _true if "session_ok" in off else (df["in_session"] == 1)
@@ -198,13 +207,21 @@ class MGCStrategy5Min:
         # ── CALL (long) ────────────────────────────────────────
         call_trend = _true if "ema_trend" in off else (df["ema_fast"] > df["ema_slow"])
         call_slope = _true if "ema_slope" in off else (df["ema_slope"] == 1)
-        call_pullback = _true if "pullback" in off else (df["pullback"] == 1)
-        call_breakout = _true if "breakout" in off else (df["breakout"] == 1)
-        call_entry = call_pullback | call_breakout
+        # Entry group: only require enabled entry conditions
+        call_entry_parts: list = []
+        if "pullback" not in off:
+            call_entry_parts.append(df["pullback"] == 1)
+        if "breakout" not in off:
+            call_entry_parts.append(df["breakout"] == 1)
+        call_entry = _or_group(call_entry_parts)
         call_st = _true if "supertrend" in off else (df["st_dir"] == 1)
-        call_macd = _true if "macd_momentum" in off else (df["macd_mom"] == 1)
-        call_rsi = _true if "rsi_momentum" in off else (df["rsi_rising"] == 1)
-        call_mom = call_macd | call_rsi
+        # Momentum group: only require enabled momentum conditions
+        call_mom_parts: list = []
+        if "macd_momentum" not in off:
+            call_mom_parts.append(df["macd_mom"] == 1)
+        if "rsi_momentum" not in off:
+            call_mom_parts.append(df["rsi_rising"] == 1)
+        call_mom = _or_group(call_mom_parts)
         htf_ema_period = p.get("htf_ema_period", 999)
         call_htf = df["htf_trend"] == 1 if htf_ema_period < 500 else True
 
@@ -215,13 +232,21 @@ class MGCStrategy5Min:
         # ── PUT (short) ────────────────────────────────────────
         put_trend = _true if "ema_trend" in off else (df["ema_fast"] < df["ema_slow"])
         put_slope = _true if "ema_slope" in off else (df["ema_slope_falling"] == 1)
-        put_pullback = _true if "pullback" in off else (df["pullback"] == 1)
-        put_breakout = _true if "breakout" in off else (df["breakout_low"] == 1)
-        put_entry = put_pullback | put_breakout
+        # Entry group
+        put_entry_parts: list = []
+        if "pullback" not in off:
+            put_entry_parts.append(df["pullback"] == 1)
+        if "breakout" not in off:
+            put_entry_parts.append(df["breakout_low"] == 1)
+        put_entry = _or_group(put_entry_parts)
         put_st = _true if "supertrend" in off else (df["st_dir"] == -1)
-        put_macd = _true if "macd_momentum" in off else (df["macd_mom_bear"] == 1)
-        put_rsi = _true if "rsi_momentum" in off else (df["rsi_falling"] == 1)
-        put_mom = put_macd | put_rsi
+        # Momentum group
+        put_mom_parts: list = []
+        if "macd_momentum" not in off:
+            put_mom_parts.append(df["macd_mom_bear"] == 1)
+        if "rsi_momentum" not in off:
+            put_mom_parts.append(df["rsi_falling"] == 1)
+        put_mom = _or_group(put_mom_parts)
 
         put_signal = put_trend & put_slope & put_entry & put_st & put_mom & filters
 

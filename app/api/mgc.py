@@ -1520,8 +1520,15 @@ async def mgc_scan_5min(
     period: Annotated[str, Query()] = "60d",
     atr_sl_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 4.0,
     atr_tp_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 3.0,
+    disabled_conditions: Annotated[Optional[str], Query()] = None,
 ) -> Scan5MinResponse:
     """Scan for 5-minute entry signal using yfinance data."""
+    # Parse disabled conditions
+    _disabled: set[str] | None = None
+    if disabled_conditions:
+        _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
+                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok"}
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid} or None
 
     def _run():
         from mgc_trading.scanner_5min import scan_5min, scan_5min_all, scan_5min_mtf
@@ -1546,11 +1553,11 @@ async def mgc_scan_5min(
             pass
 
         # MTF scan (includes per-condition status)
-        mtf_result = scan_5min_mtf(df_5m, df_15m, df_1h, params=custom_params)
+        mtf_result = scan_5min_mtf(df_5m, df_15m, df_1h, params=custom_params, disabled=_disabled)
         result = mtf_result.scan
 
-        # All recent signals (last 10 completed bars)
-        all_results = scan_5min_all(df_5m, params=custom_params, lookback=10)
+        # All recent signals (last 10 completed bars) — respect disabled conditions
+        all_results = scan_5min_all(df_5m, params=custom_params, lookback=10, disabled=_disabled)
 
         # Last 30 candles for mini chart
         tail = df_5m.tail(30)
@@ -1614,8 +1621,14 @@ async def mgc_scan_5min(
 async def mgc_scan_5min_live(
     atr_sl_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 4.0,
     atr_tp_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 3.0,
+    disabled_conditions: Annotated[Optional[str], Query()] = None,
 ) -> Scan5MinResponse:
     """Scan for 5-minute entry signal using Tiger live data."""
+    _disabled: set[str] | None = None
+    if disabled_conditions:
+        _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
+                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok"}
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid} or None
 
     def _run():
         import pandas as pd
@@ -1665,11 +1678,11 @@ async def mgc_scan_5min_live(
             pass
 
         # MTF scan
-        mtf_result = scan_5min_mtf(df_5m, df_15m, df_1h, params=custom_params)
+        mtf_result = scan_5min_mtf(df_5m, df_15m, df_1h, params=custom_params, disabled=_disabled)
         result = mtf_result.scan
 
         # All recent signals
-        all_results = scan_5min_all(df_5m, params=custom_params, lookback=10)
+        all_results = scan_5min_all(df_5m, params=custom_params, lookback=10, disabled=_disabled)
 
         def _to_sig(r):
             return Scan5MinSignal(
@@ -2008,6 +2021,66 @@ async def mgc_trade_log_5min(
         total_pnl=pnl,
         timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 5-Minute Condition Preferences (persisted in SQLite)
+# ═══════════════════════════════════════════════════════════════════════
+
+# Valid 5min condition keys
+_VALID_5MIN_CONDITIONS = {
+    "ema_trend", "ema_slope", "pullback", "breakout", "supertrend",
+    "macd_momentum", "rsi_momentum", "volume_spike", "atr_range",
+    "session_ok", "adx_ok",
+    "htf_15m_trend", "htf_15m_supertrend", "htf_1h_trend", "htf_1h_supertrend",
+}
+
+
+class ConditionTogglesPayload(BaseModel):
+    toggles: dict[str, bool]
+
+
+@router.get("/condition_toggles")
+def get_5min_condition_toggles(
+    symbol: str = Query("MGC"),
+) -> dict[str, bool]:
+    """Return saved condition toggles for 5min strategy. Returns empty dict if none saved."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    db_key = f"{symbol.upper()}_5MIN"
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT name, checked FROM condition_preferences WHERE symbol = :sym"),
+            {"sym": db_key},
+        ).fetchall()
+    return {r[0]: bool(r[1]) for r in rows if r[0] in _VALID_5MIN_CONDITIONS}
+
+
+@router.post("/condition_toggles")
+def save_5min_condition_toggles(
+    payload: ConditionTogglesPayload,
+    symbol: str = Query("MGC"),
+) -> dict[str, str]:
+    """Save condition toggles for 5min strategy."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    db_key = f"{symbol.upper()}_5MIN"
+    with engine.begin() as conn:
+        # Delete old rows for this symbol
+        conn.execute(
+            text("DELETE FROM condition_preferences WHERE symbol = :sym"),
+            {"sym": db_key},
+        )
+        # Insert new rows
+        for name, checked in payload.toggles.items():
+            if name in _VALID_5MIN_CONDITIONS:
+                conn.execute(
+                    text("INSERT INTO condition_preferences (symbol, name, checked) VALUES (:sym, :name, :checked)"),
+                    {"sym": db_key, "name": name, "checked": checked},
+                )
+    return {"status": "ok"}
 
 
 # ═══════════════════════════════════════════════════════════════════════

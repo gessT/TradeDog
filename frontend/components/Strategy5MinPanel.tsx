@@ -15,6 +15,8 @@ import {
   fetchMGC5MinBacktest,
   scan5Min,
   execute5Min,
+  load5MinConditionToggles,
+  save5MinConditionToggles,
   type MGC5MinBacktestResponse,
   type MGC5MinCandle,
   type Scan5MinResponse,
@@ -436,6 +438,7 @@ function ScannerTab({
   onApprovePending,
   onRejectPending,
   countdown,
+  conditionToggles,
 }: Readonly<{
   scanData: Scan5MinResponse | null;
   loading: boolean;
@@ -452,9 +455,28 @@ function ScannerTab({
   onApprovePending: () => void;
   onRejectPending: () => void;
   countdown: string;
+  conditionToggles: Record<string, boolean>;
 }>) {
   const sig = scanData?.signal;
-  const allSignals = scanData?.signals ?? [];
+  const rawSignals = scanData?.signals ?? [];
+  const conds = scanData?.conditions;
+
+  // ── Filter signals by HTF condition gate ───────────────
+  // 5m conditions are already filtered by the backend.
+  // HTF conditions reflect the current market state — if an HTF condition
+  // is toggled ON but fails, suppress all signals since the higher TF
+  // doesn't confirm the trade direction.
+  const htfBlocked = (() => {
+    if (!conds) return false;
+    for (const def of CONDITION_DEFS) {
+      if (def.group !== "5m" && conditionToggles[def.key] && !conds[def.key]) {
+        return true;
+      }
+    }
+    return false;
+  })();
+  const allSignals = htfBlocked ? [] : rawSignals;
+
   const [mode, setMode] = useState<"manual" | "auto">("manual");
   const [selectedIdx, setSelectedIdx] = useState<number>(0);
 
@@ -533,7 +555,11 @@ function ScannerTab({
               {allSignals.length === 0 && (
                 <div className="rounded-lg p-3 text-center border border-slate-700/60 bg-slate-900/50">
                   <p className="text-base font-bold text-slate-400">NO SIGNAL FOUND</p>
-                  <p className="text-[9px] text-slate-600 mt-1">No entry conditions met in the last 10 bars</p>
+                  <p className="text-[9px] text-slate-600 mt-1">
+                    {htfBlocked
+                      ? `${rawSignals.length} signal${rawSignals.length !== 1 ? "s" : ""} found but blocked — HTF conditions not met`
+                      : "No entry conditions met in the last 10 bars"}
+                  </p>
                 </div>
               )}
 
@@ -1579,6 +1605,27 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   // ── Condition toggles for auto-execution ──────────────
   const [conditionToggles, setConditionToggles] = useState<Record<string, boolean>>({ ...DEFAULT_CONDITION_TOGGLES });
   const [conditionsOpen, setConditionsOpen] = useState(false);
+  const conditionsLoaded = useRef(false);
+
+  // Load saved toggles from DB on mount / symbol change
+  useEffect(() => {
+    conditionsLoaded.current = false;
+    load5MinConditionToggles(symbol).then((saved) => {
+      if (saved && Object.keys(saved).length > 0) {
+        setConditionToggles((prev) => ({ ...prev, ...saved }));
+      }
+      conditionsLoaded.current = true;
+    }).catch(() => { conditionsLoaded.current = true; });
+  }, [symbol]);
+
+  // Auto-save toggles to DB when they change (debounced)
+  useEffect(() => {
+    if (!conditionsLoaded.current) return; // skip initial load echo
+    const t = setTimeout(() => {
+      save5MinConditionToggles(conditionToggles, symbol).catch(() => {});
+    }, 500);
+    return () => clearTimeout(t);
+  }, [conditionToggles, symbol]);
 
   // ── Candle-close timer state ──────────────────────────
   const [nextCandle, setNextCandle] = useState<number>(nextCandleClose5m());
@@ -1617,23 +1664,48 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles]);
 
   // ── Scanner ───────────────────────────────────────────
+  // Helper: compute disabled condition keys from toggles (OFF = disabled)
+  const getDisabledConditions = useCallback(() => {
+    return CONDITION_DEFS
+      .filter((d) => d.group === "5m" && !conditionToggles[d.key])
+      .map((d) => d.key);
+  }, [conditionToggles]);
+
   const runScan = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await scan5Min(false, slMult, tpMult, symbol);
+      const disabled = getDisabledConditions();
+      const res = await scan5Min(false, slMult, tpMult, symbol, disabled.length > 0 ? disabled : undefined);
       setScanData(res);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Scan failed");
     } finally {
       setLoading(false);
     }
-  }, [slMult, tpMult, symbol]);
+  }, [slMult, tpMult, symbol, getDisabledConditions]);
 
   // ── Execute Trade on Tiger ────────────────────────────
   const executeSignal = useCallback(async (sig?: Scan5MinSignal) => {
     const s = sig ?? scanData?.signal;
     if (!s?.found) return;
+
+    // ── Condition gate: check enabled conditions against last scan ──
+    if (scanData?.conditions) {
+      const failedConditions: string[] = [];
+      for (const def of CONDITION_DEFS) {
+        if (conditionToggles[def.key] && !scanData.conditions[def.key]) {
+          failedConditions.push(def.label);
+        }
+      }
+      if (failedConditions.length > 0) {
+        const proceed = confirm(
+          `⚠️ Conditions NOT met:\n\n${failedConditions.map((c) => `  ✗ ${c}`).join("\n")}\n\n` +
+          `Execute anyway?`
+        );
+        if (!proceed) return;
+      }
+    }
 
     const dir = s.direction || "CALL";
     const ok = confirm(
@@ -1673,7 +1745,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     } finally {
       setExecuting(false);
     }
-  }, [scanData, slMult, tpMult, symbol]);
+  }, [scanData, slMult, tpMult, symbol, conditionToggles]);
 
   // ── Desktop notification with sound ───────────────────
   const notifyTrade = useCallback((direction: string, entry: number) => {
@@ -1824,7 +1896,11 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       if (!autoRef.current || busyRef.current) return;
       busyRef.current = true;
       try {
-        const res = await scan5Min(false, slMult, tpMult, symbol);
+        // Compute disabled conditions from current toggles
+        const disabled = CONDITION_DEFS
+          .filter((d) => d.group === "5m" && !conditionTogglesRef.current[d.key])
+          .map((d) => d.key);
+        const res = await scan5Min(false, slMult, tpMult, symbol, disabled.length > 0 ? disabled : undefined);
         setScanData(res);
         const sig = res.signal;
 
@@ -2327,6 +2403,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           onApprovePending={approvePending}
           onRejectPending={rejectPending}
           countdown={countdown}
+          conditionToggles={conditionToggles}
         />
       )}
 

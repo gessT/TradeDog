@@ -973,6 +973,22 @@ const YF_SYMBOL_MAP: Record<string, string> = {
 };
 const toYF = (s: string) => YF_SYMBOL_MAP[s] ?? `${s}=F`;
 
+// ── 5min Condition Toggles (persisted) ──────────────────────────────
+
+export async function load5MinConditionToggles(symbol: string = "MGC"): Promise<Record<string, boolean>> {
+  const res = await fetch(`${API_BASE}/mgc/condition_toggles?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+  if (!res.ok) return {};
+  return (await res.json()) as Record<string, boolean>;
+}
+
+export async function save5MinConditionToggles(toggles: Record<string, boolean>, symbol: string = "MGC"): Promise<void> {
+  await fetch(`${API_BASE}/mgc/condition_toggles?symbol=${encodeURIComponent(symbol)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ toggles }),
+  });
+}
+
 export async function fetchMGC5MinBacktest(
   period: string = "60d",
   oos_split: number = 0.3,
@@ -1062,9 +1078,11 @@ export async function scan5Min(
   atr_sl_mult: number = 4.0,
   atr_tp_mult: number = 3.0,
   symbol: string = "MGC",
+  disabledConditions?: string[],
 ): Promise<Scan5MinResponse> {
   const endpoint = useLive ? "scan_5min_live" : "scan_5min";
-  const url = `${API_BASE}/mgc/${endpoint}?symbol=${encodeURIComponent(toYF(symbol))}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  let url = `${API_BASE}/mgc/${endpoint}?symbol=${encodeURIComponent(toYF(symbol))}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();

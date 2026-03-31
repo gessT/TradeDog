@@ -44,6 +44,7 @@ class ScanResult5Min:
 def scan_5min(
     df: pd.DataFrame,
     params: dict | None = None,
+    disabled: set[str] | None = None,
 ) -> ScanResult5Min:
     """Scan the latest completed bar for a 5-minute entry signal.
 
@@ -51,6 +52,7 @@ def scan_5min(
     ----------
     df : DataFrame with OHLCV data (at least 100 bars of 5min data)
     params : strategy parameter overrides
+    disabled : condition keys to skip (treat as always True)
 
     Returns
     -------
@@ -62,7 +64,7 @@ def scan_5min(
     df_ind = strategy.compute_indicators(
         df[["open", "high", "low", "close", "volume"]].copy()
     )
-    signals = strategy.generate_signals(df_ind)
+    signals = strategy.generate_signals(df_ind, disabled=disabled)
 
     # Use second-to-last bar (last completed bar)
     bar_idx = -2 if len(df_ind) >= 2 else -1
@@ -189,6 +191,7 @@ def scan_5min_all(
     df: pd.DataFrame,
     params: dict | None = None,
     lookback: int = 10,
+    disabled: set[str] | None = None,
 ) -> list[ScanResult5Min]:
     """Scan the last *lookback* completed bars and return ALL signals found.
 
@@ -197,6 +200,7 @@ def scan_5min_all(
     df : DataFrame with OHLCV data (at least 100 bars of 5min data)
     params : strategy parameter overrides
     lookback : how many recent completed bars to check (default 10)
+    disabled : condition keys to skip (treat as always True)
 
     Returns
     -------
@@ -208,7 +212,7 @@ def scan_5min_all(
     df_ind = strategy.compute_indicators(
         df[["open", "high", "low", "close", "volume"]].copy()
     )
-    signals = strategy.generate_signals(df_ind)
+    signals = strategy.generate_signals(df_ind, disabled=disabled)
 
     vol_ma = df_ind["volume"].rolling(p["vol_period"]).mean()
 
@@ -374,6 +378,7 @@ def scan_5min_mtf(
     df_15m: pd.DataFrame | None = None,
     df_1h: pd.DataFrame | None = None,
     params: dict | None = None,
+    disabled: set[str] | None = None,
 ) -> MTFScanResult:
     """Scan with multi-timeframe confirmation.
 
@@ -430,14 +435,37 @@ def scan_5min_mtf(
     if df_1h is not None and len(df_1h) >= 50:
         _check_htf(df_1h, p, bias, cond, "1h")
 
-    # Count core conditions met
-    core = [cond.ema_trend, cond.ema_slope, cond.pullback or cond.breakout,
-            cond.supertrend, cond.macd_momentum or cond.rsi_momentum,
-            cond.volume_spike, cond.atr_range, cond.session_ok]
+    # Count core conditions met (skip disabled — they always pass)
+    off = disabled or set()
+    core: list[bool] = []
+    if "ema_trend" not in off:
+        core.append(cond.ema_trend)
+    if "ema_slope" not in off:
+        core.append(cond.ema_slope)
+    if "pullback" not in off and "breakout" not in off:
+        core.append(cond.pullback or cond.breakout)
+    elif "pullback" not in off:
+        core.append(cond.pullback)
+    elif "breakout" not in off:
+        core.append(cond.breakout)
+    if "supertrend" not in off:
+        core.append(cond.supertrend)
+    if "macd_momentum" not in off and "rsi_momentum" not in off:
+        core.append(cond.macd_momentum or cond.rsi_momentum)
+    elif "macd_momentum" not in off:
+        core.append(cond.macd_momentum)
+    elif "rsi_momentum" not in off:
+        core.append(cond.rsi_momentum)
+    if "volume_spike" not in off:
+        core.append(cond.volume_spike)
+    if "atr_range" not in off:
+        core.append(cond.atr_range)
+    if "session_ok" not in off:
+        core.append(cond.session_ok)
     conditions_met = sum(core)
 
     # Normal scan for the full signal result
-    scan_result = scan_5min(df_5m, params)
+    scan_result = scan_5min(df_5m, params, disabled=disabled)
 
     return MTFScanResult(
         scan=scan_result,
