@@ -20,6 +20,7 @@ import {
   type Scan5MinResponse,
   type MGC5MinTrade,
   type Scan5MinSignal,
+  type Scan5MinConditions,
 } from "../services/api";
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -254,6 +255,50 @@ function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrad
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Condition toggle keys for auto-execution
+// ═══════════════════════════════════════════════════════════════════════
+
+/** All conditions that gate auto-execution. User can toggle each. */
+const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m" | "15m" | "1h" }[] = [
+  // 5m core
+  { key: "ema_trend", label: "EMA Trend", group: "5m" },
+  { key: "ema_slope", label: "EMA Slope", group: "5m" },
+  { key: "pullback", label: "Pullback", group: "5m" },
+  { key: "breakout", label: "Breakout", group: "5m" },
+  { key: "supertrend", label: "Supertrend", group: "5m" },
+  { key: "macd_momentum", label: "MACD Momentum", group: "5m" },
+  { key: "rsi_momentum", label: "RSI Momentum", group: "5m" },
+  { key: "volume_spike", label: "Volume Spike", group: "5m" },
+  { key: "atr_range", label: "ATR Range", group: "5m" },
+  { key: "session_ok", label: "Session Hours", group: "5m" },
+  { key: "adx_ok", label: "ADX Filter", group: "5m" },
+  // 15m confirmation
+  { key: "htf_15m_trend", label: "15m EMA Trend", group: "15m" },
+  { key: "htf_15m_supertrend", label: "15m Supertrend", group: "15m" },
+  // 1h confirmation
+  { key: "htf_1h_trend", label: "1h EMA Trend", group: "1h" },
+  { key: "htf_1h_supertrend", label: "1h Supertrend", group: "1h" },
+];
+
+/** Default: all core 5m conditions ON, HTF optional off */
+const DEFAULT_CONDITION_TOGGLES: Record<string, boolean> = Object.fromEntries(
+  CONDITION_DEFS.map((d) => [d.key, d.group === "5m"])
+);
+
+/** Compute next 5-minute candle close time. Returns ms epoch. */
+function nextCandleClose5m(): number {
+  const now = new Date();
+  const mins = now.getMinutes();
+  const next5 = Math.ceil((mins + 1) / 5) * 5; // next 5-min boundary
+  const target = new Date(now);
+  target.setMinutes(next5, 5, 0); // +5s buffer for data to settle
+  if (target.getTime() <= now.getTime()) {
+    target.setMinutes(target.getMinutes() + 5);
+  }
+  return target.getTime();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Sub-tabs
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -390,6 +435,9 @@ function ScannerTab({
   pendingSecsLeft,
   onApprovePending,
   onRejectPending,
+  conditionToggles,
+  onToggleCondition,
+  countdown,
 }: Readonly<{
   scanData: Scan5MinResponse | null;
   loading: boolean;
@@ -405,9 +453,13 @@ function ScannerTab({
   pendingSecsLeft: number;
   onApprovePending: () => void;
   onRejectPending: () => void;
+  conditionToggles: Record<string, boolean>;
+  onToggleCondition: (key: string) => void;
+  countdown: string;
 }>) {
   const sig = scanData?.signal;
   const allSignals = scanData?.signals ?? [];
+  const conds = scanData?.conditions;
   const [mode, setMode] = useState<"manual" | "auto">("manual");
   const [selectedIdx, setSelectedIdx] = useState<number>(0);
 
@@ -648,9 +700,24 @@ function ScannerTab({
               }`}>
                 {autoExec ? "AUTO-TRADING ACTIVE" : autoFilled ? "TRADE COMPLETED" : "AUTO-TRADING OFF"}
               </p>
+              {/* Candle countdown + bias */}
+              <div className="flex items-center gap-3">
+                {autoExec && countdown && (
+                  <span className="text-sm font-mono font-bold text-cyan-400 bg-cyan-950/30 px-2 py-0.5 rounded">
+                    ⏱ Next candle: {countdown}
+                  </span>
+                )}
+                {scanData?.bias && scanData.bias !== "NEUTRAL" && (
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                    scanData.bias === "CALL" ? "bg-emerald-900/40 text-emerald-400" : "bg-rose-900/40 text-rose-400"
+                  }`}>
+                    Bias: {scanData.bias}
+                  </span>
+                )}
+              </div>
               <p className="text-[10px] text-slate-500">
                 {autoExec
-                  ? "Scanning every 30s · Executes on signal · Desktop alerts enabled"
+                  ? "Fires once per 5m candle close · MTF confirmation · Desktop alerts"
                   : autoFilled
                     ? "1 trade executed successfully · Auto-trading stopped"
                     : "Toggle to start automatic scanning and execution"}
@@ -676,6 +743,106 @@ function ScannerTab({
                 {verified ? "🔓 Verified — auto-executing signals" : "🔒 Awaiting first-signal verification"}
               </div>
             )}
+          </div>
+
+          {/* ── Condition Toggles + Live Status ───────────────── */}
+          <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Execution Conditions</p>
+              {conds && (
+                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                  scanData?.conditions_met === scanData?.conditions_total ? "bg-emerald-900/40 text-emerald-400"
+                  : (scanData?.conditions_met ?? 0) >= 6 ? "bg-amber-900/40 text-amber-400"
+                  : "bg-rose-900/40 text-rose-400"
+                }`}>
+                  {scanData?.conditions_met}/{scanData?.conditions_total} met
+                </span>
+              )}
+            </div>
+
+            {/* 5m conditions */}
+            <p className="text-[8px] text-slate-600 uppercase tracking-wider mt-1">5-Minute (Execution)</p>
+            <div className="grid grid-cols-2 gap-1">
+              {CONDITION_DEFS.filter((d) => d.group === "5m").map((def) => {
+                const on = conditionToggles[def.key];
+                const live = conds?.[def.key] ?? false;
+                return (
+                  <button
+                    key={def.key}
+                    onClick={() => onToggleCondition(def.key)}
+                    className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
+                      on ? "border border-slate-700/60 bg-slate-800/50" : "border border-slate-800/30 bg-slate-900/30 opacity-50"
+                    }`}
+                  >
+                    <span className={`w-3 h-3 rounded-sm flex items-center justify-center text-[7px] font-bold ${
+                      on ? (live ? "bg-emerald-600 text-white" : "bg-slate-600 text-slate-300") : "bg-slate-800 text-slate-600"
+                    }`}>
+                      {on ? (live ? "✓" : "✗") : "—"}
+                    </span>
+                    <span className={on ? "text-slate-300" : "text-slate-600"}>{def.label}</span>
+                    {on && conds && (
+                      <span className={`ml-auto w-1.5 h-1.5 rounded-full ${live ? "bg-emerald-400" : "bg-rose-400"}`} />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 15m conditions */}
+            <p className="text-[8px] text-slate-600 uppercase tracking-wider mt-2">15-Minute (Confirmation)</p>
+            <div className="grid grid-cols-2 gap-1">
+              {CONDITION_DEFS.filter((d) => d.group === "15m").map((def) => {
+                const on = conditionToggles[def.key];
+                const live = conds?.[def.key] ?? false;
+                return (
+                  <button
+                    key={def.key}
+                    onClick={() => onToggleCondition(def.key)}
+                    className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
+                      on ? "border border-cyan-700/40 bg-cyan-950/20" : "border border-slate-800/30 bg-slate-900/30 opacity-50"
+                    }`}
+                  >
+                    <span className={`w-3 h-3 rounded-sm flex items-center justify-center text-[7px] font-bold ${
+                      on ? (live ? "bg-emerald-600 text-white" : "bg-slate-600 text-slate-300") : "bg-slate-800 text-slate-600"
+                    }`}>
+                      {on ? (live ? "✓" : "✗") : "—"}
+                    </span>
+                    <span className={on ? "text-cyan-300" : "text-slate-600"}>{def.label}</span>
+                    {on && conds && (
+                      <span className={`ml-auto w-1.5 h-1.5 rounded-full ${live ? "bg-emerald-400" : "bg-rose-400"}`} />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 1h conditions */}
+            <p className="text-[8px] text-slate-600 uppercase tracking-wider mt-2">1-Hour (Trend)</p>
+            <div className="grid grid-cols-2 gap-1">
+              {CONDITION_DEFS.filter((d) => d.group === "1h").map((def) => {
+                const on = conditionToggles[def.key];
+                const live = conds?.[def.key] ?? false;
+                return (
+                  <button
+                    key={def.key}
+                    onClick={() => onToggleCondition(def.key)}
+                    className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
+                      on ? "border border-amber-700/40 bg-amber-950/20" : "border border-slate-800/30 bg-slate-900/30 opacity-50"
+                    }`}
+                  >
+                    <span className={`w-3 h-3 rounded-sm flex items-center justify-center text-[7px] font-bold ${
+                      on ? (live ? "bg-emerald-600 text-white" : "bg-slate-600 text-slate-300") : "bg-slate-800 text-slate-600"
+                    }`}>
+                      {on ? (live ? "✓" : "✗") : "—"}
+                    </span>
+                    <span className={on ? "text-amber-300" : "text-slate-600"}>{def.label}</span>
+                    {on && conds && (
+                      <span className={`ml-auto w-1.5 h-1.5 rounded-full ${live ? "bg-emerald-400" : "bg-rose-400"}`} />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* ── Pending Signal Verification Card (2-min approval) ── */}
@@ -746,12 +913,12 @@ function ScannerTab({
               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">How it works</p>
               <div className="space-y-1.5">
                 {[
-                  { icon: "🔍", text: "Scans MGC 5min bars every 30 seconds" },
-                  { icon: "📊", text: "Checks all 8 entry conditions (Trend, RSI, MACD, etc.)" },
-                  { icon: "�", text: "First signal → 2-min verification (you approve or skip)" },
+                  { icon: "⏱", text: "Scans ONCE per 5-minute candle close (e.g. 9:05, 9:10, 9:15)" },
+                  { icon: "📊", text: "Checks enabled conditions: 5m entry + 15m confirm + 1h trend" },
+                  { icon: "🔒", text: "First signal → 2-min verification (you approve or skip)" },
                   { icon: "🐯", text: "After approval, auto-places bracket order on Tiger" },
+                  { icon: "🚫", text: "ONE trade per signal per candle — no duplicates" },
                   { icon: "🔔", text: "Desktop notification + alert sound on execution" },
-                  { icon: "🛡️", text: "Protected by 30s cooldown + 10/day max cap" },
                 ].map((item, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <span className="text-sm">{item.icon}</span>
@@ -1514,6 +1681,16 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   const pendingRef = useRef<Scan5MinSignal | null>(null);
   pendingRef.current = pendingSignal;
 
+  // ── Condition toggles for auto-execution ──────────────
+  const [conditionToggles, setConditionToggles] = useState<Record<string, boolean>>({ ...DEFAULT_CONDITION_TOGGLES });
+
+  // ── Candle-close timer state ──────────────────────────
+  const [nextCandle, setNextCandle] = useState<number>(nextCandleClose5m());
+  const [countdown, setCountdown] = useState("");
+
+  // ── Duplicate prevention: track last executed bar_time ─
+  const lastExecBarRef = useRef<string>("");
+
   // ── Clear data when symbol changes ────────────────────
   useEffect(() => {
     setBtData(null);
@@ -1696,7 +1873,22 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     setAutoLog((prev) => [`[${ts()}] ❌ User REJECTED signal — waiting for next`, ...prev.slice(0, 49)]);
   }, []);
 
-  // ── Auto-execute polling (every 30s when ON) ──────────
+  // ── Auto-execute: candle-close aligned (fires once per 5m candle close) ──
+  // Also a 1-second countdown ticker for UI display
+  useEffect(() => {
+    if (!autoExec) return;
+    const tick = setInterval(() => {
+      const now = Date.now();
+      let target = nextCandleClose5m();
+      setNextCandle(target);
+      const diff = Math.max(0, Math.ceil((target - now) / 1000));
+      const mm = String(Math.floor(diff / 60)).padStart(2, "0");
+      const ss = String(diff % 60).padStart(2, "0");
+      setCountdown(`${mm}:${ss}`);
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [autoExec]);
+
   useEffect(() => {
     // Request notification permission on first toggle
     if (autoExec && typeof Notification !== "undefined" && Notification.permission === "default") {
@@ -1707,13 +1899,26 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
 
     const ts = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-    setAutoLog((prev) => [`[${ts()}] Auto-execute ON — polling every 30s`, ...prev.slice(0, 49)]);
+    setAutoLog((prev) => [`[${ts()}] Auto-execute ON — candle-close mode (5m)`, ...prev.slice(0, 49)]);
 
     // Reset verification on fresh start
     setVerified(false);
     verifiedRef.current = false;
     setPendingSignal(null);
     setPendingExpiry(0);
+    lastExecBarRef.current = "";
+
+    /** Check if user-required conditions pass */
+    const conditionsPass = (res: Scan5MinResponse): boolean => {
+      const c = res.conditions;
+      if (!c) return true; // if backend doesn't return conditions, pass
+      for (const def of CONDITION_DEFS) {
+        if (conditionTogglesRef.current[def.key] && !c[def.key]) {
+          return false;
+        }
+      }
+      return true;
+    };
 
     const poll = async () => {
       if (!autoRef.current || busyRef.current) return;
@@ -1724,19 +1929,33 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
         const sig = res.signal;
 
         if (sig?.found) {
-          setAutoLog((prev) => [`[${ts()}] 🟢 SIGNAL: ${sig.direction} @ $${sig.entry_price}`, ...prev.slice(0, 49)]);
+          // ── Duplicate prevention: don't execute same bar twice ──
+          if (sig.bar_time === lastExecBarRef.current) {
+            setAutoLog((prev) => [`[${ts()}] ⏭ Signal already executed for bar ${sig.bar_time.slice(5, 16)}`, ...prev.slice(0, 49)]);
+            busyRef.current = false;
+            return;
+          }
+
+          // ── Condition gate: check user-toggled conditions ──
+          if (!conditionsPass(res)) {
+            const met = res.conditions_met;
+            const total = res.conditions_total;
+            setAutoLog((prev) => [`[${ts()}] 🟡 Signal found but conditions not met (${met}/${total}) — skipped`, ...prev.slice(0, 49)]);
+            busyRef.current = false;
+            return;
+          }
+
+          setAutoLog((prev) => [`[${ts()}] 🟢 SIGNAL: ${sig.direction} @ $${sig.entry_price} (${res.conditions_met}/${res.conditions_total} conditions)`, ...prev.slice(0, 49)]);
 
           // ── First signal requires user verification (2-min window) ──
           if (!verifiedRef.current) {
-            // If there's already a pending signal awaiting approval, skip
             if (pendingRef.current) {
               setAutoLog((prev) => [`[${ts()}] ⏳ Signal found but still awaiting verification…`, ...prev.slice(0, 49)]);
             } else {
-              const VERIFY_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
+              const VERIFY_WINDOW_MS = 2 * 60 * 1000;
               setPendingSignal(sig);
               setPendingExpiry(Date.now() + VERIFY_WINDOW_MS);
               setAutoLog((prev) => [`[${ts()}] 🔔 VERIFICATION REQUIRED — approve within 2 min`, ...prev.slice(0, 49)]);
-              // Play alert sound to get user attention
               notifyTrade(sig.direction === "PUT" ? "SELL" : "BUY", sig.entry_price);
             }
           } else {
@@ -1747,9 +1966,9 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
             try {
               const execRes = await execute5Min(dir, 1, 5, sig.entry_price, sig.stop_loss, sig.take_profit, symbol);
               if (execRes.execution?.executed) {
+                lastExecBarRef.current = sig.bar_time; // prevent duplicate
                 notifyTrade(side, sig.entry_price);
                 setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} → ${execRes.execution?.order_id?.slice(0, 12)}`, ...prev.slice(0, 49)]);
-                // Auto-stop after 1 successful trade
                 autoRef.current = false;
                 setAutoExec(false);
                 setAutoFilled(true);
@@ -1757,7 +1976,6 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
               } else {
                 const reason = execRes.execution?.reason || "Unknown";
                 setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${reason}`, ...prev.slice(0, 49)]);
-                // Stop auto-trading if at max position limit
                 if (reason.toLowerCase().includes("max") || reason.toLowerCase().includes("position")) {
                   autoRef.current = false;
                   setAutoExec(false);
@@ -1781,14 +1999,33 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       }
     };
 
-    // Run immediately, then every 30s
+    // ── Candle-close scheduler: run once at each 5m boundary ──
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleNext = () => {
+      if (!autoRef.current) return;
+      const now = Date.now();
+      const target = nextCandleClose5m();
+      const delay = Math.max(1000, target - now);
+      timer = setTimeout(async () => {
+        await poll();
+        scheduleNext(); // schedule the next candle
+      }, delay);
+    };
+
+    // Run immediately on start, then schedule candle-close
     poll();
-    const id = setInterval(poll, 30_000);
+    scheduleNext();
+
     return () => {
-      clearInterval(id);
+      if (timer) clearTimeout(timer);
       setAutoLog((prev) => [`[${ts()}] Auto-execute OFF`, ...prev.slice(0, 49)]);
     };
-  }, [autoExec, slMult, tpMult, notifyTrade]);
+  }, [autoExec, slMult, tpMult, notifyTrade, symbol]);
+
+  // Stable ref for condition toggles (used inside poll closure)
+  const conditionTogglesRef = useRef(conditionToggles);
+  conditionTogglesRef.current = conditionToggles;
 
   const m = btData?.metrics;
 
@@ -2033,6 +2270,9 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           pendingSecsLeft={pendingSecsLeft}
           onApprovePending={approvePending}
           onRejectPending={rejectPending}
+          conditionToggles={conditionToggles}
+          onToggleCondition={(key) => setConditionToggles((prev) => ({ ...prev, [key]: !prev[key] }))}
+          countdown={countdown}
         />
       )}
 

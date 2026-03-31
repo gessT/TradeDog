@@ -1025,11 +1025,33 @@ export type Scan5MinCandle = {
   volume: number;
 };
 
+export type Scan5MinConditions = {
+  ema_trend: boolean;
+  ema_slope: boolean;
+  pullback: boolean;
+  breakout: boolean;
+  supertrend: boolean;
+  macd_momentum: boolean;
+  rsi_momentum: boolean;
+  volume_spike: boolean;
+  atr_range: boolean;
+  session_ok: boolean;
+  adx_ok: boolean;
+  htf_15m_trend: boolean;
+  htf_15m_supertrend: boolean;
+  htf_1h_trend: boolean;
+  htf_1h_supertrend: boolean;
+};
+
 export type Scan5MinResponse = {
   opportunity: boolean;
   signal: Scan5MinSignal;
   signals: Scan5MinSignal[];
   candles: Scan5MinCandle[];
+  conditions: Scan5MinConditions | null;
+  bias: string;
+  conditions_met: number;
+  conditions_total: number;
   timestamp: string;
 };
 

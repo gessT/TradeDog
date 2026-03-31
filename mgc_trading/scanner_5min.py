@@ -329,3 +329,158 @@ def _safe_float(v, default: float = 0.0) -> float:
         return f if not math.isnan(f) else default
     except (TypeError, ValueError):
         return default
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Per-condition scan (returns which conditions are met on the last bar)
+# ═══════════════════════════════════════════════════════════════════════
+
+@dataclass
+class ConditionStatus:
+    """Status of each individual entry condition on the last completed bar."""
+    # Core conditions
+    ema_trend: bool       # EMA fast > slow (CALL) or < (PUT)
+    ema_slope: bool       # EMA fast rising (CALL) or falling (PUT)
+    pullback: bool        # price pulled back to EMA
+    breakout: bool        # breakout above/below recent high/low
+    supertrend: bool      # supertrend aligned with direction
+    macd_momentum: bool   # MACD histogram aligned
+    rsi_momentum: bool    # RSI rising/falling in zone
+    volume_spike: bool    # volume above threshold
+    # Filters
+    atr_range: bool       # ATR sufficient (not flat market)
+    session_ok: bool      # within trading session hours
+    adx_ok: bool          # ADX above minimum (trend strength)
+    # Higher timeframe confirmations
+    htf_15m_trend: bool   # 15m EMA trend aligned
+    htf_15m_supertrend: bool  # 15m supertrend aligned
+    htf_1h_trend: bool    # 1h EMA trend aligned
+    htf_1h_supertrend: bool   # 1h supertrend aligned
+
+
+@dataclass
+class MTFScanResult:
+    """Extended scan result including per-condition status and MTF confirmation."""
+    scan: ScanResult5Min
+    conditions: ConditionStatus
+    # Which direction to evaluate (even if not all conditions met)
+    bias: str             # "CALL" / "PUT" / "NEUTRAL"
+    conditions_met: int   # how many of the core conditions are met
+    conditions_total: int # total core conditions checked
+
+
+def scan_5min_mtf(
+    df_5m: pd.DataFrame,
+    df_15m: pd.DataFrame | None = None,
+    df_1h: pd.DataFrame | None = None,
+    params: dict | None = None,
+) -> MTFScanResult:
+    """Scan with multi-timeframe confirmation.
+
+    Computes all indicators on the 5m bar, then checks 15m and 1h for
+    trend + supertrend alignment.
+    """
+    p = {**DEFAULT_5MIN_PARAMS, **(params or {})}
+    strategy = MGCStrategy5Min(p)
+
+    # ── 5m indicators ──────────────────────────────────────
+    df_ind = strategy.compute_indicators(
+        df_5m[["open", "high", "low", "close", "volume"]].copy()
+    )
+    bar_idx = -2 if len(df_ind) >= 2 else -1
+    bar = df_ind.iloc[bar_idx]
+
+    # Determine market bias from EMA + Supertrend
+    ema_f = _safe_float(bar.get("ema_fast", 0))
+    ema_s = _safe_float(bar.get("ema_slow", 0))
+    st_dir = int(bar.get("st_dir", 0))
+    if ema_f > ema_s and st_dir == 1:
+        bias = "CALL"
+    elif ema_f < ema_s and st_dir == -1:
+        bias = "PUT"
+    else:
+        bias = "NEUTRAL"
+
+    # ── Per-condition status on 5m ─────────────────────────
+    is_call = bias == "CALL"
+
+    cond = ConditionStatus(
+        ema_trend=(ema_f > ema_s) if is_call else (ema_f < ema_s),
+        ema_slope=bool(bar.get("ema_slope", 0) == 1) if is_call else bool(bar.get("ema_slope_falling", 0) == 1),
+        pullback=bool(bar.get("pullback", 0) == 1),
+        breakout=bool(bar.get("breakout", 0) == 1) if is_call else bool(bar.get("breakout_low", 0) == 1),
+        supertrend=(st_dir == 1) if is_call else (st_dir == -1),
+        macd_momentum=bool(bar.get("macd_mom", 0) == 1) if is_call else bool(bar.get("macd_mom_bear", 0) == 1),
+        rsi_momentum=bool(bar.get("rsi_rising", 0) == 1) if is_call else bool(bar.get("rsi_falling", 0) == 1),
+        volume_spike=bool(bar.get("vol_spike", 0) == 1),
+        atr_range=bool(bar.get("atr_ok", 0) == 1),
+        session_ok=bool(bar.get("in_session", 1) == 1),
+        adx_ok=bool(_safe_float(bar.get("adx", 0)) >= p.get("adx_min", 0)),
+        htf_15m_trend=False,
+        htf_15m_supertrend=False,
+        htf_1h_trend=False,
+        htf_1h_supertrend=False,
+    )
+
+    # ── 15m higher timeframe confirmation ──────────────────
+    if df_15m is not None and len(df_15m) >= 50:
+        _check_htf(df_15m, p, bias, cond, "15m")
+
+    # ── 1h higher timeframe confirmation ───────────────────
+    if df_1h is not None and len(df_1h) >= 50:
+        _check_htf(df_1h, p, bias, cond, "1h")
+
+    # Count core conditions met
+    core = [cond.ema_trend, cond.ema_slope, cond.pullback or cond.breakout,
+            cond.supertrend, cond.macd_momentum or cond.rsi_momentum,
+            cond.volume_spike, cond.atr_range, cond.session_ok]
+    conditions_met = sum(core)
+
+    # Normal scan for the full signal result
+    scan_result = scan_5min(df_5m, params)
+
+    return MTFScanResult(
+        scan=scan_result,
+        conditions=cond,
+        bias=bias,
+        conditions_met=conditions_met,
+        conditions_total=len(core),
+    )
+
+
+def _check_htf(
+    df_htf: pd.DataFrame,
+    params: dict,
+    bias: str,
+    cond: ConditionStatus,
+    tf: str,
+) -> None:
+    """Check higher timeframe EMA trend + supertrend alignment."""
+    c = df_htf["close"]
+    h = df_htf["high"]
+    lo = df_htf["low"]
+
+    ema_f = ind.ema(c, params["ema_fast"])
+    ema_s = ind.ema(c, params["ema_slow"])
+    _, st_dir = ind.supertrend(h, lo, c, params["st_period"], params["st_mult"])
+
+    last_ema_f = _safe_float(ema_f.iloc[-1])
+    last_ema_s = _safe_float(ema_s.iloc[-1])
+    last_st = int(st_dir.iloc[-1])
+
+    if bias == "CALL":
+        trend_ok = last_ema_f > last_ema_s
+        st_ok = last_st == 1
+    elif bias == "PUT":
+        trend_ok = last_ema_f < last_ema_s
+        st_ok = last_st == -1
+    else:
+        trend_ok = False
+        st_ok = False
+
+    if tf == "15m":
+        cond.htf_15m_trend = trend_ok
+        cond.htf_15m_supertrend = st_ok
+    elif tf == "1h":
+        cond.htf_1h_trend = trend_ok
+        cond.htf_1h_supertrend = st_ok

@@ -1475,11 +1475,34 @@ class Scan5MinSignal(BaseModel):
     bar_time: str
 
 
+class Scan5MinConditions(BaseModel):
+    """Per-condition status for the last completed 5m bar."""
+    ema_trend: bool = False
+    ema_slope: bool = False
+    pullback: bool = False
+    breakout: bool = False
+    supertrend: bool = False
+    macd_momentum: bool = False
+    rsi_momentum: bool = False
+    volume_spike: bool = False
+    atr_range: bool = False
+    session_ok: bool = False
+    adx_ok: bool = False
+    htf_15m_trend: bool = False
+    htf_15m_supertrend: bool = False
+    htf_1h_trend: bool = False
+    htf_1h_supertrend: bool = False
+
+
 class Scan5MinResponse(BaseModel):
     opportunity: bool
     signal: Scan5MinSignal
     signals: list[Scan5MinSignal] = []
     candles: list[dict] = []
+    conditions: Optional[Scan5MinConditions] = None
+    bias: str = "NEUTRAL"
+    conditions_met: int = 0
+    conditions_total: int = 8
     timestamp: str
 
 
@@ -1493,21 +1516,36 @@ async def mgc_scan_5min(
     """Scan for 5-minute entry signal using yfinance data."""
 
     def _run():
-        from mgc_trading.scanner_5min import scan_5min, scan_5min_all
+        from mgc_trading.scanner_5min import scan_5min, scan_5min_all, scan_5min_mtf
 
         effective_period = period
         if period not in ("1d", "2d", "5d", "7d", "30d", "60d"):
             effective_period = "60d"
 
-        df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
+        df_5m = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
         custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
-        result = scan_5min(df, params=custom_params)
+
+        # Load higher timeframes for MTF confirmation
+        df_15m = None
+        df_1h = None
+        try:
+            df_15m = load_yfinance(symbol=symbol, interval="15m", period="60d")
+        except Exception:
+            pass
+        try:
+            df_1h = load_yfinance(symbol=symbol, interval="1h", period="60d")
+        except Exception:
+            pass
+
+        # MTF scan (includes per-condition status)
+        mtf_result = scan_5min_mtf(df_5m, df_15m, df_1h, params=custom_params)
+        result = mtf_result.scan
 
         # All recent signals (last 10 completed bars)
-        all_results = scan_5min_all(df, params=custom_params, lookback=10)
+        all_results = scan_5min_all(df_5m, params=custom_params, lookback=10)
 
         # Last 30 candles for mini chart
-        tail = df.tail(30)
+        tail = df_5m.tail(30)
         candles_out = []
         for idx, row in tail.iterrows():
             t = str(idx)
@@ -1532,15 +1570,32 @@ async def mgc_scan_5min(
 
         sig = _to_sig(result)
         all_sigs = [_to_sig(r) for r in all_results]
-        return result.found, sig, all_sigs, candles_out
 
-    found, sig, all_sigs, candles_out = await run_in_threadpool(_run)
+        # Build conditions model
+        c = mtf_result.conditions
+        cond_model = Scan5MinConditions(
+            ema_trend=c.ema_trend, ema_slope=c.ema_slope,
+            pullback=c.pullback, breakout=c.breakout,
+            supertrend=c.supertrend, macd_momentum=c.macd_momentum,
+            rsi_momentum=c.rsi_momentum, volume_spike=c.volume_spike,
+            atr_range=c.atr_range, session_ok=c.session_ok, adx_ok=c.adx_ok,
+            htf_15m_trend=c.htf_15m_trend, htf_15m_supertrend=c.htf_15m_supertrend,
+            htf_1h_trend=c.htf_1h_trend, htf_1h_supertrend=c.htf_1h_supertrend,
+        )
+        return (result.found, sig, all_sigs, candles_out, cond_model,
+                mtf_result.bias, mtf_result.conditions_met, mtf_result.conditions_total)
+
+    found, sig, all_sigs, candles_out, cond_model, bias, met, total = await run_in_threadpool(_run)
 
     return Scan5MinResponse(
         opportunity=found,
         signal=sig,
         signals=all_sigs,
         candles=candles_out,
+        conditions=cond_model,
+        bias=bias,
+        conditions_met=met,
+        conditions_total=total,
         timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
 
@@ -1556,7 +1611,7 @@ async def mgc_scan_5min_live(
 
     def _run():
         import pandas as pd
-        from mgc_trading.scanner_5min import scan_5min
+        from mgc_trading.scanner_5min import scan_5min, scan_5min_all, scan_5min_mtf
 
         if not _tiger_quote_ok:
             raise ValueError("Tiger SDK not available")
@@ -1566,21 +1621,47 @@ async def mgc_scan_5min_live(
         if not contracts:
             raise ValueError("No MGC contract found")
         identifier = contracts[0].identifier
-        period = _BAR_PERIOD_MAP.get("5m")
+        custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
 
-        df_raw = quote_client.get_future_bars(identifier, period=period, limit=500)
+        # Load 5m bars
+        period_5m = _BAR_PERIOD_MAP.get("5m")
+        df_raw = quote_client.get_future_bars(identifier, period=period_5m, limit=500)
         if df_raw is None or df_raw.empty:
             raise ValueError("No data from Tiger API")
+        df_5m = df_raw[["open", "high", "low", "close", "volume"]].copy()
+        df_5m.index = pd.to_datetime(df_raw["time"], unit="ms")
+        df_5m = df_5m.sort_index()
 
-        df = df_raw[["open", "high", "low", "close", "volume"]].copy()
-        df.index = pd.to_datetime(df_raw["time"], unit="ms")
-        df = df.sort_index()
+        # Load 15m and 1h bars for MTF
+        df_15m = None
+        df_1h = None
+        try:
+            period_15m = _BAR_PERIOD_MAP.get("15m")
+            if period_15m:
+                raw_15 = quote_client.get_future_bars(identifier, period=period_15m, limit=500)
+                if raw_15 is not None and not raw_15.empty:
+                    df_15m = raw_15[["open", "high", "low", "close", "volume"]].copy()
+                    df_15m.index = pd.to_datetime(raw_15["time"], unit="ms")
+                    df_15m = df_15m.sort_index()
+        except Exception:
+            pass
+        try:
+            period_1h = _BAR_PERIOD_MAP.get("1h")
+            if period_1h:
+                raw_1h = quote_client.get_future_bars(identifier, period=period_1h, limit=500)
+                if raw_1h is not None and not raw_1h.empty:
+                    df_1h = raw_1h[["open", "high", "low", "close", "volume"]].copy()
+                    df_1h.index = pd.to_datetime(raw_1h["time"], unit="ms")
+                    df_1h = df_1h.sort_index()
+        except Exception:
+            pass
 
-        result = scan_5min(df, params={"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult})
+        # MTF scan
+        mtf_result = scan_5min_mtf(df_5m, df_15m, df_1h, params=custom_params)
+        result = mtf_result.scan
 
         # All recent signals
-        from mgc_trading.scanner_5min import scan_5min_all
-        all_results = scan_5min_all(df, params={"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}, lookback=10)
+        all_results = scan_5min_all(df_5m, params=custom_params, lookback=10)
 
         def _to_sig(r):
             return Scan5MinSignal(
@@ -1596,7 +1677,7 @@ async def mgc_scan_5min_live(
         all_sigs = [_to_sig(r) for r in all_results]
 
         # Last 30 candles for mini chart
-        tail = df.tail(30)
+        tail = df_5m.tail(30)
         candles_out = []
         for i_row, row in tail.iterrows():
             t = str(i_row)
@@ -1609,15 +1690,30 @@ async def mgc_scan_5min_live(
                 "volume": int(row["volume"]),
             })
 
-        return result.found, sig, all_sigs, candles_out
+        c = mtf_result.conditions
+        cond_model = Scan5MinConditions(
+            ema_trend=c.ema_trend, ema_slope=c.ema_slope,
+            pullback=c.pullback, breakout=c.breakout,
+            supertrend=c.supertrend, macd_momentum=c.macd_momentum,
+            rsi_momentum=c.rsi_momentum, volume_spike=c.volume_spike,
+            atr_range=c.atr_range, session_ok=c.session_ok, adx_ok=c.adx_ok,
+            htf_15m_trend=c.htf_15m_trend, htf_15m_supertrend=c.htf_15m_supertrend,
+            htf_1h_trend=c.htf_1h_trend, htf_1h_supertrend=c.htf_1h_supertrend,
+        )
+        return (result.found, sig, all_sigs, candles_out, cond_model,
+                mtf_result.bias, mtf_result.conditions_met, mtf_result.conditions_total)
 
-    found, sig, all_sigs, candles_out = await run_in_threadpool(_run)
+    found, sig, all_sigs, candles_out, cond_model, bias, met, total = await run_in_threadpool(_run)
 
     return Scan5MinResponse(
         opportunity=found,
         signal=sig,
         signals=all_sigs,
         candles=candles_out,
+        conditions=cond_model,
+        bias=bias,
+        conditions_met=met,
+        conditions_total=total,
         timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
 
