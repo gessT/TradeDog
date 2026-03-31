@@ -1,0 +1,40 @@
+databases:
+  - name: tradedog-db
+    plan: free
+    databaseName: trading
+    user: tradedog
+
+services:
+  # ── Python FastAPI Backend ──────────────────────────────
+  - type: web
+    name: tradedog-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tradedog-db
+          property: connectionString
+      - key: REDIS_URL
+        value: ""
+      - key: PYTHON_VERSION
+        value: "3.11.11"
+
+  # ── Next.js Frontend ────────────────────────────────────
+  - type: web
+    name: tradedog-web
+    runtime: node
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          name: tradedog-api
+          type: web
+          property: hostport
