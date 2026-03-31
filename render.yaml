@@ -33,8 +33,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "20"
-      - key: NEXT_PUBLIC_API_URL
+      - key: NEXT_PUBLIC_API_BASE
         fromService:
           name: tradedog-api
           type: web
-          property: hostport
+          property: host
