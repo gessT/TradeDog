@@ -14,7 +14,7 @@ import {
 
 const COMMODITY_NAMES: Record<string, string> = {
   MGC: "Micro Gold",
-  BZ: "Brent Oil",
+  MCL: "Micro Crude Oil",
   NG: "Natural Gas",
   SI: "Silver",
   CL: "Crude Oil WTI",
@@ -407,13 +407,6 @@ export default function TigerAccountTab() {
       alert(`❌ ${e instanceof Error ? e.message : "Cleanup failed"}`);
     }
   }, [refresh]);
-
-  // Auto-cleanup: when positions change, cancel orphaned SL/TP
-  useEffect(() => {
-    if (data?.positions) {
-      void handleCleanup();
-    }
-  }, [data?.positions?.length]);
 
   const acct = data?.account;
 

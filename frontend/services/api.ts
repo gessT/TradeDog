@@ -955,7 +955,7 @@ export type MGC5MinBacktestResponse = {
 /** Map short commodity key → yfinance ticker */
 const YF_SYMBOL_MAP: Record<string, string> = {
   MGC: "MGC=F",
-  BZ: "BZ=F",
+  MCL: "MCL=F",
   NG: "NG=F",
   SI: "SI=F",
   CL: "CL=F",

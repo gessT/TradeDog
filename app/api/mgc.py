@@ -208,7 +208,7 @@ def _isnan(v) -> bool:
 # yfinance symbols for commodities we track
 _COMMODITY_SYMBOLS = {
     "MGC": {"yf": "MGC=F", "name": "Micro Gold", "icon": "🥇", "tiger": "MGC", "tick": 0.10},
-    "BZ":  {"yf": "BZ=F",  "name": "Brent Oil",    "icon": "🛢️", "tiger": "BZ",  "tick": 0.01},
+    "MCL": {"yf": "MCL=F", "name": "Micro Crude Oil", "icon": "🛢️", "tiger": "MCL", "tick": 0.01},
     "NG":  {"yf": "NG=F",  "name": "Natural Gas",  "icon": "🔥", "tiger": "NG",  "tick": 0.001},
     "SI":  {"yf": "SI=F",  "name": "Silver",       "icon": "🪙", "tiger": "SI",  "tick": 0.005},
     "CL":  {"yf": "CL=F",  "name": "Crude Oil WTI", "icon": "⛽", "tiger": "CL",  "tick": 0.01},
