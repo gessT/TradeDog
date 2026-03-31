@@ -92,13 +92,15 @@ class Backtester5Min:
     ) -> BacktestResult5Min:
         """Execute 5min backtest.
 
+        Indicators are computed on the full *df* so they are properly warmed
+        up regardless of which date range the caller later displays.
         If *oos_split* > 0 (e.g. 0.3), split data 70/30 and report
         out-of-sample metrics separately.
         """
         full_params = {**DEFAULT_5MIN_PARAMS, **(params or {})}
         strategy = MGCStrategy5Min(full_params)
 
-        # Compute indicators on full dataset
+        # Compute indicators on full dataset (including warmup bars)
         df_ind = strategy.compute_indicators(
             df[["open", "high", "low", "close", "volume"]].copy()
         )
@@ -152,13 +154,20 @@ class Backtester5Min:
         daily_counts: dict[str, int] = {}
         extreme_since_entry = 0.0  # highest for CALL, lowest for PUT
         worst_unrealized = 0.0  # worst unrealized P&L (most negative) during trade
+        prev_bar_date = ""
 
         for i in range(1, len(df)):
             bar = df.iloc[i]
             prev = df.iloc[i - 1]
             bar_date = str(bar.name.date()) if hasattr(bar.name, "date") else str(bar.name)[:10]
 
-            # ── 0. EOD close: force-close position when day changes ─
+            # ── 0. Day change → reset daily state ───────────────────
+            if bar_date != prev_bar_date:
+                prev_bar_date = bar_date
+                consec_losses = 0
+                daily_counts[bar_date] = daily_counts.get(bar_date, 0)
+
+            # ── 0b. EOD close: force-close position when day changes ─
             if position is not None:
                 prev_date = str(prev.name.date()) if hasattr(prev.name, "date") else str(prev.name)[:10]
                 if bar_date != prev_date:

@@ -680,7 +680,8 @@ async def tiger_account() -> TigerAccountResponse:
         filled_orders: list[TigerOrderItem] = []
         try:
             _start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-            raw_filled = trade_client.get_filled_orders(account=TIGER_ACCOUNT, sec_type="FUT", start_date=_start)
+            _end = datetime.now().strftime("%Y-%m-%d")
+            raw_filled = trade_client.get_filled_orders(account=TIGER_ACCOUNT, sec_type="FUT", start_date=_start, end_date=_end)
             for o in (raw_filled or [])[-50:]:
                 filled_orders.append(_order_to_item(o))
         except Exception:
@@ -1313,44 +1314,87 @@ async def mgc_backtest_5min(
         from mgc_trading.backtest_5min import Backtester5Min
         from mgc_trading.strategy_5min import MGCStrategy5Min, DEFAULT_5MIN_PARAMS
 
-        # 5min: max 60d on yfinance
-        effective_period = period
-        if period not in ("1d", "2d", "5d", "7d", "30d", "60d"):
-            effective_period = "60d"
-
-        df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
-
-        # Date range filter
-        if date_from:
-            df = df[df.index >= _pd.Timestamp(date_from, tz=df.index.tz)]
-        if date_to:
-            # Include the full end day
-            df = df[df.index < _pd.Timestamp(date_to, tz=df.index.tz) + _pd.Timedelta(days=1)]
+        # Always load 60d so indicators are fully warmed up
+        # (EMA, RSI, MACD, Supertrend need history to stabilize)
+        df = load_yfinance(symbol=symbol, interval="5m", period="60d")
 
         if df.empty or len(df) < 20:
-            avail_from = "N/A"
-            avail_to = "N/A"
-            if not df.empty:
-                avail_from = str(df.index[0])[:10]
-                avail_to = str(df.index[-1])[:10]
-            raise ValueError(
-                f"Not enough data for selected date range. "
-                f"yfinance 5m data is only available for the last ~60 days. "
-                f"Available range: {avail_from} to {avail_to}"
-            )
+            raise ValueError("Not enough 5m data from yfinance.")
 
+        # Also apply date_to filter on the raw data
+        if date_to:
+            trade_end = _pd.Timestamp(date_to, tz=df.index.tz) + _pd.Timedelta(days=1)
+            df = df[df.index < trade_end]
+
+        # ── Run full 60d simulation for consistent results ──────
         custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
+        bt = Backtester5Min(capital=capital)
+        result = bt.run(df, params=custom_params, oos_split=oos_split)
+
+        # ── Determine display window ────────────────────────────
+        display_start: str | None = None
+        if date_from:
+            display_start = date_from
+        elif period != "60d":
+            _period_days = {"1d": 1, "2d": 2, "3d": 3, "5d": 5, "7d": 7, "30d": 30}
+            days_back = _period_days.get(period, 60)
+            if days_back < 60:
+                last_date = df.index[-1]
+                cutoff = last_date - _pd.Timedelta(days=days_back)
+                display_start = cutoff.strftime("%Y-%m-%d")
+
+        # ── Filter trades to display window ─────────────────────
+        filtered_trades = result.trades
+        if display_start:
+            filtered_trades = [
+                t for t in result.trades
+                if str(t.exit_time)[:10] >= display_start
+            ]
+
+        # ── Filter daily_pnl to display window ─────────────────
+        filtered_daily = result.daily_pnl
+        if display_start:
+            filtered_daily = [d for d in result.daily_pnl if d["date"] >= display_start]
+
+        # ── Recompute metrics for the display window ────────────
+        display_wins = [t for t in filtered_trades if t.pnl > 0]
+        display_losses = [t for t in filtered_trades if t.pnl <= 0]
+        n_trades = len(filtered_trades)
+        display_total_pnl = sum(t.pnl for t in filtered_trades)
+
+        metrics = MGC5MinMetrics(
+            initial_capital=result.initial_capital,
+            final_equity=round(result.initial_capital + display_total_pnl, 2),
+            total_return_pct=round(display_total_pnl / result.initial_capital * 100, 2) if result.initial_capital else 0,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            total_trades=n_trades,
+            winners=len(display_wins),
+            losers=len(display_losses),
+            win_rate=round(len(display_wins) / n_trades * 100, 1) if n_trades else 0,
+            avg_win=round(sum(t.pnl for t in display_wins) / len(display_wins), 2) if display_wins else 0,
+            avg_loss=round(sum(t.pnl for t in display_losses) / len(display_losses), 2) if display_losses else 0,
+            profit_factor=round(
+                abs(sum(t.pnl for t in display_wins) / sum(t.pnl for t in display_losses)), 2
+            ) if display_losses and sum(t.pnl for t in display_losses) != 0 else 999.0,
+            risk_reward_ratio=result.risk_reward_ratio,
+            oos_win_rate=result.oos_win_rate,
+            oos_total_trades=result.oos_total_trades,
+            oos_return_pct=result.oos_return_pct,
+        )
+
+        # ── Build candle list (display window only) ─────────────
         strategy = MGCStrategy5Min({**DEFAULT_5MIN_PARAMS, **custom_params})
         df_ind = strategy.compute_indicators(
             df[["open", "high", "low", "close", "volume"]].copy()
         )
         signals = strategy.generate_signals(df_ind)
+        if display_start:
+            ts = _pd.Timestamp(display_start, tz=df_ind.index.tz)
+            df_ind = df_ind[df_ind.index >= ts]
+            signals = signals[df_ind.index]
         df_ind["signal"] = signals
 
-        bt = Backtester5Min(capital=capital)
-        result = bt.run(df, params=custom_params, oos_split=oos_split)
-
-        # Build candle list
         candles = []
         for ts, row in df_ind.iterrows():
             candles.append(MGC5MinCandle(
@@ -1382,29 +1426,10 @@ async def mgc_backtest_5min(
                 direction=t.direction,
                 mae=round(t.mae, 2),
             )
-            for t in result.trades
+            for t in filtered_trades
         ]
 
-        metrics = MGC5MinMetrics(
-            initial_capital=result.initial_capital,
-            final_equity=result.final_equity,
-            total_return_pct=result.total_return_pct,
-            max_drawdown_pct=result.max_drawdown_pct,
-            sharpe_ratio=result.sharpe_ratio,
-            total_trades=result.total_trades,
-            winners=result.winners,
-            losers=result.losers,
-            win_rate=result.win_rate,
-            avg_win=result.avg_win,
-            avg_loss=result.avg_loss,
-            profit_factor=result.profit_factor,
-            risk_reward_ratio=result.risk_reward_ratio,
-            oos_win_rate=result.oos_win_rate,
-            oos_total_trades=result.oos_total_trades,
-            oos_return_pct=result.oos_return_pct,
-        )
-
-        return candles, trades, result.equity_curve, metrics, result.params, result.daily_pnl
+        return candles, trades, result.equity_curve, metrics, result.params, filtered_daily
 
     try:
         candles, trades, eq_curve, metrics, params, daily_pnl = await run_in_threadpool(_run)
