@@ -61,6 +61,8 @@ class BacktestResult5Min:
     oos_win_rate: float = 0.0
     oos_total_trades: int = 0
     oos_return_pct: float = 0.0
+    # Daily P&L breakdown
+    daily_pnl: list[dict] = field(default_factory=list)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -155,6 +157,35 @@ class Backtester5Min:
             bar = df.iloc[i]
             prev = df.iloc[i - 1]
             bar_date = str(bar.name.date()) if hasattr(bar.name, "date") else str(bar.name)[:10]
+
+            # ── 0. EOD close: force-close position when day changes ─
+            if position is not None:
+                prev_date = str(prev.name.date()) if hasattr(prev.name, "date") else str(prev.name)[:10]
+                if bar_date != prev_date:
+                    # Close at previous bar's close (end of that day)
+                    d = position["direction"]
+                    exit_price = float(prev["close"])
+                    pnl = d * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                    pnl_pct = pnl / (self.initial_capital or 1) * 100
+                    equity += pnl
+                    trades.append(Trade5Min(
+                        entry_time=position["entry_time"],
+                        exit_time=prev.name,
+                        entry_price=position["entry_price"],
+                        exit_price=round(exit_price, 2),
+                        qty=position["qty"],
+                        pnl=round(pnl, 2),
+                        pnl_pct=round(pnl_pct, 2),
+                        reason="EOD",
+                        signal_type=position.get("signal_type", ""),
+                        direction="CALL" if d == 1 else "PUT",
+                        mae=round(worst_unrealized, 2),
+                    ))
+                    consec_losses = consec_losses + 1 if pnl < 0 else 0
+                    position = None
+                    worst_unrealized = 0.0
+                    # Reset daily counters for new day
+                    daily_counts[bar_date] = 0
 
             # ── 1. If in position → check exits ────────────────────
             if position is not None:
@@ -407,5 +438,22 @@ class Backtester5Min:
                 result.sharpe_ratio = round(
                     float(returns.mean() / returns.std() * math.sqrt(bars_per_year)), 2
                 )
+
+        # Daily P&L breakdown — group trades by exit date
+        day_map: dict[str, dict] = {}
+        for t in trades:
+            day = str(t.exit_time)[:10]
+            if day not in day_map:
+                day_map[day] = {"date": day, "pnl": 0.0, "trades": 0, "wins": 0, "losses": 0}
+            day_map[day]["pnl"] += t.pnl
+            day_map[day]["trades"] += 1
+            if t.pnl > 0:
+                day_map[day]["wins"] += 1
+            else:
+                day_map[day]["losses"] += 1
+        for d in day_map.values():
+            d["pnl"] = round(d["pnl"], 2)
+            d["win_rate"] = round(d["wins"] / d["trades"] * 100, 1) if d["trades"] else 0
+        result.daily_pnl = sorted(day_map.values(), key=lambda x: x["date"], reverse=True)
 
         return result

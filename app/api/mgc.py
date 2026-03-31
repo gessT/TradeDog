@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -676,10 +676,11 @@ async def tiger_account() -> TigerAccountResponse:
         except Exception:
             logger.exception("Failed to get Tiger open orders")
 
-        # Recent filled orders (last 20)
+        # Recent filled orders (last 50)
         filled_orders: list[TigerOrderItem] = []
         try:
-            raw_filled = trade_client.get_filled_orders(account=TIGER_ACCOUNT, sec_type="FUT")
+            _start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            raw_filled = trade_client.get_filled_orders(account=TIGER_ACCOUNT, sec_type="FUT", start_date=_start)
             for o in (raw_filled or [])[-50:]:
                 filled_orders.append(_order_to_item(o))
         except Exception:
@@ -1286,6 +1287,7 @@ class MGC5MinBacktestResponse(BaseModel):
     trades: list[MGC5MinTrade]
     equity_curve: list[float]
     metrics: MGC5MinMetrics
+    daily_pnl: list[dict] = []
     params: dict
     timestamp: str
 
@@ -1402,10 +1404,10 @@ async def mgc_backtest_5min(
             oos_return_pct=result.oos_return_pct,
         )
 
-        return candles, trades, result.equity_curve, metrics, result.params
+        return candles, trades, result.equity_curve, metrics, result.params, result.daily_pnl
 
     try:
-        candles, trades, eq_curve, metrics, params = await run_in_threadpool(_run)
+        candles, trades, eq_curve, metrics, params, daily_pnl = await run_in_threadpool(_run)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as exc:
@@ -1420,6 +1422,7 @@ async def mgc_backtest_5min(
         trades=trades,
         equity_curve=eq_curve,
         metrics=metrics,
+        daily_pnl=daily_pnl,
         params=params,
         timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
     )

@@ -1862,21 +1862,12 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
                 <Metric label="R:R" value={`1:${n(m.risk_reward_ratio).toFixed(2)}`} cls="text-cyan-400" />
               </div>
 
-              {/* Daily P&L card (matches selected period) */}
+              {/* Daily P&L card — from backend (EOD-closed per day) */}
               {(() => {
-                const numDays = parseInt(period) || 5;
-                const dailyMap: Record<string, { pnl: number; count: number }> = {};
-                for (const t of btData.trades) {
-                  const day = t.exit_time.slice(0, 10);
-                  if (!dailyMap[day]) dailyMap[day] = { pnl: 0, count: 0 };
-                  dailyMap[day].pnl += t.pnl;
-                  dailyMap[day].count += 1;
-                }
-                const days = Object.entries(dailyMap)
-                  .sort(([a], [b]) => b.localeCompare(a))
-                  .slice(0, numDays);
+                const days = btData.daily_pnl ?? [];
                 if (days.length === 0) return null;
-                const totalPnl = days.reduce((s, [, d]) => s + d.pnl, 0);
+                const totalPnl = days.reduce((s, d) => s + d.pnl, 0);
+                const maxAbs = Math.max(...days.map(d => Math.abs(d.pnl)), 1);
                 return (
                   <div className="rounded-xl border border-slate-800/60 bg-slate-900/40 p-3">
                     <div className="flex items-center justify-between mb-2">
@@ -1886,20 +1877,23 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
                       </span>
                     </div>
                     <div className="space-y-1">
-                      {days.map(([day, d]) => (
-                        <div key={day} className="flex items-center gap-2">
-                          <span className="text-[9px] text-slate-500 tabular-nums w-[70px]">{day.slice(5)}</span>
+                      {days.map((d) => (
+                        <div key={d.date} className="flex items-center gap-2">
+                          <span className="text-[9px] text-slate-500 tabular-nums w-[70px]">{d.date.slice(5)}</span>
                           <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
                             {d.pnl >= 0 ? (
-                              <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.min(100, (d.pnl / Math.max(...days.map(([,x]) => Math.abs(x.pnl)))) * 100)}%` }} />
+                              <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.min(100, (d.pnl / maxAbs) * 100)}%` }} />
                             ) : (
-                              <div className="h-full bg-rose-500 rounded-full ml-auto" style={{ width: `${Math.min(100, (Math.abs(d.pnl) / Math.max(...days.map(([,x]) => Math.abs(x.pnl)))) * 100)}%` }} />
+                              <div className="h-full bg-rose-500 rounded-full ml-auto" style={{ width: `${Math.min(100, (Math.abs(d.pnl) / maxAbs) * 100)}%` }} />
                             )}
                           </div>
                           <span className={`text-[10px] font-bold tabular-nums w-[60px] text-right ${d.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                             {d.pnl >= 0 ? "+" : ""}${n(d.pnl).toFixed(0)}
                           </span>
-                          <span className="text-[8px] text-slate-600 tabular-nums w-[20px] text-right">{d.count}t</span>
+                          <span className={`text-[9px] font-bold tabular-nums w-[38px] text-right ${d.win_rate >= 60 ? "text-emerald-500" : d.win_rate >= 40 ? "text-amber-500" : "text-rose-500"}`}>
+                            {d.win_rate.toFixed(0)}%
+                          </span>
+                          <span className="text-[8px] text-slate-600 tabular-nums w-[30px] text-right">{d.wins}W{d.losses}L</span>
                         </div>
                       ))}
                     </div>

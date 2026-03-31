@@ -940,6 +940,15 @@ export type MGC5MinMetrics = {
   oos_return_pct: number;
 };
 
+export type DailyPnl = {
+  date: string;
+  pnl: number;
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+};
+
 export type MGC5MinBacktestResponse = {
   symbol: string;
   interval: string;
@@ -948,6 +957,7 @@ export type MGC5MinBacktestResponse = {
   trades: MGC5MinTrade[];
   equity_curve: number[];
   metrics: MGC5MinMetrics;
+  daily_pnl: DailyPnl[];
   params: Record<string, unknown>;
   timestamp: string;
 };
