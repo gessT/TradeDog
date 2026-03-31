@@ -349,18 +349,25 @@ export default function TigerAccountTab() {
   const [error, setError] = useState<string | null>(null);
   const [orderTab, setOrderTab] = useState<"open" | "today" | "filled">("today");
 
+  const [failCount, setFailCount] = useState(0);
+
   const refresh = useCallback(async () => {
     setLoading(true);
-    setError(null);
     try {
       const res = await fetchTigerAccount();
       setData(res);
+      setError(null);
+      setFailCount(0);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to fetch account");
+      setFailCount((c) => c + 1);
+      // Only show error after 2+ consecutive failures (ignore transient)
+      if (failCount >= 1) {
+        setError(e instanceof Error ? e.message : "Failed to fetch account");
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [failCount]);
 
   // Auto-refresh every 15s
   useEffect(() => {

@@ -14,6 +14,7 @@ import yfinance as yf
 from app.core.config import get_settings
 from app.db.database import get_db
 from app.models.stock import StockPreference
+from app.models.starred_stock import StarredStock
 from app.services.data_collector import fetch_stock
 from app.services.redis_client import redis_service
 from app.utils.indicators import ema, rsi as compute_rsi, atr as compute_atr
@@ -1381,3 +1382,38 @@ async def daily_scan(top: int = Query(default=6, ge=1, le=20), market: str = Que
     }
 
 
+# ── Starred Stocks ───────────────────────────────────────────────────
+
+
+class StarPayload(BaseModel):
+    symbol: str = Field(min_length=1, max_length=16)
+    name: str = Field(default="", max_length=64)
+    market: str = Field(default="MY", max_length=8)
+
+
+@router.get("/starred")
+def list_starred(market: str = Query(default="MY"), db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.query(StarredStock).filter(StarredStock.market == market).order_by(StarredStock.created_at.desc()).all()
+    return [{"symbol": r.symbol, "name": r.name, "market": r.market} for r in rows]
+
+
+@router.post("/starred")
+def add_starred(payload: StarPayload, db: Session = Depends(get_db)) -> dict:
+    existing = db.query(StarredStock).filter(StarredStock.symbol == payload.symbol).first()
+    if existing:
+        return {"symbol": existing.symbol, "name": existing.name, "market": existing.market}
+    row = StarredStock(symbol=payload.symbol, name=payload.name, market=payload.market)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"symbol": row.symbol, "name": row.name, "market": row.market}
+
+
+@router.delete("/starred")
+def remove_starred(symbol: str = Query(min_length=1), db: Session = Depends(get_db)) -> dict:
+    row = db.query(StarredStock).filter(StarredStock.symbol == symbol).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not starred")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}

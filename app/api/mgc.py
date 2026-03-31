@@ -1401,6 +1401,7 @@ class Scan5MinSignal(BaseModel):
 class Scan5MinResponse(BaseModel):
     opportunity: bool
     signal: Scan5MinSignal
+    signals: list[Scan5MinSignal] = []
     candles: list[dict] = []
     timestamp: str
 
@@ -1415,7 +1416,7 @@ async def mgc_scan_5min(
     """Scan for 5-minute entry signal using yfinance data."""
 
     def _run():
-        from mgc_trading.scanner_5min import scan_5min
+        from mgc_trading.scanner_5min import scan_5min, scan_5min_all
 
         effective_period = period
         if period not in ("1d", "2d", "5d", "7d", "30d", "60d"):
@@ -1424,6 +1425,9 @@ async def mgc_scan_5min(
         df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
         custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
         result = scan_5min(df, params=custom_params)
+
+        # All recent signals (last 10 completed bars)
+        all_results = scan_5min_all(df, params=custom_params, lookback=10)
 
         # Last 30 candles for mini chart
         tail = df.tail(30)
@@ -1439,32 +1443,26 @@ async def mgc_scan_5min(
                 "volume": int(row.get("Volume", row.get("volume", 0))),
             })
 
-        sig = Scan5MinSignal(
-            found=result.found,
-            direction=result.direction,
-            signal_type=result.signal_type,
-            entry_price=result.entry_price,
-            stop_loss=result.stop_loss,
-            take_profit=result.take_profit,
-            risk_reward=result.risk_reward,
-            strength=result.strength,
-            strength_detail=result.strength_detail,
-            rsi=result.rsi,
-            atr=result.atr,
-            ema_fast=result.ema_fast,
-            ema_slow=result.ema_slow,
-            macd_hist=result.macd_hist,
-            supertrend_dir=result.supertrend_dir,
-            volume_ratio=result.volume_ratio,
-            bar_time=result.bar_time,
-        )
-        return result.found, sig, candles_out
+        def _to_sig(r):
+            return Scan5MinSignal(
+                found=r.found, direction=r.direction, signal_type=r.signal_type,
+                entry_price=r.entry_price, stop_loss=r.stop_loss, take_profit=r.take_profit,
+                risk_reward=r.risk_reward, strength=r.strength, strength_detail=r.strength_detail,
+                rsi=r.rsi, atr=r.atr, ema_fast=r.ema_fast, ema_slow=r.ema_slow,
+                macd_hist=r.macd_hist, supertrend_dir=r.supertrend_dir,
+                volume_ratio=r.volume_ratio, bar_time=r.bar_time,
+            )
 
-    found, sig, candles_out = await run_in_threadpool(_run)
+        sig = _to_sig(result)
+        all_sigs = [_to_sig(r) for r in all_results]
+        return result.found, sig, all_sigs, candles_out
+
+    found, sig, all_sigs, candles_out = await run_in_threadpool(_run)
 
     return Scan5MinResponse(
         opportunity=found,
         signal=sig,
+        signals=all_sigs,
         candles=candles_out,
         timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
@@ -1503,32 +1501,46 @@ async def mgc_scan_5min_live(
 
         result = scan_5min(df, params={"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult})
 
-        sig = Scan5MinSignal(
-            found=result.found,
-            direction=result.direction,
-            signal_type=result.signal_type,
-            entry_price=result.entry_price,
-            stop_loss=result.stop_loss,
-            take_profit=result.take_profit,
-            risk_reward=result.risk_reward,
-            strength=result.strength,
-            strength_detail=result.strength_detail,
-            rsi=result.rsi,
-            atr=result.atr,
-            ema_fast=result.ema_fast,
-            ema_slow=result.ema_slow,
-            macd_hist=result.macd_hist,
-            supertrend_dir=result.supertrend_dir,
-            volume_ratio=result.volume_ratio,
-            bar_time=result.bar_time,
-        )
-        return result.found, sig
+        # All recent signals
+        from mgc_trading.scanner_5min import scan_5min_all
+        all_results = scan_5min_all(df, params={"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}, lookback=10)
 
-    found, sig = await run_in_threadpool(_run)
+        def _to_sig(r):
+            return Scan5MinSignal(
+                found=r.found, direction=r.direction, signal_type=r.signal_type,
+                entry_price=r.entry_price, stop_loss=r.stop_loss, take_profit=r.take_profit,
+                risk_reward=r.risk_reward, strength=r.strength, strength_detail=r.strength_detail,
+                rsi=r.rsi, atr=r.atr, ema_fast=r.ema_fast, ema_slow=r.ema_slow,
+                macd_hist=r.macd_hist, supertrend_dir=r.supertrend_dir,
+                volume_ratio=r.volume_ratio, bar_time=r.bar_time,
+            )
+
+        sig = _to_sig(result)
+        all_sigs = [_to_sig(r) for r in all_results]
+
+        # Last 30 candles for mini chart
+        tail = df.tail(30)
+        candles_out = []
+        for i_row, row in tail.iterrows():
+            t = str(i_row)
+            candles_out.append({
+                "time": t[:16] if len(t) > 16 else t,
+                "open": round(float(row["open"]), 2),
+                "high": round(float(row["high"]), 2),
+                "low": round(float(row["low"]), 2),
+                "close": round(float(row["close"]), 2),
+                "volume": int(row["volume"]),
+            })
+
+        return result.found, sig, all_sigs, candles_out
+
+    found, sig, all_sigs, candles_out = await run_in_threadpool(_run)
 
     return Scan5MinResponse(
         opportunity=found,
         signal=sig,
+        signals=all_sigs,
+        candles=candles_out,
         timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
 
@@ -1594,15 +1606,35 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
         sl_price = round(round(req.stop_loss / tick_size) * tick_size, 6)
         tp_price = round(round(req.take_profit / tick_size) * tick_size, 6)
 
-        trader = TigerTrader()
-        trader.connect()
-        bracket = trader.place_bracket_order(
-            symbol=tiger_sym,
-            qty=req.qty,
-            side=side,
-            stop_loss_price=sl_price,
-            take_profit_price=tp_price,
-        )
+        try:
+            trader = TigerTrader()
+            trader.connect()
+        except Exception as exc:
+            logger.exception("TigerTrader connect failed")
+            exec_result = ExecutionResult(
+                executed=False, order_id="", side=side, qty=req.qty,
+                status="CONNECT_FAILED",
+                reason=f"Tiger connection failed: {exc}",
+            )
+            return exec_result, position_info
+
+        try:
+            bracket = trader.place_bracket_order(
+                symbol=tiger_sym,
+                qty=req.qty,
+                side=side,
+                stop_loss_price=sl_price,
+                take_profit_price=tp_price,
+            )
+        except Exception as exc:
+            logger.exception("Bracket order placement failed")
+            exec_result = ExecutionResult(
+                executed=False, order_id="", side=side, qty=req.qty,
+                status="ORDER_ERROR",
+                reason=f"Order error: {exc}",
+            )
+            return exec_result, position_info
+
         if bracket.entry and bracket.entry.status != "FAILED":
             parts = [f"Entry {bracket.entry.order_id} {side}"]
             if bracket.stop_loss:
@@ -1618,17 +1650,27 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
                 reason=" | ".join(parts),
             )
         else:
+            # Provide more detail on why it failed
+            entry_status = bracket.entry.status if bracket.entry else "NO_ENTRY"
             exec_result = ExecutionResult(
                 executed=False,
                 order_id="",
                 side=side,
                 qty=req.qty,
                 status="FAILED",
-                reason="Tiger API order failed",
+                reason=f"Tiger order failed ({entry_status}) — check risk gates or market hours",
             )
         return exec_result, position_info
 
-    exec_result, position_info = await run_in_threadpool(_run)
+    try:
+        exec_result, position_info = await run_in_threadpool(_run)
+    except Exception as exc:
+        logger.exception("execute_5min unexpected error")
+        exec_result = ExecutionResult(
+            executed=False, order_id="", side="BUY", qty=req.qty,
+            status="ERROR", reason=f"Unexpected error: {exc}",
+        )
+        position_info = {"current_qty": 0, "max_qty": req.max_qty, "trade_qty": req.qty, "blocked": False}
 
     return Execute5MinResponse(
         execution=exec_result,

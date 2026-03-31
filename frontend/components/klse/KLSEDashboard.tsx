@@ -9,6 +9,7 @@ import StockPicker from "../StockPicker";
 import StrategyPanel from "../StrategyPanel";
 import StrategyPanelV1 from "../StrategyPanelV1";
 import KLSEStrategyPanel from "../KLSEStrategyPanel";
+import StarredStocks from "../StarredStocks";
 import DataTable from "../DataTable";
 import TVChart, { type TVChartHandle, type EmaConfig } from "../TVChart";
 import type { DemoPoint } from "../../services/api";
@@ -102,6 +103,7 @@ export default function KLSEDashboard() {
 
         {/* ── MIDDLE 1/3: Strategy Panels ─────────── */}
         <section className="hidden md:flex md:w-1/3 flex-shrink-0 flex-col overflow-y-auto border-r border-slate-800/60 p-4 space-y-3">
+          <StarredStocks onSelectSymbol={setSymbol} activeSymbol={symbol} stockName={stockName} market="MY" />
           <KLSEStrategyPanel symbol={symbol} period={period} onTradeClick={(d) => chartRef.current?.goToDate(d)} />
           <StrategyPanelV1 symbol={symbol} period={period} onTradeClick={(d) => chartRef.current?.goToDate(d)} />
           <StrategyPanel symbol={symbol} period={period} onTradeClick={(d) => chartRef.current?.goToDate(d)} />

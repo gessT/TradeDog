@@ -185,6 +185,144 @@ def scan_5min(
     )
 
 
+def scan_5min_all(
+    df: pd.DataFrame,
+    params: dict | None = None,
+    lookback: int = 10,
+) -> list[ScanResult5Min]:
+    """Scan the last *lookback* completed bars and return ALL signals found.
+
+    Parameters
+    ----------
+    df : DataFrame with OHLCV data (at least 100 bars of 5min data)
+    params : strategy parameter overrides
+    lookback : how many recent completed bars to check (default 10)
+
+    Returns
+    -------
+    List of ScanResult5Min for every bar that produced a signal, newest first.
+    """
+    p = {**DEFAULT_5MIN_PARAMS, **(params or {})}
+    strategy = MGCStrategy5Min(p)
+
+    df_ind = strategy.compute_indicators(
+        df[["open", "high", "low", "close", "volume"]].copy()
+    )
+    signals = strategy.generate_signals(df_ind)
+
+    vol_ma = df_ind["volume"].rolling(p["vol_period"]).mean()
+
+    results: list[ScanResult5Min] = []
+
+    # Check last `lookback` completed bars (skip the current incomplete bar at -1)
+    start_idx = max(0, len(df_ind) - 1 - lookback)
+    end_idx = len(df_ind) - 1  # exclusive — skip the live bar
+
+    for i in range(end_idx - 1, start_idx - 1, -1):
+        sig_val = int(signals.iloc[i])
+        if sig_val == 0:
+            continue
+
+        bar = df_ind.iloc[i]
+        current_price = float(bar["close"])
+        bar_time = str(df_ind.index[i])
+
+        if sig_val == 1:
+            direction = "CALL"
+            signal_type = "BREAKOUT" if int(bar.get("breakout", 0)) == 1 else "PULLBACK"
+        else:
+            direction = "PUT"
+            signal_type = "BREAKOUT" if int(bar.get("breakout_low", 0)) == 1 else "PULLBACK"
+
+        atr_val = _safe_float(bar.get("atr", 0))
+        rsi_val = _safe_float(bar.get("rsi", 50))
+        ema_f = _safe_float(bar.get("ema_fast", 0))
+        ema_s = _safe_float(bar.get("ema_slow", 0))
+        macd_h = _safe_float(bar.get("macd_hist", 0))
+        st_dir = int(bar.get("st_dir", 0))
+
+        vol_ratio = float(bar["volume"] / vol_ma.iloc[i]) if vol_ma.iloc[i] > 0 else 1.0
+
+        entry_price = current_price
+        if direction == "PUT":
+            sl_price = entry_price + p["atr_sl_mult"] * atr_val
+            tp_price = entry_price - p["atr_tp_mult"] * atr_val
+        else:
+            sl_price = entry_price - p["atr_sl_mult"] * atr_val
+            tp_price = entry_price + p["atr_tp_mult"] * atr_val
+        rr = abs(tp_price - entry_price) / abs(entry_price - sl_price) if abs(entry_price - sl_price) > 0 else 0
+
+        # ── Strength scoring (same logic as scan_5min) ────────
+        score = 0
+        detail: dict = {}
+
+        is_bullish_trend = ema_f > ema_s
+        is_bearish_trend = ema_f < ema_s
+        trend_aligned = (direction == "CALL" and is_bullish_trend) or (direction == "PUT" and is_bearish_trend)
+        if trend_aligned:
+            gap_pct = abs(ema_f - ema_s) / max(ema_s, 1e-10) * 100
+            trend_pts = min(2, 1 + (1 if gap_pct > 0.15 else 0))
+            score += trend_pts
+            detail["trend"] = {"pts": trend_pts, "ema_gap_pct": round(gap_pct, 3)}
+        else:
+            detail["trend"] = {"pts": 0, "note": "against trend"}
+
+        if 40 <= rsi_val <= 60:
+            rsi_pts = 2
+        elif 30 <= rsi_val < 40 or 60 < rsi_val <= 70:
+            rsi_pts = 1
+        else:
+            rsi_pts = 0
+        score += rsi_pts
+        detail["rsi"] = {"pts": rsi_pts, "value": round(rsi_val, 1)}
+
+        macd_aligned = (direction == "CALL" and macd_h > 0) or (direction == "PUT" and macd_h < 0)
+        if macd_aligned:
+            macd_pts = 2 if abs(macd_h) > atr_val * 0.1 else 1
+        else:
+            macd_pts = 0
+        score += macd_pts
+        detail["macd"] = {"pts": macd_pts, "hist": round(macd_h, 4)}
+
+        st_aligned = (direction == "CALL" and st_dir == 1) or (direction == "PUT" and st_dir == -1)
+        st_pts = 2 if st_aligned else 0
+        score += st_pts
+        detail["supertrend"] = {"pts": st_pts, "dir": st_dir}
+
+        if vol_ratio >= 2.0:
+            vol_pts = 2
+        elif vol_ratio >= 1.3:
+            vol_pts = 1
+        else:
+            vol_pts = 0
+        score += vol_pts
+        detail["volume"] = {"pts": vol_pts, "ratio": round(vol_ratio, 2)}
+
+        strength = max(1, min(10, score))
+
+        results.append(ScanResult5Min(
+            found=True,
+            direction=direction,
+            signal_type=signal_type,
+            entry_price=round(entry_price, 2),
+            stop_loss=round(sl_price, 2),
+            take_profit=round(tp_price, 2),
+            risk_reward=round(rr, 2),
+            strength=strength,
+            strength_detail=detail,
+            rsi=round(rsi_val, 1),
+            atr=round(atr_val, 2),
+            ema_fast=round(ema_f, 2),
+            ema_slow=round(ema_s, 2),
+            macd_hist=round(macd_h, 4),
+            supertrend_dir=st_dir,
+            volume_ratio=round(vol_ratio, 2),
+            bar_time=bar_time,
+        ))
+
+    return results
+
+
 def _safe_float(v, default: float = 0.0) -> float:
     try:
         f = float(v)

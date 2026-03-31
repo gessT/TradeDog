@@ -527,6 +527,45 @@ export async function fetchDailyScan(top: number = 6, market: string = "MY"): Pr
 }
 
 
+// ── Starred Stocks ──────────────────────────────────────────────────
+
+export type StarredStockItem = {
+  symbol: string;
+  name: string;
+  market: string;
+};
+
+export async function fetchStarredStocks(market: string = "MY"): Promise<StarredStockItem[]> {
+  const response = await fetch(`${API_BASE}/stock/starred?market=${encodeURIComponent(market)}`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as StarredStockItem[];
+}
+
+export async function addStarredStock(symbol: string, name: string = "", market: string = "MY"): Promise<StarredStockItem> {
+  const response = await fetch(`${API_BASE}/stock/starred`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol, name, market }),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as StarredStockItem;
+}
+
+export async function removeStarredStock(symbol: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/stock/starred?symbol=${encodeURIComponent(symbol)}`, { method: "DELETE" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+}
+
+
 // ── MGC Micro Gold Futures Trading ───────────────────────────────────
 
 export type MGCCandle = {
@@ -709,7 +748,10 @@ export type TigerAccountResponse = {
 
 export async function fetchTigerAccount(): Promise<TigerAccountResponse> {
   const res = await fetch(`${API_BASE}/mgc/account`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Account fetch failed: ${res.status}`);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `Account fetch failed: ${res.status}`);
+  }
   return (await res.json()) as TigerAccountResponse;
 }
 
@@ -725,6 +767,10 @@ export async function placeSimpleOrder(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ symbol, side, qty, order_type: orderType, limit_price: limitPrice }),
   });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `Order failed: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -732,6 +778,10 @@ export async function cancelOrder(orderId: string): Promise<{ success: boolean; 
   const res = await fetch(`${API_BASE}/mgc/cancel_order?order_id=${encodeURIComponent(orderId)}`, {
     method: "POST",
   });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `Cancel failed: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -739,11 +789,19 @@ export async function closePosition(symbol: string = "MGC"): Promise<{ success: 
   const res = await fetch(`${API_BASE}/mgc/close_position?symbol=${encodeURIComponent(symbol)}`, {
     method: "POST",
   });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `Close position failed: ${res.status}`);
+  }
   return res.json();
 }
 
 export async function cleanupOrders(): Promise<{ success: boolean; cancelled: string[]; message: string }> {
   const res = await fetch(`${API_BASE}/mgc/cleanup_orders`, { method: "POST" });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `Cleanup failed: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -960,6 +1018,7 @@ export type Scan5MinCandle = {
 export type Scan5MinResponse = {
   opportunity: boolean;
   signal: Scan5MinSignal;
+  signals: Scan5MinSignal[];
   candles: Scan5MinCandle[];
   timestamp: string;
 };

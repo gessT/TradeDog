@@ -274,6 +274,12 @@ function ScanMiniChart({
 
     chart.timeScale().fitContent();
 
+    // Center the last bar (signal bar) in the visible area
+    if (ohlc.length > 0) {
+      const half = Math.floor(ohlc.length / 2);
+      chart.timeScale().scrollToPosition(half, false);
+    }
+
     const ro = new ResizeObserver(() => {
       if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth });
     });
@@ -293,25 +299,40 @@ function ScannerTab({
   scanData,
   loading,
   onScan,
-  onExecute,
+  onExecuteSignal,
   executing,
   autoExec,
   autoFilled,
   onToggleAuto,
   autoLog,
+  verified,
+  pendingSignal,
+  pendingSecsLeft,
+  onApprovePending,
+  onRejectPending,
 }: Readonly<{
   scanData: Scan5MinResponse | null;
   loading: boolean;
   onScan: () => void;
-  onExecute: () => void;
+  onExecuteSignal: (sig: Scan5MinSignal) => void;
   executing: boolean;
   autoExec: boolean;
   autoFilled: boolean;
   onToggleAuto: () => void;
   autoLog: string[];
+  verified: boolean;
+  pendingSignal: Scan5MinSignal | null;
+  pendingSecsLeft: number;
+  onApprovePending: () => void;
+  onRejectPending: () => void;
 }>) {
   const sig = scanData?.signal;
+  const allSignals = scanData?.signals ?? [];
   const [mode, setMode] = useState<"manual" | "auto">("manual");
+  const [selectedIdx, setSelectedIdx] = useState<number>(0);
+
+  // Reset selection when new scan data arrives
+  useEffect(() => { setSelectedIdx(0); }, [scanData]);
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -370,103 +391,145 @@ function ScannerTab({
             )}
           </div>
 
-          {/* Step 2: Signal result */}
-          {scanData && sig && (
+          {/* Step 2: All Signal Results */}
+          {scanData && (
             <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
               <div className="flex items-center gap-2">
-                <span className={`w-5 h-5 rounded-full text-white text-[10px] font-bold flex items-center justify-center ${sig.found ? "bg-emerald-600" : "bg-slate-600"}`}>2</span>
-                <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Signal Result</span>
+                <span className={`w-5 h-5 rounded-full text-white text-[10px] font-bold flex items-center justify-center ${allSignals.length > 0 ? "bg-emerald-600" : "bg-slate-600"}`}>2</span>
+                <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
+                  Signal Results
+                  {allSignals.length > 0 && <span className="text-emerald-400 ml-1">({allSignals.length})</span>}
+                </span>
                 <span className="text-[9px] text-slate-600 ml-auto">{scanData.timestamp}</span>
               </div>
 
-              {/* Signal banner */}
-              <div className={`rounded-lg p-3 text-center border ${
-                sig.found
-                  ? sig.direction === "PUT" ? "border-rose-700/60 bg-rose-950/30" : "border-emerald-700/60 bg-emerald-950/30"
-                  : "border-slate-700/60 bg-slate-900/50"
-              }`}>
-                <p className={`text-base font-bold ${
-                  sig.found ? (sig.direction === "PUT" ? "text-rose-400" : "text-emerald-400") : "text-slate-400"
-                }`}>
-                  {sig.found ? `${sig.direction || "CALL"} · ${sig.signal_type}` : "NO SIGNAL FOUND"}
-                </p>
-                {sig.found && (
-                  <div className="mt-1.5 flex justify-center gap-4">
-                    <span className="text-[10px] text-slate-400">Entry <span className="text-white font-bold">${n(sig.entry_price).toFixed(2)}</span></span>
-                    <span className="text-[10px] text-slate-400">SL <span className="text-rose-400 font-bold">${n(sig.stop_loss).toFixed(2)}</span></span>
-                    <span className="text-[10px] text-slate-400">TP <span className="text-emerald-400 font-bold">${n(sig.take_profit).toFixed(2)}</span></span>
-                  </div>
-                )}
-              </div>
-
-              {/* Mini chart */}
-              {scanData.candles && scanData.candles.length > 0 && (
-                <ScanMiniChart
-                  candles={scanData.candles}
-                  entry={sig.found ? sig.entry_price : undefined}
-                  sl={sig.found ? sig.stop_loss : undefined}
-                  tp={sig.found ? sig.take_profit : undefined}
-                  direction={sig.found ? sig.direction : undefined}
-                />
+              {allSignals.length === 0 && (
+                <div className="rounded-lg p-3 text-center border border-slate-700/60 bg-slate-900/50">
+                  <p className="text-base font-bold text-slate-400">NO SIGNAL FOUND</p>
+                  <p className="text-[9px] text-slate-600 mt-1">No entry conditions met in the last 10 bars</p>
+                </div>
               )}
 
-              {/* Strength */}
-              <div className="flex items-center gap-3">
-                <div className="flex-1 bg-slate-800 rounded-full h-2">
-                  <div
-                    className={`h-2 rounded-full transition-all ${strengthBgClass(sig.strength)}`}
-                    style={{ width: `${sig.strength * 10}%` }}
-                  />
+              {/* Signal cards — scrollable list */}
+              {allSignals.length > 0 && (
+                <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                  {allSignals.map((s, i) => {
+                    const selected = i === selectedIdx;
+                    const isPut = s.direction === "PUT";
+                    return (
+                      <div
+                        key={`${s.bar_time}-${i}`}
+                        onClick={() => setSelectedIdx(i)}
+                        className={`rounded-lg p-3 border cursor-pointer transition-all ${
+                          selected
+                            ? isPut
+                              ? "border-rose-500 bg-rose-950/30 ring-1 ring-rose-500/40"
+                              : "border-emerald-500 bg-emerald-950/30 ring-1 ring-emerald-500/40"
+                            : "border-slate-700/60 bg-slate-900/50 hover:border-slate-600"
+                        }`}
+                      >
+                        {/* Header row */}
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-2">
+                            {selected && <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />}
+                            <span className={`text-sm font-bold ${isPut ? "text-rose-400" : "text-emerald-400"}`}>
+                              {s.direction || "CALL"} · {s.signal_type}
+                            </span>
+                          </div>
+                          <span className={`text-xs font-bold ${strengthColor(s.strength)}`}>{s.strength}/10</span>
+                        </div>
+
+                        {/* Price row */}
+                        <div className="flex gap-3 text-[10px]">
+                          <span className="text-slate-400">Entry <span className="text-white font-bold">${n(s.entry_price).toFixed(2)}</span></span>
+                          <span className="text-slate-400">SL <span className="text-rose-400 font-bold">${n(s.stop_loss).toFixed(2)}</span></span>
+                          <span className="text-slate-400">TP <span className="text-emerald-400 font-bold">${n(s.take_profit).toFixed(2)}</span></span>
+                          <span className="text-slate-400">R:R <span className="text-cyan-400 font-bold">1:{n(s.risk_reward).toFixed(1)}</span></span>
+                        </div>
+
+                        {/* Bar time */}
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-[9px] text-slate-600">{s.bar_time}</span>
+                          {/* Strength mini chips */}
+                          <div className="flex gap-0.5">
+                            {Object.entries(s.strength_detail).map(([key, detail]) => (
+                              <span key={key} className={`text-[7px] font-bold px-1 py-0 rounded ${
+                                detail.pts >= 2 ? "bg-emerald-500/20 text-emerald-400"
+                                : detail.pts >= 1 ? "bg-amber-500/20 text-amber-400"
+                                : "bg-slate-800 text-slate-500"
+                              }`}>
+                                {key.toUpperCase().slice(0, 3)} +{detail.pts}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Expanded details for selected signal */}
+                        {selected && (
+                          <div className="mt-2 pt-2 border-t border-slate-700/40 space-y-2">
+                            {/* Mini chart */}
+                            {scanData.candles && scanData.candles.length > 0 && (
+                              <ScanMiniChart
+                                candles={scanData.candles}
+                                entry={s.entry_price}
+                                sl={s.stop_loss}
+                                tp={s.take_profit}
+                                direction={s.direction}
+                              />
+                            )}
+
+                            {/* Strength bar */}
+                            <div className="flex items-center gap-3">
+                              <div className="flex-1 bg-slate-800 rounded-full h-2">
+                                <div
+                                  className={`h-2 rounded-full transition-all ${strengthBgClass(s.strength)}`}
+                                  style={{ width: `${s.strength * 10}%` }}
+                                />
+                              </div>
+                              <span className={`text-sm font-bold ${strengthColor(s.strength)}`}>{s.strength}/10</span>
+                            </div>
+
+                            {/* Indicators */}
+                            <div className="grid grid-cols-3 gap-1">
+                              <MiniMetric label="RSI" value={`${n(s.rsi).toFixed(1)}`} cls={s.rsi >= 40 && s.rsi <= 60 ? "text-emerald-400" : "text-slate-300"} />
+                              <MiniMetric label="R:R" value={`1:${n(s.risk_reward).toFixed(1)}`} cls="text-cyan-400" />
+                              <MiniMetric label="Vol" value={`${n(s.volume_ratio).toFixed(1)}x`} cls={s.volume_ratio >= 1.5 ? "text-emerald-400" : "text-slate-300"} />
+                              <MiniMetric label="MACD" value={`${n(s.macd_hist).toFixed(3)}`} cls={s.macd_hist > 0 ? "text-emerald-400" : "text-rose-400"} />
+                              <MiniMetric label="ATR" value={`${n(s.atr).toFixed(2)}`} cls="text-slate-300" />
+                              <MiniMetric label="ST" value={s.supertrend_dir === 1 ? "BULL" : "BEAR"} cls={s.supertrend_dir === 1 ? "text-emerald-400" : "text-rose-400"} />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                <span className={`text-sm font-bold ${strengthColor(sig.strength)}`}>{sig.strength}/10</span>
-              </div>
-
-              {/* Score chips */}
-              <div className="flex flex-wrap gap-1">
-                {Object.entries(sig.strength_detail).map(([key, detail]) => (
-                  <span key={key} className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                    detail.pts >= 2 ? "bg-emerald-500/20 text-emerald-400"
-                    : detail.pts >= 1 ? "bg-amber-500/20 text-amber-400"
-                    : "bg-slate-800 text-slate-500"
-                  }`}>
-                    {key.toUpperCase()} +{detail.pts}
-                  </span>
-                ))}
-              </div>
-
-              {/* Indicators */}
-              <div className="grid grid-cols-3 gap-1">
-                <MiniMetric label="RSI" value={`${n(sig.rsi).toFixed(1)}`} cls={sig.rsi >= 40 && sig.rsi <= 60 ? "text-emerald-400" : "text-slate-300"} />
-                <MiniMetric label="R:R" value={`1:${n(sig.risk_reward).toFixed(1)}`} cls="text-cyan-400" />
-                <MiniMetric label="Vol" value={`${n(sig.volume_ratio).toFixed(1)}x`} cls={sig.volume_ratio >= 1.5 ? "text-emerald-400" : "text-slate-300"} />
-                <MiniMetric label="MACD" value={`${n(sig.macd_hist).toFixed(3)}`} cls={sig.macd_hist > 0 ? "text-emerald-400" : "text-rose-400"} />
-                <MiniMetric label="ATR" value={`${n(sig.atr).toFixed(2)}`} cls="text-slate-300" />
-                <MiniMetric label="ST" value={sig.supertrend_dir === 1 ? "BULL" : "BEAR"} cls={sig.supertrend_dir === 1 ? "text-emerald-400" : "text-rose-400"} />
-              </div>
+              )}
             </div>
           )}
 
-          {/* Step 3: Execute */}
-          {scanData?.signal?.found && (
+          {/* Step 3: Execute (uses selected signal) */}
+          {allSignals.length > 0 && allSignals[selectedIdx] && (
             <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
               <div className="flex items-center gap-2">
                 <span className="w-5 h-5 rounded-full bg-amber-600 text-white text-[10px] font-bold flex items-center justify-center">3</span>
                 <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Execute Order</span>
+                <span className="text-[9px] text-slate-500 ml-auto">Signal #{selectedIdx + 1} selected</span>
               </div>
               <button
-                onClick={onExecute}
+                onClick={() => onExecuteSignal(allSignals[selectedIdx])}
                 disabled={executing || autoExec}
                 className={`w-full px-4 py-3 text-sm font-bold rounded-lg transition-all ${
                   executing
                     ? "bg-slate-800 text-slate-500 cursor-wait"
-                    : scanData.signal.direction === "PUT"
+                    : allSignals[selectedIdx].direction === "PUT"
                       ? "bg-gradient-to-r from-rose-600 to-pink-600 text-white hover:from-rose-500 hover:to-pink-500 active:scale-95 shadow-lg shadow-rose-900/40"
                       : "bg-gradient-to-r from-emerald-600 to-cyan-600 text-white hover:from-emerald-500 hover:to-cyan-500 active:scale-95 shadow-lg shadow-emerald-900/40"
                 }`}
               >
                 {executing
                   ? "Placing Order…"
-                  : `🐯 Execute ${scanData.signal.direction} @ Tiger`}
+                  : `🐯 Execute ${allSignals[selectedIdx].direction} @ Tiger`}
               </button>
               <p className="text-[8px] text-amber-400/60 text-center">
                 ⚠️ Places a REAL bracket order (Entry MKT + OCA SL/TP) on your Tiger account
@@ -526,7 +589,76 @@ function ScannerTab({
             >
               {autoExec ? "⏹ Stop Auto-Trading" : autoFilled ? "🔄 Restart Auto-Trading" : "▶ Start Auto-Trading"}
             </button>
+
+            {/* Verification status badge */}
+            {autoExec && (
+              <div className={`flex items-center justify-center gap-1.5 text-[10px] font-bold ${verified ? "text-emerald-400" : "text-amber-400"}`}>
+                {verified ? "🔓 Verified — auto-executing signals" : "🔒 Awaiting first-signal verification"}
+              </div>
+            )}
           </div>
+
+          {/* ── Pending Signal Verification Card (2-min approval) ── */}
+          {pendingSignal && pendingSecsLeft > 0 && (
+            <div className="rounded-xl border-2 border-amber-500/60 bg-amber-950/20 p-4 space-y-3 animate-pulse-slow">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold text-amber-400 uppercase tracking-wider">🔔 Verify Signal</p>
+                <span className={`text-sm font-bold tabular-nums ${pendingSecsLeft <= 30 ? "text-rose-400" : "text-amber-300"}`}>
+                  {Math.floor(pendingSecsLeft / 60)}:{String(pendingSecsLeft % 60).padStart(2, "0")}
+                </span>
+              </div>
+
+              {/* Signal details */}
+              <div className={`rounded-lg p-3 text-center border ${
+                pendingSignal.direction === "PUT" ? "border-rose-700/60 bg-rose-950/30" : "border-emerald-700/60 bg-emerald-950/30"
+              }`}>
+                <p className={`text-lg font-bold ${pendingSignal.direction === "PUT" ? "text-rose-400" : "text-emerald-400"}`}>
+                  {pendingSignal.direction || "CALL"} · {pendingSignal.signal_type}
+                </p>
+                <div className="mt-1.5 flex justify-center gap-4">
+                  <span className="text-[10px] text-slate-400">Entry <span className="text-white font-bold">${n(pendingSignal.entry_price).toFixed(2)}</span></span>
+                  <span className="text-[10px] text-slate-400">SL <span className="text-rose-400 font-bold">${n(pendingSignal.stop_loss).toFixed(2)}</span></span>
+                  <span className="text-[10px] text-slate-400">TP <span className="text-emerald-400 font-bold">${n(pendingSignal.take_profit).toFixed(2)}</span></span>
+                </div>
+                <div className="mt-1 flex justify-center gap-3 text-[10px]">
+                  <span className="text-slate-400">R:R <span className="text-cyan-400 font-bold">1:{n(pendingSignal.risk_reward).toFixed(1)}</span></span>
+                  <span className="text-slate-400">Strength <span className={`font-bold ${strengthColor(pendingSignal.strength)}`}>{pendingSignal.strength}/10</span></span>
+                </div>
+              </div>
+
+              {/* Mini chart showing latest bars with entry/SL/TP */}
+              {scanData?.candles && scanData.candles.length > 0 && (
+                <ScanMiniChart
+                  candles={scanData.candles}
+                  entry={pendingSignal.entry_price}
+                  sl={pendingSignal.stop_loss}
+                  tp={pendingSignal.take_profit}
+                  direction={pendingSignal.direction}
+                />
+              )}
+
+              {/* Approve / Reject buttons */}
+              <div className="flex gap-2">
+                <button
+                  onClick={onApprovePending}
+                  disabled={executing}
+                  className="flex-1 px-4 py-3 text-sm font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 active:scale-95 shadow-lg shadow-emerald-900/40 transition-all"
+                >
+                  ✅ Pass — Execute & Enable Auto
+                </button>
+                <button
+                  onClick={onRejectPending}
+                  className="px-4 py-3 text-sm font-bold rounded-lg bg-slate-700 text-slate-300 hover:bg-slate-600 active:scale-95 transition-all"
+                >
+                  ❌ Skip
+                </button>
+              </div>
+
+              <p className="text-[8px] text-amber-400/60 text-center">
+                First signal requires your approval. After passing, subsequent signals will auto-execute.
+              </p>
+            </div>
+          )}
 
           {/* How it works */}
           {!autoExec && (
@@ -536,7 +668,8 @@ function ScannerTab({
                 {[
                   { icon: "🔍", text: "Scans MGC 5min bars every 30 seconds" },
                   { icon: "📊", text: "Checks all 8 entry conditions (Trend, RSI, MACD, etc.)" },
-                  { icon: "🐯", text: "Auto-places bracket order on Tiger when signal found" },
+                  { icon: "�", text: "First signal → 2-min verification (you approve or skip)" },
+                  { icon: "🐯", text: "After approval, auto-places bracket order on Tiger" },
                   { icon: "🔔", text: "Desktop notification + alert sound on execution" },
                   { icon: "🛡️", text: "Protected by 30s cooldown + 10/day max cap" },
                 ].map((item, i) => (
@@ -1292,11 +1425,24 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   const busyRef = useRef(false);     // prevent overlapping polls
   autoRef.current = autoExec;
 
+  // ── First-signal verification (2-min approval before auto-trade) ──
+  const [verified, setVerified] = useState(false);      // user has approved first signal
+  const verifiedRef = useRef(false);
+  verifiedRef.current = verified;
+  const [pendingSignal, setPendingSignal] = useState<Scan5MinSignal | null>(null); // signal awaiting approval
+  const [pendingExpiry, setPendingExpiry] = useState<number>(0); // epoch ms when pending signal expires
+  const pendingRef = useRef<Scan5MinSignal | null>(null);
+  pendingRef.current = pendingSignal;
+
   // ── Clear data when symbol changes ────────────────────
   useEffect(() => {
     setBtData(null);
     setScanData(null);
     setError(null);
+    setVerified(false);
+    verifiedRef.current = false;
+    setPendingSignal(null);
+    setPendingExpiry(0);
   }, [symbol]);
 
   // ── Backtest ──────────────────────────────────────────
@@ -1359,10 +1505,14 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       if (res.execution?.executed) {
         alert(`✅ Order Placed!\n\n${res.execution.reason}`);
       } else {
-        alert(`❌ Order Failed\n\n${res.execution?.reason || "Unknown error"}`);
+        const reason = res.execution?.reason || "Unknown error";
+        const status = res.execution?.status || "";
+        alert(`❌ Order Failed\n\nStatus: ${status}\n${reason}`);
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Execution failed");
+      const msg = e instanceof Error ? e.message : "Execution failed";
+      alert(`❌ Execute Error\n\n${msg}`);
+      setError(msg);
     } finally {
       setExecuting(false);
     }
@@ -1404,6 +1554,68 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     }
   }, []);
 
+  // ── Pending signal countdown (tick every 1s) ──────────
+  const [pendingSecsLeft, setPendingSecsLeft] = useState(0);
+  useEffect(() => {
+    if (!pendingSignal || pendingExpiry === 0) { setPendingSecsLeft(0); return; }
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((pendingExpiry - Date.now()) / 1000));
+      setPendingSecsLeft(left);
+      if (left === 0) {
+        // Time expired — auto-reject
+        setPendingSignal(null);
+        setPendingExpiry(0);
+        setAutoLog((prev) => [`[${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}] ⏰ Verification expired — signal skipped`, ...prev.slice(0, 49)]);
+      }
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [pendingSignal, pendingExpiry]);
+
+  // ── Approve pending signal (user clicks Pass) ─────────
+  const approvePending = useCallback(async () => {
+    const sig = pendingRef.current;
+    if (!sig) return;
+    setVerified(true);
+    verifiedRef.current = true;
+    setPendingSignal(null);
+    setPendingExpiry(0);
+    const ts = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setAutoLog((prev) => [`[${ts()}] ✅ User APPROVED signal — executing & enabling auto-trade`, ...prev.slice(0, 49)]);
+
+    // Execute the approved signal immediately
+    const dir = sig.direction || "CALL";
+    const side = dir === "PUT" ? "SELL" : "BUY";
+    setExecuting(true);
+    try {
+      const execRes = await execute5Min(dir, 1, 5, sig.entry_price, sig.stop_loss, sig.take_profit, symbol);
+      if (execRes.execution?.executed) {
+        notifyTrade(side, sig.entry_price);
+        setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} → ${execRes.execution?.order_id?.slice(0, 12)}`, ...prev.slice(0, 49)]);
+        autoRef.current = false;
+        setAutoExec(false);
+        setAutoFilled(true);
+        setAutoLog((prev) => [`[${ts()}] 🛑 Auto-trading stopped (1 trade filled)`, ...prev.slice(0, 49)]);
+      } else {
+        const reason = execRes.execution?.reason || "Unknown";
+        setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${reason}`, ...prev.slice(0, 49)]);
+      }
+    } catch (e) {
+      setAutoLog((prev) => [`[${ts()}] ❌ ERROR: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]);
+    } finally {
+      setExecuting(false);
+    }
+  }, [symbol, notifyTrade]);
+
+  // ── Reject pending signal ─────────────────────────────
+  const rejectPending = useCallback(() => {
+    setPendingSignal(null);
+    setPendingExpiry(0);
+    const ts = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setAutoLog((prev) => [`[${ts()}] ❌ User REJECTED signal — waiting for next`, ...prev.slice(0, 49)]);
+  }, []);
+
   // ── Auto-execute polling (every 30s when ON) ──────────
   useEffect(() => {
     // Request notification permission on first toggle
@@ -1417,6 +1629,12 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
 
     setAutoLog((prev) => [`[${ts()}] Auto-execute ON — polling every 30s`, ...prev.slice(0, 49)]);
 
+    // Reset verification on fresh start
+    setVerified(false);
+    verifiedRef.current = false;
+    setPendingSignal(null);
+    setPendingExpiry(0);
+
     const poll = async () => {
       if (!autoRef.current || busyRef.current) return;
       busyRef.current = true;
@@ -1428,35 +1646,50 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
         if (sig?.found) {
           setAutoLog((prev) => [`[${ts()}] 🟢 SIGNAL: ${sig.direction} @ $${sig.entry_price}`, ...prev.slice(0, 49)]);
 
-          // Auto-execute
-          const dir = sig.direction || "CALL";
-          const side = dir === "PUT" ? "SELL" : "BUY";
-          setExecuting(true);
-          try {
-            const execRes = await execute5Min(dir, 1, 5, sig.entry_price, sig.stop_loss, sig.take_profit, symbol);
-            if (execRes.execution?.executed) {
-              notifyTrade(side, sig.entry_price);
-              setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} → ${execRes.execution?.order_id?.slice(0, 12)}`, ...prev.slice(0, 49)]);
-              // Auto-stop after 1 successful trade
-              autoRef.current = false;
-              setAutoExec(false);
-              setAutoFilled(true);
-              setAutoLog((prev) => [`[${ts()}] 🛑 Auto-trading stopped (1 trade filled)`, ...prev.slice(0, 49)]);
+          // ── First signal requires user verification (2-min window) ──
+          if (!verifiedRef.current) {
+            // If there's already a pending signal awaiting approval, skip
+            if (pendingRef.current) {
+              setAutoLog((prev) => [`[${ts()}] ⏳ Signal found but still awaiting verification…`, ...prev.slice(0, 49)]);
             } else {
-              const reason = execRes.execution?.reason || "Unknown";
-              setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${reason}`, ...prev.slice(0, 49)]);
-              // Stop auto-trading if at max position limit
-              if (reason.toLowerCase().includes("max") || reason.toLowerCase().includes("position")) {
+              const VERIFY_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
+              setPendingSignal(sig);
+              setPendingExpiry(Date.now() + VERIFY_WINDOW_MS);
+              setAutoLog((prev) => [`[${ts()}] 🔔 VERIFICATION REQUIRED — approve within 2 min`, ...prev.slice(0, 49)]);
+              // Play alert sound to get user attention
+              notifyTrade(sig.direction === "PUT" ? "SELL" : "BUY", sig.entry_price);
+            }
+          } else {
+            // ── Already verified → auto-execute directly ──
+            const dir = sig.direction || "CALL";
+            const side = dir === "PUT" ? "SELL" : "BUY";
+            setExecuting(true);
+            try {
+              const execRes = await execute5Min(dir, 1, 5, sig.entry_price, sig.stop_loss, sig.take_profit, symbol);
+              if (execRes.execution?.executed) {
+                notifyTrade(side, sig.entry_price);
+                setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} → ${execRes.execution?.order_id?.slice(0, 12)}`, ...prev.slice(0, 49)]);
+                // Auto-stop after 1 successful trade
                 autoRef.current = false;
                 setAutoExec(false);
                 setAutoFilled(true);
-                setAutoLog((prev) => [`[${ts()}] 🛑 Auto-trading stopped (position limit reached)`, ...prev.slice(0, 49)]);
+                setAutoLog((prev) => [`[${ts()}] 🛑 Auto-trading stopped (1 trade filled)`, ...prev.slice(0, 49)]);
+              } else {
+                const reason = execRes.execution?.reason || "Unknown";
+                setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${reason}`, ...prev.slice(0, 49)]);
+                // Stop auto-trading if at max position limit
+                if (reason.toLowerCase().includes("max") || reason.toLowerCase().includes("position")) {
+                  autoRef.current = false;
+                  setAutoExec(false);
+                  setAutoFilled(true);
+                  setAutoLog((prev) => [`[${ts()}] 🛑 Auto-trading stopped (position limit reached)`, ...prev.slice(0, 49)]);
+                }
               }
+            } catch (e) {
+              setAutoLog((prev) => [`[${ts()}] ❌ ERROR: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]);
+            } finally {
+              setExecuting(false);
             }
-          } catch (e) {
-            setAutoLog((prev) => [`[${ts()}] ❌ ERROR: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]);
-          } finally {
-            setExecuting(false);
           }
         } else {
           setAutoLog((prev) => [`[${ts()}] ⏳ No signal`, ...prev.slice(0, 49)]);
@@ -1737,12 +1970,17 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           scanData={scanData}
           loading={loading}
           onScan={runScan}
-          onExecute={() => executeSignal()}
+          onExecuteSignal={(sig) => executeSignal(sig)}
           executing={executing}
           autoExec={autoExec}
           autoFilled={autoFilled}
           onToggleAuto={() => { setAutoFilled(false); setAutoExec((v) => !v); }}
           autoLog={autoLog}
+          verified={verified}
+          pendingSignal={pendingSignal}
+          pendingSecsLeft={pendingSecsLeft}
+          onApprovePending={approvePending}
+          onRejectPending={rejectPending}
         />
       )}
 
