@@ -336,7 +336,7 @@ class Backtester5Min:
                     continue
 
                 risk_amount = equity * self.risk_per_trade
-                qty = max(1, int(risk_amount / risk_per_contract))
+                qty = 1  # fixed 1 contract per trade
 
                 # Determine signal type
                 sig_type = "PULLBACK"
