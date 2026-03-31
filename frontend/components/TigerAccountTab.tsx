@@ -401,12 +401,10 @@ export default function TigerAccountTab() {
   const handleCleanup = useCallback(async () => {
     try {
       const res = await cleanupOrders();
-      if (res.cancelled.length > 0) {
-        alert(`🧹 ${res.message}`);
-        refresh();
-      }
-    } catch {
-      // silent
+      alert(`🧹 ${res.message}`);
+      refresh();
+    } catch (e) {
+      alert(`❌ ${e instanceof Error ? e.message : "Cleanup failed"}`);
     }
   }, [refresh]);
 
@@ -438,7 +436,7 @@ export default function TigerAccountTab() {
           <button
             onClick={handleCleanup}
             className="px-3 py-1 text-[10px] font-bold rounded bg-slate-800 text-slate-400 hover:text-amber-400 hover:bg-slate-700 transition-all"
-            title="Cancel orphaned SL/TP orders for closed positions"
+            title="Cancel ALL open orders"
           >🧹 Cleanup</button>
         </div>
       </div>

@@ -342,13 +342,15 @@ except ImportError:
 
 
 def _get_tiger_clients():
-    """Create Tiger quote + trade clients."""
-    config = _TConfig()
-    config.tiger_id = TIGER_ID
-    config.language = _Language.en_US
-    config.private_key = _read_pk(TIGER_PRIVATE_KEY)
-    config.account = TIGER_ACCOUNT
-    return _QuoteClient(config), _TradeClient(config)
+    """Create Tiger quote + trade clients (cached — reuse across calls)."""
+    if not hasattr(_get_tiger_clients, "_cache"):
+        config = _TConfig()
+        config.tiger_id = TIGER_ID
+        config.language = _Language.en_US
+        config.private_key = _read_pk(TIGER_PRIVATE_KEY)
+        config.account = TIGER_ACCOUNT
+        _get_tiger_clients._cache = (_QuoteClient(config), _TradeClient(config))
+    return _get_tiger_clients._cache
 
 
 @router.get("/live")
@@ -779,14 +781,27 @@ async def place_simple_order(req: SimpleOrderRequest) -> SimpleOrderResponse:
 
 @router.post("/cancel_order")
 async def cancel_order(order_id: str):
-    """Cancel an open order by ID."""
+    """Cancel an open order by display order_id.
+
+    Looks up the global id from open orders since Tiger SDK cancel_order
+    requires the global id, not the local order_id.
+    """
 
     def _run():
         _, trade_client = _get_tiger_clients()
         try:
-            # Tiger SDK cancel_order expects int order_id
-            trade_client.cancel_order(id=int(order_id))
-            return {"success": True, "message": f"Cancelled {order_id}"}
+            # First try: find the global id by matching order_id in open orders
+            open_orders = trade_client.get_open_orders(account=TIGER_ACCOUNT, sec_type="FUT")
+            global_id = None
+            for o in (open_orders or []):
+                local = str(getattr(o, "order_id", "") or "")
+                if local == order_id:
+                    global_id = getattr(o, "id", None)
+                    break
+
+            cancel_id = int(global_id) if global_id else int(order_id)
+            trade_client.cancel_order(id=cancel_id)
+            return {"success": True, "message": f"Cancelled order {order_id}"}
         except Exception as exc:
             return {"success": False, "message": str(exc)}
 
@@ -844,52 +859,86 @@ async def close_position(symbol: str = "MGC"):
         return {"success": False, "message": str(exc)}
 
 
-# ── Orphan order cleanup ────────────────────────────────────────────
+# ── Cancel all open orders ──────────────────────────────────────────
 
 @router.post("/cleanup_orders")
 async def cleanup_orders():
-    """Cancel open SL/TP orders for symbols with no position (orphaned OCA legs).
+    """Cancel ALL open orders for futures today.
 
-    This prevents stale stop-loss or take-profit orders from triggering
-    unintended trades after a position has already been closed.
+    Fetches every open order and attempts to cancel each one.
+    Orders that are already filled/cancelled/expired are skipped gracefully.
     """
 
+    # Statuses that are definitely NOT cancellable — skip immediately
+    _NOT_CANCELLABLE = {
+        "FILLED", "CANCELLED", "CANCELED", "EXPIRED", "INACTIVE",
+        "DEACTIVATED", "REJECTED",
+        "filled", "cancelled", "canceled", "expired", "inactive",
+        "deactivated", "rejected",
+    }
+
     def _run():
-        import re
         _, trade_client = _get_tiger_clients()
 
-        # Get current positions → set of symbols that have a position
-        positions = trade_client.get_positions(account=TIGER_ACCOUNT, sec_type="FUT")
-        held_symbols: set[str] = set()
-        for p in (positions or []):
-            if p.contract and p.contract.symbol:
-                base = re.sub(r"\d+$", "", p.contract.symbol)
-                if int(getattr(p, "quantity", 0) or 0) != 0:
-                    held_symbols.add(base)
-
-        # Get open orders
+        # Get all open orders
         open_orders = trade_client.get_open_orders(account=TIGER_ACCOUNT, sec_type="FUT")
         cancelled = []
+        skipped = []
+        failed = []
+
         for o in (open_orders or []):
+            # Tiger SDK: 'id' is the GLOBAL order id needed by cancel_order.
+            # 'order_id' is only the local/display id.
+            global_id = getattr(o, "id", None) or getattr(o, "order_id", None)
+            display_id = str(getattr(o, "order_id", "") or global_id or "")
             sym = ""
             if hasattr(o, "contract") and o.contract and hasattr(o.contract, "symbol"):
                 sym = o.contract.symbol or ""
-            base = re.sub(r"\d+$", "", sym)
+            if not global_id:
+                continue
 
-            # If no position held for this symbol, cancel the order
-            if base and base not in held_symbols:
-                oid = str(getattr(o, "order_id", "") or getattr(o, "id", "") or "")
-                try:
-                    trade_client.cancel_order(id=int(oid))
-                    cancelled.append(oid)
-                    logger.info("🧹 Cancelled orphaned order %s for %s (no position)", oid, sym)
-                except Exception:
-                    logger.warning("Failed to cancel orphaned order %s", oid)
+            # Get order status
+            status_raw = str(getattr(o, "status", "") or "")
+            if "." in status_raw:
+                status_raw = status_raw.rsplit(".", 1)[-1]
+
+            # Skip orders that are clearly not cancellable
+            if status_raw in _NOT_CANCELLABLE:
+                skipped.append(display_id)
+                logger.info("⏭️ Skip order %s — already %s", display_id, status_raw)
+                continue
+
+            # Attempt to cancel using GLOBAL id
+            try:
+                trade_client.cancel_order(id=int(global_id))
+                cancelled.append(display_id)
+                logger.info("🧹 Cancelled order %s / gid=%s (%s) [was %s]", display_id, global_id, sym, status_raw)
+            except Exception as exc:
+                err_msg = str(exc)
+                logger.warning("⚠️ cancel_order(%s / gid=%s) error: %s", display_id, global_id, err_msg[:120])
+                # If the error indicates it's already done, count as skipped
+                if any(kw in err_msg.lower() for kw in
+                       ["filled", "cancelled", "canceled", "inactive",
+                        "invalid status", "expired", "not found", "cannot cancel",
+                        "not exist", "does not exist"]):
+                    skipped.append(display_id)
+                else:
+                    failed.append(display_id)
+
+        msg_parts = []
+        if cancelled:
+            msg_parts.append(f"Cancelled {len(cancelled)} order(s)")
+        if skipped:
+            msg_parts.append(f"{len(skipped)} already done")
+        if failed:
+            msg_parts.append(f"{len(failed)} failed")
+        if not cancelled and not skipped and not failed:
+            msg_parts.append("No open orders")
 
         return {
-            "success": True,
+            "success": len(failed) == 0,
             "cancelled": cancelled,
-            "message": f"Cancelled {len(cancelled)} orphaned order(s)" if cancelled else "No orphaned orders",
+            "message": ". ".join(msg_parts),
         }
 
     try:
@@ -1827,3 +1876,328 @@ async def mgc_trade_log_5min(
         total_pnl=pnl,
         timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#   STRATEGY V2 — Professional Quant Long-Only
+# ═══════════════════════════════════════════════════════════════════════
+
+class V2Candle(BaseModel):
+    time: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    ema20: Optional[float] = None
+    ema50: Optional[float] = None
+    ema200: Optional[float] = None
+    rsi: Optional[float] = None
+    macd_hist: Optional[float] = None
+    st_dir: Optional[int] = None
+    ht_trend: Optional[int] = None
+    signal: int = 0
+
+
+class V2Trade(BaseModel):
+    entry_time: str
+    exit_time: str
+    entry_price: float
+    exit_price: float
+    qty: int
+    pnl: float
+    pnl_pct: float
+    reason: str
+    rsi: float = 0.0
+    ema_align: str = ""
+    ht_dir: str = ""
+    vol_ratio: float = 0.0
+    macd_hist: float = 0.0
+    st_dir: int = 0
+    mae: float = 0.0
+
+
+class V2Metrics(BaseModel):
+    initial_capital: float
+    final_equity: float
+    total_return_pct: float
+    max_drawdown_pct: float
+    sharpe_ratio: float
+    calmar_ratio: float = 0.0
+    total_trades: int
+    winners: int
+    losers: int
+    win_rate: float
+    avg_win: float
+    avg_loss: float
+    avg_pnl_pct: float = 0.0
+    profit_factor: float
+    risk_reward_ratio: float
+    oos_win_rate: float = 0.0
+    oos_total_trades: int = 0
+    oos_return_pct: float = 0.0
+
+
+class V2BacktestResponse(BaseModel):
+    symbol: str
+    interval: str
+    period: str
+    candles: list[V2Candle]
+    trades: list[V2Trade]
+    equity_curve: list[float]
+    metrics: V2Metrics
+    params: dict
+    timestamp: str
+
+
+class V2ScanSignal(BaseModel):
+    found: bool
+    entry_price: float
+    stop_loss: float
+    take_profit: float
+    risk_reward: float
+    strength: int
+    strength_detail: dict
+    bar_time: str
+    rsi: float
+    atr: float
+    ema20: float
+    ema50: float
+    ema200: float
+    ema_align: str
+    ht_dir: str
+    st_dir: int
+    macd_hist: float
+    vol_ratio: float
+    vol_breakout: bool
+    candle_body_pct: float
+
+
+class V2ScanResponse(BaseModel):
+    opportunity: bool
+    signal: V2ScanSignal
+    signals: list[V2ScanSignal] = []
+    candles: list[dict] = []
+    timestamp: str
+
+
+# ── V2 Backtest endpoint ────────────────────────────────────────────
+
+@router.get("/backtest_v2")
+async def mgc_backtest_v2(
+    symbol: Annotated[str, Query()] = "MGC=F",
+    period: Annotated[str, Query()] = "60d",
+    capital: Annotated[float, Query()] = INITIAL_CAPITAL,
+    oos_split: Annotated[float, Query(ge=0, le=0.5)] = 0.3,
+    atr_sl_mult: Annotated[float, Query(ge=0.3, le=5.0)] = 1.0,
+    atr_tp_mult: Annotated[float, Query(ge=0.5, le=5.0)] = 2.0,
+    st_mult: Annotated[float, Query(ge=1.0, le=5.0)] = 2.0,
+    vol_mult: Annotated[float, Query(ge=0.5, le=3.0)] = 1.2,
+    date_from: Annotated[Optional[str], Query()] = None,
+    date_to: Annotated[Optional[str], Query()] = None,
+) -> V2BacktestResponse:
+    """Run Strategy V2 backtest (long-only, EMA alignment + HalfTrend + Supertrend)."""
+
+    def _run():
+        import pandas as _pd
+        from mgc_trading.backtest_v2 import BacktesterV2
+        from mgc_trading.strategy_v2 import StrategyV2, DEFAULT_V2_PARAMS
+
+        effective_period = period if period in ("1d", "2d", "5d", "7d", "30d", "60d") else "60d"
+
+        df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
+        if date_from:
+            df = df[df.index >= _pd.Timestamp(date_from, tz=df.index.tz)]
+        if date_to:
+            df = df[df.index < _pd.Timestamp(date_to, tz=df.index.tz) + _pd.Timedelta(days=1)]
+
+        if df.empty or len(df) < 50:
+            raise ValueError("Not enough data. yfinance 5m data available for last ~60 days.")
+
+        custom_params = {
+            "atr_sl_mult": atr_sl_mult,
+            "atr_tp_mult": atr_tp_mult,
+            "st_mult": st_mult,
+            "vol_mult": vol_mult,
+        }
+
+        strategy = StrategyV2({**DEFAULT_V2_PARAMS, **custom_params})
+        df_ind = strategy.compute_indicators(
+            df[["open", "high", "low", "close", "volume"]].copy()
+        )
+        signals = strategy.generate_signals(df_ind)
+        df_ind["signal"] = signals
+
+        bt = BacktesterV2(capital=capital)
+        result = bt.run(df, params=custom_params, oos_split=oos_split)
+
+        candles = []
+        for ts, row in df_ind.iterrows():
+            candles.append(V2Candle(
+                time=str(ts),
+                open=round(float(row["open"]), 2),
+                high=round(float(row["high"]), 2),
+                low=round(float(row["low"]), 2),
+                close=round(float(row["close"]), 2),
+                volume=float(row.get("volume", 0)),
+                ema20=round(float(row["ema20"]), 2) if not _isnan(row.get("ema20")) else None,
+                ema50=round(float(row["ema50"]), 2) if not _isnan(row.get("ema50")) else None,
+                ema200=round(float(row["ema200"]), 2) if not _isnan(row.get("ema200")) else None,
+                rsi=round(float(row["rsi"]), 1) if not _isnan(row.get("rsi")) else None,
+                macd_hist=round(float(row["macd_hist"]), 4) if not _isnan(row.get("macd_hist")) else None,
+                st_dir=int(row["st_dir"]) if not _isnan(row.get("st_dir")) else None,
+                ht_trend=int(row["ht_trend"]) if not _isnan(row.get("ht_trend")) else None,
+                signal=int(row.get("signal", 0)),
+            ))
+
+        trades = [
+            V2Trade(
+                entry_time=str(t.entry_time), exit_time=str(t.exit_time),
+                entry_price=round(t.entry_price, 2), exit_price=round(t.exit_price, 2),
+                qty=t.qty, pnl=round(t.pnl, 2), pnl_pct=round(t.pnl_pct, 2),
+                reason=t.reason, rsi=t.rsi, ema_align=t.ema_align, ht_dir=t.ht_dir,
+                vol_ratio=t.vol_ratio, macd_hist=t.macd_hist, st_dir=t.st_dir,
+                mae=round(t.mae, 2),
+            )
+            for t in result.trades
+        ]
+
+        metrics = V2Metrics(
+            initial_capital=result.initial_capital,
+            final_equity=result.final_equity,
+            total_return_pct=result.total_return_pct,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            calmar_ratio=result.calmar_ratio,
+            total_trades=result.total_trades,
+            winners=result.winners,
+            losers=result.losers,
+            win_rate=result.win_rate,
+            avg_win=result.avg_win,
+            avg_loss=result.avg_loss,
+            avg_pnl_pct=result.avg_pnl_pct,
+            profit_factor=result.profit_factor,
+            risk_reward_ratio=result.risk_reward_ratio,
+            oos_win_rate=result.oos_win_rate,
+            oos_total_trades=result.oos_total_trades,
+            oos_return_pct=result.oos_return_pct,
+        )
+
+        return candles, trades, result.equity_curve, metrics, result.params
+
+    try:
+        candles, trades, eq_curve, metrics, params = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("V2 backtest failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return V2BacktestResponse(
+        symbol=symbol, interval="5m", period=period,
+        candles=candles, trades=trades, equity_curve=eq_curve,
+        metrics=metrics, params=params,
+        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+    )
+
+
+# ── V2 Scan endpoint ────────────────────────────────────────────────
+
+@router.get("/scan_v2")
+async def mgc_scan_v2(
+    symbol: Annotated[str, Query()] = "MGC=F",
+    period: Annotated[str, Query()] = "60d",
+    atr_sl_mult: Annotated[float, Query(ge=0.3, le=5.0)] = 1.0,
+    atr_tp_mult: Annotated[float, Query(ge=0.5, le=5.0)] = 2.0,
+) -> V2ScanResponse:
+    """Scan for V2 entry signals on latest 5m data."""
+
+    def _run():
+        from mgc_trading.scanner_v2 import scan_v2, scan_v2_all
+
+        effective_period = period if period in ("1d", "2d", "5d", "7d", "30d", "60d") else "60d"
+        df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
+
+        custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
+        result = scan_v2(df, params=custom_params)
+        all_results = scan_v2_all(df, params=custom_params, lookback=10)
+
+        tail = df.tail(30)
+        candles_out = []
+        for idx, row in tail.iterrows():
+            t = str(idx)
+            candles_out.append({
+                "time": t[:16] if len(t) > 16 else t,
+                "open": round(float(row.get("Open", row.get("open", 0))), 2),
+                "high": round(float(row.get("High", row.get("high", 0))), 2),
+                "low": round(float(row.get("Low", row.get("low", 0))), 2),
+                "close": round(float(row.get("Close", row.get("close", 0))), 2),
+                "volume": int(row.get("Volume", row.get("volume", 0))),
+            })
+
+        def _to_sig(r):
+            return V2ScanSignal(
+                found=r.found, entry_price=r.entry_price,
+                stop_loss=r.stop_loss, take_profit=r.take_profit,
+                risk_reward=r.risk_reward, strength=r.strength,
+                strength_detail=r.strength_detail, bar_time=r.bar_time,
+                rsi=r.rsi, atr=r.atr, ema20=r.ema20, ema50=r.ema50,
+                ema200=r.ema200, ema_align=r.ema_align, ht_dir=r.ht_dir,
+                st_dir=r.st_dir, macd_hist=r.macd_hist,
+                vol_ratio=r.vol_ratio, vol_breakout=r.vol_breakout,
+                candle_body_pct=r.candle_body_pct,
+            )
+
+        sig = _to_sig(result)
+        all_sigs = [_to_sig(r) for r in all_results]
+        return result.found, sig, all_sigs, candles_out
+
+    found, sig, all_sigs, candles_out = await run_in_threadpool(_run)
+
+    return V2ScanResponse(
+        opportunity=found, signal=sig, signals=all_sigs,
+        candles=candles_out,
+        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+    )
+
+
+# ── V2 Optimize endpoint ────────────────────────────────────────────
+
+@router.get("/optimize_v2")
+async def mgc_optimize_v2(
+    symbol: Annotated[str, Query()] = "MGC=F",
+    period: Annotated[str, Query()] = "60d",
+    capital: Annotated[float, Query()] = INITIAL_CAPITAL,
+) -> dict:
+    """Run V2 grid-search optimizer. Returns best result + top 20."""
+
+    def _run():
+        from mgc_trading.backtest_v2 import optimize_v2 as _optimize
+
+        effective_period = period if period in ("1d", "2d", "5d", "7d", "30d", "60d") else "60d"
+        df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
+
+        best, top_results = _optimize(df, capital=capital)
+
+        return {
+            "best": {
+                "params": best.params,
+                "trades": best.total_trades,
+                "win_rate": best.win_rate,
+                "return_pct": best.total_return_pct,
+                "max_dd": best.max_drawdown_pct,
+                "sharpe": best.sharpe_ratio,
+                "pf": best.profit_factor,
+                "rr": best.risk_reward_ratio,
+                "avg_pnl_pct": best.avg_pnl_pct,
+            },
+            "top_results": top_results,
+            "total_combos": len(top_results),
+            "timestamp": datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+        }
+
+    try:
+        return await run_in_threadpool(_run)
+    except Exception as exc:
+        logger.exception("V2 optimize failed")
+        raise HTTPException(status_code=500, detail=str(exc))
