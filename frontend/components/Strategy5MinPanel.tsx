@@ -174,6 +174,86 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Trade Log grouped by date (expandable rows)
+// ═══════════════════════════════════════════════════════════════════════
+
+function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrade[]; onTradeClick?: (t: MGC5MinTrade) => void }>) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  // Group trades by exit date, newest first
+  const grouped = (() => {
+    const map: Record<string, MGC5MinTrade[]> = {};
+    for (const t of trades) {
+      const day = t.exit_time.slice(0, 10);
+      (map[day] ??= []).push(t);
+    }
+    return Object.entries(map).sort((a, b) => b[0].localeCompare(a[0]));
+  })();
+
+  const toggle = (d: string) => setExpanded((p) => ({ ...p, [d]: !p[d] }));
+
+  if (grouped.length === 0) {
+    return <div className="text-center text-[10px] text-slate-600 py-4">No trades generated</div>;
+  }
+
+  return (
+    <table className="w-full text-left">
+      <tbody>
+        {grouped.map(([date, dayTrades]) => {
+          const open = !!expanded[date];
+          const dayPnl = dayTrades.reduce((s, t) => s + n(t.pnl), 0);
+          const wins = dayTrades.filter((t) => t.pnl >= 0).length;
+          const wr = dayTrades.length ? Math.round((wins / dayTrades.length) * 100) : 0;
+          return (
+            <tr key={date}><td colSpan={9} className="p-0">
+              {/* Day summary row */}
+              <button
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-slate-800/40 transition-colors border-b border-slate-800/30"
+                onClick={() => toggle(date)}
+              >
+                <span className="text-[10px] text-slate-500 w-3">{open ? "▼" : "▶"}</span>
+                <span className="text-[10px] font-semibold text-slate-300 w-[70px]">{date.slice(5).replace("-", "/")}</span>
+                <span className="text-[9px] text-slate-500">{dayTrades.length} trade{dayTrades.length > 1 ? "s" : ""}</span>
+                <span className={`text-[9px] font-semibold ${wr >= 60 ? "text-emerald-400" : wr >= 50 ? "text-amber-400" : "text-rose-400"}`}>
+                  WR {wr}%
+                </span>
+                <span className="text-[9px] text-slate-500">({wins}W/{dayTrades.length - wins}L)</span>
+                <span className={`ml-auto text-[10px] font-bold tabular-nums ${dayPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                  {dayPnl >= 0 ? "+" : ""}{dayPnl.toFixed(2)}
+                </span>
+              </button>
+              {/* Expanded trade rows */}
+              {open && (
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="text-[8px] text-slate-600 uppercase bg-slate-900/80">
+                      <th className="px-2 py-0.5">Entry</th>
+                      <th className="px-2 py-0.5">Exit</th>
+                      <th className="px-2 py-0.5 text-right">In$</th>
+                      <th className="px-2 py-0.5 text-right">Out$</th>
+                      <th className="px-2 py-0.5 text-right">P&L</th>
+                      <th className="px-2 py-0.5 text-right">MAE$</th>
+                      <th className="px-2 py-0.5 text-center">Dir</th>
+                      <th className="px-2 py-0.5 text-center">Type</th>
+                      <th className="px-2 py-0.5 text-center">Sig</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dayTrades.map((t, i) => (
+                      <TradeRow5Min key={`${t.entry_time}-${i}`} t={t} idx={i} onTradeClick={onTradeClick} />
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </td></tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Sub-tabs
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -1913,35 +1993,13 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
                 </div>
               )}
 
-              {/* Trade log */}
+              {/* Trade log — grouped by date */}
               <div className="rounded-lg border border-slate-800/60 bg-slate-900/50">
                 <p className="text-[9px] uppercase tracking-widest text-slate-500 px-3 py-2 border-b border-slate-800/40">
                   Trade Log ({btData.trades.length})
                 </p>
-                <div className="max-h-[350px] overflow-y-auto">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="text-[8px] text-slate-600 uppercase sticky top-0 bg-slate-900/95">
-                        <th className="px-2 py-1">Entry</th>
-                        <th className="px-2 py-1">Exit</th>
-                        <th className="px-2 py-1 text-right">In$</th>
-                        <th className="px-2 py-1 text-right">Out$</th>
-                        <th className="px-2 py-1 text-right">P&L</th>
-                        <th className="px-2 py-1 text-right">MAE$</th>
-                        <th className="px-2 py-1 text-center">Dir</th>
-                        <th className="px-2 py-1 text-center">Type</th>
-                        <th className="px-2 py-1 text-center">Sig</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...btData.trades].reverse().map((t, i) => (
-                        <TradeRow5Min key={`${t.entry_time}-${i}`} t={t} idx={i} onTradeClick={onTradeClick} />
-                      ))}
-                      {btData.trades.length === 0 && (
-                        <tr><td colSpan={9} className="text-center text-[10px] text-slate-600 py-4">No trades generated</td></tr>
-                      )}
-                    </tbody>
-                  </table>
+                <div className="max-h-[420px] overflow-y-auto">
+                  <TradeLogByDate trades={btData.trades} onTradeClick={onTradeClick} />
                 </div>
               </div>
 
