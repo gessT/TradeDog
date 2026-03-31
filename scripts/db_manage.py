@@ -33,7 +33,7 @@ from app.db.database import engine, SessionLocal, Base  # noqa: E402
 from app.models.backtest_trade import BacktestTrade  # noqa: F401
 from app.models.signal import TradingSignal  # noqa: F401
 from app.models.stock import StockSnapshot, StockPreference  # noqa: F401
-from app.models.condition_preference import ConditionPreference, LogicPreference  # noqa: F401
+from app.models.condition_preference import ConditionPreference, ConditionPreset, LogicPreference  # noqa: F401
 
 
 # ── Tables ordered for safe truncation ────────────────────────────────
@@ -43,6 +43,7 @@ ALL_TABLES = [
     "stock_snapshots",
     "stock_preferences",
     "condition_preferences",
+    "condition_presets",
     "logic_preferences",
 ]
 

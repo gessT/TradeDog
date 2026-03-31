@@ -13,10 +13,16 @@ import {
 import { halfTrend, type HalfTrendPoint } from "../utils/indicators";
 import {
   fetchMGC5MinBacktest,
+  optimize5MinConditions,
   scan5Min,
   execute5Min,
   load5MinConditionToggles,
   save5MinConditionToggles,
+  save5MinConditionPreset,
+  load5MinConditionPresets,
+  delete5MinConditionPreset,
+  type ConditionPreset,
+  type ConditionOptimizationResult,
   type MGC5MinBacktestResponse,
   type MGC5MinCandle,
   type Scan5MinResponse,
@@ -1777,6 +1783,15 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   const [conditionsOpen, setConditionsOpen] = useState(false);
   const conditionsLoaded = useRef(false);
 
+  // ── Condition presets ──────────────
+  const [presets, setPresets] = useState<ConditionPreset[]>([]);
+  const [presetName, setPresetName] = useState("");
+  const [presetsLoaded, setPresetsLoaded] = useState(false);
+
+  // ── Condition optimization ──────────────
+  const [optimizationResults, setOptimizationResults] = useState<ConditionOptimizationResult[]>([]);
+  const [optimizing, setOptimizing] = useState(false);
+
   // Load saved toggles from DB on mount / symbol change
   useEffect(() => {
     conditionsLoaded.current = false;
@@ -1796,6 +1811,15 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     }, 500);
     return () => clearTimeout(t);
   }, [conditionToggles, symbol]);
+
+  // Load presets on mount / symbol change
+  useEffect(() => {
+    setPresetsLoaded(false);
+    load5MinConditionPresets(symbol).then((loadedPresets) => {
+      setPresets(loadedPresets);
+      setPresetsLoaded(true);
+    }).catch(() => setPresetsLoaded(true));
+  }, [symbol]);
 
   // ── Candle-close timer state ──────────────────────────
   const [nextCandle, setNextCandle] = useState<number>(nextCandleClose5m());
@@ -1935,6 +1959,60 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       setExecuting(false);
     }
   }, [scanData, slMult, tpMult, symbol, conditionToggles]);
+
+  // ── Preset functions ───────────────────────────
+  const savePreset = useCallback(async () => {
+    if (!presetName.trim()) {
+      alert("Please enter a preset name");
+      return;
+    }
+    try {
+      await save5MinConditionPreset(presetName.trim(), conditionToggles, symbol);
+      // Reload presets
+      const updatedPresets = await load5MinConditionPresets(symbol);
+      setPresets(updatedPresets);
+      setPresetName("");
+      alert(`✅ Preset "${presetName.trim()}" saved!`);
+    } catch (e) {
+      alert(`❌ Failed to save preset: ${e instanceof Error ? e.message : "Unknown error"}`);
+    }
+  }, [presetName, conditionToggles, symbol]);
+
+  const loadPreset = useCallback(async (preset: ConditionPreset) => {
+    try {
+      setConditionToggles({ ...DEFAULT_CONDITION_TOGGLES, ...preset.toggles });
+      alert(`✅ Preset "${preset.name}" loaded!`);
+    } catch (e) {
+      alert(`❌ Failed to load preset: ${e instanceof Error ? e.message : "Unknown error"}`);
+    }
+  }, []);
+
+  const deletePreset = useCallback(async (presetName: string) => {
+    if (!confirm(`Delete preset "${presetName}"?`)) return;
+    try {
+      await delete5MinConditionPreset(presetName, symbol);
+      // Reload presets
+      const updatedPresets = await load5MinConditionPresets(symbol);
+      setPresets(updatedPresets);
+      alert(`✅ Preset "${presetName}" deleted!`);
+    } catch (e) {
+      alert(`❌ Failed to delete preset: ${e instanceof Error ? e.message : "Unknown error"}`);
+    }
+  }, [symbol]);
+
+  // ── Condition optimization ───────────────────────────
+  const runConditionOptimization = useCallback(async () => {
+    setOptimizing(true);
+    setOptimizationResults([]);
+    try {
+      const results = await optimize5MinConditions(symbol, period, 5);
+      setOptimizationResults(results);
+    } catch (e: unknown) {
+      alert(`❌ Optimization failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setOptimizing(false);
+    }
+  }, [symbol, period]);
 
   // ── Desktop notification with sound ───────────────────
   const notifyTrade = useCallback((direction: string, entry: number) => {
@@ -2411,6 +2489,58 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
                     );
                   })}
                 </div>
+
+                {/* Preset management */}
+                <div className="mt-3 pt-2 border-t border-slate-800/40">
+                  <p className="text-[8px] text-slate-600 uppercase tracking-wider mb-2">Condition Presets</p>
+                  
+                  {/* Save preset */}
+                  <div className="flex gap-1 mb-2">
+                    <input
+                      type="text"
+                      value={presetName}
+                      onChange={(e) => setPresetName(e.target.value)}
+                      placeholder="Preset name..."
+                      className="flex-1 bg-slate-900 border border-slate-700 text-slate-300 text-[9px] rounded px-2 py-1 placeholder-slate-600"
+                    />
+                    <button
+                      onClick={savePreset}
+                      disabled={!presetName.trim()}
+                      className={`px-2 py-1 text-[9px] font-bold rounded transition ${
+                        presetName.trim()
+                          ? "bg-emerald-600 text-white hover:bg-emerald-500"
+                          : "bg-slate-800 text-slate-600 cursor-not-allowed"
+                      }`}
+                    >
+                      💾 Save
+                    </button>
+                  </div>
+
+                  {/* Load presets */}
+                  {presets.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-[8px] text-slate-500">Saved Presets:</p>
+                      <div className="max-h-[120px] overflow-y-auto space-y-1">
+                        {presets.map((preset) => (
+                          <div key={preset.name} className="flex items-center gap-1">
+                            <button
+                              onClick={() => loadPreset(preset)}
+                              className="flex-1 text-left px-2 py-1 text-[9px] bg-slate-800/50 hover:bg-slate-700/50 border border-slate-700/30 rounded text-slate-300 hover:text-cyan-300 transition"
+                            >
+                              {preset.name}
+                            </button>
+                            <button
+                              onClick={() => deletePreset(preset.name)}
+                              className="px-1.5 py-1 text-[8px] bg-rose-900/50 hover:bg-rose-800/50 border border-rose-700/30 rounded text-rose-300 hover:text-rose-200 transition"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -2492,6 +2622,18 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
               }`}
             >
               {loading ? "Running…" : "🎯 Run 5min"}
+            </button>
+
+            <button
+              onClick={runConditionOptimization}
+              disabled={optimizing || loading}
+              className={`px-3 py-1 text-[11px] font-bold rounded-lg transition-all ${
+                optimizing || loading
+                  ? "bg-slate-800 text-slate-500 cursor-wait"
+                  : "bg-purple-600 text-white hover:bg-purple-500 active:scale-95 shadow-md shadow-purple-900/40"
+              }`}
+            >
+              {optimizing ? "Optimizing…" : "🔍 Find Best 5"}
             </button>
           </div>
 
@@ -2593,6 +2735,73 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
                 <span>MGC=F · 5m · {btData.period}</span>
                 <span>${n(m.initial_capital).toLocaleString()} → ${n(m.final_equity).toLocaleString()}</span>
                 <span className="ml-auto">{btData.timestamp}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Condition Optimization Results */}
+          {optimizationResults.length > 0 && (
+            <div className="mt-4 rounded-lg border border-purple-800/60 bg-purple-950/20 p-3">
+              <p className="text-[11px] font-bold text-purple-400 uppercase tracking-wider mb-3">
+                🏆 Top 5 Condition Combinations
+              </p>
+              <div className="space-y-2">
+                {optimizationResults.map((result, idx) => (
+                  <div key={idx} className="rounded border border-purple-700/40 bg-purple-900/20 p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-bold text-purple-300">#{idx + 1}</span>
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                        result.score > 0 ? "bg-emerald-900/40 text-emerald-400" : "bg-rose-900/40 text-rose-400"
+                      }`}>
+                        Score: {result.score.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1 text-[8px] mb-2">
+                      <div>✅ <span className="text-emerald-300">{result.conditions.join(", ")}</span></div>
+                      <div>❌ <span className="text-rose-300">{result.disabled.join(", ")}</span></div>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1 text-[8px]">
+                      <div className="text-center">
+                        <div className="text-slate-400">Win Rate</div>
+                        <div className={`font-bold ${result.win_rate >= 60 ? "text-emerald-400" : result.win_rate >= 50 ? "text-amber-400" : "text-rose-400"}`}>
+                          {result.win_rate.toFixed(1)}%
+                        </div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-slate-400">Return</div>
+                        <div className={`font-bold ${result.total_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                          {result.total_return_pct >= 0 ? "+" : ""}{result.total_return_pct.toFixed(1)}%
+                        </div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-slate-400">Max DD</div>
+                        <div className="font-bold text-rose-400">{result.max_drawdown_pct.toFixed(1)}%</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-slate-400">Trades</div>
+                        <div className="font-bold text-slate-300">{result.total_trades}</div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        // Apply this condition combination
+                        const newToggles: Record<string, boolean> = {};
+                        CONDITION_DEFS.forEach(def => {
+                          if (def.group === "5m") {
+                            newToggles[def.key] = result.conditions.includes(def.key);
+                          } else {
+                            newToggles[def.key] = conditionToggles[def.key]; // Keep HTF conditions as is
+                          }
+                        });
+                        setConditionToggles(newToggles);
+                        alert(`✅ Applied combination #${idx + 1} to your conditions!`);
+                      }}
+                      className="mt-2 w-full px-2 py-1 text-[9px] font-bold bg-purple-600 text-white rounded hover:bg-purple-500 transition"
+                    >
+                      Apply This Combination
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
           )}

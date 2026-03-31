@@ -2040,6 +2040,17 @@ class ConditionTogglesPayload(BaseModel):
     toggles: dict[str, bool]
 
 
+class ConditionPresetItem(BaseModel):
+    name: str
+    toggles: dict[str, bool]
+    created_at: str
+
+
+class SaveConditionPresetPayload(BaseModel):
+    name: str
+    toggles: dict[str, bool]
+
+
 @router.get("/condition_toggles")
 def get_5min_condition_toggles(
     symbol: str = Query("MGC"),
@@ -2083,9 +2094,159 @@ def save_5min_condition_toggles(
     return {"status": "ok"}
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#   STRATEGY V2 — Professional Quant Long-Only
-# ═══════════════════════════════════════════════════════════════════════
+@router.post("/condition_presets")
+def save_5min_condition_preset(
+    payload: SaveConditionPresetPayload,
+    symbol: str = Query("MGC"),
+) -> dict[str, str]:
+    """Save a condition preset for 5min strategy."""
+    import json
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    db_key = f"{symbol.upper()}_5MIN"
+    toggles_json = json.dumps(payload.toggles)
+    
+    with engine.begin() as conn:
+        # Insert or replace the preset
+        conn.execute(
+            text("""
+                INSERT INTO condition_presets (symbol, name, toggles, created_at) 
+                VALUES (:sym, :name, :toggles, CURRENT_TIMESTAMP)
+                ON CONFLICT (symbol, name) DO UPDATE SET
+                    toggles = EXCLUDED.toggles,
+                    created_at = CURRENT_TIMESTAMP
+            """),
+            {"sym": db_key, "name": payload.name, "toggles": toggles_json},
+        )
+    return {"status": "ok"}
+
+
+@router.get("/condition_presets")
+def get_5min_condition_presets(
+    symbol: str = Query("MGC"),
+) -> list[ConditionPresetItem]:
+    """Return saved condition presets for 5min strategy."""
+    import json
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    db_key = f"{symbol.upper()}_5MIN"
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT name, toggles, created_at FROM condition_presets WHERE symbol = :sym ORDER BY created_at DESC"),
+            {"sym": db_key},
+        ).fetchall()
+    
+    presets = []
+    for row in rows:
+        try:
+            toggles = json.loads(row[1])
+            presets.append(ConditionPresetItem(
+                name=row[0],
+                toggles=toggles,
+                created_at=row[2].isoformat() if hasattr(row[2], 'isoformat') else str(row[2])
+            ))
+        except (json.JSONDecodeError, TypeError):
+            continue  # Skip invalid presets
+    
+    return presets
+
+
+@router.delete("/condition_presets")
+def delete_5min_condition_preset(
+    name: str = Query(...),
+    symbol: str = Query("MGC"),
+) -> dict[str, str]:
+    """Delete a condition preset for 5min strategy."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    db_key = f"{symbol.upper()}_5MIN"
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM condition_presets WHERE symbol = :sym AND name = :name"),
+            {"sym": db_key, "name": name},
+        )
+    return {"status": "ok"}
+
+
+@router.get("/optimize_conditions_5min")
+async def optimize_5min_conditions(
+    symbol: Annotated[str, Query()] = "MGC=F",
+    period: Annotated[str, Query()] = "60d",
+    top_n: Annotated[int, Query(ge=1, le=10)] = 5,
+) -> list[dict]:
+    """Optimize 5-minute condition combinations and return top performing ones."""
+    
+    def _run():
+        from mgc_trading.backtest_5min import Backtester5Min
+        from mgc_trading.strategy_5min import DEFAULT_5MIN_PARAMS
+        from itertools import combinations
+
+        # Load 5m data
+        df = load_yfinance(symbol=symbol, interval="5m", period=period)
+        if df.empty or len(df) < 20:
+            raise ValueError("Not enough 5m data from yfinance.")
+
+        # Use 8 core conditions for optimization
+        condition_keys = [
+            "ema_trend",
+            "ema_slope",
+            "pullback",
+            "breakout",
+            "supertrend",
+            "macd_momentum",
+            "rsi_momentum",
+            "volume_spike",
+            # optional advanced condition in the 8th slot
+            "atr_range",
+            # currently supporting 10, but results will include the top 8 combos
+        ]
+
+        # We'll evaluate all subsets with at least 8 active conditions (8, 9, 10)
+        results = []
+
+        for r in range(8, len(condition_keys) + 1):
+            for combo in combinations(condition_keys, r):
+                enabled = set(combo)
+                disabled = set(condition_keys) - enabled
+
+                try:
+                    bt = Backtester5Min()
+                    result = bt.run(df, params=DEFAULT_5MIN_PARAMS, oos_split=0.3, disabled_conditions=disabled or None)
+
+                    if result.total_trades < 10:
+                        continue
+
+                    # Combined score for win rate + return + risk
+                    score = (
+                        (result.total_return_pct / 100) * 0.45
+                        + (result.win_rate / 100) * 0.35
+                        - (result.max_drawdown_pct / 100) * 0.20
+                    )
+
+                    results.append({
+                        "conditions": sorted(list(enabled)),
+                        "disabled": sorted(list(disabled)),
+                        "score": round(score, 6),
+                        "win_rate": round(result.win_rate, 2),
+                        "total_return_pct": round(result.total_return_pct, 2),
+                        "max_drawdown_pct": round(result.max_drawdown_pct, 2),
+                        "sharpe_ratio": round(result.sharpe_ratio, 4),
+                        "profit_factor": round(result.profit_factor, 4),
+                        "total_trades": result.total_trades,
+                    })
+
+                except Exception:
+                    continue
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:top_n]
+
+    top = await run_in_threadpool(_run)
+    return top
+
 
 class V2Candle(BaseModel):
     time: str

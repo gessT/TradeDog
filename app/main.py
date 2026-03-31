@@ -8,7 +8,7 @@ from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.core.logger import configure_logging, render_metrics, track
 from app.db.database import Base, engine
-from app.models import backtest_trade as backtest_trade_model, signal as signal_model, stock as stock_model, starred_stock as starred_stock_model  # noqa: F401
+from app.models import backtest_trade as backtest_trade_model, condition_preference as condition_preference_model, signal as signal_model, stock as stock_model, starred_stock as starred_stock_model  # noqa: F401
 from app.services.redis_client import redis_service
 
 

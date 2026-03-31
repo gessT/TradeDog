@@ -989,6 +989,34 @@ export async function save5MinConditionToggles(toggles: Record<string, boolean>,
   });
 }
 
+// ── 5min Condition Presets ──────────────────────────────
+
+export type ConditionPreset = {
+  name: string;
+  toggles: Record<string, boolean>;
+  created_at: string;
+};
+
+export async function save5MinConditionPreset(name: string, toggles: Record<string, boolean>, symbol: string = "MGC"): Promise<void> {
+  await fetch(`${API_BASE}/mgc/condition_presets?symbol=${encodeURIComponent(symbol)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, toggles }),
+  });
+}
+
+export async function load5MinConditionPresets(symbol: string = "MGC"): Promise<ConditionPreset[]> {
+  const res = await fetch(`${API_BASE}/mgc/condition_presets?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+  if (!res.ok) return [];
+  return (await res.json()) as ConditionPreset[];
+}
+
+export async function delete5MinConditionPreset(name: string, symbol: string = "MGC"): Promise<void> {
+  await fetch(`${API_BASE}/mgc/condition_presets?symbol=${encodeURIComponent(symbol)}&name=${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function fetchMGC5MinBacktest(
   period: string = "60d",
   oos_split: number = 0.3,
@@ -1009,6 +1037,35 @@ export async function fetchMGC5MinBacktest(
     throw new Error(detail || `Request failed with ${response.status}`);
   }
   return (await response.json()) as MGC5MinBacktestResponse;
+}
+
+
+// ── 5min Condition Optimization ──────────────────────────────────────
+
+export type ConditionOptimizationResult = {
+  conditions: string[];
+  disabled: string[];
+  score: number;
+  win_rate: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  total_trades: number;
+  profit_factor: number;
+};
+
+export async function optimize5MinConditions(
+  symbol: string = "MGC",
+  period: string = "60d",
+  top_n: number = 5,
+): Promise<ConditionOptimizationResult[]> {
+  const url = `${API_BASE}/mgc/optimize_conditions_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&top_n=${top_n}`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as ConditionOptimizationResult[];
 }
 
 
