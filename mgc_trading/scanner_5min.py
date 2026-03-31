@@ -462,6 +462,8 @@ def scan_5min_mtf(
         core.append(cond.atr_range)
     if "session_ok" not in off:
         core.append(cond.session_ok)
+    if "adx_ok" not in off:
+        core.append(cond.adx_ok)
     conditions_met = sum(core)
 
     # Normal scan for the full signal result

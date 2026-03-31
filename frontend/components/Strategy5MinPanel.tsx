@@ -1692,11 +1692,30 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
 
     // ── Condition gate: check enabled conditions against last scan ──
     if (scanData?.conditions) {
+      const c = scanData.conditions;
+      const t = conditionToggles;
       const failedConditions: string[] = [];
+
+      // OR-grouped pairs (mirrors backend logic)
+      const pullbackOn = t["pullback"], breakoutOn = t["breakout"];
+      if (pullbackOn && breakoutOn) {
+        if (!c.pullback && !c.breakout) failedConditions.push("Pullback/Breakout");
+      } else {
+        if (pullbackOn && !c.pullback) failedConditions.push("Pullback");
+        if (breakoutOn && !c.breakout) failedConditions.push("Breakout");
+      }
+      const macdOn = t["macd_momentum"], rsiOn = t["rsi_momentum"];
+      if (macdOn && rsiOn) {
+        if (!c.macd_momentum && !c.rsi_momentum) failedConditions.push("MACD/RSI Momentum");
+      } else {
+        if (macdOn && !c.macd_momentum) failedConditions.push("MACD Momentum");
+        if (rsiOn && !c.rsi_momentum) failedConditions.push("RSI Momentum");
+      }
+      // All other conditions checked individually
+      const orKeys = new Set(["pullback", "breakout", "macd_momentum", "rsi_momentum"]);
       for (const def of CONDITION_DEFS) {
-        if (conditionToggles[def.key] && !scanData.conditions[def.key]) {
-          failedConditions.push(def.label);
-        }
+        if (orKeys.has(def.key)) continue;
+        if (t[def.key] && !c[def.key]) failedConditions.push(def.label);
       }
       if (failedConditions.length > 0) {
         const proceed = confirm(
@@ -1880,16 +1899,36 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     setPendingExpiry(0);
     lastExecBarRef.current = "";
 
-    /** Check if user-required conditions pass */
-    const conditionsPass = (res: Scan5MinResponse): boolean => {
+    /** Check if user-required conditions pass (mirrors backend OR-grouping) */
+    const conditionsPass = (res: Scan5MinResponse): { pass: boolean; failed: string[] } => {
       const c = res.conditions;
-      if (!c) return true; // if backend doesn't return conditions, pass
-      for (const def of CONDITION_DEFS) {
-        if (conditionTogglesRef.current[def.key] && !c[def.key]) {
-          return false;
-        }
+      if (!c) return { pass: true, failed: [] };
+      const t = conditionTogglesRef.current;
+      const failed: string[] = [];
+
+      // OR-grouped pairs: pullback/breakout and macd/rsi
+      const pullbackOn = t["pullback"], breakoutOn = t["breakout"];
+      if (pullbackOn && breakoutOn) {
+        if (!c.pullback && !c.breakout) failed.push("Pullback/Breakout");
+      } else {
+        if (pullbackOn && !c.pullback) failed.push("Pullback");
+        if (breakoutOn && !c.breakout) failed.push("Breakout");
       }
-      return true;
+      const macdOn = t["macd_momentum"], rsiOn = t["rsi_momentum"];
+      if (macdOn && rsiOn) {
+        if (!c.macd_momentum && !c.rsi_momentum) failed.push("MACD/RSI Momentum");
+      } else {
+        if (macdOn && !c.macd_momentum) failed.push("MACD Momentum");
+        if (rsiOn && !c.rsi_momentum) failed.push("RSI Momentum");
+      }
+
+      // All other conditions checked individually
+      const orKeys = new Set(["pullback", "breakout", "macd_momentum", "rsi_momentum"]);
+      for (const def of CONDITION_DEFS) {
+        if (orKeys.has(def.key)) continue;
+        if (t[def.key] && !c[def.key]) failed.push(def.label);
+      }
+      return { pass: failed.length === 0, failed };
     };
 
     const poll = async () => {
@@ -1913,10 +1952,12 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           }
 
           // ── Condition gate: check user-toggled conditions ──
-          if (!conditionsPass(res)) {
+          const gate = conditionsPass(res);
+          if (!gate.pass) {
             const met = res.conditions_met;
             const total = res.conditions_total;
-            setAutoLog((prev) => [`[${ts()}] 🟡 Signal found but conditions not met (${met}/${total}) — skipped`, ...prev.slice(0, 49)]);
+            const why = gate.failed.join(", ");
+            setAutoLog((prev) => [`[${ts()}] 🟡 Signal found but conditions not met (${met}/${total}) — skipped: ${why}`, ...prev.slice(0, 49)]);
             busyRef.current = false;
             return;
           }
