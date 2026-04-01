@@ -308,15 +308,15 @@ const DEFAULT_CONDITION_TOGGLES: Record<string, boolean> = Object.fromEntries(
   CONDITION_DEFS.map((d) => [d.key, d.group === "5m"])
 );
 
-/** Compute next 5-minute candle close time. Returns ms epoch. */
-function nextCandleClose5m(): number {
+/** Compute next candle close time for a given interval (minutes). Returns ms epoch. */
+function nextCandleClose(intervalMin: number = 5): number {
   const now = new Date();
   const mins = now.getMinutes();
-  const next5 = Math.ceil((mins + 1) / 5) * 5; // next 5-min boundary
+  const nextBoundary = Math.ceil((mins + 1) / intervalMin) * intervalMin;
   const target = new Date(now);
-  target.setMinutes(next5, 5, 0); // +5s buffer for data to settle
+  target.setMinutes(nextBoundary, 5, 0); // +5s buffer for data to settle
   if (target.getTime() <= now.getTime()) {
-    target.setMinutes(target.getMinutes() + 5);
+    target.setMinutes(target.getMinutes() + intervalMin);
   }
   return target.getTime();
 }
@@ -465,6 +465,8 @@ function ScannerTab({
   positionQty,
   autoQty,
   onAutoQtyChange,
+  candleInterval,
+  onCandleIntervalChange,
 }: Readonly<{
   scanData: Scan5MinResponse | null;
   loading: boolean;
@@ -487,6 +489,8 @@ function ScannerTab({
   positionQty: number;
   autoQty: number;
   onAutoQtyChange: (v: number) => void;
+  candleInterval: number;
+  onCandleIntervalChange: (v: number) => void;
 }>) {
   const sig = scanData?.signal;
   const rawSignals = scanData?.signals ?? [];
@@ -768,18 +772,37 @@ function ScannerTab({
                   {positionQty} / {autoQty} qty held
                 </span>
               )}
-              {/* Candle countdown + bias */}
-              <div className="flex items-center gap-3">
+              {/* Candle countdown + interval + bias */}
+              <div className="flex items-center gap-3 flex-wrap">
                 {autoExec && countdown && (
                   <span className="text-sm font-mono font-bold text-cyan-400 bg-cyan-950/30 px-2 py-0.5 rounded">
                     ⏱ Next candle: {countdown}
                   </span>
                 )}
-                {scanData?.bias && scanData.bias !== "NEUTRAL" && (
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-slate-500">⏱ Interval:</span>
+                  <select
+                    value={candleInterval}
+                    onChange={(e) => onCandleIntervalChange(Number(e.target.value))}
+                    disabled={autoExec}
+                    className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded px-1.5 py-0.5 w-16 disabled:opacity-50"
+                  >
+                    <option value={1}>1m</option>
+                    <option value={3}>3m</option>
+                    <option value={5}>5m</option>
+                    <option value={15}>15m</option>
+                    <option value={30}>30m</option>
+                  </select>
+                </div>
+                {scanData?.bias && (
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                    scanData.bias === "CALL" ? "bg-emerald-900/40 text-emerald-400" : "bg-rose-900/40 text-rose-400"
+                    scanData.bias === "CALL"
+                      ? "bg-emerald-900/40 text-emerald-400"
+                      : scanData.bias === "PUT"
+                        ? "bg-rose-900/40 text-rose-400"
+                        : "bg-slate-800/60 text-slate-400"
                   }`}>
-                    Bias: {scanData.bias}
+                    {scanData.bias === "CALL" ? "▲ AUTO BUY" : scanData.bias === "PUT" ? "▼ AUTO SELL" : "— NEUTRAL"}
                   </span>
                 )}
               </div>
@@ -1916,8 +1939,11 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     }).catch(() => setPresetsLoaded(true));
   }, [symbol]);
 
-  // ── Candle-close timer state ──────────────────────────
-  const [nextCandle, setNextCandle] = useState<number>(nextCandleClose5m());
+  // ── Candle interval + timer state ─────────────────────
+  const [candleInterval, setCandleInterval] = useState<number>(5);
+  const candleIntervalRef = useRef(5);
+  useEffect(() => { candleIntervalRef.current = candleInterval; }, [candleInterval]);
+  const [nextCandle, setNextCandle] = useState<number>(nextCandleClose(5));
   const [countdown, setCountdown] = useState("");
 
   // ── Duplicate prevention: track last executed bar_time ─
@@ -2238,13 +2264,13 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     setAutoLog((prev) => [`[${ts()}] ❌ User REJECTED signal — waiting for next`, ...prev.slice(0, 49)]);
   }, []);
 
-  // ── Auto-execute: candle-close aligned (fires once per 5m candle close) ──
+  // ── Auto-execute: candle-close aligned (fires once per candle close) ──
   // Also a 1-second countdown ticker for UI display
   useEffect(() => {
     if (!autoExec) return;
     const tick = setInterval(() => {
       const now = Date.now();
-      let target = nextCandleClose5m();
+      let target = nextCandleClose(candleIntervalRef.current);
       setNextCandle(target);
       const diff = Math.max(0, Math.ceil((target - now) / 1000));
       const mm = String(Math.floor(diff / 60)).padStart(2, "0");
@@ -2447,13 +2473,13 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       }
     };
 
-    // ── Candle-close scheduler: run once at each 5m boundary ──
+    // ── Candle-close scheduler: run once at each candle boundary ──
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const scheduleNext = () => {
       if (!autoRef.current) return;
       const now = Date.now();
-      const target = nextCandleClose5m();
+      const target = nextCandleClose(candleIntervalRef.current);
       const delay = Math.max(1000, target - now);
       timer = setTimeout(async () => {
         await poll();
@@ -3023,6 +3049,8 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
             setAutoQty(v);
             saveAutoTradeSettings({ verify_lock: verifyLock, auto_qty: v }, symbol).catch(() => {});
           }}
+          candleInterval={candleInterval}
+          onCandleIntervalChange={(v) => setCandleInterval(v)}
         />
       )}
 
