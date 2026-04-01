@@ -161,6 +161,58 @@ function Metric({ label, value, cls = "" }: Readonly<{ label: string; value: str
   );
 }
 
+function DailyPnlCard({ days, totalPnl, maxAbs, period, visibleDays }: Readonly<{
+  days: { date: string; pnl: number; win_rate: number; wins: number; losses: number }[];
+  totalPnl: number;
+  maxAbs: number;
+  period: string;
+  visibleDays: number;
+}>) {
+  const [expanded, setExpanded] = useState(true);
+
+  return (
+    <div className="rounded-xl border border-slate-800/60 bg-slate-900/40 p-3">
+      <button
+        className="w-full flex items-center justify-between"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <span className="text-[9px] uppercase tracking-widest text-slate-500">
+          {period} Daily P&L · {days.length} trading day{days.length > 1 ? "s" : ""}
+        </span>
+        <span className="flex items-center gap-2">
+          <span className={`text-sm font-bold ${totalPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+            {totalPnl >= 0 ? "+" : ""}${n(totalPnl).toFixed(2)}
+          </span>
+          <svg className={`w-3 h-3 text-slate-500 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path d="M19 9l-7 7-7-7"/></svg>
+        </span>
+      </button>
+      {expanded && (
+        <div className="space-y-1 mt-2">
+          {days.map((d) => (
+          <div key={d.date} className="flex items-center gap-2">
+            <span className="text-[9px] text-slate-500 tabular-nums w-[70px]">{d.date.slice(5)}</span>
+            <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+              {d.pnl >= 0 ? (
+                <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.min(100, (d.pnl / maxAbs) * 100)}%` }} />
+              ) : (
+                <div className="h-full bg-rose-500 rounded-full ml-auto" style={{ width: `${Math.min(100, (Math.abs(d.pnl) / maxAbs) * 100)}%` }} />
+              )}
+            </div>
+            <span className={`text-[10px] font-bold tabular-nums w-[60px] text-right ${d.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {d.pnl >= 0 ? "+" : ""}${n(d.pnl).toFixed(0)}
+            </span>
+            <span className={`text-[9px] font-bold tabular-nums w-[38px] text-right ${d.win_rate >= 60 ? "text-emerald-500" : d.win_rate >= 40 ? "text-amber-500" : "text-rose-500"}`}>
+              {d.win_rate.toFixed(0)}%
+            </span>
+            <span className="text-[8px] text-slate-600 tabular-nums w-[30px] text-right">{d.wins}W{d.losses}L</span>
+          </div>
+        ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx: number; onTradeClick?: (t: MGC5MinTrade) => void }>) {
   const win = t.pnl >= 0;
   const pipDiff = n(t.exit_price) - n(t.entry_price);
@@ -206,11 +258,23 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
 
 function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrade[]; onTradeClick?: (t: MGC5MinTrade) => void }>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [pnlFilter, setPnlFilter] = useState<"all" | "win" | "loss">("all");
+  const [dirFilter, setDirFilter] = useState<"all" | "CALL" | "PUT">("all");
+  const [reasonFilter, setReasonFilter] = useState<"all" | "TP" | "SL" | "TRAILING">("all");
+
+  // Apply filters
+  const filtered = trades.filter((t) => {
+    if (pnlFilter === "win" && t.pnl < 0) return false;
+    if (pnlFilter === "loss" && t.pnl >= 0) return false;
+    if (dirFilter !== "all" && (t.direction || "CALL") !== dirFilter) return false;
+    if (reasonFilter !== "all" && t.reason !== reasonFilter) return false;
+    return true;
+  });
 
   // Group trades by exit date, newest first
   const grouped = (() => {
     const map: Record<string, MGC5MinTrade[]> = {};
-    for (const t of trades) {
+    for (const t of filtered) {
       const day = t.exit_time.slice(0, 10);
       (map[day] ??= []).push(t);
     }
@@ -221,65 +285,107 @@ function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrad
 
   const toggle = (d: string) => setExpanded((p) => ({ ...p, [d]: !p[d] }));
 
-  if (grouped.length === 0) {
-    return <div className="text-center text-[10px] text-slate-600 py-4">No trades generated</div>;
-  }
-
   return (
-    <table className="w-full text-left">
-      <tbody>
-        {grouped.map(([date, dayTrades]) => {
-          const open = !!expanded[date];
-          const dayPnl = dayTrades.reduce((s, t) => s + n(t.pnl), 0);
-          const wins = dayTrades.filter((t) => t.pnl >= 0).length;
-          const wr = dayTrades.length ? Math.round((wins / dayTrades.length) * 100) : 0;
-          return (
-            <tr key={date}><td colSpan={11} className="p-0">
-              {/* Day summary row */}
-              <button
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-slate-800/40 transition-colors border-b border-slate-800/30"
-                onClick={() => toggle(date)}
-              >
-                <span className="text-[10px] text-slate-500 w-3">{open ? "▼" : "▶"}</span>
-                <span className="text-[10px] font-semibold text-slate-300 w-[70px]">{date.slice(5).replace("-", "/")}</span>
-                <span className="text-[9px] text-slate-500">{dayTrades.length} trade{dayTrades.length > 1 ? "s" : ""}</span>
-                <span className={`text-[9px] font-semibold ${wr >= 60 ? "text-emerald-400" : wr >= 50 ? "text-amber-400" : "text-rose-400"}`}>
-                  WR {wr}%
-                </span>
-                <span className="text-[9px] text-slate-500">({wins}W/{dayTrades.length - wins}L)</span>
-                <span className={`ml-auto text-[10px] font-bold tabular-nums ${dayPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                  {dayPnl >= 0 ? "+" : ""}{dayPnl.toFixed(2)}
-                </span>
-              </button>
-              {/* Expanded trade rows */}
-              {open && (
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="text-[8px] text-slate-600 uppercase bg-slate-900/80">
-                      <th className="px-2 py-0.5">Entry</th>
-                      <th className="px-2 py-0.5">Exit</th>
-                      <th className="px-2 py-0.5 text-right">In$</th>
-                      <th className="px-2 py-0.5 text-right">Out$</th>
-                      <th className="px-2 py-0.5 text-right">Pip$</th>
-                      <th className="px-2 py-0.5 text-right">P&L</th>
-                      <th className="px-2 py-0.5 text-right">MAE$</th>
-                      <th className="px-2 py-0.5 text-center">Dir</th>
-                      <th className="px-2 py-0.5 text-center">Struct</th>
-                      <th className="px-2 py-0.5 text-center">Type</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dayTrades.map((t, i) => (
-                      <TradeRow5Min key={`${t.entry_time}-${i}`} t={t} idx={i} onTradeClick={onTradeClick} />
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </td></tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <div>
+      {/* Filter bar */}
+      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-slate-800/30 flex-wrap">
+        <span className="text-[8px] text-slate-600 uppercase mr-1">Filter:</span>
+        {/* P&L filter */}
+        {(["all", "win", "loss"] as const).map((f) => (
+          <button key={f} onClick={() => setPnlFilter(f)} className={`px-1.5 py-0.5 text-[8px] font-bold rounded transition ${
+            pnlFilter === f
+              ? f === "win" ? "bg-emerald-900/50 text-emerald-400 border border-emerald-700/40"
+                : f === "loss" ? "bg-rose-900/50 text-rose-400 border border-rose-700/40"
+                : "bg-slate-700/50 text-slate-300 border border-slate-600/40"
+              : "text-slate-500 hover:text-slate-300"
+          }`}>{f === "all" ? "All" : f === "win" ? "Win" : "Loss"}</button>
+        ))}
+        <span className="text-slate-700">|</span>
+        {/* Direction filter */}
+        {(["all", "CALL", "PUT"] as const).map((f) => (
+          <button key={f} onClick={() => setDirFilter(f)} className={`px-1.5 py-0.5 text-[8px] font-bold rounded transition ${
+            dirFilter === f
+              ? f === "CALL" ? "bg-emerald-900/50 text-emerald-400 border border-emerald-700/40"
+                : f === "PUT" ? "bg-rose-900/50 text-rose-400 border border-rose-700/40"
+                : "bg-slate-700/50 text-slate-300 border border-slate-600/40"
+              : "text-slate-500 hover:text-slate-300"
+          }`}>{f === "all" ? "Dir" : f}</button>
+        ))}
+        <span className="text-slate-700">|</span>
+        {/* Reason filter */}
+        {(["all", "TP", "SL", "TRAILING"] as const).map((f) => (
+          <button key={f} onClick={() => setReasonFilter(f)} className={`px-1.5 py-0.5 text-[8px] font-bold rounded transition ${
+            reasonFilter === f
+              ? f === "TP" ? "bg-emerald-900/50 text-emerald-400 border border-emerald-700/40"
+                : f === "SL" ? "bg-rose-900/50 text-rose-400 border border-rose-700/40"
+                : f === "TRAILING" ? "bg-cyan-900/50 text-cyan-400 border border-cyan-700/40"
+                : "bg-slate-700/50 text-slate-300 border border-slate-600/40"
+              : "text-slate-500 hover:text-slate-300"
+          }`}>{f === "all" ? "Exit" : f}</button>
+        ))}
+        {/* Count */}
+        <span className="ml-auto text-[8px] text-slate-600">{filtered.length}/{trades.length}</span>
+      </div>
+
+      {grouped.length === 0 ? (
+        <div className="text-center text-[10px] text-slate-600 py-4">No trades match filter</div>
+      ) : (
+        <table className="w-full text-left">
+          <tbody>
+            {grouped.map(([date, dayTrades]) => {
+              const open = !!expanded[date];
+              const dayPnl = dayTrades.reduce((s, t) => s + n(t.pnl), 0);
+              const wins = dayTrades.filter((t) => t.pnl >= 0).length;
+              const wr = dayTrades.length ? Math.round((wins / dayTrades.length) * 100) : 0;
+              return (
+                <tr key={date}><td colSpan={11} className="p-0">
+                  {/* Day summary row */}
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-slate-800/40 transition-colors border-b border-slate-800/30"
+                    onClick={() => toggle(date)}
+                  >
+                    <span className="text-[10px] text-slate-500 w-3">{open ? "▼" : "▶"}</span>
+                    <span className="text-[10px] font-semibold text-slate-300 w-[70px]">{date.slice(5).replace("-", "/")}</span>
+                    <span className="text-[9px] text-slate-500">{dayTrades.length} trade{dayTrades.length > 1 ? "s" : ""}</span>
+                    <span className={`text-[9px] font-semibold ${wr >= 60 ? "text-emerald-400" : wr >= 50 ? "text-amber-400" : "text-rose-400"}`}>
+                      WR {wr}%
+                    </span>
+                    <span className="text-[9px] text-slate-500">({wins}W/{dayTrades.length - wins}L)</span>
+                    <span className={`ml-auto text-[10px] font-bold tabular-nums ${dayPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {dayPnl >= 0 ? "+" : ""}{dayPnl.toFixed(2)}
+                    </span>
+                  </button>
+                  {/* Expanded trade rows */}
+                  {open && (
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="text-[8px] text-slate-600 uppercase bg-slate-900/80">
+                          <th className="px-2 py-0.5">Entry</th>
+                          <th className="px-2 py-0.5">Exit</th>
+                          <th className="px-2 py-0.5 text-right">In$</th>
+                          <th className="px-2 py-0.5 text-right">Out$</th>
+                          <th className="px-2 py-0.5 text-right">Pip$</th>
+                          <th className="px-2 py-0.5 text-right">P&L</th>
+                          <th className="px-2 py-0.5 text-right">MAE$</th>
+                          <th className="px-2 py-0.5 text-center">Dir</th>
+                          <th className="px-2 py-0.5 text-center">Struct</th>
+                          <th className="px-2 py-0.5 text-center">Type</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dayTrades.map((t, i) => (
+                          <TradeRow5Min key={`${t.entry_time}-${i}`} t={t} idx={i} onTradeClick={onTradeClick} />
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </td></tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 
@@ -2324,28 +2430,6 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
             }
           }
           prevStructureRef.current = curr;
-
-          // ── Sideways auto-close: if toggle ON and SIDEWAYS, close positions ──
-          if (conditionTogglesRef.current["mkt_structure"] && freshMs.structure === 0) {
-            const curPos = positionQtyRef.current;
-            if (curPos > 0) {
-              setAutoLog((prev) => [`[${ts()}] ═ SIDEWAYS detected — closing ${curPos} contract(s)`, ...prev.slice(0, 49)]);
-              try {
-                await closePosition(symbol);
-                setPositionQty(0);
-                positionQtyRef.current = 0;
-                setAutoLog((prev) => [`[${ts()}] ✅ Position closed (sideways market)`, ...prev.slice(0, 49)]);
-                notifyTrade("CLOSE", 0, false);
-              } catch (e: unknown) {
-                const msg = e instanceof Error ? e.message : String(e);
-                setAutoLog((prev) => [`[${ts()}] ❌ Failed to close position: ${msg}`, ...prev.slice(0, 49)]);
-              }
-            } else {
-              setAutoLog((prev) => [`[${ts()}] ═ SIDEWAYS — no trades allowed, waiting for trend`, ...prev.slice(0, 49)]);
-            }
-            busyRef.current = false;
-            return;
-          }
         } catch { /* structure fetch failed — continue with scan */ }
 
         const sig = res.signal;
@@ -2589,24 +2673,6 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
 
             {/* ── Options ── */}
             <div className="flex gap-3 mt-2 pt-2 border-t border-slate-700/50">
-              {/* Auto-close on SIDEWAYS */}
-              <label
-                className={`flex items-center gap-2 cursor-pointer text-xs px-3 py-1.5 rounded-md transition ${
-                  conditionToggles["mkt_structure"]
-                    ? "bg-amber-900/50 text-amber-300 border border-amber-600/50 shadow-sm shadow-amber-900/30"
-                    : "bg-slate-800/50 text-slate-500 border border-slate-700/30 hover:text-slate-300 hover:border-slate-600/50"
-                }`}
-                title="When ON + SIDEWAYS: auto-close all positions"
-              >
-                <input
-                  type="checkbox"
-                  checked={!!conditionToggles["mkt_structure"]}
-                  onChange={() => setConditionToggles((prev) => ({ ...prev, mkt_structure: !prev.mkt_structure }))}
-                  className="w-3.5 h-3.5 accent-amber-500 rounded"
-                />
-                <span>{conditionToggles["mkt_structure"] ? "⚡ Auto-close SIDEWAYS: ON" : "Auto-close SIDEWAYS"}</span>
-              </label>
-
               {/* Skip FLAT in backtest */}
               <label
                 className={`flex items-center gap-2 cursor-pointer text-xs px-3 py-1.5 rounded-md transition ${
@@ -2942,65 +3008,72 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           {/* Results */}
           {btData && m && (
             <div className="p-3 space-y-3">
-              {/* Metrics grid */}
-              <div className="grid grid-cols-4 gap-1.5">
-                <Metric label="Win Rate" value={`${n(m.win_rate).toFixed(1)}%`} cls={winRateColor(m.win_rate)} />
-                <Metric label="Return" value={`${m.total_return_pct >= 0 ? "+" : ""}${n(m.total_return_pct).toFixed(2)}%`} cls={m.total_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"} />
-                <Metric label="Max DD" value={`${n(m.max_drawdown_pct).toFixed(2)}%`} cls="text-rose-400" />
-                <Metric label="Sharpe" value={`${n(m.sharpe_ratio).toFixed(2)}`} cls={m.sharpe_ratio >= 1 ? "text-emerald-400" : "text-slate-300"} />
-                <Metric label="Trades" value={`${m.total_trades}`} cls="text-slate-200" />
-                <Metric label="W / L" value={`${m.winners} / ${m.losers}`} cls="text-slate-200" />
-                <Metric label="PF" value={`${n(m.profit_factor).toFixed(2)}`} cls={m.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400"} />
-                <Metric label="R:R" value={`1:${n(m.risk_reward_ratio).toFixed(2)}`} cls="text-cyan-400" />
+              {/* Metrics — single compact row */}
+              <div className="flex gap-1 items-stretch">
+                {/* Highlighted key metrics */}
+                <div className="flex-1 rounded-md border border-cyan-700/40 bg-cyan-950/15 px-2 py-1 text-center">
+                  <div className="text-[7px] text-cyan-500/70 uppercase">WR</div>
+                  <div className={`text-xs font-bold tabular-nums ${winRateColor(m.win_rate)}`}>{n(m.win_rate).toFixed(1)}%</div>
+                </div>
+                <div className="flex-1 rounded-md border border-cyan-700/40 bg-cyan-950/15 px-2 py-1 text-center">
+                  <div className="text-[7px] text-cyan-500/70 uppercase">Return</div>
+                  <div className={`text-xs font-bold tabular-nums ${m.total_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{m.total_return_pct >= 0 ? "+" : ""}{n(m.total_return_pct).toFixed(2)}%</div>
+                </div>
+                <div className="flex-1 rounded-md border border-rose-700/40 bg-rose-950/15 px-2 py-1 text-center">
+                  <div className="text-[7px] text-rose-500/70 uppercase">Max DD</div>
+                  <div className="text-xs font-bold tabular-nums text-rose-400">{n(m.max_drawdown_pct).toFixed(2)}%</div>
+                </div>
+                {/* Secondary metrics */}
+                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center">
+                  <div className="text-[7px] text-slate-600 uppercase">Sharpe</div>
+                  <div className={`text-xs font-bold tabular-nums ${m.sharpe_ratio >= 1 ? "text-emerald-400" : "text-slate-300"}`}>{n(m.sharpe_ratio).toFixed(2)}</div>
+                </div>
+                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center">
+                  <div className="text-[7px] text-slate-600 uppercase">Trades</div>
+                  <div className="text-xs font-bold tabular-nums text-slate-200">{m.total_trades}</div>
+                </div>
+                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center">
+                  <div className="text-[7px] text-slate-600 uppercase">W/L</div>
+                  <div className="text-xs font-bold tabular-nums text-slate-200">{m.winners}/{m.losers}</div>
+                </div>
+                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center">
+                  <div className="text-[7px] text-slate-600 uppercase">PF</div>
+                  <div className={`text-xs font-bold tabular-nums ${m.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400"}`}>{n(m.profit_factor).toFixed(2)}</div>
+                </div>
+                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center">
+                  <div className="text-[7px] text-slate-600 uppercase">R:R</div>
+                  <div className="text-xs font-bold tabular-nums text-cyan-400">1:{n(m.risk_reward_ratio).toFixed(2)}</div>
+                </div>
               </div>
 
-              {/* Daily P&L card — from backend (EOD-closed per day) */}
+              {/* Daily P&L card — expandable, default open, 7 days visible */}
               {(() => {
                 const days = btData.daily_pnl ?? [];
                 if (days.length === 0) return null;
                 const totalPnl = days.reduce((s, d) => s + d.pnl, 0);
                 const maxAbs = Math.max(...days.map(d => Math.abs(d.pnl)), 1);
+                const VISIBLE_DAYS = 7;
                 return (
-                  <div className="rounded-xl border border-slate-800/60 bg-slate-900/40 p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[9px] uppercase tracking-widest text-slate-500">{period} Daily P&L · {days.length} trading day{days.length > 1 ? "s" : ""}</span>
-                      <span className={`text-sm font-bold ${totalPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                        {totalPnl >= 0 ? "+" : ""}${n(totalPnl).toFixed(2)}
-                      </span>
-                    </div>
-                    <div className="space-y-1">
-                      {days.map((d) => (
-                        <div key={d.date} className="flex items-center gap-2">
-                          <span className="text-[9px] text-slate-500 tabular-nums w-[70px]">{d.date.slice(5)}</span>
-                          <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                            {d.pnl >= 0 ? (
-                              <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.min(100, (d.pnl / maxAbs) * 100)}%` }} />
-                            ) : (
-                              <div className="h-full bg-rose-500 rounded-full ml-auto" style={{ width: `${Math.min(100, (Math.abs(d.pnl) / maxAbs) * 100)}%` }} />
-                            )}
-                          </div>
-                          <span className={`text-[10px] font-bold tabular-nums w-[60px] text-right ${d.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                            {d.pnl >= 0 ? "+" : ""}${n(d.pnl).toFixed(0)}
-                          </span>
-                          <span className={`text-[9px] font-bold tabular-nums w-[38px] text-right ${d.win_rate >= 60 ? "text-emerald-500" : d.win_rate >= 40 ? "text-amber-500" : "text-rose-500"}`}>
-                            {d.win_rate.toFixed(0)}%
-                          </span>
-                          <span className="text-[8px] text-slate-600 tabular-nums w-[30px] text-right">{d.wins}W{d.losses}L</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <DailyPnlCard
+                    days={days}
+                    totalPnl={totalPnl}
+                    maxAbs={maxAbs}
+                    period={period}
+                    visibleDays={VISIBLE_DAYS}
+                  />
                 );
               })()}
 
-              {/* OOS validation */}
+              {/* OOS validation — compact */}
               {m.oos_total_trades > 0 && (
-                <div className="rounded-lg border border-cyan-800/40 bg-cyan-950/20 p-2.5">
-                  <p className="text-[9px] uppercase tracking-widest text-cyan-500 mb-1.5">Out-of-Sample (30%)</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    <Metric label="OOS WR" value={`${n(m.oos_win_rate).toFixed(1)}%`} cls={winRateColor(m.oos_win_rate)} />
-                    <Metric label="OOS Trades" value={`${m.oos_total_trades}`} cls="text-slate-200" />
-                    <Metric label="OOS Return" value={`${m.oos_return_pct >= 0 ? "+" : ""}${n(m.oos_return_pct).toFixed(2)}%`} cls={m.oos_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"} />
+                <div className="rounded-md border border-cyan-800/40 bg-cyan-950/20 px-2.5 py-1.5">
+                  <div className="flex items-center gap-3">
+                    <span className="text-[8px] uppercase tracking-widest text-cyan-500 shrink-0">OOS 30%</span>
+                    <span className={`text-[10px] font-bold ${winRateColor(m.oos_win_rate)}`}>{n(m.oos_win_rate).toFixed(1)}%</span>
+                    <span className="text-[9px] text-slate-400">{m.oos_total_trades} trades</span>
+                    <span className={`text-[10px] font-bold ${m.oos_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {m.oos_return_pct >= 0 ? "+" : ""}{n(m.oos_return_pct).toFixed(2)}%
+                    </span>
                   </div>
                 </div>
               )}
