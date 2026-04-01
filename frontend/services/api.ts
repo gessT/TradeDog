@@ -758,6 +758,49 @@ export async function fetchTigerAccount(): Promise<TigerAccountResponse> {
   return (await res.json()) as TigerAccountResponse;
 }
 
+// ── Trade History (paired round-trip trades with P&L) ────────────────
+export type TradeRecord = {
+  symbol: string;
+  side: string;        // LONG or SHORT
+  qty: number;
+  entry_price: number;
+  exit_price: number;
+  entry_time: string;
+  exit_time: string;
+  pnl: number;
+  pnl_pct: number;
+  multiplier: number;
+  entry_order_id: string;
+  exit_order_id: string;
+  status: string;      // CLOSED or OPEN
+};
+
+export type TradeHistoryResponse = {
+  trades: TradeRecord[];
+  summary: {
+    total_trades: number;
+    open_trades: number;
+    wins: number;
+    losses: number;
+    win_rate: number;
+    total_pnl: number;
+    avg_pnl: number;
+    profit_factor: number;
+    best_trade: number;
+    worst_trade: number;
+  };
+  timestamp: string;
+};
+
+export async function fetchTradeHistory(days: number = 7): Promise<TradeHistoryResponse> {
+  const res = await fetch(`${API_BASE}/mgc/trade_history?days=${days}`, { cache: "no-store" });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `Trade history fetch failed: ${res.status}`);
+  }
+  return (await res.json()) as TradeHistoryResponse;
+}
+
 export async function placeSimpleOrder(
   symbol: string,
   side: string,
@@ -829,6 +872,8 @@ export type ScanSignal = {
   ema_slow: number;
   volume_ratio: number;
   bar_time: string;
+  is_fresh?: boolean;
+  bars_since_first?: number;
 };
 
 export type BacktestCheck = {
@@ -922,6 +967,7 @@ export type MGC5MinTrade = {
   signal_type: string;
   direction: string;
   mae: number;
+  mkt_structure: number;
 };
 
 export type MGC5MinMetrics = {
@@ -1013,6 +1059,23 @@ export async function saveAutoTradeSettings(settings: AutoTradeSettings, symbol:
   });
 }
 
+// ── Market Structure (fast cached endpoint) ─────────────
+
+export interface MarketStructure {
+  symbol: string;
+  structure: number;  // 1=BULL, -1=BEAR, 0=SIDEWAYS
+  label: string;
+  bars?: number;
+  last_price?: number;
+  timestamp?: string;
+}
+
+export async function getMarketStructure(symbol: string = "MGC"): Promise<MarketStructure> {
+  const res = await fetch(`${API_BASE}/mgc/market_structure?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+  if (!res.ok) return { symbol, structure: 0, label: "NO DATA" };
+  return (await res.json()) as MarketStructure;
+}
+
 // ── 5min Condition Presets ──────────────────────────────
 
 export type ConditionPreset = {
@@ -1050,11 +1113,13 @@ export async function fetchMGC5MinBacktest(
   date_to?: string,
   symbol: string = "MGC",
   disabledConditions?: string[],
+  skipFlat?: boolean,
 ): Promise<MGC5MinBacktestResponse> {
   let url = `${API_BASE}/mgc/backtest_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
   if (date_from) url += `&date_from=${date_from}`;
   if (date_to) url += `&date_to=${date_to}`;
   if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  if (skipFlat) url += `&skip_flat=true`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
@@ -1113,6 +1178,8 @@ export type Scan5MinSignal = {
   supertrend_dir: number;
   volume_ratio: number;
   bar_time: string;
+  is_fresh?: boolean;
+  bars_since_first?: number;
 };
 
 export type Scan5MinCandle = {
@@ -1140,6 +1207,7 @@ export type Scan5MinConditions = {
   htf_15m_supertrend: boolean;
   htf_1h_trend: boolean;
   htf_1h_supertrend: boolean;
+  mkt_structure: number;  // 1=BULL, -1=BEAR, 0=SIDEWAYS
 };
 
 export type Scan5MinResponse = {
@@ -1269,4 +1337,95 @@ export async function optimize5Min(
     throw new Error(detail || `Optimize failed with ${response.status}`);
   }
   return (await response.json()) as Optimize5MinResponse;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// US Stock 1-Hour Strategy Backtest
+// ═══════════════════════════════════════════════════════════════════════
+
+export type US1HCandle = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  ema_fast?: number | null;
+  ema_slow?: number | null;
+  rsi?: number | null;
+  macd_hist?: number | null;
+  st_dir?: number | null;
+  signal: number;
+};
+
+export type US1HTrade = {
+  entry_time: string;
+  exit_time: string;
+  entry_price: number;
+  exit_price: number;
+  qty: number;
+  pnl: number;
+  pnl_pct: number;
+  reason: string;
+  signal_type: string;
+  direction: string;
+  mae: number;
+  mkt_structure: number;
+};
+
+export type US1HMetrics = {
+  initial_capital: number;
+  final_equity: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  total_trades: number;
+  winners: number;
+  losers: number;
+  win_rate: number;
+  avg_win: number;
+  avg_loss: number;
+  profit_factor: number;
+  risk_reward_ratio: number;
+  oos_win_rate: number;
+  oos_total_trades: number;
+  oos_return_pct: number;
+};
+
+export type US1HBacktestResponse = {
+  symbol: string;
+  interval: string;
+  period: string;
+  candles: US1HCandle[];
+  trades: US1HTrade[];
+  equity_curve: number[];
+  metrics: US1HMetrics;
+  daily_pnl: Array<Record<string, unknown>>;
+  params: Record<string, unknown>;
+  timestamp: string;
+};
+
+export async function fetchUS1HBacktest(
+  symbol: string = "AAPL",
+  period: string = "2y",
+  oos_split: number = 0.3,
+  atr_sl_mult: number = 3.0,
+  atr_tp_mult: number = 2.5,
+  date_from?: string,
+  date_to?: string,
+  disabledConditions?: string[],
+  skipFlat?: boolean,
+): Promise<US1HBacktestResponse> {
+  let url = `${API_BASE}/stock/backtest_1h?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  if (date_from) url += `&date_from=${date_from}`;
+  if (date_to) url += `&date_to=${date_to}`;
+  if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  if (skipFlat) url += `&skip_flat=true`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as US1HBacktestResponse;
 }

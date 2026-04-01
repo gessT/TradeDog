@@ -11,12 +11,15 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { halfTrend, type HalfTrendPoint } from "../utils/indicators";
+import TradeDetailDialog from "./strategy5min/TradeDetailDialog";
 import {
   fetchMGC5MinBacktest,
   optimize5MinConditions,
   scan5Min,
   execute5Min,
   getMgcPosition,
+  closePosition,
+  getMarketStructure,
   load5MinConditionToggles,
   save5MinConditionToggles,
   save5MinConditionPreset,
@@ -24,6 +27,7 @@ import {
   delete5MinConditionPreset,
   getAutoTradeSettings,
   saveAutoTradeSettings,
+  type MarketStructure,
   type ConditionPreset,
   type ConditionOptimizationResult,
   type MGC5MinBacktestResponse,
@@ -176,9 +180,6 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
       <td className={`px-2 py-1 text-right text-[10px] font-bold ${win ? "text-emerald-400" : "text-rose-400"}`}>
         {win ? "+" : ""}{n(t.pnl).toFixed(2)}
       </td>
-      <td className="px-2 py-1 text-center text-[10px] font-mono text-amber-400">
-        {t.qty > 1 ? `×${t.qty}` : "1"}
-      </td>
       <td className="px-2 py-1 text-right text-[10px] font-bold text-rose-400/80">
         {n(t.mae) < 0 ? `${n(t.mae).toFixed(2)}` : "—"}
       </td>
@@ -186,9 +187,15 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${t.direction === "PUT" ? "bg-rose-900/40 text-rose-400" : "bg-emerald-900/40 text-emerald-400"}`}>{t.direction || "CALL"}</span>
       </td>
       <td className="px-2 py-1 text-center">
+        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+          t.mkt_structure === 1 ? "bg-emerald-900/40 text-emerald-400" :
+          t.mkt_structure === -1 ? "bg-rose-900/40 text-rose-400" :
+          "bg-slate-700/40 text-slate-400"
+        }`}>{t.mkt_structure === 1 ? "BULL" : t.mkt_structure === -1 ? "BEAR" : "FLAT"}</span>
+      </td>
+      <td className="px-2 py-1 text-center">
         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${reasonStyle(t.reason)}`}>{t.reason}</span>
       </td>
-      <td className="px-2 py-1 text-center text-[9px] text-slate-500">{t.signal_type.slice(0, 3) || "—"}</td>
     </tr>
   );
 }
@@ -255,11 +262,10 @@ function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrad
                       <th className="px-2 py-0.5 text-right">Out$</th>
                       <th className="px-2 py-0.5 text-right">Pip$</th>
                       <th className="px-2 py-0.5 text-right">P&L</th>
-                      <th className="px-2 py-0.5 text-center">Qty</th>
                       <th className="px-2 py-0.5 text-right">MAE$</th>
                       <th className="px-2 py-0.5 text-center">Dir</th>
+                      <th className="px-2 py-0.5 text-center">Struct</th>
                       <th className="px-2 py-0.5 text-center">Type</th>
-                      <th className="px-2 py-0.5 text-center">Sig</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -282,7 +288,7 @@ function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrad
 // ═══════════════════════════════════════════════════════════════════════
 
 /** All conditions that gate auto-execution. User can toggle each. */
-const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m" | "15m" | "1h"; desc: string }[] = [
+const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m" | "15m" | "1h" | "structure"; desc: string }[] = [
   // 5m core
   { key: "ema_trend", label: "EMA Trend", group: "5m", desc: "Price is above fast EMA for CALL or below for PUT, confirming trend direction." },
   { key: "ema_slope", label: "EMA Slope", group: "5m", desc: "Fast EMA is sloping upward (CALL) or downward (PUT), showing momentum." },
@@ -301,6 +307,8 @@ const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m
   // 1h confirmation
   { key: "htf_1h_trend", label: "1h EMA Trend", group: "1h", desc: "1-hour EMA trend aligns with the trade direction for higher conviction." },
   { key: "htf_1h_supertrend", label: "1h Supertrend", group: "1h", desc: "1-hour Supertrend confirms the macro trend supports the trade." },
+  // Market Structure
+  // mkt_structure removed from CONDITION_DEFS — it's a display-only analysis widget, not a gate
 ];
 
 /** Default: all core 5m conditions ON, HTF optional off */
@@ -504,9 +512,11 @@ function ScannerTab({
   const htfBlocked = (() => {
     if (!conds) return false;
     for (const def of CONDITION_DEFS) {
-      if (def.group !== "5m" && conditionToggles[def.key] && !conds[def.key]) {
-        return true;
-      }
+      if (def.group === "5m") continue;
+      if (!conditionToggles[def.key]) continue;
+      // mkt_structure is display-only — skip it in gate check
+      if (def.key === "mkt_structure") continue;
+      if (!conds[def.key]) return true;
     }
     return false;
   })();
@@ -977,7 +987,18 @@ function ScannerTab({
                 }`}>
                   {sig.found ? `${sig.direction} · ${sig.signal_type}` : "No Signal"}
                 </span>
-                <span className={`text-sm font-bold ${strengthColor(sig.strength)}`}>{sig.strength}/10</span>
+                <span className="flex items-center gap-2">
+                  {sig.found && (
+                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                      sig.is_fresh === false
+                        ? "bg-amber-500/20 text-amber-400"
+                        : "bg-emerald-500/20 text-emerald-400"
+                    }`}>
+                      {sig.is_fresh === false ? `STALE (${sig.bars_since_first ?? 0} bars)` : "FRESH"}
+                    </span>
+                  )}
+                  <span className={`text-sm font-bold ${strengthColor(sig.strength)}`}>{sig.strength}/10</span>
+                </span>
               </div>
               {sig.found && (
                 <div className="flex gap-3 text-[9px]">
@@ -1021,165 +1042,6 @@ function MiniMetric({ label, value, cls = "" }: Readonly<{ label: string; value:
     <div className="rounded bg-slate-800/60 px-2 py-1 text-center">
       <div className="text-[7px] text-slate-600 uppercase">{label}</div>
       <div className={`text-[10px] font-bold tabular-nums ${cls}`}>{value}</div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Trade Zoom Chart — 30 bars before entry → trade → 30 bars after exit
-// ═══════════════════════════════════════════════════════════════════════
-
-function TradeZoomChart({ candles, trade, onClose }: Readonly<{ candles: MGC5MinCandle[]; trade: MGC5MinTrade; onClose: () => void }>) {
-  const ref = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-
-  useEffect(() => {
-    if (!ref.current || candles.length === 0) return;
-    const el = ref.current;
-
-    const entryTs = new Date(trade.entry_time).getTime();
-    const exitTs = new Date(trade.exit_time).getTime();
-
-    // Find entry and exit bar indices
-    let entryIdx = 0;
-    let exitIdx = candles.length - 1;
-    for (let i = 0; i < candles.length; i++) {
-      if (new Date(candles[i].time).getTime() >= entryTs) { entryIdx = i; break; }
-    }
-    for (let i = candles.length - 1; i >= 0; i--) {
-      if (new Date(candles[i].time).getTime() <= exitTs) { exitIdx = i; break; }
-    }
-
-    // Slice: 30 bars before entry → exit → 30 bars after exit
-    const PAD = 30;
-    const startIdx = Math.max(0, entryIdx - PAD);
-    const endIdx = Math.min(candles.length, exitIdx + PAD + 1);
-    const slice = candles.slice(startIdx, endIdx);
-    if (slice.length === 0) return;
-
-    if (chartRef.current) { try { chartRef.current.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; }
-
-    const chart = createChart(el, {
-      width: el.clientWidth,
-      height: 220,
-      layout: { background: { color: "#0f172a" }, textColor: "#64748b", fontSize: 9 },
-      grid: { vertLines: { color: "#1e293b" }, horzLines: { color: "#1e293b" } },
-      rightPriceScale: { borderVisible: false },
-      timeScale: { borderColor: "#334155", timeVisible: true, secondsVisible: false },
-      crosshair: { mode: 0 },
-    });
-    chartRef.current = chart;
-
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#22c55e", downColor: "#ef4444",
-      borderUpColor: "#22c55e", borderDownColor: "#ef4444",
-      wickUpColor: "#22c55e80", wickDownColor: "#ef444480",
-    });
-
-    const volSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" }, priceScaleId: "vol",
-    });
-    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-
-    const seen = new Set<number>();
-    const ohlc: { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
-    const vol: { time: UTCTimestamp; value: number; color: string }[] = [];
-
-    for (const c of slice) {
-      const t = toLocal(Math.floor(new Date(c.time).getTime() / 1000));
-      if (seen.has(t as number)) continue;
-      seen.add(t as number);
-      ohlc.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
-      vol.push({ time: t, value: c.volume, color: c.close >= c.open ? "#22c55e30" : "#ef444430" });
-    }
-
-    candleSeries.setData(ohlc);
-    volSeries.setData(vol);
-
-    // EMA lines
-    const emaFastData: { time: UTCTimestamp; value: number }[] = [];
-    const emaSlowData: { time: UTCTimestamp; value: number }[] = [];
-    let si = 0;
-    for (const c of slice) {
-      const t = ohlc[si]?.time;
-      if (!t) break;
-      if (c.ema_fast != null) emaFastData.push({ time: t, value: c.ema_fast });
-      if (c.ema_slow != null) emaSlowData.push({ time: t, value: c.ema_slow });
-      si++;
-    }
-    if (emaFastData.length > 0) {
-      chart.addSeries(LineSeries, { color: "#06b6d4", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }).setData(emaFastData);
-    }
-    if (emaSlowData.length > 0) {
-      chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }).setData(emaSlowData);
-    }
-
-    // HalfTrend overlay
-    const htPoints = halfTrend(slice, 2, 10);
-    const htUp: { time: UTCTimestamp; value: number }[] = [];
-    const htDown: { time: UTCTimestamp; value: number }[] = [];
-    for (let i = 0; i < htPoints.length && i < ohlc.length; i++) {
-      const pt = htPoints[i];
-      if (!pt) continue;
-      const d = { time: ohlc[i].time, value: pt.value };
-      if (pt.trend === 0) htUp.push(d); else htDown.push(d);
-    }
-    if (htUp.length > 0) {
-      chart.addSeries(LineSeries, { color: "#22c55e", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(htUp);
-    }
-    if (htDown.length > 0) {
-      chart.addSeries(LineSeries, { color: "#ef4444", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(htDown);
-    }
-
-    // SL / TP price lines
-    const isCall = trade.direction === "CALL";
-    const atrEst = Math.abs(trade.entry_price - (isCall
-      ? trade.entry_price - (trade.exit_price - trade.entry_price) / (trade.pnl >= 0 ? 2 : -1)
-      : trade.entry_price));
-    // Show entry price line
-    candleSeries.createPriceLine({ price: trade.entry_price, color: "#a78bfa", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "Entry" });
-    candleSeries.createPriceLine({ price: trade.exit_price, color: trade.pnl >= 0 ? "#22c55e" : "#ef4444", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: trade.reason });
-
-    // Entry & exit markers
-    const entryBarTs = toLocal(Math.floor(entryTs / 1000));
-    const exitBarTs = toLocal(Math.floor(exitTs / 1000));
-    const findClosest = (target: UTCTimestamp) => {
-      let best = ohlc[0]?.time ?? target;
-      let bestDiff = Math.abs((best as number) - (target as number));
-      for (const bar of ohlc) {
-        const diff = Math.abs((bar.time as number) - (target as number));
-        if (diff < bestDiff) { best = bar.time; bestDiff = diff; }
-      }
-      return best;
-    };
-
-    const win = trade.pnl >= 0;
-    const markers: { time: UTCTimestamp; position: "belowBar" | "aboveBar"; color: string; shape: "arrowUp" | "arrowDown"; text: string }[] = [
-      { time: findClosest(entryBarTs), position: isCall ? "belowBar" : "aboveBar", color: "#a78bfa", shape: isCall ? "arrowUp" : "arrowDown", text: `${trade.direction} $${trade.entry_price}` },
-      { time: findClosest(exitBarTs), position: "aboveBar", color: win ? "#22c55e" : "#ef4444", shape: "arrowDown", text: `${trade.reason} ${win ? "+" : ""}$${trade.pnl.toFixed(2)}` },
-    ];
-    markers.sort((a, b) => (a.time as number) - (b.time as number));
-    createSeriesMarkers(candleSeries, markers);
-
-    chart.timeScale().fitContent();
-
-    const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
-    ro.observe(el);
-    return () => { ro.disconnect(); try { chart.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; };
-  }, [candles, trade]);
-
-  const win = trade.pnl >= 0;
-  return (
-    <div className="rounded-lg border border-slate-800/60 bg-slate-950 overflow-hidden">
-      <div className="px-2.5 py-1.5 border-b border-slate-800/40 flex items-center justify-between">
-        <span className="text-[9px] uppercase tracking-widest text-slate-500">
-          {trade.direction} · {trade.entry_time.slice(5, 16)} → {trade.exit_time.slice(11, 16)} ·{" "}
-          <span className={win ? "text-emerald-400" : "text-rose-400"}>{win ? "+" : ""}{trade.pnl.toFixed(2)}</span>
-          {" "}· {trade.reason}
-        </span>
-        <button onClick={onClose} className="text-[10px] text-slate-500 hover:text-slate-300 px-1">✕</button>
-      </div>
-      <div ref={ref} className="w-full" style={{ height: 220 }} />
     </div>
   );
 }
@@ -1838,12 +1700,20 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Per-symbol SL/TP defaults (backtest-optimized) ─────────────────
+  const SYMBOL_RISK: Record<string, { sl: number; tp: number }> = {
+    MGC: { sl: 4.0, tp: 3.0 },   // Gold: wider stops, moderate target
+    MCL: { sl: 0.8, tp: 2.0 },   // Oil: tight stop ($21 avg loss), 2.5:1 R:R
+    MNQ: { sl: 3.0, tp: 2.5 },   // Nasdaq: moderate
+  };
+  const defaultRisk = SYMBOL_RISK[symbol] ?? { sl: 4.0, tp: 3.0 };
+
   // Backtest state
   const [btData, setBtData] = useState<MGC5MinBacktestResponse | null>(null);
   const [zoomTrade, setZoomTrade] = useState<MGC5MinTrade | null>(null);
   const [period, setPeriod] = useState("3d");
-  const [slMult, setSlMult] = useState(4.0);
-  const [tpMult, setTpMult] = useState(3.0);
+  const [slMult, setSlMult] = useState(defaultRisk.sl);
+  const [tpMult, setTpMult] = useState(defaultRisk.tp);
 
   // Date range filter
   const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
@@ -1854,6 +1724,13 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   };
   const [dateFrom, setDateFrom] = useState(() => calcFrom("3"));
   const [dateTo, setDateTo] = useState(() => fmtDate(new Date()));
+
+  // Auto-switch SL/TP when symbol changes
+  useEffect(() => {
+    const risk = SYMBOL_RISK[symbol] ?? { sl: 4.0, tp: 3.0 };
+    setSlMult(risk.sl);
+    setTpMult(risk.tp);
+  }, [symbol]);
 
   // Scanner state
   const [scanData, setScanData] = useState<Scan5MinResponse | null>(null);
@@ -1905,6 +1782,34 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   const [optimizationResults, setOptimizationResults] = useState<ConditionOptimizationResult[]>([]);
   const [optimizing, setOptimizing] = useState(false);
 
+  // ── Market Structure (independent, cached, auto-refresh) ──
+  const [mktStructure, setMktStructure] = useState<MarketStructure | null>(null);
+  const [mktLoading, setMktLoading] = useState(false);
+  const prevStructureRef = useRef<number | null>(null);  // track transitions
+  const [skipFlat, setSkipFlat] = useState(false);  // filter out FLAT entries in backtest
+
+  // Fetch market structure on mount, symbol change, and every 5 min
+  useEffect(() => {
+    let cancelled = false;
+    const fetch = () => {
+      setMktLoading(true);
+      getMarketStructure(symbol)
+        .then((ms) => {
+          if (!cancelled) {
+            setMktStructure(ms);
+            // Initialize prevStructureRef so first poll doesn't trigger false transition
+            if (prevStructureRef.current === null) prevStructureRef.current = ms.structure;
+          }
+        })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setMktLoading(false); });
+    };
+    fetch(); // immediate on mount / symbol change
+    prevStructureRef.current = null; // reset on symbol change
+    const interval = setInterval(fetch, 5 * 60 * 1000); // refresh every 5 min
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [symbol]);
+
   // Load saved toggles from DB on mount / symbol change
   useEffect(() => {
     conditionsLoaded.current = false;
@@ -1949,7 +1854,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   // ── Duplicate prevention: track last executed bar_time ─
   const lastExecBarRef = useRef<string>("");
 
-  // ── Clear data when symbol changes ────────────────────
+  // ── Clear data when symbol changes ──
   useEffect(() => {
     setBtData(null);
     setScanData(null);
@@ -1969,14 +1874,14 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       const disabled = CONDITION_DEFS
         .filter((d) => d.group === "5m" && !conditionToggles[d.key])
         .map((d) => d.key);
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol, disabled.length > 0 ? disabled : undefined);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, skipFlat);
       setBtData(res);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
       setLoading(false);
     }
-  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles]);
+  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, skipFlat]);
 
   // ── Scanner ───────────────────────────────────────────
   // Helper: compute disabled condition keys from toggles (OFF = disabled)
@@ -2347,7 +2252,10 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       const orKeys = new Set(["pullback", "breakout", "macd_momentum", "rsi_momentum"]);
       for (const def of CONDITION_DEFS) {
         if (orKeys.has(def.key)) continue;
-        if (t[def.key] && !c[def.key]) failed.push(def.label);
+        if (!t[def.key]) continue;
+        // mkt_structure is display-only — skip it in condition check
+        if (def.key === "mkt_structure") continue;
+        if (!c[def.key]) failed.push(def.label);
       }
       return { pass: failed.length === 0, failed };
     };
@@ -2379,12 +2287,81 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           .map((d) => d.key);
         const res = await scan5Min(false, slMult, tpMult, symbol, disabled.length > 0 ? disabled : undefined);
         setScanData(res);
+
+        // ── Refresh market structure on every poll (uses fast cached endpoint) ──
+        try {
+          const freshMs = await getMarketStructure(symbol);
+          setMktStructure(freshMs);
+
+          const prev = prevStructureRef.current;
+          const curr = freshMs.structure;
+
+          // ── Structure Transition Detection ──
+          // 横盘→牛: SIDEWAYS(0) → BULL(1)  = trend starting, favor LONG
+          // 横盘→熊: SIDEWAYS(0) → BEAR(-1) = trend starting, favor SHORT
+          // 牛→横盘 or 熊→横盘 = trend ending, flatten
+          if (prev !== null && prev !== curr) {
+            const labels: Record<number, string> = { 1: "📈 BULL", [-1]: "📉 BEAR", 0: "📊 SIDEWAYS" };
+            const fromL = labels[prev] ?? "?";
+            const toL = labels[curr] ?? "?";
+            setAutoLog((p) => [`[${ts()}] 🔄 STRUCTURE SHIFT: ${fromL} → ${toL}`, ...p.slice(0, 49)]);
+
+            if (prev === 0 && curr === 1) {
+              // 横盘→牛: trend just started bullish — signal reference for LONG
+              setAutoLog((p) => [`[${ts()}] 🟢 TREND START: Sideways → Bullish — favor BUY entries`, ...p.slice(0, 49)]);
+            } else if (prev === 0 && curr === -1) {
+              // 横盘→熊: trend just started bearish — signal reference for SHORT
+              setAutoLog((p) => [`[${ts()}] 🔴 TREND START: Sideways → Bearish — favor SELL entries`, ...p.slice(0, 49)]);
+            } else if (curr === 0 && (prev === 1 || prev === -1)) {
+              // 牛/熊→横盘: trend ended — consider closing
+              setAutoLog((p) => [`[${ts()}] ⚠️ TREND END: ${fromL} → Sideways — consider flattening`, ...p.slice(0, 49)]);
+            } else if (prev === 1 && curr === -1) {
+              // 牛→熊: trend reversal — close longs, consider shorts
+              setAutoLog((p) => [`[${ts()}] 🔁 REVERSAL: Bull → Bear — close LONGs, favor SELL`, ...p.slice(0, 49)]);
+            } else if (prev === -1 && curr === 1) {
+              // 熊→牛: trend reversal — close shorts, consider longs
+              setAutoLog((p) => [`[${ts()}] 🔁 REVERSAL: Bear → Bull — close SHORTs, favor BUY`, ...p.slice(0, 49)]);
+            }
+          }
+          prevStructureRef.current = curr;
+
+          // ── Sideways auto-close: if toggle ON and SIDEWAYS, close positions ──
+          if (conditionTogglesRef.current["mkt_structure"] && freshMs.structure === 0) {
+            const curPos = positionQtyRef.current;
+            if (curPos > 0) {
+              setAutoLog((prev) => [`[${ts()}] ═ SIDEWAYS detected — closing ${curPos} contract(s)`, ...prev.slice(0, 49)]);
+              try {
+                await closePosition(symbol);
+                setPositionQty(0);
+                positionQtyRef.current = 0;
+                setAutoLog((prev) => [`[${ts()}] ✅ Position closed (sideways market)`, ...prev.slice(0, 49)]);
+                notifyTrade("CLOSE", 0, false);
+              } catch (e: unknown) {
+                const msg = e instanceof Error ? e.message : String(e);
+                setAutoLog((prev) => [`[${ts()}] ❌ Failed to close position: ${msg}`, ...prev.slice(0, 49)]);
+              }
+            } else {
+              setAutoLog((prev) => [`[${ts()}] ═ SIDEWAYS — no trades allowed, waiting for trend`, ...prev.slice(0, 49)]);
+            }
+            busyRef.current = false;
+            return;
+          }
+        } catch { /* structure fetch failed — continue with scan */ }
+
         const sig = res.signal;
 
         if (sig?.found) {
           // ── Duplicate prevention: don't execute same bar twice ──
           if (sig.bar_time === lastExecBarRef.current) {
             setAutoLog((prev) => [`[${ts()}] ⏭ Signal already executed for bar ${sig.bar_time.slice(5, 16)}`, ...prev.slice(0, 49)]);
+            busyRef.current = false;
+            return;
+          }
+
+          // ── Freshness check: only trade first-time signals ──
+          if (sig.is_fresh === false) {
+            const barsOld = sig.bars_since_first ?? 0;
+            setAutoLog((prev) => [`[${ts()}] ⏭ STALE signal (${barsOld} bars old) — skipped, waiting for fresh entry`, ...prev.slice(0, 49)]);
             busyRef.current = false;
             return;
           }
@@ -2547,6 +2524,110 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           {error}
         </div>
       )}
+
+      {/* ═════════════════════════════════════════════════════ */}
+      {/* MARKET STRUCTURE — top-level status card              */}
+      {/* ═════════════════════════════════════════════════════ */}
+      {(() => {
+        const ms = mktStructure;
+        const val = ms?.structure ?? null;
+        const isLoading = mktLoading && !ms;
+        const structLabel = val === 1 ? "BULL ▲" : val === -1 ? "BEAR ▼" : val === 0 ? "SIDEWAYS ═ 横盘" : "LOADING...";
+        const structColor = val === 1 ? "text-emerald-400" : val === -1 ? "text-rose-400" : val === 0 ? "text-amber-400" : "text-slate-500";
+        const borderColor = val === 1 ? "border-emerald-700/50" : val === -1 ? "border-rose-700/50" : val === 0 ? "border-amber-700/50" : "border-slate-700/40";
+        const bgColor = val === 1 ? "bg-emerald-500/5" : val === -1 ? "bg-rose-500/5" : val === 0 ? "bg-amber-500/5" : "bg-slate-800/20";
+        const icon = val === 1 ? "📈" : val === -1 ? "📉" : val === 0 ? "📊" : "⏳";
+        const hint = val === 1 ? "Favor LONG entries" : val === -1 ? "Favor SHORT entries" : val === 0 ? "No clear trend — consider staying flat" : "";
+        return (
+          <div className={`mx-3 mt-2 rounded-lg border ${borderColor} ${bgColor} px-3 py-2`}>
+            <div className="flex items-center gap-2">
+              {/* Label */}
+              <span className="text-[9px] text-slate-500 font-medium">📐 Structure</span>
+
+              {/* Status badge */}
+              <span className={`px-2 py-0.5 rounded text-[11px] font-black ${structColor}`}>
+                {isLoading ? (
+                  <span className="animate-pulse">⏳ Loading...</span>
+                ) : (
+                  <>{icon} {structLabel}</>
+                )}
+              </span>
+
+              {/* Suggestion */}
+              {hint && <span className={`text-[8px] ${structColor} opacity-70`}>— {hint}</span>}
+
+              {/* Last update time + refresh button */}
+              <span className="ml-auto flex items-center gap-1.5">
+                {ms?.timestamp && (
+                  <span className="text-[7px] text-slate-600">{ms.timestamp}</span>
+                )}
+                {ms?.last_price && (
+                  <span className="text-[8px] text-slate-400 font-mono">${ms.last_price.toFixed(2)}</span>
+                )}
+                <button
+                  onClick={() => {
+                    setMktLoading(true);
+                    getMarketStructure(symbol)
+                      .then((r) => setMktStructure(r))
+                      .catch(() => {})
+                      .finally(() => setMktLoading(false));
+                  }}
+                  className="text-[8px] text-slate-500 hover:text-cyan-400 transition"
+                  title="Refresh structure now"
+                >
+                  {mktLoading ? "⏳" : "🔄"}
+                </button>
+              </span>
+            </div>
+
+            {/* 3-column legend */}
+            <div className="flex gap-2 mt-1.5">
+              <span className={`text-[7px] px-1.5 py-0.5 rounded ${val === 1 ? "bg-emerald-900/40 text-emerald-400 font-bold" : "text-slate-600"}`}>▲ BULL (HH+HL)</span>
+              <span className={`text-[7px] px-1.5 py-0.5 rounded ${val === -1 ? "bg-rose-900/40 text-rose-400 font-bold" : "text-slate-600"}`}>▼ BEAR (LH+LL)</span>
+              <span className={`text-[7px] px-1.5 py-0.5 rounded ${val === 0 && ms ? "bg-amber-900/40 text-amber-400 font-bold" : "text-slate-600"}`}>═ SIDE 横盘</span>
+            </div>
+
+            {/* ── Options ── */}
+            <div className="flex gap-3 mt-2 pt-2 border-t border-slate-700/50">
+              {/* Auto-close on SIDEWAYS */}
+              <label
+                className={`flex items-center gap-2 cursor-pointer text-xs px-3 py-1.5 rounded-md transition ${
+                  conditionToggles["mkt_structure"]
+                    ? "bg-amber-900/50 text-amber-300 border border-amber-600/50 shadow-sm shadow-amber-900/30"
+                    : "bg-slate-800/50 text-slate-500 border border-slate-700/30 hover:text-slate-300 hover:border-slate-600/50"
+                }`}
+                title="When ON + SIDEWAYS: auto-close all positions"
+              >
+                <input
+                  type="checkbox"
+                  checked={!!conditionToggles["mkt_structure"]}
+                  onChange={() => setConditionToggles((prev) => ({ ...prev, mkt_structure: !prev.mkt_structure }))}
+                  className="w-3.5 h-3.5 accent-amber-500 rounded"
+                />
+                <span>{conditionToggles["mkt_structure"] ? "⚡ Auto-close SIDEWAYS: ON" : "Auto-close SIDEWAYS"}</span>
+              </label>
+
+              {/* Skip FLAT in backtest */}
+              <label
+                className={`flex items-center gap-2 cursor-pointer text-xs px-3 py-1.5 rounded-md transition ${
+                  skipFlat
+                    ? "bg-cyan-900/50 text-cyan-300 border border-cyan-600/50 shadow-sm shadow-cyan-900/30"
+                    : "bg-slate-800/50 text-slate-500 border border-slate-700/30 hover:text-slate-300 hover:border-slate-600/50"
+                }`}
+                title="Backtest will skip entries during SIDEWAYS/横盘 market — only take BULL or BEAR trades"
+              >
+                <input
+                  type="checkbox"
+                  checked={skipFlat}
+                  onChange={(e) => setSkipFlat(e.target.checked)}
+                  className="w-3.5 h-3.5 accent-cyan-500 rounded"
+                />
+                <span>{skipFlat ? "📊 Skip FLAT in backtest: ON" : "📊 Skip FLAT in backtest"}</span>
+              </label>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ═════════════════════════════════════════════════════ */}
       {/* GLOBAL: Execution Conditions (shared across all tabs)*/}
@@ -2804,7 +2885,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
               <label className="flex items-center gap-1 text-[10px]">
                 <span className="text-rose-400 font-bold">SL</span>
                 <input
-                  type="range" min="0.5" max="6" step="0.5" value={slMult}
+                  type="range" min="0.5" max="6" step="0.1" value={slMult}
                   onChange={(e) => setSlMult(parseFloat(e.target.value))}
                   className="w-14 h-1 accent-rose-500 cursor-pointer"
                 />
@@ -2813,7 +2894,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
               <label className="flex items-center gap-1 text-[10px]">
                 <span className="text-emerald-400 font-bold">TP</span>
                 <input
-                  type="range" min="0.5" max="6" step="0.5" value={tpMult}
+                  type="range" min="0.5" max="6" step="0.1" value={tpMult}
                   onChange={(e) => setTpMult(parseFloat(e.target.value))}
                   className="w-14 h-1 accent-emerald-500 cursor-pointer"
                 />
@@ -2922,11 +3003,6 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
                     <Metric label="OOS Return" value={`${m.oos_return_pct >= 0 ? "+" : ""}${n(m.oos_return_pct).toFixed(2)}%`} cls={m.oos_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"} />
                   </div>
                 </div>
-              )}
-
-              {/* Trade zoom chart — shown when a trade is clicked */}
-              {zoomTrade && btData.candles.length > 0 && (
-                <TradeZoomChart candles={btData.candles} trade={zoomTrade} onClose={() => setZoomTrade(null)} />
               )}
 
               {/* Trade log — grouped by date */}
@@ -3059,6 +3135,11 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       {/* ═════════════════════════════════════════════════════ */}
       {tab === "exam" && (
         <ExamTab trades={btData?.trades ?? []} candles={btData?.candles ?? []} loading={loading} onLoadTrades={runBacktest} onTradeClick={onTradeClick} />
+      )}
+
+      {/* Trade detail dialog — opens when a trade log row is clicked */}
+      {zoomTrade && btData && btData.candles.length > 0 && (
+        <TradeDetailDialog candles={btData.candles} trade={zoomTrade} onClose={() => setZoomTrade(null)} />
       )}
     </div>
   );

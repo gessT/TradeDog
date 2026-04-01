@@ -488,6 +488,8 @@ class ScanSignal(BaseModel):
     ema_slow: float
     volume_ratio: float
     bar_time: str
+    is_fresh: bool = True           # True = signal just appeared this bar
+    bars_since_first: int = 0       # 0 = fresh, 1+ = stale
 
 
 class BacktestCheck(BaseModel):
@@ -696,6 +698,227 @@ async def tiger_account() -> TigerAccountResponse:
         )
 
     return await run_in_threadpool(_run)
+
+
+# ── Trade History: pair filled orders into round-trip trades ─────────
+
+# Contract multipliers for P&L calculation
+_CONTRACT_MULT: dict[str, float] = {
+    "MGC": 10.0,    # 10 troy oz per Micro Gold
+    "MCL": 100.0,   # 100 barrels per Micro Crude
+    "MNQ": 2.0,     # $2 per point Micro Nasdaq
+    "MES": 5.0,     # $5 per point Micro S&P
+    "MYM": 0.5,     # $0.50 per point Micro Dow
+    "M2K": 5.0,     # $5 per point Micro Russell
+    "CL": 1000.0,   # 1000 barrels Crude Oil
+    "GC": 100.0,    # 100 troy oz Gold
+    "NQ": 20.0,     # $20 per point Nasdaq
+    "ES": 50.0,     # $50 per point S&P
+    "NG": 10000.0,  # 10,000 MMBtu Natural Gas
+    "SI": 5000.0,   # 5,000 troy oz Silver
+    "HG": 25000.0,  # 25,000 lbs Copper
+}
+
+
+def _get_multiplier(symbol: str) -> float:
+    """Get contract multiplier from symbol (strip trailing digits)."""
+    import re
+    base = re.sub(r"\d+$", "", symbol)
+    return _CONTRACT_MULT.get(base, 1.0)
+
+
+class TradeRecord(BaseModel):
+    """A round-trip trade: entry → exit with P&L."""
+    symbol: str
+    side: str              # LONG or SHORT (direction of entry)
+    qty: int
+    entry_price: float
+    exit_price: float
+    entry_time: str
+    exit_time: str
+    pnl: float             # dollar P&L
+    pnl_pct: float         # % return on entry notional
+    multiplier: float
+    entry_order_id: str = ""
+    exit_order_id: str = ""
+    status: str = "CLOSED" # CLOSED or OPEN (still holding)
+
+
+class TradeHistoryResponse(BaseModel):
+    trades: list[TradeRecord]
+    summary: dict
+    timestamp: str
+
+
+@router.get("/trade_history")
+async def tiger_trade_history(
+    days: Annotated[int, Query(ge=1, le=90)] = 7,
+) -> TradeHistoryResponse:
+    """Pair filled orders into round-trip trades with P&L."""
+
+    def _run():
+        _, trade_client = _get_tiger_clients()
+
+        _start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        _end = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        raw_filled = trade_client.get_filled_orders(
+            account=TIGER_ACCOUNT, sec_type="FUT",
+            start_date=_start, end_date=_end,
+        )
+        if not raw_filled:
+            return TradeHistoryResponse(
+                trades=[], summary=_empty_summary(),
+                timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+            )
+
+        # Normalize fills
+        fills = []
+        for o in raw_filled:
+            sym = ""
+            if hasattr(o, "contract") and o.contract and hasattr(o.contract, "symbol"):
+                sym = o.contract.symbol or ""
+            action = str(getattr(o, "action", "") or "").upper()
+            qty = int(getattr(o, "filled", 0) or getattr(o, "filled_quantity", 0) or 0)
+            price = float(getattr(o, "avg_fill_price", 0) or 0)
+            oid = str(getattr(o, "order_id", "") or getattr(o, "id", "") or "")
+            raw_time = getattr(o, "trade_time", None) or getattr(o, "order_time", None)
+            tstr = _fmt_tiger_time(raw_time)
+
+            if sym and action in ("BUY", "SELL") and qty > 0 and price > 0:
+                fills.append({
+                    "symbol": sym, "action": action, "qty": qty,
+                    "price": price, "time": tstr, "order_id": oid,
+                    "ts": raw_time if isinstance(raw_time, (int, float)) else 0,
+                })
+
+        # Sort by timestamp
+        fills.sort(key=lambda f: f["ts"])
+
+        # Pair into round-trip trades (FIFO per symbol)
+        from collections import defaultdict
+        open_fills: dict[str, list] = defaultdict(list)
+        trades: list[TradeRecord] = []
+
+        for fill in fills:
+            sym = fill["symbol"]
+            action = fill["action"]
+            remaining = fill["qty"]
+
+            while remaining > 0:
+                stack = open_fills[sym]
+                if stack and stack[0]["action"] != action:
+                    # Opposite side — close the trade
+                    entry_fill = stack[0]
+                    match_qty = min(remaining, entry_fill["qty"])
+
+                    mult = _get_multiplier(sym)
+                    if entry_fill["action"] == "BUY":
+                        # LONG trade: bought then sold
+                        pnl = (fill["price"] - entry_fill["price"]) * match_qty * mult
+                        side = "LONG"
+                    else:
+                        # SHORT trade: sold then bought
+                        pnl = (entry_fill["price"] - fill["price"]) * match_qty * mult
+                        side = "SHORT"
+
+                    entry_notional = entry_fill["price"] * match_qty * mult
+                    pnl_pct = (pnl / entry_notional * 100) if entry_notional else 0
+
+                    trades.append(TradeRecord(
+                        symbol=sym,
+                        side=side,
+                        qty=match_qty,
+                        entry_price=round(entry_fill["price"], 4),
+                        exit_price=round(fill["price"], 4),
+                        entry_time=entry_fill["time"],
+                        exit_time=fill["time"],
+                        pnl=round(pnl, 2),
+                        pnl_pct=round(pnl_pct, 2),
+                        multiplier=mult,
+                        entry_order_id=entry_fill["order_id"],
+                        exit_order_id=fill["order_id"],
+                    ))
+
+                    entry_fill["qty"] -= match_qty
+                    remaining -= match_qty
+                    if entry_fill["qty"] <= 0:
+                        stack.pop(0)
+                else:
+                    # Same side or no open — add to stack
+                    open_fills[sym].append({**fill, "qty": remaining})
+                    remaining = 0
+
+        # Add open (unpaired) positions as OPEN trades
+        for sym, stack in open_fills.items():
+            for f in stack:
+                if f["qty"] > 0:
+                    mult = _get_multiplier(sym)
+                    side = "LONG" if f["action"] == "BUY" else "SHORT"
+                    trades.append(TradeRecord(
+                        symbol=sym,
+                        side=side,
+                        qty=f["qty"],
+                        entry_price=round(f["price"], 4),
+                        exit_price=0,
+                        entry_time=f["time"],
+                        exit_time="",
+                        pnl=0,
+                        pnl_pct=0,
+                        multiplier=mult,
+                        entry_order_id=f["order_id"],
+                        exit_order_id="",
+                        status="OPEN",
+                    ))
+
+        # Sort: OPEN first, then CLOSED newest first
+        trades.sort(key=lambda t: (
+            0 if t.status == "OPEN" else 1,
+            t.exit_time or t.entry_time,
+        ), reverse=True)
+        # Re-sort: OPEN on top, then by time desc
+        open_trades = [t for t in trades if t.status == "OPEN"]
+        closed_trades = [t for t in trades if t.status == "CLOSED"]
+        closed_trades.sort(key=lambda t: t.exit_time, reverse=True)
+        trades = open_trades + closed_trades
+
+        # Summary (only count closed trades)
+        closed = [t for t in trades if t.status == "CLOSED"]
+        total_pnl = sum(t.pnl for t in closed)
+        wins = [t for t in closed if t.pnl > 0]
+        losses = [t for t in closed if t.pnl <= 0]
+        win_rate = len(wins) / len(closed) * 100 if closed else 0
+        gross_win = sum(t.pnl for t in wins)
+        gross_loss = abs(sum(t.pnl for t in losses))
+        pf = gross_win / gross_loss if gross_loss > 0 else float("inf") if gross_win > 0 else 0
+
+        summary = {
+            "total_trades": len(closed),
+            "open_trades": len(open_trades),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round(win_rate, 1),
+            "total_pnl": round(total_pnl, 2),
+            "avg_pnl": round(total_pnl / len(closed), 2) if closed else 0,
+            "profit_factor": round(pf, 2) if pf != float("inf") else 999.99,
+            "best_trade": round(max((t.pnl for t in trades), default=0), 2),
+            "worst_trade": round(min((t.pnl for t in trades), default=0), 2),
+        }
+
+        return TradeHistoryResponse(
+            trades=trades, summary=summary,
+            timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        )
+
+    return await run_in_threadpool(_run)
+
+
+def _empty_summary() -> dict:
+    return {
+        "total_trades": 0, "wins": 0, "losses": 0, "win_rate": 0,
+        "total_pnl": 0, "avg_pnl": 0, "profit_factor": 0,
+        "best_trade": 0, "worst_trade": 0,
+    }
 
 
 def _order_to_item(o) -> TigerOrderItem:
@@ -1258,6 +1481,7 @@ class MGC5MinTrade(BaseModel):
     signal_type: str = ""
     direction: str = "CALL"  # "CALL" or "PUT"
     mae: float = 0.0  # Max Adverse Excursion (worst unrealized loss)
+    mkt_structure: int = 0  # 1=BULL, -1=BEAR, 0=SIDEWAYS
 
 
 class MGC5MinMetrics(BaseModel):
@@ -1304,6 +1528,7 @@ async def mgc_backtest_5min(
     date_from: Annotated[Optional[str], Query()] = None,
     date_to: Annotated[Optional[str], Query()] = None,
     disabled_conditions: Annotated[Optional[str], Query()] = None,
+    skip_flat: Annotated[bool, Query()] = False,
 ) -> MGC5MinBacktestResponse:
     """Run 5-minute strategy backtest with out-of-sample validation.
 
@@ -1337,7 +1562,7 @@ async def mgc_backtest_5min(
         # ── Run full 60d simulation for consistent results ──────
         custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
         bt = Backtester5Min(capital=capital)
-        result = bt.run(df, params=custom_params, oos_split=oos_split, disabled_conditions=_disabled or None)
+        result = bt.run(df, params=custom_params, oos_split=oos_split, disabled_conditions=_disabled or None, skip_flat=skip_flat)
 
         # ── Determine display window ────────────────────────────
         display_start: str | None = None
@@ -1433,6 +1658,7 @@ async def mgc_backtest_5min(
                 signal_type=t.signal_type,
                 direction=t.direction,
                 mae=round(t.mae, 2),
+                mkt_structure=getattr(t, "mkt_structure", 0),
             )
             for t in filtered_trades
         ]
@@ -1481,6 +1707,8 @@ class Scan5MinSignal(BaseModel):
     supertrend_dir: int
     volume_ratio: float
     bar_time: str
+    is_fresh: bool = True
+    bars_since_first: int = 0
 
 
 class Scan5MinConditions(BaseModel):
@@ -1500,6 +1728,7 @@ class Scan5MinConditions(BaseModel):
     htf_15m_supertrend: bool = False
     htf_1h_trend: bool = False
     htf_1h_supertrend: bool = False
+    mkt_structure: int = 0  # 1=BULL(HH+HL), -1=BEAR(LH+LL), 0=SIDEWAYS
 
 
 class Scan5MinResponse(BaseModel):
@@ -1581,6 +1810,8 @@ async def mgc_scan_5min(
                 rsi=r.rsi, atr=r.atr, ema_fast=r.ema_fast, ema_slow=r.ema_slow,
                 macd_hist=r.macd_hist, supertrend_dir=r.supertrend_dir,
                 volume_ratio=r.volume_ratio, bar_time=r.bar_time,
+                is_fresh=getattr(r, 'is_fresh', True),
+                bars_since_first=getattr(r, 'bars_since_first', 0),
             )
 
         sig = _to_sig(result)
@@ -1596,6 +1827,7 @@ async def mgc_scan_5min(
             atr_range=c.atr_range, session_ok=c.session_ok, adx_ok=c.adx_ok,
             htf_15m_trend=c.htf_15m_trend, htf_15m_supertrend=c.htf_15m_supertrend,
             htf_1h_trend=c.htf_1h_trend, htf_1h_supertrend=c.htf_1h_supertrend,
+            mkt_structure=c.mkt_structure,
         )
         return (result.found, sig, all_sigs, candles_out, cond_model,
                 mtf_result.bias, mtf_result.conditions_met, mtf_result.conditions_total)
@@ -1692,6 +1924,8 @@ async def mgc_scan_5min_live(
                 rsi=r.rsi, atr=r.atr, ema_fast=r.ema_fast, ema_slow=r.ema_slow,
                 macd_hist=r.macd_hist, supertrend_dir=r.supertrend_dir,
                 volume_ratio=r.volume_ratio, bar_time=r.bar_time,
+                is_fresh=getattr(r, 'is_fresh', True),
+                bars_since_first=getattr(r, 'bars_since_first', 0),
             )
 
         sig = _to_sig(result)
@@ -1720,6 +1954,7 @@ async def mgc_scan_5min_live(
             atr_range=c.atr_range, session_ok=c.session_ok, adx_ok=c.adx_ok,
             htf_15m_trend=c.htf_15m_trend, htf_15m_supertrend=c.htf_15m_supertrend,
             htf_1h_trend=c.htf_1h_trend, htf_1h_supertrend=c.htf_1h_supertrend,
+            mkt_structure=c.mkt_structure,
         )
         return (result.found, sig, all_sigs, candles_out, cond_model,
                 mtf_result.bias, mtf_result.conditions_met, mtf_result.conditions_total)
@@ -2002,6 +2237,7 @@ async def mgc_trade_log_5min(
                 reason=t.reason,
                 signal_type=t.signal_type,
                 mae=round(t.mae, 2),
+                mkt_structure=getattr(t, "mkt_structure", 0),
             )
             for t in recent
         ]
@@ -2619,4 +2855,57 @@ async def mgc_optimize_v2(
         return await run_in_threadpool(_run)
     except Exception as exc:
         logger.exception("V2 optimize failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Market Structure — fast, cached endpoint
+# ═══════════════════════════════════════════════════════════════════════
+import time as _time
+
+_structure_cache: dict[str, dict] = {}   # symbol -> {value, ts}
+_STRUCTURE_TTL = 60  # seconds — cache for 1 min (re-compute on next 5m candle)
+
+
+@router.get("/market_structure")
+async def get_market_structure(
+    symbol: Annotated[str, Query()] = "MGC",
+):
+    """Fast market structure endpoint — returns BULL(1)/BEAR(-1)/SIDEWAYS(0).
+    Cached for 60s to avoid recomputing on every poll."""
+
+    now = _time.time()
+    cached = _structure_cache.get(symbol)
+    if cached and (now - cached["ts"]) < _STRUCTURE_TTL:
+        return cached["data"]
+
+    def _compute():
+        from mgc_trading.indicators_5min import market_structure
+
+        commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": "MGC=F"})
+        yf_symbol = commodity["yf"]
+
+        df = load_yfinance(symbol=yf_symbol, interval="5m", period="5d")
+        if df is None or df.empty:
+            return {"symbol": symbol, "structure": 0, "label": "NO DATA", "cached": False}
+
+        ms = market_structure(df["high"], df["low"], df["close"], lookback=100)
+        val = int(ms.iloc[-1]) if len(ms) > 0 else 0
+        label = {1: "BULL", -1: "BEAR", 0: "SIDEWAYS"}.get(val, "SIDEWAYS")
+
+        return {
+            "symbol": symbol,
+            "structure": val,
+            "label": label,
+            "bars": len(df),
+            "last_price": round(float(df["close"].iloc[-1]), 4),
+            "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
+        }
+
+    try:
+        data = await run_in_threadpool(_compute)
+        _structure_cache[symbol] = {"data": data, "ts": now}
+        return data
+    except Exception as exc:
+        logger.exception("Market structure failed")
         raise HTTPException(status_code=500, detail=str(exc))

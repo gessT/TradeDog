@@ -1417,3 +1417,293 @@ def remove_starred(symbol: str = Query(min_length=1), db: Session = Depends(get_
     db.delete(row)
     db.commit()
     return {"ok": True}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# US Stock Quotes (for USStockCards)
+# ═══════════════════════════════════════════════════════════════════════
+
+_US_STOCKS = [
+    {"symbol": "AAPL", "name": "Apple"},
+    {"symbol": "MSFT", "name": "Microsoft"},
+    {"symbol": "NVDA", "name": "Nvidia"},
+    {"symbol": "GOOGL", "name": "Alphabet"},
+    {"symbol": "AMZN", "name": "Amazon"},
+    {"symbol": "META", "name": "Meta"},
+    {"symbol": "TSLA", "name": "Tesla"},
+    {"symbol": "AMD", "name": "AMD"},
+    {"symbol": "NFLX", "name": "Netflix"},
+    {"symbol": "PLTR", "name": "Palantir"},
+]
+
+
+@router.get("/us-quotes")
+async def us_stock_quotes():
+    """Fetch latest quotes for popular US stocks via yfinance."""
+
+    def _run():
+        quotes = []
+        tickers = yf.Tickers(" ".join([s["symbol"] for s in _US_STOCKS]))
+        for meta in _US_STOCKS:
+            sym = meta["symbol"]
+            try:
+                info = tickers.tickers[sym].fast_info
+                price = float(info.last_price or 0)
+                prev = float(info.previous_close or 0)
+                change = price - prev
+                change_pct = (change / prev * 100) if prev else 0.0
+                quotes.append({
+                    "symbol": sym,
+                    "name": meta["name"],
+                    "price": round(price, 2),
+                    "prev_close": round(prev, 2),
+                    "change": round(change, 2),
+                    "change_pct": round(change_pct, 2),
+                })
+            except Exception:
+                quotes.append({
+                    "symbol": sym, "name": meta["name"],
+                    "price": 0, "prev_close": 0, "change": 0, "change_pct": 0,
+                })
+        return quotes
+
+    quotes = await run_in_threadpool(_run)
+    return {"quotes": quotes, "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S")}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# US Stock 1-Hour Strategy Backtest
+# ═══════════════════════════════════════════════════════════════════════
+
+import math as _math
+from typing import Optional as _Opt, Annotated as _Ann
+
+
+def _isnan(v) -> bool:
+    try:
+        return _math.isnan(float(v))
+    except (TypeError, ValueError):
+        return True
+
+
+class US1HCandle(BaseModel):
+    time: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    ema_fast: _Opt[float] = None
+    ema_slow: _Opt[float] = None
+    rsi: _Opt[float] = None
+    macd_hist: _Opt[float] = None
+    st_dir: _Opt[int] = None
+    signal: int = 0
+
+
+class US1HTrade(BaseModel):
+    entry_time: str
+    exit_time: str
+    entry_price: float
+    exit_price: float
+    qty: int
+    pnl: float
+    pnl_pct: float
+    reason: str
+    signal_type: str = ""
+    direction: str = "CALL"
+    mae: float = 0.0
+    mkt_structure: int = 0
+
+
+class US1HMetrics(BaseModel):
+    initial_capital: float
+    final_equity: float
+    total_return_pct: float
+    max_drawdown_pct: float
+    sharpe_ratio: float
+    total_trades: int
+    winners: int
+    losers: int
+    win_rate: float
+    avg_win: float
+    avg_loss: float
+    profit_factor: float
+    risk_reward_ratio: float
+    oos_win_rate: float = 0.0
+    oos_total_trades: int = 0
+    oos_return_pct: float = 0.0
+
+
+class US1HBacktestResponse(BaseModel):
+    symbol: str
+    interval: str
+    period: str
+    candles: list[US1HCandle]
+    trades: list[US1HTrade]
+    equity_curve: list[float]
+    metrics: US1HMetrics
+    daily_pnl: list[dict] = []
+    params: dict
+    timestamp: str
+
+
+@router.get("/backtest_1h")
+async def us_stock_backtest_1h(
+    symbol: _Ann[str, Query()] = "AAPL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 25000.0,
+    oos_split: _Ann[float, Query(ge=0, le=0.5)] = 0.3,
+    atr_sl_mult: _Ann[float, Query(ge=0.5, le=10.0)] = 3.0,
+    atr_tp_mult: _Ann[float, Query(ge=0.5, le=10.0)] = 2.5,
+    date_from: _Ann[_Opt[str], Query()] = None,
+    date_to: _Ann[_Opt[str], Query()] = None,
+    disabled_conditions: _Ann[_Opt[str], Query()] = None,
+    skip_flat: _Ann[bool, Query()] = False,
+) -> US1HBacktestResponse:
+    """Run 1-hour strategy backtest on a US stock."""
+
+    _disabled: set[str] = set()
+    if disabled_conditions:
+        _valid = {"ema_trend", "ema_slope", "pullback", "breakout", "supertrend",
+                  "macd_momentum", "rsi_momentum", "volume_spike", "atr_range", "session_ok", "adx_ok"}
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
+
+    def _run():
+        from mgc_trading.data_loader import load_yfinance
+        from us_stock.backtest_1h import Backtester1H
+        from us_stock.strategy_1h import USStrategy1H, DEFAULT_1H_PARAMS
+
+        # yfinance: 1h data max 730d
+        effective_period = period
+        _period_days_map = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
+        if period not in _period_days_map and period != "max":
+            effective_period = "2y"
+
+        df = load_yfinance(symbol=symbol, interval="1h", period=effective_period)
+        if df.empty or len(df) < 20:
+            raise ValueError(f"Not enough 1h data for {symbol}.")
+
+        if date_to:
+            trade_end = pd.Timestamp(date_to, tz=df.index.tz) + pd.Timedelta(days=1)
+            df = df[df.index < trade_end]
+
+        custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
+        bt = Backtester1H(capital=capital)
+        result = bt.run(df, params=custom_params, oos_split=oos_split,
+                        disabled_conditions=_disabled or None, skip_flat=skip_flat)
+
+        # Display window
+        display_start: str | None = None
+        if date_from:
+            display_start = date_from
+        elif period not in ("2y", "max"):
+            _days = _period_days_map.get(period, 730)
+            if _days < 730:
+                cutoff = df.index[-1] - pd.Timedelta(days=_days)
+                display_start = cutoff.strftime("%Y-%m-%d")
+
+        filtered_trades = result.trades
+        if display_start:
+            filtered_trades = [t for t in result.trades if str(t.exit_time)[:10] >= display_start]
+
+        filtered_daily = result.daily_pnl
+        if display_start:
+            filtered_daily = [d for d in result.daily_pnl if d["date"] >= display_start]
+
+        # Recompute display-window metrics
+        display_wins = [t for t in filtered_trades if t.pnl > 0]
+        display_losses = [t for t in filtered_trades if t.pnl <= 0]
+        n_trades = len(filtered_trades)
+        display_total_pnl = sum(t.pnl for t in filtered_trades)
+
+        metrics = US1HMetrics(
+            initial_capital=result.initial_capital,
+            final_equity=round(result.initial_capital + display_total_pnl, 2),
+            total_return_pct=round(display_total_pnl / result.initial_capital * 100, 2) if result.initial_capital else 0,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            total_trades=n_trades,
+            winners=len(display_wins),
+            losers=len(display_losses),
+            win_rate=round(len(display_wins) / n_trades * 100, 1) if n_trades else 0,
+            avg_win=round(sum(t.pnl for t in display_wins) / len(display_wins), 2) if display_wins else 0,
+            avg_loss=round(sum(t.pnl for t in display_losses) / len(display_losses), 2) if display_losses else 0,
+            profit_factor=round(
+                abs(sum(t.pnl for t in display_wins) / sum(t.pnl for t in display_losses)), 2
+            ) if display_losses and sum(t.pnl for t in display_losses) != 0 else 999.0,
+            risk_reward_ratio=result.risk_reward_ratio,
+            oos_win_rate=result.oos_win_rate,
+            oos_total_trades=result.oos_total_trades,
+            oos_return_pct=result.oos_return_pct,
+        )
+
+        # Build candles
+        strategy = USStrategy1H({**DEFAULT_1H_PARAMS, **custom_params})
+        df_ind = strategy.compute_indicators(
+            df[["open", "high", "low", "close", "volume"]].copy()
+        )
+        signals = strategy.generate_signals(df_ind)
+        if display_start:
+            ts = pd.Timestamp(display_start, tz=df_ind.index.tz)
+            df_ind = df_ind[df_ind.index >= ts]
+            signals = signals[df_ind.index]
+        df_ind["signal"] = signals
+
+        candles = []
+        for ts_val, row in df_ind.iterrows():
+            candles.append(US1HCandle(
+                time=ts_val.isoformat(),
+                open=round(float(row["open"]), 2),
+                high=round(float(row["high"]), 2),
+                low=round(float(row["low"]), 2),
+                close=round(float(row["close"]), 2),
+                volume=float(row.get("volume", 0)),
+                ema_fast=round(float(row["ema_fast"]), 2) if not _isnan(row.get("ema_fast")) else None,
+                ema_slow=round(float(row["ema_slow"]), 2) if not _isnan(row.get("ema_slow")) else None,
+                rsi=round(float(row["rsi"]), 1) if not _isnan(row.get("rsi")) else None,
+                macd_hist=round(float(row["macd_hist"]), 4) if not _isnan(row.get("macd_hist")) else None,
+                st_dir=int(row["st_dir"]) if not _isnan(row.get("st_dir")) else None,
+                signal=int(row.get("signal", 0)),
+            ))
+
+        trades = [
+            US1HTrade(
+                entry_time=t.entry_time.isoformat() if hasattr(t.entry_time, 'isoformat') else str(t.entry_time),
+                exit_time=t.exit_time.isoformat() if hasattr(t.exit_time, 'isoformat') else str(t.exit_time),
+                entry_price=round(t.entry_price, 2),
+                exit_price=round(t.exit_price, 2),
+                qty=t.qty,
+                pnl=round(t.pnl, 2),
+                pnl_pct=round(t.pnl_pct, 2),
+                reason=t.reason,
+                signal_type=t.signal_type,
+                direction=t.direction,
+                mae=round(t.mae, 2),
+                mkt_structure=getattr(t, "mkt_structure", 0),
+            )
+            for t in filtered_trades
+        ]
+
+        return candles, trades, result.equity_curve, metrics, result.params, filtered_daily
+
+    try:
+        candles, trades, eq_curve, metrics, params, daily_pnl = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("1h backtest failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return US1HBacktestResponse(
+        symbol=symbol,
+        interval="1h",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        daily_pnl=daily_pnl,
+        params=params,
+        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+    )

@@ -1,9 +1,10 @@
 """
-5-Minute Backtester — Dedicated bar-by-bar simulation for 5min strategy
-========================================================================
-• Uses MGCStrategy5Min for signal generation
-• Out-of-sample split (70/30) to detect overfitting
-• Same bar-by-bar engine as main Backtester with 5min defaults
+1-Hour Backtester — Bar-by-bar simulation for US stock 1h strategy
+===================================================================
+Same engine as Backtester5Min but:
+  • P&L uses SHARE_SIZE (1) instead of CONTRACT_SIZE (10)
+  • No EOD forced close (1h bars span days naturally)
+  • Sharpe annualised for 1h bars (6.5 bars/day × 252 days)
 """
 from __future__ import annotations
 
@@ -14,18 +15,18 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from .config import CONTRACT_SIZE, INITIAL_CAPITAL, RISK_PER_TRADE
-from .strategy_5min import MGCStrategy5Min, DEFAULT_5MIN_PARAMS
+from .config import SHARE_SIZE, INITIAL_CAPITAL, RISK_PER_TRADE
+from .strategy_1h import USStrategy1H, DEFAULT_1H_PARAMS
 
 logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Data classes (same shape as main backtest for API compatibility)
+# Data classes
 # ═══════════════════════════════════════════════════════════════════════
 
 @dataclass
-class Trade5Min:
+class Trade1H:
     entry_time: object
     exit_time: object
     entry_price: float
@@ -33,16 +34,16 @@ class Trade5Min:
     qty: int
     pnl: float
     pnl_pct: float
-    reason: str  # "TP", "SL", "TRAILING", "EOD"
-    signal_type: str = ""  # "PULLBACK" / "BREAKOUT"
-    direction: str = "CALL"  # "CALL" (long) / "PUT" (short)
-    mae: float = 0.0  # Max Adverse Excursion (worst unrealized loss in $)
-    mkt_structure: int = 0  # Market structure at entry: 1=BULL, -1=BEAR, 0=SIDEWAYS
+    reason: str
+    signal_type: str = ""
+    direction: str = "CALL"
+    mae: float = 0.0
+    mkt_structure: int = 0
 
 
 @dataclass
-class BacktestResult5Min:
-    trades: list[Trade5Min] = field(default_factory=list)
+class BacktestResult1H:
+    trades: list[Trade1H] = field(default_factory=list)
     equity_curve: list[float] = field(default_factory=list)
     initial_capital: float = 0.0
     final_equity: float = 0.0
@@ -58,24 +59,21 @@ class BacktestResult5Min:
     max_drawdown_pct: float = 0.0
     sharpe_ratio: float = 0.0
     params: dict = field(default_factory=dict)
-    # Out-of-sample metrics
     oos_win_rate: float = 0.0
     oos_total_trades: int = 0
     oos_return_pct: float = 0.0
-    # Daily P&L breakdown
     daily_pnl: list[dict] = field(default_factory=list)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Backtester5Min
+# Backtester1H
 # ═══════════════════════════════════════════════════════════════════════
 
-class Backtester5Min:
-    """5-minute bar-by-bar backtest engine with out-of-sample support."""
+class Backtester1H:
+    """1-hour bar-by-bar backtest engine."""
 
-    # Risk management defaults (tighter for 5min)
     MAX_CONSEC_LOSSES = 4
-    MAX_DAILY_TRADES = 15
+    MAX_DAILY_TRADES = 10
 
     def __init__(
         self,
@@ -92,32 +90,21 @@ class Backtester5Min:
         oos_split: float = 0.0,
         disabled_conditions: set[str] | None = None,
         skip_flat: bool = False,
-    ) -> BacktestResult5Min:
-        """Execute 5min backtest.
+    ) -> BacktestResult1H:
+        full_params = {**DEFAULT_1H_PARAMS, **(params or {})}
+        strategy = USStrategy1H(full_params)
 
-        Indicators are computed on the full *df* so they are properly warmed
-        up regardless of which date range the caller later displays.
-        If *oos_split* > 0 (e.g. 0.3), split data 70/30 and report
-        out-of-sample metrics separately.
-        *disabled_conditions*: condition keys to skip (treat as always True).
-        """
-        full_params = {**DEFAULT_5MIN_PARAMS, **(params or {})}
-        strategy = MGCStrategy5Min(full_params)
-
-        # Compute indicators on full dataset (including warmup bars)
         df_ind = strategy.compute_indicators(
             df[["open", "high", "low", "close", "volume"]].copy()
         )
         signals = strategy.generate_signals(df_ind, disabled=disabled_conditions)
 
-        # In-sample run (full data or first portion)
         if oos_split > 0:
             split_idx = int(len(df_ind) * (1 - oos_split))
             is_trades, is_curve, is_equity = self._simulate(
                 df_ind.iloc[:split_idx], signals.iloc[:split_idx], full_params,
                 skip_flat=skip_flat,
             )
-            # Out-of-sample run — chain from IS ending equity
             saved_capital = self.initial_capital
             self.initial_capital = is_equity
             oos_trades, oos_curve, oos_equity = self._simulate(
@@ -125,17 +112,17 @@ class Backtester5Min:
                 skip_flat=skip_flat,
             )
             self.initial_capital = saved_capital
-            # Merge curves
             all_trades = is_trades + oos_trades
             all_curve = is_curve + oos_curve
         else:
-            all_trades, all_curve, _ = self._simulate(df_ind, signals, full_params, skip_flat=skip_flat)
+            all_trades, all_curve, _ = self._simulate(
+                df_ind, signals, full_params, skip_flat=skip_flat
+            )
             is_trades = all_trades
             oos_trades = []
 
         result = self._compute_metrics(all_trades, all_curve, self.initial_capital, full_params)
 
-        # OOS metrics
         if oos_trades:
             oos_wins = [t for t in oos_trades if t.pnl > 0]
             result.oos_total_trades = len(oos_trades)
@@ -151,16 +138,15 @@ class Backtester5Min:
         signals: pd.Series,
         params: dict,
         skip_flat: bool = False,
-    ) -> tuple[list[Trade5Min], list[float], float]:
-        """Bar-by-bar simulation loop. Supports CALL (+1) and PUT (-1) signals."""
+    ) -> tuple[list[Trade1H], list[float], float]:
         equity = self.initial_capital
         position: dict | None = None
-        trades: list[Trade5Min] = []
+        trades: list[Trade1H] = []
         equity_curve: list[float] = []
         consec_losses = 0
         daily_counts: dict[str, int] = {}
-        extreme_since_entry = 0.0  # highest for CALL, lowest for PUT
-        worst_unrealized = 0.0  # worst unrealized P&L (most negative) during trade
+        extreme_since_entry = 0.0
+        worst_unrealized = 0.0
         prev_bar_date = ""
 
         for i in range(1, len(df)):
@@ -168,59 +154,27 @@ class Backtester5Min:
             prev = df.iloc[i - 1]
             bar_date = str(bar.name.date()) if hasattr(bar.name, "date") else str(bar.name)[:10]
 
-            # ── 0. Day change → reset daily state ───────────────────
             if bar_date != prev_bar_date:
                 prev_bar_date = bar_date
                 consec_losses = 0
                 daily_counts[bar_date] = daily_counts.get(bar_date, 0)
 
-            # ── 0b. EOD close: force-close position when day changes ─
-            if position is not None:
-                prev_date = str(prev.name.date()) if hasattr(prev.name, "date") else str(prev.name)[:10]
-                if bar_date != prev_date:
-                    # Close at previous bar's close (end of that day)
-                    d = position["direction"]
-                    exit_price = float(prev["close"])
-                    pnl = d * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
-                    pnl_pct = pnl / (self.initial_capital or 1) * 100
-                    equity += pnl
-                    trades.append(Trade5Min(
-                        entry_time=position["entry_time"],
-                        exit_time=prev.name,
-                        entry_price=position["entry_price"],
-                        exit_price=round(exit_price, 2),
-                        qty=position["qty"],
-                        pnl=round(pnl, 2),
-                        pnl_pct=round(pnl_pct, 2),
-                        reason="EOD",
-                        signal_type=position.get("signal_type", ""),
-                        direction="CALL" if d == 1 else "PUT",
-                        mae=round(worst_unrealized, 2),
-                        mkt_structure=position.get("mkt_structure", 0),
-                    ))
-                    consec_losses = consec_losses + 1 if pnl < 0 else 0
-                    position = None
-                    worst_unrealized = 0.0
-                    # Reset daily counters for new day
-                    daily_counts[bar_date] = 0
-
             # ── 1. If in position → check exits ────────────────────
             if position is not None:
                 sl = position["sl"]
                 tp = position["tp"]
-                direction = position["direction"]  # 1 = CALL, -1 = PUT
+                direction = position["direction"]
 
-                # Track worst unrealized loss (MAE)
+                # MAE
                 if direction == 1:
-                    adverse = (float(bar["low"]) - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                    adverse = (float(bar["low"]) - position["entry_price"]) * position["qty"] * SHARE_SIZE
                 else:
-                    adverse = (position["entry_price"] - float(bar["high"])) * position["qty"] * CONTRACT_SIZE
+                    adverse = (position["entry_price"] - float(bar["high"])) * position["qty"] * SHARE_SIZE
                 if adverse < worst_unrealized:
                     worst_unrealized = adverse
 
                 if direction == 1:
-                    # ── CALL exit logic (long) ──
-                    # Breakeven stop
+                    # Breakeven
                     if params.get("use_breakeven") and not position.get("be_triggered"):
                         be_thresh = position["entry_price"] + params.get("be_atr_mult", 1.0) * position["entry_atr"]
                         if bar["high"] >= be_thresh:
@@ -229,7 +183,7 @@ class Backtester5Min:
                             if new_sl > sl:
                                 sl = new_sl
                                 position["sl"] = sl
-                    # Trailing stop
+                    # Trailing
                     if params.get("use_trailing") and bar["high"] > extreme_since_entry:
                         extreme_since_entry = bar["high"]
                         new_sl = extreme_since_entry - params["trailing_atr_mult"] * prev["atr"]
@@ -240,8 +194,6 @@ class Backtester5Min:
                     hit_sl = bar["low"] <= sl
                     hit_tp = bar["high"] >= tp
                 else:
-                    # ── PUT exit logic (short) ──
-                    # Breakeven stop (inverted)
                     if params.get("use_breakeven") and not position.get("be_triggered"):
                         be_thresh = position["entry_price"] - params.get("be_atr_mult", 1.0) * position["entry_atr"]
                         if bar["low"] <= be_thresh:
@@ -250,7 +202,6 @@ class Backtester5Min:
                             if new_sl < sl:
                                 sl = new_sl
                                 position["sl"] = sl
-                    # Trailing stop (inverted)
                     if params.get("use_trailing") and bar["low"] < extreme_since_entry:
                         extreme_since_entry = bar["low"]
                         new_sl = extreme_since_entry + params["trailing_atr_mult"] * prev["atr"]
@@ -263,7 +214,7 @@ class Backtester5Min:
 
                 if hit_sl:
                     exit_price = sl
-                    pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                    pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * SHARE_SIZE
                     pnl_pct = pnl / (self.initial_capital or 1) * 100
                     equity += pnl
                     reason = "SL"
@@ -273,7 +224,7 @@ class Backtester5Min:
                             reason = "BE"
                     elif params.get("use_trailing") and sl != position["orig_sl"]:
                         reason = "TRAILING"
-                    trades.append(Trade5Min(
+                    trades.append(Trade1H(
                         entry_time=position["entry_time"],
                         exit_time=bar.name,
                         entry_price=position["entry_price"],
@@ -293,10 +244,10 @@ class Backtester5Min:
 
                 elif hit_tp:
                     exit_price = tp
-                    pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                    pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * SHARE_SIZE
                     pnl_pct = pnl / (self.initial_capital or 1) * 100
                     equity += pnl
-                    trades.append(Trade5Min(
+                    trades.append(Trade1H(
                         entry_time=position["entry_time"],
                         exit_time=bar.name,
                         entry_price=position["entry_price"],
@@ -330,7 +281,7 @@ class Backtester5Min:
                     equity_curve.append(equity)
                     continue
 
-                direction = int(sig_val)  # +1 = CALL, -1 = PUT
+                direction = int(sig_val)
                 if direction == 1:
                     sl_price = entry_price - params["atr_sl_mult"] * atr_val
                     tp_price = entry_price + params["atr_tp_mult"] * atr_val
@@ -338,25 +289,23 @@ class Backtester5Min:
                     sl_price = entry_price + params["atr_sl_mult"] * atr_val
                     tp_price = entry_price - params["atr_tp_mult"] * atr_val
 
-                risk_per_contract = abs(entry_price - sl_price) * CONTRACT_SIZE
-                if risk_per_contract <= 0:
+                risk_per_share = abs(entry_price - sl_price) * SHARE_SIZE
+                if risk_per_share <= 0:
                     equity_curve.append(equity)
                     continue
 
+                # Position sizing: risk amount / risk per share
                 risk_amount = equity * self.risk_per_trade
-                qty = 1  # fixed 1 contract per trade
+                qty = max(1, int(risk_amount / risk_per_share))
 
-                # Determine signal type
                 sig_type = "PULLBACK"
                 if direction == 1 and int(prev.get("breakout", 0)) == 1:
                     sig_type = "BREAKOUT"
                 elif direction == -1 and int(prev.get("breakout_low", 0)) == 1:
                     sig_type = "BREAKOUT"
 
-                # Capture market structure at entry bar
                 _mkt_s = int(prev.get("mkt_structure", 0)) if "mkt_structure" in prev.index else 0
 
-                # Skip FLAT/SIDEWAYS entries when skip_flat is enabled
                 if skip_flat and _mkt_s == 0:
                     equity_curve.append(equity)
                     continue
@@ -381,19 +330,19 @@ class Backtester5Min:
             # ── 3. Record equity ───────────────────────────────────
             if position is not None:
                 d = position["direction"]
-                unrealized = d * (float(bar["close"]) - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                unrealized = d * (float(bar["close"]) - position["entry_price"]) * position["qty"] * SHARE_SIZE
                 equity_curve.append(equity + unrealized)
             else:
                 equity_curve.append(equity)
 
-        # Close remaining position at last close
+        # Close remaining position at last bar
         if position is not None:
             last = df.iloc[-1]
             d = position["direction"]
-            pnl = d * (float(last["close"]) - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+            pnl = d * (float(last["close"]) - position["entry_price"]) * position["qty"] * SHARE_SIZE
             pnl_pct = pnl / (self.initial_capital or 1) * 100
             equity += pnl
-            trades.append(Trade5Min(
+            trades.append(Trade1H(
                 entry_time=position["entry_time"],
                 exit_time=last.name,
                 entry_price=position["entry_price"],
@@ -412,12 +361,12 @@ class Backtester5Min:
 
     @staticmethod
     def _compute_metrics(
-        trades: list[Trade5Min],
+        trades: list[Trade1H],
         equity_curve: list[float],
         initial_capital: float,
         params: dict,
-    ) -> BacktestResult5Min:
-        result = BacktestResult5Min(
+    ) -> BacktestResult1H:
+        result = BacktestResult1H(
             trades=trades,
             equity_curve=equity_curve,
             initial_capital=initial_capital,
@@ -459,16 +408,16 @@ class Backtester5Min:
                     max_dd = dd
             result.max_drawdown_pct = round(max_dd * 100, 2)
 
-        # Sharpe ratio (annualised for 5min bars: 78 bars/day × 252 days)
+        # Sharpe ratio — 1h bars: ~6.5 bars/day × 252 days
         if len(equity_curve) > 1:
             returns = np.diff(equity_curve) / np.maximum(equity_curve[:-1], 1e-10)
             if returns.std() > 0:
-                bars_per_year = 252 * 78  # 5min: 78 bars/day
+                bars_per_year = 252 * 7  # ~7 hourly bars per US trading day
                 result.sharpe_ratio = round(
                     float(returns.mean() / returns.std() * math.sqrt(bars_per_year)), 2
                 )
 
-        # Daily P&L breakdown — group trades by exit date
+        # Daily P&L breakdown
         day_map: dict[str, dict] = {}
         for t in trades:
             day = str(t.exit_time)[:10]
