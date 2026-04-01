@@ -16,11 +16,14 @@ import {
   optimize5MinConditions,
   scan5Min,
   execute5Min,
+  getMgcPosition,
   load5MinConditionToggles,
   save5MinConditionToggles,
   save5MinConditionPreset,
   load5MinConditionPresets,
   delete5MinConditionPreset,
+  getAutoTradeSettings,
+  saveAutoTradeSettings,
   type ConditionPreset,
   type ConditionOptimizationResult,
   type MGC5MinBacktestResponse,
@@ -204,6 +207,8 @@ function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrad
       const day = t.exit_time.slice(0, 10);
       (map[day] ??= []).push(t);
     }
+    // Reverse trades within each day so latest order is on top
+    for (const arr of Object.values(map)) arr.reverse();
     return Object.entries(map).sort((a, b) => b[0].localeCompare(a[0]));
   })();
 
@@ -303,15 +308,15 @@ const DEFAULT_CONDITION_TOGGLES: Record<string, boolean> = Object.fromEntries(
   CONDITION_DEFS.map((d) => [d.key, d.group === "5m"])
 );
 
-/** Compute next 5-minute candle close time. Returns ms epoch. */
-function nextCandleClose5m(): number {
+/** Compute next candle close time for a given interval (minutes). Returns ms epoch. */
+function nextCandleClose(intervalMin: number = 5): number {
   const now = new Date();
   const mins = now.getMinutes();
-  const next5 = Math.ceil((mins + 1) / 5) * 5; // next 5-min boundary
+  const nextBoundary = Math.ceil((mins + 1) / intervalMin) * intervalMin;
   const target = new Date(now);
-  target.setMinutes(next5, 5, 0); // +5s buffer for data to settle
+  target.setMinutes(nextBoundary, 5, 0); // +5s buffer for data to settle
   if (target.getTime() <= now.getTime()) {
-    target.setMinutes(target.getMinutes() + 5);
+    target.setMinutes(target.getMinutes() + intervalMin);
   }
   return target.getTime();
 }
@@ -349,7 +354,7 @@ function ScanMiniChart({
     if (!el || candles.length === 0) return;
 
     if (chartRef.current) {
-      chartRef.current.remove();
+      try { chartRef.current.remove(); } catch { /* lw-charts cleanup */ }
       chartRef.current = null;
     }
 
@@ -428,7 +433,7 @@ function ScanMiniChart({
     });
     ro.observe(el);
 
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
+    return () => { ro.disconnect(); try { chart.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; };
   }, [candles, entry, sl, tp, direction]);
 
   return <div ref={containerRef} className="w-full rounded-lg overflow-hidden" />;
@@ -449,12 +454,19 @@ function ScannerTab({
   onToggleAuto,
   autoLog,
   verified,
+  verifyLock,
+  onVerifyLockChange,
   pendingSignal,
   pendingSecsLeft,
   onApprovePending,
   onRejectPending,
   countdown,
   conditionToggles,
+  positionQty,
+  autoQty,
+  onAutoQtyChange,
+  candleInterval,
+  onCandleIntervalChange,
 }: Readonly<{
   scanData: Scan5MinResponse | null;
   loading: boolean;
@@ -466,12 +478,19 @@ function ScannerTab({
   onToggleAuto: () => void;
   autoLog: string[];
   verified: boolean;
+  verifyLock: boolean;
+  onVerifyLockChange: (v: boolean) => void;
   pendingSignal: Scan5MinSignal | null;
   pendingSecsLeft: number;
   onApprovePending: () => void;
   onRejectPending: () => void;
   countdown: string;
   conditionToggles: Record<string, boolean>;
+  positionQty: number;
+  autoQty: number;
+  onAutoQtyChange: (v: number) => void;
+  candleInterval: number;
+  onCandleIntervalChange: (v: number) => void;
 }>) {
   const sig = scanData?.signal;
   const rawSignals = scanData?.signals ?? [];
@@ -716,49 +735,109 @@ function ScannerTab({
           {/* Status card */}
           <div className={`rounded-xl border p-4 text-center space-y-3 ${
             autoExec
-              ? "border-emerald-700/60 bg-emerald-950/20"
-              : autoFilled
+              ? positionQty >= autoQty
                 ? "border-amber-700/60 bg-amber-950/20"
-                : "border-slate-700/60 bg-slate-900/40"
+                : "border-emerald-700/60 bg-emerald-950/20"
+              : "border-slate-700/60 bg-slate-900/40"
           }`}>
             {/* Big status indicator */}
             <div className="flex flex-col items-center gap-2">
               <span className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${
                 autoExec
-                  ? "bg-emerald-600 shadow-[0_0_20px_rgba(52,211,153,0.3)]"
-                  : autoFilled
-                    ? "bg-amber-600 shadow-[0_0_20px_rgba(245,158,11,0.2)]"
-                    : "bg-slate-800"
+                  ? positionQty >= autoQty
+                    ? "bg-amber-600 shadow-[0_0_20px_rgba(245,158,11,0.3)]"
+                    : "bg-emerald-600 shadow-[0_0_20px_rgba(52,211,153,0.3)]"
+                  : "bg-slate-800"
               }`}>
-                {autoExec ? "🟢" : autoFilled ? "✅" : "⚫"}
+                {autoExec ? (positionQty >= autoQty ? "⏸" : "🟢") : "⚫"}
               </span>
               <p className={`text-lg font-bold ${
-                autoExec ? "text-emerald-400" : autoFilled ? "text-amber-400" : "text-slate-400"
+                autoExec
+                  ? positionQty >= autoQty ? "text-amber-400" : "text-emerald-400"
+                  : "text-slate-400"
               }`}>
-                {autoExec ? "AUTO-TRADING ACTIVE" : autoFilled ? "TRADE COMPLETED" : "AUTO-TRADING OFF"}
+                {autoExec
+                  ? positionQty >= autoQty
+                    ? "PAUSED — QTY FULL"
+                    : "AUTO-TRADING ACTIVE"
+                  : "AUTO-TRADING OFF"}
               </p>
-              {/* Candle countdown + bias */}
-              <div className="flex items-center gap-3">
+              {/* Position qty badge */}
+              {autoExec && (
+                <span className={`text-xs font-bold tabular-nums px-3 py-1 rounded-full ${
+                  positionQty >= autoQty
+                    ? "bg-amber-900/40 text-amber-400 border border-amber-700/40"
+                    : "bg-slate-800/60 text-slate-300 border border-slate-700/40"
+                }`}>
+                  {positionQty} / {autoQty} qty held
+                </span>
+              )}
+              {/* Candle countdown + interval + bias */}
+              <div className="flex items-center gap-3 flex-wrap">
                 {autoExec && countdown && (
                   <span className="text-sm font-mono font-bold text-cyan-400 bg-cyan-950/30 px-2 py-0.5 rounded">
                     ⏱ Next candle: {countdown}
                   </span>
                 )}
-                {scanData?.bias && scanData.bias !== "NEUTRAL" && (
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-slate-500">⏱ Interval:</span>
+                  <select
+                    value={candleInterval}
+                    onChange={(e) => onCandleIntervalChange(Number(e.target.value))}
+                    disabled={autoExec}
+                    className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded px-1.5 py-0.5 w-16 disabled:opacity-50"
+                  >
+                    <option value={1}>1m</option>
+                    <option value={3}>3m</option>
+                    <option value={5}>5m</option>
+                    <option value={15}>15m</option>
+                    <option value={30}>30m</option>
+                  </select>
+                </div>
+                {scanData?.bias && (
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                    scanData.bias === "CALL" ? "bg-emerald-900/40 text-emerald-400" : "bg-rose-900/40 text-rose-400"
+                    scanData.bias === "CALL"
+                      ? "bg-emerald-900/40 text-emerald-400"
+                      : scanData.bias === "PUT"
+                        ? "bg-rose-900/40 text-rose-400"
+                        : "bg-slate-800/60 text-slate-400"
                   }`}>
-                    Bias: {scanData.bias}
+                    {scanData.bias === "CALL" ? "▲ AUTO BUY" : scanData.bias === "PUT" ? "▼ AUTO SELL" : "— NEUTRAL"}
                   </span>
                 )}
               </div>
               <p className="text-[10px] text-slate-500">
                 {autoExec
-                  ? "Fires once per 5m candle close · MTF confirmation · Desktop alerts"
-                  : autoFilled
-                    ? "1 trade executed successfully · Auto-trading stopped"
-                    : "Toggle to start automatic scanning and execution"}
+                  ? positionQty >= autoQty
+                    ? `Holding ${positionQty}/${autoQty} qty · Waiting for position to close`
+                    : positionQty > 0
+                      ? `Holding ${positionQty}/${autoQty} qty · ${autoQty - positionQty} remaining to fill`
+                      : `Fires once per 5m candle close · target: ${autoQty} contract${autoQty > 1 ? "s" : ""}`
+                  : "Toggle to start automatic scanning and execution"}
               </p>
+            </div>
+
+            {/* Quantity input */}
+            <div className="flex items-center justify-center gap-4">
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] text-slate-400 font-medium">Target Qty:</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={autoQty}
+                  onChange={(e) => onAutoQtyChange(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+                  disabled={autoExec}
+                  className="w-16 px-2 py-1 text-sm font-bold text-center rounded-lg bg-slate-800 border border-slate-700 text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                />
+                <span className="text-[9px] text-slate-500">contracts</span>
+              </div>
+              {autoExec && positionQty > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-slate-500">Holding:</span>
+                  <span className={`text-[10px] font-bold ${positionQty >= autoQty ? "text-amber-400" : "text-cyan-400"}`}>{positionQty} qty</span>
+                </div>
+              )}
             </div>
 
             {/* Toggle button */}
@@ -771,15 +850,34 @@ function ScannerTab({
                   : "bg-emerald-600 text-white hover:bg-emerald-500 active:scale-95 shadow-lg shadow-emerald-900/40"
               }`}
             >
-              {autoExec ? "⏹ Stop Auto-Trading" : autoFilled ? "🔄 Restart Auto-Trading" : "▶ Start Auto-Trading"}
+              {autoExec ? "⏹ Stop Auto-Trading" : "▶ Start Auto-Trading"}
             </button>
 
-            {/* Verification status badge */}
-            {autoExec && (
-              <div className={`flex items-center justify-center gap-1.5 text-[10px] font-bold ${verified ? "text-emerald-400" : "text-amber-400"}`}>
-                {verified ? "🔓 Verified — auto-executing signals" : "🔒 Awaiting first-signal verification"}
-              </div>
-            )}
+            {/* Verify Lock toggle + status */}
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => onVerifyLockChange(!verifyLock)}
+                disabled={autoExec}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border ${
+                  verifyLock
+                    ? "border-amber-600/50 bg-amber-950/30 text-amber-400 hover:bg-amber-950/50"
+                    : "border-emerald-600/50 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-950/50"
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                {verifyLock ? "🔒 Verify Lock: ON" : "🔓 Verify Lock: OFF"}
+              </button>
+              {autoExec && (
+                <span className={`text-[10px] font-bold ${
+                  !verifyLock ? "text-emerald-400" : verified ? "text-emerald-400" : "text-amber-400"
+                }`}>
+                  {!verifyLock
+                    ? "Auto-executing signals"
+                    : verified
+                      ? "Verified — auto-executing"
+                      : "Awaiting verification"}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* ── Pending Signal Verification Card (2-min approval) ── */}
@@ -844,28 +942,6 @@ function ScannerTab({
             </div>
           )}
 
-          {/* How it works */}
-          {!autoExec && (
-            <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
-              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">How it works</p>
-              <div className="space-y-1.5">
-                {[
-                  { icon: "⏱", text: "Scans ONCE per 5-minute candle close (e.g. 9:05, 9:10, 9:15)" },
-                  { icon: "📊", text: "Checks enabled conditions: 5m entry + 15m confirm + 1h trend" },
-                  { icon: "🔒", text: "First signal → 2-min verification (you approve or skip)" },
-                  { icon: "🐯", text: "After approval, auto-places bracket order on Tiger" },
-                  { icon: "🚫", text: "ONE trade per signal per candle — no duplicates" },
-                  { icon: "🔔", text: "Desktop notification + alert sound on execution" },
-                ].map((item, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <span className="text-sm">{item.icon}</span>
-                    <span className="text-[10px] text-slate-400">{item.text}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Live log */}
           {autoLog.length > 0 && (
             <div className={`rounded-xl border p-3 space-y-1 ${
@@ -910,6 +986,28 @@ function ScannerTab({
                   <span className="text-slate-400">TP <span className="text-emerald-400 font-bold">${n(sig.take_profit).toFixed(2)}</span></span>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* How it works */}
+          {!autoExec && (
+            <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">How it works</p>
+              <div className="space-y-1.5">
+                {[
+                  { icon: "⏱", text: "Scans ONCE per 5-minute candle close (e.g. 9:05, 9:10, 9:15)" },
+                  { icon: "📊", text: "Checks enabled conditions: 5m entry + 15m confirm + 1h trend" },
+                  { icon: "🔒", text: "First signal → 2-min verification (you approve or skip)" },
+                  { icon: "🐯", text: "After approval, auto-places bracket order on Tiger" },
+                  { icon: "🚫", text: "ONE trade per signal per candle — no duplicates" },
+                  { icon: "🔔", text: "Desktop notification + alert sound on execution" },
+                ].map((item, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="text-sm">{item.icon}</span>
+                    <span className="text-[10px] text-slate-400">{item.text}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -959,7 +1057,7 @@ function TradeZoomChart({ candles, trade, onClose }: Readonly<{ candles: MGC5Min
     const slice = candles.slice(startIdx, endIdx);
     if (slice.length === 0) return;
 
-    if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; }
+    if (chartRef.current) { try { chartRef.current.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; }
 
     const chart = createChart(el, {
       width: el.clientWidth,
@@ -1067,7 +1165,7 @@ function TradeZoomChart({ candles, trade, onClose }: Readonly<{ candles: MGC5Min
 
     const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
     ro.observe(el);
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
+    return () => { ro.disconnect(); try { chart.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; };
   }, [candles, trade]);
 
   const win = trade.pnl >= 0;
@@ -1122,7 +1220,7 @@ function ExamMiniChart({ candles, entryTime }: Readonly<{ candles: MGC5MinCandle
 
     // Clear previous
     if (chartRef.current) {
-      chartRef.current.remove();
+      try { chartRef.current.remove(); } catch { /* lw-charts cleanup */ }
       chartRef.current = null;
     }
 
@@ -1222,7 +1320,7 @@ function ExamMiniChart({ candles, entryTime }: Readonly<{ candles: MGC5MinCandle
 
     const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
     ro.observe(el);
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
+    return () => { ro.disconnect(); try { chart.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; };
   }, [candles, entryTime]);
 
   return (
@@ -1266,7 +1364,7 @@ function ExamResultChart({ candles, trade }: Readonly<{ candles: MGC5MinCandle[]
     if (slice.length === 0) return;
 
     if (chartRef.current) {
-      chartRef.current.remove();
+      try { chartRef.current.remove(); } catch { /* lw-charts cleanup */ }
       chartRef.current = null;
     }
 
@@ -1376,7 +1474,7 @@ function ExamResultChart({ candles, trade }: Readonly<{ candles: MGC5MinCandle[]
 
     const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
     ro.observe(el);
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
+    return () => { ro.disconnect(); try { chart.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; };
   }, [candles, trade]);
 
   return (
@@ -1769,6 +1867,16 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   const busyRef = useRef(false);     // prevent overlapping polls
   autoRef.current = autoExec;
 
+  // ── Position qty tracking: compare current vs target ──
+  const [positionQty, setPositionQty] = useState(0);      // actual current position qty
+  const positionQtyRef = useRef(0);
+  positionQtyRef.current = positionQty;
+
+  // ── Target quantity: total contracts to hold ──
+  const [autoQty, setAutoQty] = useState(1);              // user-configurable target qty
+  const autoQtyRef = useRef(1);
+  autoQtyRef.current = autoQty;
+
   // ── First-signal verification (2-min approval before auto-trade) ──
   const [verified, setVerified] = useState(false);      // user has approved first signal
   const verifiedRef = useRef(false);
@@ -1777,6 +1885,11 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   const [pendingExpiry, setPendingExpiry] = useState<number>(0); // epoch ms when pending signal expires
   const pendingRef = useRef<Scan5MinSignal | null>(null);
   pendingRef.current = pendingSignal;
+
+  // ── Verify Lock: true = require manual verification, false = auto-execute immediately ──
+  const [verifyLock, setVerifyLock] = useState(true);
+  const verifyLockRef = useRef(true);
+  verifyLockRef.current = verifyLock;
 
   // ── Condition toggles for auto-execution ──────────────
   const [conditionToggles, setConditionToggles] = useState<Record<string, boolean>>({ ...DEFAULT_CONDITION_TOGGLES });
@@ -1801,6 +1914,11 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       }
       conditionsLoaded.current = true;
     }).catch(() => { conditionsLoaded.current = true; });
+    // Load auto-trade settings (verify_lock, auto_qty)
+    getAutoTradeSettings(symbol).then((s) => {
+      setVerifyLock(s.verify_lock);
+      setAutoQty(s.auto_qty);
+    }).catch(() => {});
   }, [symbol]);
 
   // Auto-save toggles to DB when they change (debounced)
@@ -1821,8 +1939,11 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     }).catch(() => setPresetsLoaded(true));
   }, [symbol]);
 
-  // ── Candle-close timer state ──────────────────────────
-  const [nextCandle, setNextCandle] = useState<number>(nextCandleClose5m());
+  // ── Candle interval + timer state ─────────────────────
+  const [candleInterval, setCandleInterval] = useState<number>(5);
+  const candleIntervalRef = useRef(5);
+  useEffect(() => { candleIntervalRef.current = candleInterval; }, [candleInterval]);
+  const [nextCandle, setNextCandle] = useState<number>(nextCandleClose(5));
   const [countdown, setCountdown] = useState("");
 
   // ── Duplicate prevention: track last executed bar_time ─
@@ -1924,6 +2045,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     const ok = confirm(
       `🐯 Execute ${dir} on Tiger Account\n\n` +
       `Direction: ${dir}\n` +
+      `Quantity: ${autoQty} contract${autoQty > 1 ? "s" : ""}\n` +
       `Entry: $${s.entry_price}\n` +
       `Stop Loss: $${s.stop_loss}\n` +
       `Take Profit: $${s.take_profit}\n` +
@@ -1935,16 +2057,24 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     setExecuting(true);
     setError(null);
     try {
+      const curPos = positionQtyRef.current;
+      const remainingQty = Math.max(1, autoQty - curPos);
       const res = await execute5Min(
         dir,
-        1,    // qty
-        5,    // maxQty
+        remainingQty,     // qty: only trade the remaining contracts
+        autoQty,          // maxQty: total target position
         s.entry_price,
         s.stop_loss,
         s.take_profit,
         symbol,
       );
       if (res.execution?.executed) {
+        // Update position qty from response
+        if (res.position?.current_qty != null) {
+          const newQty = Math.abs(res.position.current_qty);
+          setPositionQty(newQty);
+          positionQtyRef.current = newQty;
+        }
         alert(`✅ Order Placed!\n\n${res.execution.reason}`);
       } else {
         const reason = res.execution?.reason || "Unknown error";
@@ -2015,7 +2145,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   }, [symbol, period]);
 
   // ── Desktop notification with sound ───────────────────
-  const notifyTrade = useCallback((direction: string, entry: number) => {
+  const notifyTrade = useCallback((direction: string, entry: number, isVerifyRequest: boolean = false) => {
     // Play alert sound
     try {
       const ctx = new AudioContext();
@@ -2023,7 +2153,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
-      osc.frequency.value = direction === "BUY" ? 880 : 440;
+      osc.frequency.value = isVerifyRequest ? 660 : (direction === "BUY" ? 880 : 440);
       osc.type = "square";
       gain.gain.value = 0.3;
       osc.start();
@@ -2033,7 +2163,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       const gain2 = ctx.createGain();
       osc2.connect(gain2);
       gain2.connect(ctx.destination);
-      osc2.frequency.value = direction === "BUY" ? 1100 : 550;
+      osc2.frequency.value = isVerifyRequest ? 880 : (direction === "BUY" ? 1100 : 550);
       osc2.type = "square";
       gain2.gain.value = 0.3;
       osc2.start(ctx.currentTime + 0.5);
@@ -2042,10 +2172,14 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
 
     // Desktop notification
     if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-      new Notification(`🐯 Auto-Trade: ${direction}`, {
-        body: `MGC ${direction} executed @ $${entry.toFixed(2)}`,
+      const title = isVerifyRequest ? `🔔 Verify: ${direction}` : `🐯 Auto-Trade: ${direction}`;
+      const body = isVerifyRequest
+        ? `${symbol} ${direction} signal @ $${entry.toFixed(2)} — approve to execute`
+        : `${symbol} ${direction} executed @ $${entry.toFixed(2)}`;
+      new Notification(title, {
+        body,
         icon: "/favicon.ico",
-        requireInteraction: true,
+        requireInteraction: isVerifyRequest,
       });
     }
   }, []);
@@ -2080,19 +2214,37 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     const ts = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     setAutoLog((prev) => [`[${ts()}] ✅ User APPROVED signal — executing & enabling auto-trade`, ...prev.slice(0, 49)]);
 
-    // Execute the approved signal immediately
+    // Refresh real position before executing
+    let curPos = positionQtyRef.current;
+    try {
+      const pos = await getMgcPosition(symbol);
+      curPos = Math.abs(pos.current_qty ?? 0);
+      setPositionQty(curPos);
+      positionQtyRef.current = curPos;
+    } catch { /* use cached value */ }
+    const targetQty = autoQtyRef.current;
+    if (curPos >= targetQty) {
+      setAutoLog((prev) => [`[${ts()}] ⏸ Already holding ${curPos}/${targetQty} qty — skipped`, ...prev.slice(0, 49)]);
+      setExecuting(false);
+      return;
+    }
+    const remainingQty = Math.max(1, targetQty - curPos);
     const dir = sig.direction || "CALL";
     const side = dir === "PUT" ? "SELL" : "BUY";
     setExecuting(true);
     try {
-      const execRes = await execute5Min(dir, 1, 5, sig.entry_price, sig.stop_loss, sig.take_profit, symbol);
+      const execRes = await execute5Min(dir, remainingQty, targetQty, sig.entry_price, sig.stop_loss, sig.take_profit, symbol);
       if (execRes.execution?.executed) {
-        notifyTrade(side, sig.entry_price);
-        setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} → ${execRes.execution?.order_id?.slice(0, 12)}`, ...prev.slice(0, 49)]);
-        autoRef.current = false;
-        setAutoExec(false);
-        setAutoFilled(true);
-        setAutoLog((prev) => [`[${ts()}] 🛑 Auto-trading stopped (1 trade filled)`, ...prev.slice(0, 49)]);
+        notifyTrade(side, sig.entry_price, false);
+        const newQty = execRes.position?.current_qty != null
+          ? Math.abs(execRes.position.current_qty)
+          : curPos + remainingQty;
+        setPositionQty(newQty);
+        positionQtyRef.current = newQty;
+        setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} ${remainingQty}x → ${execRes.execution?.order_id?.slice(0, 12)} (${newQty}/${targetQty} qty)`, ...prev.slice(0, 49)]);
+        if (newQty >= targetQty) {
+          setAutoLog((prev) => [`[${ts()}] ⏸ Target qty reached (${newQty}/${targetQty}) — paused, waiting for close`, ...prev.slice(0, 49)]);
+        }
       } else {
         const reason = execRes.execution?.reason || "Unknown";
         setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${reason}`, ...prev.slice(0, 49)]);
@@ -2112,13 +2264,13 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     setAutoLog((prev) => [`[${ts()}] ❌ User REJECTED signal — waiting for next`, ...prev.slice(0, 49)]);
   }, []);
 
-  // ── Auto-execute: candle-close aligned (fires once per 5m candle close) ──
+  // ── Auto-execute: candle-close aligned (fires once per candle close) ──
   // Also a 1-second countdown ticker for UI display
   useEffect(() => {
     if (!autoExec) return;
     const tick = setInterval(() => {
       const now = Date.now();
-      let target = nextCandleClose5m();
+      let target = nextCandleClose(candleIntervalRef.current);
       setNextCandle(target);
       const diff = Math.max(0, Math.ceil((target - now) / 1000));
       const mm = String(Math.floor(diff / 60)).padStart(2, "0");
@@ -2138,7 +2290,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
 
     const ts = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-    setAutoLog((prev) => [`[${ts()}] Auto-execute ON — candle-close mode (5m)`, ...prev.slice(0, 49)]);
+    setAutoLog((prev) => [`[${ts()}] Auto-execute ON — candle-close mode (5m) · target qty: ${autoQty}`, ...prev.slice(0, 49)]);
 
     // Reset verification on fresh start
     setVerified(false);
@@ -2146,6 +2298,27 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     setPendingSignal(null);
     setPendingExpiry(0);
     lastExecBarRef.current = "";
+
+    // Check current position on start
+    (async () => {
+      try {
+        const pos = await getMgcPosition(symbol);
+        const curQty = Math.abs(pos.current_qty ?? 0);
+        setPositionQty(curQty);
+        positionQtyRef.current = curQty;
+        if (curQty >= autoQty) {
+          setAutoLog((prev) => [`[${ts()}] 📊 Position already full (${curQty}/${autoQty} qty) — waiting for close`, ...prev.slice(0, 49)]);
+        } else if (curQty > 0) {
+          setAutoLog((prev) => [`[${ts()}] 📊 Existing position (${curQty}/${autoQty} qty) — ${autoQty - curQty} remaining to fill`, ...prev.slice(0, 49)]);
+        } else {
+          setAutoLog((prev) => [`[${ts()}] 📊 No open position — 0/${autoQty} qty, ready to trade`, ...prev.slice(0, 49)]);
+        }
+      } catch {
+        setPositionQty(0);
+        positionQtyRef.current = 0;
+        setAutoLog((prev) => [`[${ts()}] ⚠️ Could not check position — assuming 0/${autoQty}`, ...prev.slice(0, 49)]);
+      }
+    })();
 
     /** Check if user-required conditions pass (mirrors backend OR-grouping) */
     const conditionsPass = (res: Scan5MinResponse): { pass: boolean; failed: string[] } => {
@@ -2183,6 +2356,23 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       if (!autoRef.current || busyRef.current) return;
       busyRef.current = true;
       try {
+        // ── Always check position qty to keep positionQty in sync ──
+        try {
+          const pos = await getMgcPosition(symbol);
+          const curQty = Math.abs(pos.current_qty ?? 0);
+          const prevQty = positionQtyRef.current;
+
+          if (curQty !== prevQty) {
+            setPositionQty(curQty);
+            positionQtyRef.current = curQty;
+            if (curQty < prevQty) {
+              setAutoLog((prev) => [`[${ts()}] 🔓 Position reduced ${prevQty}→${curQty} qty — ${Math.max(0, autoQtyRef.current - curQty)} slot(s) freed`, ...prev.slice(0, 49)]);
+            } else {
+              setAutoLog((prev) => [`[${ts()}] 📊 Position updated ${prevQty}→${curQty}/${autoQtyRef.current} qty`, ...prev.slice(0, 49)]);
+            }
+          }
+        } catch { /* position check failed, continue with last known state */ }
+
         // Compute disabled conditions from current toggles
         const disabled = CONDITION_DEFS
           .filter((d) => d.group === "5m" && !conditionTogglesRef.current[d.key])
@@ -2212,8 +2402,11 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
 
           setAutoLog((prev) => [`[${ts()}] 🟢 SIGNAL: ${sig.direction} @ $${sig.entry_price} (${res.conditions_met}/${res.conditions_total} conditions)`, ...prev.slice(0, 49)]);
 
-          // ── First signal requires user verification (2-min window) ──
-          if (!verifiedRef.current) {
+          // ── Decide: verify or auto-execute ──
+          const needsVerify = verifyLockRef.current && !verifiedRef.current;
+
+          if (needsVerify) {
+            // LOCKED mode: first signal requires user verification (2-min window)
             if (pendingRef.current) {
               setAutoLog((prev) => [`[${ts()}] ⏳ Signal found but still awaiting verification…`, ...prev.slice(0, 49)]);
             } else {
@@ -2221,32 +2414,48 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
               setPendingSignal(sig);
               setPendingExpiry(Date.now() + VERIFY_WINDOW_MS);
               setAutoLog((prev) => [`[${ts()}] 🔔 VERIFICATION REQUIRED — approve within 2 min`, ...prev.slice(0, 49)]);
-              notifyTrade(sig.direction === "PUT" ? "SELL" : "BUY", sig.entry_price);
+              // Notify only for verification request (locked mode)
+              notifyTrade(sig.direction === "PUT" ? "SELL" : "BUY", sig.entry_price, true);
             }
           } else {
-            // ── Already verified → auto-execute directly ──
+            // UNLOCKED mode (or already verified) → auto-execute directly
+            // Fresh position check right before execution
+            let curPos = positionQtyRef.current;
+            try {
+              const freshPos = await getMgcPosition(symbol);
+              curPos = Math.abs(freshPos.current_qty ?? 0);
+              setPositionQty(curPos);
+              positionQtyRef.current = curPos;
+            } catch { /* use cached value */ }
+            const targetQty = autoQtyRef.current;
+            if (curPos >= targetQty) {
+              setAutoLog((prev) => [`[${ts()}] ⏸ Position full (${curPos}/${targetQty} qty) — waiting for close`, ...prev.slice(0, 49)]);
+              busyRef.current = false;
+              return;
+            }
+            const remainingQty = Math.max(1, targetQty - curPos);
             const dir = sig.direction || "CALL";
             const side = dir === "PUT" ? "SELL" : "BUY";
             setExecuting(true);
             try {
-              const execRes = await execute5Min(dir, 1, 5, sig.entry_price, sig.stop_loss, sig.take_profit, symbol);
+              const execRes = await execute5Min(dir, remainingQty, targetQty, sig.entry_price, sig.stop_loss, sig.take_profit, symbol);
               if (execRes.execution?.executed) {
                 lastExecBarRef.current = sig.bar_time; // prevent duplicate
-                notifyTrade(side, sig.entry_price);
-                setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} → ${execRes.execution?.order_id?.slice(0, 12)}`, ...prev.slice(0, 49)]);
-                autoRef.current = false;
-                setAutoExec(false);
-                setAutoFilled(true);
-                setAutoLog((prev) => [`[${ts()}] 🛑 Auto-trading stopped (1 trade filled)`, ...prev.slice(0, 49)]);
+                // Notify on successful execution only
+                notifyTrade(side, sig.entry_price, false);
+                // Update position qty from response or estimated
+                const newQty = execRes.position?.current_qty != null
+                  ? Math.abs(execRes.position.current_qty)
+                  : curPos + remainingQty;
+                setPositionQty(newQty);
+                positionQtyRef.current = newQty;
+                setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} ${remainingQty}x → ${execRes.execution?.order_id?.slice(0, 12)} (${newQty}/${targetQty} qty)`, ...prev.slice(0, 49)]);
+                if (newQty >= targetQty) {
+                  setAutoLog((prev) => [`[${ts()}] ⏸ Target qty reached (${newQty}/${targetQty}) — paused, waiting for close`, ...prev.slice(0, 49)]);
+                }
               } else {
                 const reason = execRes.execution?.reason || "Unknown";
                 setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${reason}`, ...prev.slice(0, 49)]);
-                if (reason.toLowerCase().includes("max") || reason.toLowerCase().includes("position")) {
-                  autoRef.current = false;
-                  setAutoExec(false);
-                  setAutoFilled(true);
-                  setAutoLog((prev) => [`[${ts()}] 🛑 Auto-trading stopped (position limit reached)`, ...prev.slice(0, 49)]);
-                }
               }
             } catch (e) {
               setAutoLog((prev) => [`[${ts()}] ❌ ERROR: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]);
@@ -2264,13 +2473,13 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       }
     };
 
-    // ── Candle-close scheduler: run once at each 5m boundary ──
+    // ── Candle-close scheduler: run once at each candle boundary ──
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const scheduleNext = () => {
       if (!autoRef.current) return;
       const now = Date.now();
-      const target = nextCandleClose5m();
+      const target = nextCandleClose(candleIntervalRef.current);
       const delay = Math.max(1000, target - now);
       timer = setTimeout(async () => {
         await poll();
@@ -2820,15 +3029,28 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           executing={executing}
           autoExec={autoExec}
           autoFilled={autoFilled}
-          onToggleAuto={() => { setAutoFilled(false); setAutoExec((v) => !v); }}
+          onToggleAuto={() => { setAutoExec((v) => !v); }}
           autoLog={autoLog}
           verified={verified}
+          verifyLock={verifyLock}
+          onVerifyLockChange={(v) => {
+            setVerifyLock(v);
+            saveAutoTradeSettings({ verify_lock: v, auto_qty: autoQty }, symbol).catch(() => {});
+          }}
           pendingSignal={pendingSignal}
           pendingSecsLeft={pendingSecsLeft}
           onApprovePending={approvePending}
           onRejectPending={rejectPending}
           countdown={countdown}
           conditionToggles={conditionToggles}
+          positionQty={positionQty}
+          autoQty={autoQty}
+          onAutoQtyChange={(v) => {
+            setAutoQty(v);
+            saveAutoTradeSettings({ verify_lock: verifyLock, auto_qty: v }, symbol).catch(() => {});
+          }}
+          candleInterval={candleInterval}
+          onCandleIntervalChange={(v) => setCandleInterval(v)}
         />
       )}
 

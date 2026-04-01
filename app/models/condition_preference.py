@@ -29,3 +29,13 @@ class LogicPreference(Base):
     symbol: Mapped[str] = mapped_column(String(16), primary_key=True, index=True)
     key: Mapped[str] = mapped_column(String(32), primary_key=True)
     value: Mapped[str] = mapped_column(String(64), default="OR")
+
+
+class AutoTradeSetting(Base):
+    """Per-symbol auto-trade settings (verify lock, qty, etc.)."""
+    __tablename__ = "auto_trade_settings"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True, index=True)
+    verify_lock: Mapped[bool] = mapped_column(Boolean, default=True)  # True = require verification
+    auto_qty: Mapped[int] = mapped_column(default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())

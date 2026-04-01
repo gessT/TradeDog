@@ -85,7 +85,7 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data,
 
     // Clear previous chart
     if (chartRef.current) {
-      chartRef.current.remove();
+      try { chartRef.current.remove(); } catch { /* lw-charts cleanup */ }
       chartRef.current = null;
     }
 
@@ -235,7 +235,7 @@ const TVChart = forwardRef<TVChartHandle, TVChartProps>(function TVChart({ data,
 
     return () => {
       ro.disconnect();
-      chart.remove();
+      try { chart.remove(); } catch { /* lightweight-charts internal cleanup */ }
       chartRef.current = null;
     };
   }, [data, trades, buySignals]);

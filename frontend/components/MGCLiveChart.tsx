@@ -53,7 +53,7 @@ function PriceBadge({ price, prevPrice }: Readonly<{ price: number; prevPrice: n
 // ═══════════════════════════════════════════════════════════════════════
 
 export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold", symbolIcon = "🥇", onPriceUpdate, focusTime, focusInterval }: Readonly<Props>) {
-  const [chartInterval, setChartInterval] = useState("15m");
+  const [chartInterval, setChartInterval] = useState("5m");
   const [live, setLive] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -175,7 +175,7 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
 
     const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
     ro.observe(el);
-    return () => { ro.disconnect(); chart.remove(); };
+    return () => { ro.disconnect(); try { chart.remove(); } catch { /* lightweight-charts internal cleanup */ } };
   }, [data]);
 
   // ── Switch interval when a trade from a different timeframe is clicked ──
