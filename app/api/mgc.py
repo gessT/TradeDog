@@ -2171,6 +2171,59 @@ def delete_5min_condition_preset(
     return {"status": "ok"}
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# Auto-Trade Settings (verify lock, qty — persisted in SQLite)
+# ═══════════════════════════════════════════════════════════════════════
+
+class AutoTradeSettingsPayload(BaseModel):
+    verify_lock: bool = True
+    auto_qty: int = 1
+
+
+@router.get("/auto_trade_settings")
+def get_auto_trade_settings(
+    symbol: str = Query("MGC"),
+) -> dict:
+    """Return saved auto-trade settings for a symbol."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    sym = symbol.upper()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT verify_lock, auto_qty FROM auto_trade_settings WHERE symbol = :sym"),
+            {"sym": sym},
+        ).fetchone()
+    if row:
+        return {"verify_lock": bool(row[0]), "auto_qty": int(row[1])}
+    return {"verify_lock": True, "auto_qty": 1}  # defaults
+
+
+@router.post("/auto_trade_settings")
+def save_auto_trade_settings(
+    payload: AutoTradeSettingsPayload,
+    symbol: str = Query("MGC"),
+) -> dict[str, str]:
+    """Save auto-trade settings for a symbol."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    sym = symbol.upper()
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO auto_trade_settings (symbol, verify_lock, auto_qty, updated_at)
+                VALUES (:sym, :vl, :aq, CURRENT_TIMESTAMP)
+                ON CONFLICT (symbol) DO UPDATE SET
+                    verify_lock = EXCLUDED.verify_lock,
+                    auto_qty = EXCLUDED.auto_qty,
+                    updated_at = CURRENT_TIMESTAMP
+            """),
+            {"sym": sym, "vl": payload.verify_lock, "aq": payload.auto_qty},
+        )
+    return {"status": "ok"}
+
+
 @router.get("/optimize_conditions_5min")
 async def optimize_5min_conditions(
     symbol: Annotated[str, Query()] = "MGC=F",

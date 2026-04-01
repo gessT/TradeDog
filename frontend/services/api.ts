@@ -860,9 +860,9 @@ export type ScanTradeResponse = {
   timestamp: string;
 };
 
-export async function getMgcPosition(): Promise<{ current_qty: number; symbol: string }> {
-  const res = await fetch(`${API_BASE}/mgc/position`);
-  if (!res.ok) return { current_qty: 0, symbol: "MGC" };
+export async function getMgcPosition(symbol: string = "MGC"): Promise<{ current_qty: number; symbol: string }> {
+  const res = await fetch(`${API_BASE}/mgc/position?symbol=${encodeURIComponent(symbol)}`);
+  if (!res.ok) return { current_qty: 0, symbol };
   return res.json();
 }
 
@@ -989,6 +989,27 @@ export async function save5MinConditionToggles(toggles: Record<string, boolean>,
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ toggles }),
+  });
+}
+
+// ── Auto-Trade Settings (verify lock, qty — persisted) ──────────────
+
+export type AutoTradeSettings = {
+  verify_lock: boolean;
+  auto_qty: number;
+};
+
+export async function getAutoTradeSettings(symbol: string = "MGC"): Promise<AutoTradeSettings> {
+  const res = await fetch(`${API_BASE}/mgc/auto_trade_settings?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+  if (!res.ok) return { verify_lock: true, auto_qty: 1 };
+  return (await res.json()) as AutoTradeSettings;
+}
+
+export async function saveAutoTradeSettings(settings: AutoTradeSettings, symbol: string = "MGC"): Promise<void> {
+  await fetch(`${API_BASE}/mgc/auto_trade_settings?symbol=${encodeURIComponent(symbol)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
   });
 }
 
