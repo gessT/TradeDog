@@ -16,6 +16,7 @@ import {
   optimize5MinConditions,
   scan5Min,
   execute5Min,
+  getMgcPosition,
   load5MinConditionToggles,
   save5MinConditionToggles,
   save5MinConditionPreset,
@@ -455,6 +456,9 @@ function ScannerTab({
   onRejectPending,
   countdown,
   conditionToggles,
+  maxOrders,
+  onMaxOrdersChange,
+  filledCount,
 }: Readonly<{
   scanData: Scan5MinResponse | null;
   loading: boolean;
@@ -472,6 +476,9 @@ function ScannerTab({
   onRejectPending: () => void;
   countdown: string;
   conditionToggles: Record<string, boolean>;
+  maxOrders: number;
+  onMaxOrdersChange: (v: number) => void;
+  filledCount: number;
 }>) {
   const sig = scanData?.signal;
   const rawSignals = scanData?.signals ?? [];
@@ -716,27 +723,43 @@ function ScannerTab({
           {/* Status card */}
           <div className={`rounded-xl border p-4 text-center space-y-3 ${
             autoExec
-              ? "border-emerald-700/60 bg-emerald-950/20"
-              : autoFilled
+              ? filledCount >= maxOrders
                 ? "border-amber-700/60 bg-amber-950/20"
-                : "border-slate-700/60 bg-slate-900/40"
+                : "border-emerald-700/60 bg-emerald-950/20"
+              : "border-slate-700/60 bg-slate-900/40"
           }`}>
             {/* Big status indicator */}
             <div className="flex flex-col items-center gap-2">
               <span className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${
                 autoExec
-                  ? "bg-emerald-600 shadow-[0_0_20px_rgba(52,211,153,0.3)]"
-                  : autoFilled
-                    ? "bg-amber-600 shadow-[0_0_20px_rgba(245,158,11,0.2)]"
-                    : "bg-slate-800"
+                  ? filledCount >= maxOrders
+                    ? "bg-amber-600 shadow-[0_0_20px_rgba(245,158,11,0.3)]"
+                    : "bg-emerald-600 shadow-[0_0_20px_rgba(52,211,153,0.3)]"
+                  : "bg-slate-800"
               }`}>
-                {autoExec ? "🟢" : autoFilled ? "✅" : "⚫"}
+                {autoExec ? (filledCount >= maxOrders ? "⏸" : "🟢") : "⚫"}
               </span>
               <p className={`text-lg font-bold ${
-                autoExec ? "text-emerald-400" : autoFilled ? "text-amber-400" : "text-slate-400"
+                autoExec
+                  ? filledCount >= maxOrders ? "text-amber-400" : "text-emerald-400"
+                  : "text-slate-400"
               }`}>
-                {autoExec ? "AUTO-TRADING ACTIVE" : autoFilled ? "TRADE COMPLETED" : "AUTO-TRADING OFF"}
+                {autoExec
+                  ? filledCount >= maxOrders
+                    ? "PAUSED — MAX ORDERS"
+                    : "AUTO-TRADING ACTIVE"
+                  : "AUTO-TRADING OFF"}
               </p>
+              {/* Filled / Max orders badge */}
+              {autoExec && (
+                <span className={`text-xs font-bold tabular-nums px-3 py-1 rounded-full ${
+                  filledCount >= maxOrders
+                    ? "bg-amber-900/40 text-amber-400 border border-amber-700/40"
+                    : "bg-slate-800/60 text-slate-300 border border-slate-700/40"
+                }`}>
+                  {filledCount} / {maxOrders} orders filled
+                </span>
+              )}
               {/* Candle countdown + bias */}
               <div className="flex items-center gap-3">
                 {autoExec && countdown && (
@@ -754,11 +777,26 @@ function ScannerTab({
               </div>
               <p className="text-[10px] text-slate-500">
                 {autoExec
-                  ? "Fires once per 5m candle close · MTF confirmation · Desktop alerts"
-                  : autoFilled
-                    ? "1 trade executed successfully · Auto-trading stopped"
-                    : "Toggle to start automatic scanning and execution"}
+                  ? filledCount >= maxOrders
+                    ? `${filledCount} orders filled · Waiting for position to close before next trade`
+                    : "Fires once per 5m candle close · MTF confirmation · Desktop alerts"
+                  : "Toggle to start automatic scanning and execution"}
               </p>
+            </div>
+
+            {/* Max orders input */}
+            <div className="flex items-center justify-center gap-2">
+              <label className="text-[10px] text-slate-400 font-medium">Max Orders:</label>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={maxOrders}
+                onChange={(e) => onMaxOrdersChange(Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))}
+                disabled={autoExec}
+                className="w-16 px-2 py-1 text-sm font-bold text-center rounded-lg bg-slate-800 border border-slate-700 text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              />
+              <span className="text-[9px] text-slate-500">per session</span>
             </div>
 
             {/* Toggle button */}
@@ -771,7 +809,7 @@ function ScannerTab({
                   : "bg-emerald-600 text-white hover:bg-emerald-500 active:scale-95 shadow-lg shadow-emerald-900/40"
               }`}
             >
-              {autoExec ? "⏹ Stop Auto-Trading" : autoFilled ? "🔄 Restart Auto-Trading" : "▶ Start Auto-Trading"}
+              {autoExec ? "⏹ Stop Auto-Trading" : "▶ Start Auto-Trading"}
             </button>
 
             {/* Verification status badge */}
@@ -1769,6 +1807,15 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   const busyRef = useRef(false);     // prevent overlapping polls
   autoRef.current = autoExec;
 
+  // ── Max orders limit: auto-trading stays ON but pauses when filledCount >= maxOrders ──
+  const [maxOrders, setMaxOrders] = useState(1);          // user-configurable max
+  const [filledCount, setFilledCount] = useState(0);      // orders filled this session
+  const maxOrdersRef = useRef(1);
+  const filledCountRef = useRef(0);
+  const lastPositionQtyRef = useRef(0);                   // track position qty to detect slots freed
+  maxOrdersRef.current = maxOrders;
+  filledCountRef.current = filledCount;
+
   // ── First-signal verification (2-min approval before auto-trade) ──
   const [verified, setVerified] = useState(false);      // user has approved first signal
   const verifiedRef = useRef(false);
@@ -2088,11 +2135,15 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       const execRes = await execute5Min(dir, 1, 5, sig.entry_price, sig.stop_loss, sig.take_profit, symbol);
       if (execRes.execution?.executed) {
         notifyTrade(side, sig.entry_price);
-        setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} → ${execRes.execution?.order_id?.slice(0, 12)}`, ...prev.slice(0, 49)]);
-        autoRef.current = false;
-        setAutoExec(false);
-        setAutoFilled(true);
-        setAutoLog((prev) => [`[${ts()}] 🛑 Auto-trading stopped (1 trade filled)`, ...prev.slice(0, 49)]);
+        const newFilled = filledCountRef.current + 1;
+        setFilledCount(newFilled);
+        filledCountRef.current = newFilled;
+        // Track position qty for slot-freed detection
+        if (execRes.position) lastPositionQtyRef.current = execRes.position.current_qty;
+        setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} → ${execRes.execution?.order_id?.slice(0, 12)} (${newFilled}/${maxOrdersRef.current})`, ...prev.slice(0, 49)]);
+        if (newFilled >= maxOrdersRef.current) {
+          setAutoLog((prev) => [`[${ts()}] ⏸ Max orders reached (${newFilled}/${maxOrdersRef.current}) — paused, waiting for slot`, ...prev.slice(0, 49)]);
+        }
       } else {
         const reason = execRes.execution?.reason || "Unknown";
         setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${reason}`, ...prev.slice(0, 49)]);
@@ -2138,7 +2189,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
 
     const ts = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-    setAutoLog((prev) => [`[${ts()}] Auto-execute ON — candle-close mode (5m)`, ...prev.slice(0, 49)]);
+    setAutoLog((prev) => [`[${ts()}] Auto-execute ON — candle-close mode (5m) · max orders: ${maxOrders}`, ...prev.slice(0, 49)]);
 
     // Reset verification on fresh start
     setVerified(false);
@@ -2146,6 +2197,10 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     setPendingSignal(null);
     setPendingExpiry(0);
     lastExecBarRef.current = "";
+    // Reset filled count on fresh start
+    setFilledCount(0);
+    filledCountRef.current = 0;
+    lastPositionQtyRef.current = 0;
 
     /** Check if user-required conditions pass (mirrors backend OR-grouping) */
     const conditionsPass = (res: Scan5MinResponse): { pass: boolean; failed: string[] } => {
@@ -2183,6 +2238,22 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       if (!autoRef.current || busyRef.current) return;
       busyRef.current = true;
       try {
+        // ── Check position to detect freed slots ──
+        if (filledCountRef.current >= maxOrdersRef.current) {
+          try {
+            const pos = await getMgcPosition();
+            const curQty = pos.current_qty ?? 0;
+            if (curQty < lastPositionQtyRef.current) {
+              const freed = lastPositionQtyRef.current - curQty;
+              const newFilled = Math.max(0, filledCountRef.current - freed);
+              setFilledCount(newFilled);
+              filledCountRef.current = newFilled;
+              setAutoLog((prev) => [`[${ts()}] 🔓 Position closed (${curQty} held) — slot freed! (${newFilled}/${maxOrdersRef.current})`, ...prev.slice(0, 49)]);
+            }
+            lastPositionQtyRef.current = curQty;
+          } catch { /* position check failed, continue */ }
+        }
+
         // Compute disabled conditions from current toggles
         const disabled = CONDITION_DEFS
           .filter((d) => d.group === "5m" && !conditionTogglesRef.current[d.key])
@@ -2225,6 +2296,12 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
             }
           } else {
             // ── Already verified → auto-execute directly ──
+            // Check max orders limit first
+            if (filledCountRef.current >= maxOrdersRef.current) {
+              setAutoLog((prev) => [`[${ts()}] ⏸ Max orders reached (${filledCountRef.current}/${maxOrdersRef.current}) — waiting for slot to free`, ...prev.slice(0, 49)]);
+              busyRef.current = false;
+              return;
+            }
             const dir = sig.direction || "CALL";
             const side = dir === "PUT" ? "SELL" : "BUY";
             setExecuting(true);
@@ -2233,20 +2310,18 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
               if (execRes.execution?.executed) {
                 lastExecBarRef.current = sig.bar_time; // prevent duplicate
                 notifyTrade(side, sig.entry_price);
-                setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} → ${execRes.execution?.order_id?.slice(0, 12)}`, ...prev.slice(0, 49)]);
-                autoRef.current = false;
-                setAutoExec(false);
-                setAutoFilled(true);
-                setAutoLog((prev) => [`[${ts()}] 🛑 Auto-trading stopped (1 trade filled)`, ...prev.slice(0, 49)]);
+                const newFilled = filledCountRef.current + 1;
+                setFilledCount(newFilled);
+                filledCountRef.current = newFilled;
+                // Track position qty for slot-freed detection
+                if (execRes.position) lastPositionQtyRef.current = execRes.position.current_qty;
+                setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} → ${execRes.execution?.order_id?.slice(0, 12)} (${newFilled}/${maxOrdersRef.current})`, ...prev.slice(0, 49)]);
+                if (newFilled >= maxOrdersRef.current) {
+                  setAutoLog((prev) => [`[${ts()}] ⏸ Max orders reached (${newFilled}/${maxOrdersRef.current}) — paused, waiting for slot`, ...prev.slice(0, 49)]);
+                }
               } else {
                 const reason = execRes.execution?.reason || "Unknown";
                 setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${reason}`, ...prev.slice(0, 49)]);
-                if (reason.toLowerCase().includes("max") || reason.toLowerCase().includes("position")) {
-                  autoRef.current = false;
-                  setAutoExec(false);
-                  setAutoFilled(true);
-                  setAutoLog((prev) => [`[${ts()}] 🛑 Auto-trading stopped (position limit reached)`, ...prev.slice(0, 49)]);
-                }
               }
             } catch (e) {
               setAutoLog((prev) => [`[${ts()}] ❌ ERROR: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]);
@@ -2820,7 +2895,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           executing={executing}
           autoExec={autoExec}
           autoFilled={autoFilled}
-          onToggleAuto={() => { setAutoFilled(false); setAutoExec((v) => !v); }}
+          onToggleAuto={() => { setAutoExec((v) => !v); }}
           autoLog={autoLog}
           verified={verified}
           pendingSignal={pendingSignal}
@@ -2829,6 +2904,9 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           onRejectPending={rejectPending}
           countdown={countdown}
           conditionToggles={conditionToggles}
+          maxOrders={maxOrders}
+          onMaxOrdersChange={setMaxOrders}
+          filledCount={filledCount}
         />
       )}
 
