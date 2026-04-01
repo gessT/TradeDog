@@ -872,6 +872,8 @@ export type ScanSignal = {
   ema_slow: number;
   volume_ratio: number;
   bar_time: string;
+  is_fresh?: boolean;
+  bars_since_first?: number;
 };
 
 export type BacktestCheck = {
@@ -1156,6 +1158,8 @@ export type Scan5MinSignal = {
   supertrend_dir: number;
   volume_ratio: number;
   bar_time: string;
+  is_fresh?: boolean;
+  bars_since_first?: number;
 };
 
 export type Scan5MinCandle = {

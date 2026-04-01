@@ -39,6 +39,9 @@ class ScanResult5Min:
     supertrend_dir: int     # 1 = bullish, -1 = bearish
     volume_ratio: float
     bar_time: str
+    # Signal freshness — only trade on first bar where signal appears
+    is_fresh: bool = True           # True = signal just appeared this bar
+    bars_since_first: int = 0       # 0 = fresh, 1+ = stale continuation
 
 
 def scan_5min(
@@ -74,6 +77,20 @@ def scan_5min(
 
     sig_val = int(signals.iloc[bar_idx])
     has_signal = sig_val != 0
+
+    # ── Signal freshness: check if previous bars also had this signal ──
+    is_fresh = True
+    bars_since_first = 0
+    if has_signal and len(signals) >= 3:
+        # Walk backwards from the bar before bar_idx
+        abs_idx = len(signals) + bar_idx if bar_idx < 0 else bar_idx
+        for lookback in range(1, min(20, abs_idx)):
+            prev_sig = int(signals.iloc[abs_idx - lookback])
+            if prev_sig == sig_val:
+                bars_since_first = lookback
+                is_fresh = False
+            else:
+                break  # signal chain broken — this is where it first appeared
 
     # Determine direction and signal type
     if sig_val == 1:
@@ -184,6 +201,8 @@ def scan_5min(
         supertrend_dir=st_dir,
         volume_ratio=round(vol_ratio, 2),
         bar_time=bar_time,
+        is_fresh=is_fresh,
+        bars_since_first=bars_since_first,
     )
 
 

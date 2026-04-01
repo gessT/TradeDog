@@ -488,6 +488,8 @@ class ScanSignal(BaseModel):
     ema_slow: float
     volume_ratio: float
     bar_time: str
+    is_fresh: bool = True           # True = signal just appeared this bar
+    bars_since_first: int = 0       # 0 = fresh, 1+ = stale
 
 
 class BacktestCheck(BaseModel):
@@ -1702,6 +1704,8 @@ class Scan5MinSignal(BaseModel):
     supertrend_dir: int
     volume_ratio: float
     bar_time: str
+    is_fresh: bool = True
+    bars_since_first: int = 0
 
 
 class Scan5MinConditions(BaseModel):
@@ -1802,6 +1806,8 @@ async def mgc_scan_5min(
                 rsi=r.rsi, atr=r.atr, ema_fast=r.ema_fast, ema_slow=r.ema_slow,
                 macd_hist=r.macd_hist, supertrend_dir=r.supertrend_dir,
                 volume_ratio=r.volume_ratio, bar_time=r.bar_time,
+                is_fresh=getattr(r, 'is_fresh', True),
+                bars_since_first=getattr(r, 'bars_since_first', 0),
             )
 
         sig = _to_sig(result)
@@ -1913,6 +1919,8 @@ async def mgc_scan_5min_live(
                 rsi=r.rsi, atr=r.atr, ema_fast=r.ema_fast, ema_slow=r.ema_slow,
                 macd_hist=r.macd_hist, supertrend_dir=r.supertrend_dir,
                 volume_ratio=r.volume_ratio, bar_time=r.bar_time,
+                is_fresh=getattr(r, 'is_fresh', True),
+                bars_since_first=getattr(r, 'bars_since_first', 0),
             )
 
         sig = _to_sig(result)
