@@ -758,6 +758,49 @@ export async function fetchTigerAccount(): Promise<TigerAccountResponse> {
   return (await res.json()) as TigerAccountResponse;
 }
 
+// ── Trade History (paired round-trip trades with P&L) ────────────────
+export type TradeRecord = {
+  symbol: string;
+  side: string;        // LONG or SHORT
+  qty: number;
+  entry_price: number;
+  exit_price: number;
+  entry_time: string;
+  exit_time: string;
+  pnl: number;
+  pnl_pct: number;
+  multiplier: number;
+  entry_order_id: string;
+  exit_order_id: string;
+  status: string;      // CLOSED or OPEN
+};
+
+export type TradeHistoryResponse = {
+  trades: TradeRecord[];
+  summary: {
+    total_trades: number;
+    open_trades: number;
+    wins: number;
+    losses: number;
+    win_rate: number;
+    total_pnl: number;
+    avg_pnl: number;
+    profit_factor: number;
+    best_trade: number;
+    worst_trade: number;
+  };
+  timestamp: string;
+};
+
+export async function fetchTradeHistory(days: number = 7): Promise<TradeHistoryResponse> {
+  const res = await fetch(`${API_BASE}/mgc/trade_history?days=${days}`, { cache: "no-store" });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `Trade history fetch failed: ${res.status}`);
+  }
+  return (await res.json()) as TradeHistoryResponse;
+}
+
 export async function placeSimpleOrder(
   symbol: string,
   side: string,

@@ -698,6 +698,227 @@ async def tiger_account() -> TigerAccountResponse:
     return await run_in_threadpool(_run)
 
 
+# ── Trade History: pair filled orders into round-trip trades ─────────
+
+# Contract multipliers for P&L calculation
+_CONTRACT_MULT: dict[str, float] = {
+    "MGC": 10.0,    # 10 troy oz per Micro Gold
+    "MCL": 100.0,   # 100 barrels per Micro Crude
+    "MNQ": 2.0,     # $2 per point Micro Nasdaq
+    "MES": 5.0,     # $5 per point Micro S&P
+    "MYM": 0.5,     # $0.50 per point Micro Dow
+    "M2K": 5.0,     # $5 per point Micro Russell
+    "CL": 1000.0,   # 1000 barrels Crude Oil
+    "GC": 100.0,    # 100 troy oz Gold
+    "NQ": 20.0,     # $20 per point Nasdaq
+    "ES": 50.0,     # $50 per point S&P
+    "NG": 10000.0,  # 10,000 MMBtu Natural Gas
+    "SI": 5000.0,   # 5,000 troy oz Silver
+    "HG": 25000.0,  # 25,000 lbs Copper
+}
+
+
+def _get_multiplier(symbol: str) -> float:
+    """Get contract multiplier from symbol (strip trailing digits)."""
+    import re
+    base = re.sub(r"\d+$", "", symbol)
+    return _CONTRACT_MULT.get(base, 1.0)
+
+
+class TradeRecord(BaseModel):
+    """A round-trip trade: entry → exit with P&L."""
+    symbol: str
+    side: str              # LONG or SHORT (direction of entry)
+    qty: int
+    entry_price: float
+    exit_price: float
+    entry_time: str
+    exit_time: str
+    pnl: float             # dollar P&L
+    pnl_pct: float         # % return on entry notional
+    multiplier: float
+    entry_order_id: str = ""
+    exit_order_id: str = ""
+    status: str = "CLOSED" # CLOSED or OPEN (still holding)
+
+
+class TradeHistoryResponse(BaseModel):
+    trades: list[TradeRecord]
+    summary: dict
+    timestamp: str
+
+
+@router.get("/trade_history")
+async def tiger_trade_history(
+    days: Annotated[int, Query(ge=1, le=90)] = 7,
+) -> TradeHistoryResponse:
+    """Pair filled orders into round-trip trades with P&L."""
+
+    def _run():
+        _, trade_client = _get_tiger_clients()
+
+        _start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        _end = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        raw_filled = trade_client.get_filled_orders(
+            account=TIGER_ACCOUNT, sec_type="FUT",
+            start_date=_start, end_date=_end,
+        )
+        if not raw_filled:
+            return TradeHistoryResponse(
+                trades=[], summary=_empty_summary(),
+                timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+            )
+
+        # Normalize fills
+        fills = []
+        for o in raw_filled:
+            sym = ""
+            if hasattr(o, "contract") and o.contract and hasattr(o.contract, "symbol"):
+                sym = o.contract.symbol or ""
+            action = str(getattr(o, "action", "") or "").upper()
+            qty = int(getattr(o, "filled", 0) or getattr(o, "filled_quantity", 0) or 0)
+            price = float(getattr(o, "avg_fill_price", 0) or 0)
+            oid = str(getattr(o, "order_id", "") or getattr(o, "id", "") or "")
+            raw_time = getattr(o, "trade_time", None) or getattr(o, "order_time", None)
+            tstr = _fmt_tiger_time(raw_time)
+
+            if sym and action in ("BUY", "SELL") and qty > 0 and price > 0:
+                fills.append({
+                    "symbol": sym, "action": action, "qty": qty,
+                    "price": price, "time": tstr, "order_id": oid,
+                    "ts": raw_time if isinstance(raw_time, (int, float)) else 0,
+                })
+
+        # Sort by timestamp
+        fills.sort(key=lambda f: f["ts"])
+
+        # Pair into round-trip trades (FIFO per symbol)
+        from collections import defaultdict
+        open_fills: dict[str, list] = defaultdict(list)
+        trades: list[TradeRecord] = []
+
+        for fill in fills:
+            sym = fill["symbol"]
+            action = fill["action"]
+            remaining = fill["qty"]
+
+            while remaining > 0:
+                stack = open_fills[sym]
+                if stack and stack[0]["action"] != action:
+                    # Opposite side — close the trade
+                    entry_fill = stack[0]
+                    match_qty = min(remaining, entry_fill["qty"])
+
+                    mult = _get_multiplier(sym)
+                    if entry_fill["action"] == "BUY":
+                        # LONG trade: bought then sold
+                        pnl = (fill["price"] - entry_fill["price"]) * match_qty * mult
+                        side = "LONG"
+                    else:
+                        # SHORT trade: sold then bought
+                        pnl = (entry_fill["price"] - fill["price"]) * match_qty * mult
+                        side = "SHORT"
+
+                    entry_notional = entry_fill["price"] * match_qty * mult
+                    pnl_pct = (pnl / entry_notional * 100) if entry_notional else 0
+
+                    trades.append(TradeRecord(
+                        symbol=sym,
+                        side=side,
+                        qty=match_qty,
+                        entry_price=round(entry_fill["price"], 4),
+                        exit_price=round(fill["price"], 4),
+                        entry_time=entry_fill["time"],
+                        exit_time=fill["time"],
+                        pnl=round(pnl, 2),
+                        pnl_pct=round(pnl_pct, 2),
+                        multiplier=mult,
+                        entry_order_id=entry_fill["order_id"],
+                        exit_order_id=fill["order_id"],
+                    ))
+
+                    entry_fill["qty"] -= match_qty
+                    remaining -= match_qty
+                    if entry_fill["qty"] <= 0:
+                        stack.pop(0)
+                else:
+                    # Same side or no open — add to stack
+                    open_fills[sym].append({**fill, "qty": remaining})
+                    remaining = 0
+
+        # Add open (unpaired) positions as OPEN trades
+        for sym, stack in open_fills.items():
+            for f in stack:
+                if f["qty"] > 0:
+                    mult = _get_multiplier(sym)
+                    side = "LONG" if f["action"] == "BUY" else "SHORT"
+                    trades.append(TradeRecord(
+                        symbol=sym,
+                        side=side,
+                        qty=f["qty"],
+                        entry_price=round(f["price"], 4),
+                        exit_price=0,
+                        entry_time=f["time"],
+                        exit_time="",
+                        pnl=0,
+                        pnl_pct=0,
+                        multiplier=mult,
+                        entry_order_id=f["order_id"],
+                        exit_order_id="",
+                        status="OPEN",
+                    ))
+
+        # Sort: OPEN first, then CLOSED newest first
+        trades.sort(key=lambda t: (
+            0 if t.status == "OPEN" else 1,
+            t.exit_time or t.entry_time,
+        ), reverse=True)
+        # Re-sort: OPEN on top, then by time desc
+        open_trades = [t for t in trades if t.status == "OPEN"]
+        closed_trades = [t for t in trades if t.status == "CLOSED"]
+        closed_trades.sort(key=lambda t: t.exit_time, reverse=True)
+        trades = open_trades + closed_trades
+
+        # Summary (only count closed trades)
+        closed = [t for t in trades if t.status == "CLOSED"]
+        total_pnl = sum(t.pnl for t in closed)
+        wins = [t for t in closed if t.pnl > 0]
+        losses = [t for t in closed if t.pnl <= 0]
+        win_rate = len(wins) / len(closed) * 100 if closed else 0
+        gross_win = sum(t.pnl for t in wins)
+        gross_loss = abs(sum(t.pnl for t in losses))
+        pf = gross_win / gross_loss if gross_loss > 0 else float("inf") if gross_win > 0 else 0
+
+        summary = {
+            "total_trades": len(closed),
+            "open_trades": len(open_trades),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round(win_rate, 1),
+            "total_pnl": round(total_pnl, 2),
+            "avg_pnl": round(total_pnl / len(closed), 2) if closed else 0,
+            "profit_factor": round(pf, 2) if pf != float("inf") else 999.99,
+            "best_trade": round(max((t.pnl for t in trades), default=0), 2),
+            "worst_trade": round(min((t.pnl for t in trades), default=0), 2),
+        }
+
+        return TradeHistoryResponse(
+            trades=trades, summary=summary,
+            timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        )
+
+    return await run_in_threadpool(_run)
+
+
+def _empty_summary() -> dict:
+    return {
+        "total_trades": 0, "wins": 0, "losses": 0, "win_rate": 0,
+        "total_pnl": 0, "avg_pnl": 0, "profit_factor": 0,
+        "best_trade": 0, "worst_trade": 0,
+    }
+
+
 def _order_to_item(o) -> TigerOrderItem:
     """Convert a Tiger SDK order object to our serialisable model."""
     sym = ""
