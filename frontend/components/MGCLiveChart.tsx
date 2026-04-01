@@ -175,7 +175,7 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
 
     const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
     ro.observe(el);
-    return () => { ro.disconnect(); chart.remove(); };
+    return () => { ro.disconnect(); try { chart.remove(); } catch { /* lightweight-charts internal cleanup */ } };
   }, [data]);
 
   // ── Switch interval when a trade from a different timeframe is clicked ──

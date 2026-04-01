@@ -349,7 +349,7 @@ function ScanMiniChart({
     if (!el || candles.length === 0) return;
 
     if (chartRef.current) {
-      chartRef.current.remove();
+      try { chartRef.current.remove(); } catch { /* lw-charts cleanup */ }
       chartRef.current = null;
     }
 
@@ -428,7 +428,7 @@ function ScanMiniChart({
     });
     ro.observe(el);
 
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
+    return () => { ro.disconnect(); try { chart.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; };
   }, [candles, entry, sl, tp, direction]);
 
   return <div ref={containerRef} className="w-full rounded-lg overflow-hidden" />;
@@ -959,7 +959,7 @@ function TradeZoomChart({ candles, trade, onClose }: Readonly<{ candles: MGC5Min
     const slice = candles.slice(startIdx, endIdx);
     if (slice.length === 0) return;
 
-    if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; }
+    if (chartRef.current) { try { chartRef.current.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; }
 
     const chart = createChart(el, {
       width: el.clientWidth,
@@ -1067,7 +1067,7 @@ function TradeZoomChart({ candles, trade, onClose }: Readonly<{ candles: MGC5Min
 
     const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
     ro.observe(el);
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
+    return () => { ro.disconnect(); try { chart.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; };
   }, [candles, trade]);
 
   const win = trade.pnl >= 0;
@@ -1122,7 +1122,7 @@ function ExamMiniChart({ candles, entryTime }: Readonly<{ candles: MGC5MinCandle
 
     // Clear previous
     if (chartRef.current) {
-      chartRef.current.remove();
+      try { chartRef.current.remove(); } catch { /* lw-charts cleanup */ }
       chartRef.current = null;
     }
 
@@ -1222,7 +1222,7 @@ function ExamMiniChart({ candles, entryTime }: Readonly<{ candles: MGC5MinCandle
 
     const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
     ro.observe(el);
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
+    return () => { ro.disconnect(); try { chart.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; };
   }, [candles, entryTime]);
 
   return (
@@ -1266,7 +1266,7 @@ function ExamResultChart({ candles, trade }: Readonly<{ candles: MGC5MinCandle[]
     if (slice.length === 0) return;
 
     if (chartRef.current) {
-      chartRef.current.remove();
+      try { chartRef.current.remove(); } catch { /* lw-charts cleanup */ }
       chartRef.current = null;
     }
 
@@ -1376,7 +1376,7 @@ function ExamResultChart({ candles, trade }: Readonly<{ candles: MGC5MinCandle[]
 
     const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
     ro.observe(el);
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
+    return () => { ro.disconnect(); try { chart.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; };
   }, [candles, trade]);
 
   return (
