@@ -1838,12 +1838,20 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Per-symbol SL/TP defaults (backtest-optimized) ─────────────────
+  const SYMBOL_RISK: Record<string, { sl: number; tp: number }> = {
+    MGC: { sl: 4.0, tp: 3.0 },   // Gold: wider stops, moderate target
+    MCL: { sl: 0.8, tp: 2.0 },   // Oil: tight stop ($21 avg loss), 2.5:1 R:R
+    MNQ: { sl: 3.0, tp: 2.5 },   // Nasdaq: moderate
+  };
+  const defaultRisk = SYMBOL_RISK[symbol] ?? { sl: 4.0, tp: 3.0 };
+
   // Backtest state
   const [btData, setBtData] = useState<MGC5MinBacktestResponse | null>(null);
   const [zoomTrade, setZoomTrade] = useState<MGC5MinTrade | null>(null);
   const [period, setPeriod] = useState("3d");
-  const [slMult, setSlMult] = useState(4.0);
-  const [tpMult, setTpMult] = useState(3.0);
+  const [slMult, setSlMult] = useState(defaultRisk.sl);
+  const [tpMult, setTpMult] = useState(defaultRisk.tp);
 
   // Date range filter
   const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
@@ -1854,6 +1862,13 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   };
   const [dateFrom, setDateFrom] = useState(() => calcFrom("3"));
   const [dateTo, setDateTo] = useState(() => fmtDate(new Date()));
+
+  // Auto-switch SL/TP when symbol changes
+  useEffect(() => {
+    const risk = SYMBOL_RISK[symbol] ?? { sl: 4.0, tp: 3.0 };
+    setSlMult(risk.sl);
+    setTpMult(risk.tp);
+  }, [symbol]);
 
   // Scanner state
   const [scanData, setScanData] = useState<Scan5MinResponse | null>(null);
@@ -2804,7 +2819,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
               <label className="flex items-center gap-1 text-[10px]">
                 <span className="text-rose-400 font-bold">SL</span>
                 <input
-                  type="range" min="0.5" max="6" step="0.5" value={slMult}
+                  type="range" min="0.5" max="6" step="0.1" value={slMult}
                   onChange={(e) => setSlMult(parseFloat(e.target.value))}
                   className="w-14 h-1 accent-rose-500 cursor-pointer"
                 />
@@ -2813,7 +2828,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
               <label className="flex items-center gap-1 text-[10px]">
                 <span className="text-emerald-400 font-bold">TP</span>
                 <input
-                  type="range" min="0.5" max="6" step="0.5" value={tpMult}
+                  type="range" min="0.5" max="6" step="0.1" value={tpMult}
                   onChange={(e) => setTpMult(parseFloat(e.target.value))}
                   className="w-14 h-1 accent-emerald-500 cursor-pointer"
                 />
