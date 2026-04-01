@@ -2852,3 +2852,56 @@ async def mgc_optimize_v2(
     except Exception as exc:
         logger.exception("V2 optimize failed")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Market Structure — fast, cached endpoint
+# ═══════════════════════════════════════════════════════════════════════
+import time as _time
+
+_structure_cache: dict[str, dict] = {}   # symbol -> {value, ts}
+_STRUCTURE_TTL = 60  # seconds — cache for 1 min (re-compute on next 5m candle)
+
+
+@router.get("/market_structure")
+async def get_market_structure(
+    symbol: Annotated[str, Query()] = "MGC",
+):
+    """Fast market structure endpoint — returns BULL(1)/BEAR(-1)/SIDEWAYS(0).
+    Cached for 60s to avoid recomputing on every poll."""
+
+    now = _time.time()
+    cached = _structure_cache.get(symbol)
+    if cached and (now - cached["ts"]) < _STRUCTURE_TTL:
+        return cached["data"]
+
+    def _compute():
+        from mgc_trading.indicators_5min import market_structure
+
+        commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": "MGC=F"})
+        yf_symbol = commodity["yf"]
+
+        df = load_yfinance(symbol=yf_symbol, interval="5m", period="5d")
+        if df is None or df.empty:
+            return {"symbol": symbol, "structure": 0, "label": "NO DATA", "cached": False}
+
+        ms = market_structure(df["high"], df["low"], df["close"], lookback=100)
+        val = int(ms.iloc[-1]) if len(ms) > 0 else 0
+        label = {1: "BULL", -1: "BEAR", 0: "SIDEWAYS"}.get(val, "SIDEWAYS")
+
+        return {
+            "symbol": symbol,
+            "structure": val,
+            "label": label,
+            "bars": len(df),
+            "last_price": round(float(df["close"].iloc[-1]), 4),
+            "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
+        }
+
+    try:
+        data = await run_in_threadpool(_compute)
+        _structure_cache[symbol] = {"data": data, "ts": now}
+        return data
+    except Exception as exc:
+        logger.exception("Market structure failed")
+        raise HTTPException(status_code=500, detail=str(exc))

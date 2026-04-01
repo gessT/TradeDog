@@ -1058,6 +1058,23 @@ export async function saveAutoTradeSettings(settings: AutoTradeSettings, symbol:
   });
 }
 
+// ── Market Structure (fast cached endpoint) ─────────────
+
+export interface MarketStructure {
+  symbol: string;
+  structure: number;  // 1=BULL, -1=BEAR, 0=SIDEWAYS
+  label: string;
+  bars?: number;
+  last_price?: number;
+  timestamp?: string;
+}
+
+export async function getMarketStructure(symbol: string = "MGC"): Promise<MarketStructure> {
+  const res = await fetch(`${API_BASE}/mgc/market_structure?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+  if (!res.ok) return { symbol, structure: 0, label: "NO DATA" };
+  return (await res.json()) as MarketStructure;
+}
+
 // ── 5min Condition Presets ──────────────────────────────
 
 export type ConditionPreset = {

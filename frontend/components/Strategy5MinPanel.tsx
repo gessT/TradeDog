@@ -18,6 +18,7 @@ import {
   execute5Min,
   getMgcPosition,
   closePosition,
+  getMarketStructure,
   load5MinConditionToggles,
   save5MinConditionToggles,
   save5MinConditionPreset,
@@ -25,6 +26,7 @@ import {
   delete5MinConditionPreset,
   getAutoTradeSettings,
   saveAutoTradeSettings,
+  type MarketStructure,
   type ConditionPreset,
   type ConditionOptimizationResult,
   type MGC5MinBacktestResponse,
@@ -1936,6 +1938,33 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   const [optimizationResults, setOptimizationResults] = useState<ConditionOptimizationResult[]>([]);
   const [optimizing, setOptimizing] = useState(false);
 
+  // ── Market Structure (independent, cached, auto-refresh) ──
+  const [mktStructure, setMktStructure] = useState<MarketStructure | null>(null);
+  const [mktLoading, setMktLoading] = useState(false);
+  const prevStructureRef = useRef<number | null>(null);  // track transitions
+
+  // Fetch market structure on mount, symbol change, and every 5 min
+  useEffect(() => {
+    let cancelled = false;
+    const fetch = () => {
+      setMktLoading(true);
+      getMarketStructure(symbol)
+        .then((ms) => {
+          if (!cancelled) {
+            setMktStructure(ms);
+            // Initialize prevStructureRef so first poll doesn't trigger false transition
+            if (prevStructureRef.current === null) prevStructureRef.current = ms.structure;
+          }
+        })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setMktLoading(false); });
+    };
+    fetch(); // immediate on mount / symbol change
+    prevStructureRef.current = null; // reset on symbol change
+    const interval = setInterval(fetch, 5 * 60 * 1000); // refresh every 5 min
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [symbol]);
+
   // Load saved toggles from DB on mount / symbol change
   useEffect(() => {
     conditionsLoaded.current = false;
@@ -1980,7 +2009,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   // ── Duplicate prevention: track last executed bar_time ─
   const lastExecBarRef = useRef<string>("");
 
-  // ── Clear data when symbol changes & auto-scan for market structure ──
+  // ── Clear data when symbol changes ──
   useEffect(() => {
     setBtData(null);
     setScanData(null);
@@ -1989,16 +2018,6 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     verifiedRef.current = false;
     setPendingSignal(null);
     setPendingExpiry(0);
-    // Auto-scan to populate market structure immediately
-    (async () => {
-      try {
-        const disabled = CONDITION_DEFS
-          .filter((d) => d.group === "5m" && !conditionToggles[d.key])
-          .map((d) => d.key);
-        const res = await scan5Min(false, slMult, tpMult, symbol, disabled.length > 0 ? disabled : undefined);
-        setScanData(res);
-      } catch { /* silent — widget will show SIDEWAYS until manual scan */ }
-    })();
   }, [symbol]);
 
   // ── Backtest ──────────────────────────────────────────
@@ -2424,27 +2443,65 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
         const res = await scan5Min(false, slMult, tpMult, symbol, disabled.length > 0 ? disabled : undefined);
         setScanData(res);
 
-        // ── Sideways auto-close: if mkt_structure toggled ON and SIDEWAYS, close positions ──
-        if (conditionTogglesRef.current["mkt_structure"] && res.conditions?.mkt_structure === 0) {
-          const curPos = positionQtyRef.current;
-          if (curPos > 0) {
-            setAutoLog((prev) => [`[${ts()}] ═ SIDEWAYS detected — closing ${curPos} contract(s)`, ...prev.slice(0, 49)]);
-            try {
-              await closePosition(symbol);
-              setPositionQty(0);
-              positionQtyRef.current = 0;
-              setAutoLog((prev) => [`[${ts()}] ✅ Position closed (sideways market)`, ...prev.slice(0, 49)]);
-              notifyTrade("CLOSE", 0, false);
-            } catch (e: unknown) {
-              const msg = e instanceof Error ? e.message : String(e);
-              setAutoLog((prev) => [`[${ts()}] ❌ Failed to close position: ${msg}`, ...prev.slice(0, 49)]);
+        // ── Refresh market structure on every poll (uses fast cached endpoint) ──
+        try {
+          const freshMs = await getMarketStructure(symbol);
+          setMktStructure(freshMs);
+
+          const prev = prevStructureRef.current;
+          const curr = freshMs.structure;
+
+          // ── Structure Transition Detection ──
+          // 横盘→牛: SIDEWAYS(0) → BULL(1)  = trend starting, favor LONG
+          // 横盘→熊: SIDEWAYS(0) → BEAR(-1) = trend starting, favor SHORT
+          // 牛→横盘 or 熊→横盘 = trend ending, flatten
+          if (prev !== null && prev !== curr) {
+            const labels: Record<number, string> = { 1: "📈 BULL", [-1]: "📉 BEAR", 0: "📊 SIDEWAYS" };
+            const fromL = labels[prev] ?? "?";
+            const toL = labels[curr] ?? "?";
+            setAutoLog((p) => [`[${ts()}] 🔄 STRUCTURE SHIFT: ${fromL} → ${toL}`, ...p.slice(0, 49)]);
+
+            if (prev === 0 && curr === 1) {
+              // 横盘→牛: trend just started bullish — signal reference for LONG
+              setAutoLog((p) => [`[${ts()}] 🟢 TREND START: Sideways → Bullish — favor BUY entries`, ...p.slice(0, 49)]);
+            } else if (prev === 0 && curr === -1) {
+              // 横盘→熊: trend just started bearish — signal reference for SHORT
+              setAutoLog((p) => [`[${ts()}] 🔴 TREND START: Sideways → Bearish — favor SELL entries`, ...p.slice(0, 49)]);
+            } else if (curr === 0 && (prev === 1 || prev === -1)) {
+              // 牛/熊→横盘: trend ended — consider closing
+              setAutoLog((p) => [`[${ts()}] ⚠️ TREND END: ${fromL} → Sideways — consider flattening`, ...p.slice(0, 49)]);
+            } else if (prev === 1 && curr === -1) {
+              // 牛→熊: trend reversal — close longs, consider shorts
+              setAutoLog((p) => [`[${ts()}] 🔁 REVERSAL: Bull → Bear — close LONGs, favor SELL`, ...p.slice(0, 49)]);
+            } else if (prev === -1 && curr === 1) {
+              // 熊→牛: trend reversal — close shorts, consider longs
+              setAutoLog((p) => [`[${ts()}] 🔁 REVERSAL: Bear → Bull — close SHORTs, favor BUY`, ...p.slice(0, 49)]);
             }
-          } else {
-            setAutoLog((prev) => [`[${ts()}] ═ SIDEWAYS — no trades allowed, waiting for trend`, ...prev.slice(0, 49)]);
           }
-          busyRef.current = false;
-          return;
-        }
+          prevStructureRef.current = curr;
+
+          // ── Sideways auto-close: if toggle ON and SIDEWAYS, close positions ──
+          if (conditionTogglesRef.current["mkt_structure"] && freshMs.structure === 0) {
+            const curPos = positionQtyRef.current;
+            if (curPos > 0) {
+              setAutoLog((prev) => [`[${ts()}] ═ SIDEWAYS detected — closing ${curPos} contract(s)`, ...prev.slice(0, 49)]);
+              try {
+                await closePosition(symbol);
+                setPositionQty(0);
+                positionQtyRef.current = 0;
+                setAutoLog((prev) => [`[${ts()}] ✅ Position closed (sideways market)`, ...prev.slice(0, 49)]);
+                notifyTrade("CLOSE", 0, false);
+              } catch (e: unknown) {
+                const msg = e instanceof Error ? e.message : String(e);
+                setAutoLog((prev) => [`[${ts()}] ❌ Failed to close position: ${msg}`, ...prev.slice(0, 49)]);
+              }
+            } else {
+              setAutoLog((prev) => [`[${ts()}] ═ SIDEWAYS — no trades allowed, waiting for trend`, ...prev.slice(0, 49)]);
+            }
+            busyRef.current = false;
+            return;
+          }
+        } catch { /* structure fetch failed — continue with scan */ }
 
         const sig = res.signal;
 
@@ -2624,6 +2681,83 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       )}
 
       {/* ═════════════════════════════════════════════════════ */}
+      {/* MARKET STRUCTURE — top-level status card              */}
+      {/* ═════════════════════════════════════════════════════ */}
+      {(() => {
+        const ms = mktStructure;
+        const val = ms?.structure ?? null;
+        const isLoading = mktLoading && !ms;
+        const structLabel = val === 1 ? "BULL ▲" : val === -1 ? "BEAR ▼" : val === 0 ? "SIDEWAYS ═ 横盘" : "LOADING...";
+        const structColor = val === 1 ? "text-emerald-400" : val === -1 ? "text-rose-400" : val === 0 ? "text-amber-400" : "text-slate-500";
+        const borderColor = val === 1 ? "border-emerald-700/50" : val === -1 ? "border-rose-700/50" : val === 0 ? "border-amber-700/50" : "border-slate-700/40";
+        const bgColor = val === 1 ? "bg-emerald-500/5" : val === -1 ? "bg-rose-500/5" : val === 0 ? "bg-amber-500/5" : "bg-slate-800/20";
+        const icon = val === 1 ? "📈" : val === -1 ? "📉" : val === 0 ? "📊" : "⏳";
+        const hint = val === 1 ? "Favor LONG entries" : val === -1 ? "Favor SHORT entries" : val === 0 ? "No clear trend — consider staying flat" : "";
+        return (
+          <div className={`mx-3 mt-2 rounded-lg border ${borderColor} ${bgColor} px-3 py-2`}>
+            <div className="flex items-center gap-2">
+              {/* Label */}
+              <span className="text-[9px] text-slate-500 font-medium">📐 Structure</span>
+
+              {/* Status badge */}
+              <span className={`px-2 py-0.5 rounded text-[11px] font-black ${structColor}`}>
+                {isLoading ? (
+                  <span className="animate-pulse">⏳ Loading...</span>
+                ) : (
+                  <>{icon} {structLabel}</>
+                )}
+              </span>
+
+              {/* Suggestion */}
+              {hint && <span className={`text-[8px] ${structColor} opacity-70`}>— {hint}</span>}
+
+              {/* Last update time + refresh button */}
+              <span className="ml-auto flex items-center gap-1.5">
+                {ms?.timestamp && (
+                  <span className="text-[7px] text-slate-600">{ms.timestamp}</span>
+                )}
+                {ms?.last_price && (
+                  <span className="text-[8px] text-slate-400 font-mono">${ms.last_price.toFixed(2)}</span>
+                )}
+                <button
+                  onClick={() => {
+                    setMktLoading(true);
+                    getMarketStructure(symbol)
+                      .then((r) => setMktStructure(r))
+                      .catch(() => {})
+                      .finally(() => setMktLoading(false));
+                  }}
+                  className="text-[8px] text-slate-500 hover:text-cyan-400 transition"
+                  title="Refresh structure now"
+                >
+                  {mktLoading ? "⏳" : "🔄"}
+                </button>
+              </span>
+            </div>
+
+            {/* 3-column legend — compact inline */}
+            <div className="flex gap-2 mt-1.5">
+              <span className={`text-[7px] px-1.5 py-0.5 rounded ${val === 1 ? "bg-emerald-900/40 text-emerald-400 font-bold" : "text-slate-600"}`}>▲ BULL (HH+HL)</span>
+              <span className={`text-[7px] px-1.5 py-0.5 rounded ${val === -1 ? "bg-rose-900/40 text-rose-400 font-bold" : "text-slate-600"}`}>▼ BEAR (LH+LL)</span>
+              <span className={`text-[7px] px-1.5 py-0.5 rounded ${val === 0 && ms ? "bg-amber-900/40 text-amber-400 font-bold" : "text-slate-600"}`}>═ SIDE 横盘</span>
+              {/* Auto-close toggle — inline */}
+              <button
+                onClick={() => setConditionToggles((prev) => ({ ...prev, mkt_structure: !prev.mkt_structure }))}
+                className={`ml-auto text-[7px] px-1.5 py-0.5 rounded transition ${
+                  conditionToggles["mkt_structure"]
+                    ? "bg-amber-800/40 text-amber-300 font-bold border border-amber-700/40"
+                    : "text-slate-600 hover:text-slate-400"
+                }`}
+                title="When ON + SIDEWAYS: auto-close all positions"
+              >
+                {conditionToggles["mkt_structure"] ? "⚡ Auto-close SIDEWAYS: ON" : "Auto-close: OFF"}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ═════════════════════════════════════════════════════ */}
       {/* GLOBAL: Execution Conditions (shared across all tabs)*/}
       {/* ═════════════════════════════════════════════════════ */}
       {(() => {
@@ -2773,70 +2907,6 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
                     );
                   })}
                 </div>
-
-                {/* Market Structure (HH/LL) — Always-visible analysis widget */}
-                <p className="text-[8px] text-slate-600 uppercase tracking-wider mt-3">📐 Market Structure (100-bar)</p>
-                {(() => {
-                  const hasData = conds != null && conds.mkt_structure !== undefined;
-                  const structVal = hasData ? (conds.mkt_structure as number) : null;
-                  const structLabel = structVal === 1 ? "BULL ▲" : structVal === -1 ? "BEAR ▼" : structVal === 0 ? "SIDEWAYS ═" : "— NO DATA";
-                  const structColor = structVal === 1 ? "text-emerald-400" : structVal === -1 ? "text-rose-400" : structVal === 0 ? "text-amber-400" : "text-slate-500";
-                  const structBg = structVal === 1 ? "bg-emerald-500/10 border-emerald-700/40" : structVal === -1 ? "bg-rose-500/10 border-rose-700/40" : structVal === 0 ? "bg-amber-500/10 border-amber-700/40" : "bg-slate-800/20 border-slate-700/30";
-                  const structIcon = structVal === 1 ? "📈" : structVal === -1 ? "📉" : structVal === 0 ? "📊" : "⏳";
-                  const suggestion = structVal === 1 ? "Favor LONG entries" : structVal === -1 ? "Favor SHORT entries" : structVal === 0 ? "No clear trend — consider staying flat" : "Run scan or switch symbol to load";
-                  return (
-                    <div className="space-y-1.5">
-                      {/* Status card — always visible */}
-                      <div className={`rounded-lg border ${structBg} px-3 py-2.5`}>
-                        <div className="flex items-center justify-between">
-                          <span className="text-[9px] text-slate-400">Current Structure</span>
-                          <span className={`px-2.5 py-0.5 rounded text-[11px] font-black ${structColor}`}>
-                            {structIcon} {structLabel}
-                          </span>
-                        </div>
-                        <p className={`text-[9px] mt-1 ${structColor} opacity-80`}>{suggestion}</p>
-                      </div>
-
-                      {/* Legend — compact */}
-                      <div className="grid grid-cols-3 gap-1 text-[7px]">
-                        <div className={`rounded px-1.5 py-1 text-center ${structVal === 1 ? "bg-emerald-900/30 border border-emerald-700/30" : "bg-slate-900/30 border border-slate-800/20 opacity-40"}`}>
-                          <span className="text-emerald-400">▲ BULL</span>
-                          <p className="text-slate-500 mt-0.5">HH + HL</p>
-                        </div>
-                        <div className={`rounded px-1.5 py-1 text-center ${structVal === -1 ? "bg-rose-900/30 border border-rose-700/30" : "bg-slate-900/30 border border-slate-800/20 opacity-40"}`}>
-                          <span className="text-rose-400">▼ BEAR</span>
-                          <p className="text-slate-500 mt-0.5">LH + LL</p>
-                        </div>
-                        <div className={`rounded px-1.5 py-1 text-center ${structVal === 0 && hasData ? "bg-amber-900/30 border border-amber-700/30" : "bg-slate-900/30 border border-slate-800/20 opacity-40"}`}>
-                          <span className="text-amber-400">═ SIDE</span>
-                          <p className="text-slate-500 mt-0.5">横盘</p>
-                        </div>
-                      </div>
-
-                      {/* Opt-in: auto-close on sideways */}
-                      <button
-                        onClick={() => setConditionToggles((prev) => ({ ...prev, mkt_structure: !prev.mkt_structure }))}
-                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-left transition-all text-[9px] ${
-                          conditionToggles["mkt_structure"]
-                            ? "border border-amber-700/40 bg-amber-950/20"
-                            : "border border-slate-800/30 bg-slate-900/30 opacity-60"
-                        }`}
-                      >
-                        <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[7px] font-bold ${
-                          conditionToggles["mkt_structure"] ? "bg-amber-600 text-white" : "bg-slate-800 text-slate-600"
-                        }`}>
-                          {conditionToggles["mkt_structure"] ? "✓" : "—"}
-                        </span>
-                        <span className={conditionToggles["mkt_structure"] ? "text-amber-300 font-semibold" : "text-slate-500"}>
-                          Auto-close on SIDEWAYS
-                        </span>
-                        <span className="ml-auto text-[7px] text-slate-600">
-                          {conditionToggles["mkt_structure"] ? "ON — will flatten positions" : "OFF"}
-                        </span>
-                      </button>
-                    </div>
-                  );
-                })()}
 
                 {/* Preset management */}
                 <div className="mt-3 pt-2 border-t border-slate-800/40">
