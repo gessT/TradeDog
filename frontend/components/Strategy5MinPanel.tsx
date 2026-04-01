@@ -977,7 +977,18 @@ function ScannerTab({
                 }`}>
                   {sig.found ? `${sig.direction} · ${sig.signal_type}` : "No Signal"}
                 </span>
-                <span className={`text-sm font-bold ${strengthColor(sig.strength)}`}>{sig.strength}/10</span>
+                <span className="flex items-center gap-2">
+                  {sig.found && (
+                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                      sig.is_fresh === false
+                        ? "bg-amber-500/20 text-amber-400"
+                        : "bg-emerald-500/20 text-emerald-400"
+                    }`}>
+                      {sig.is_fresh === false ? `STALE (${sig.bars_since_first ?? 0} bars)` : "FRESH"}
+                    </span>
+                  )}
+                  <span className={`text-sm font-bold ${strengthColor(sig.strength)}`}>{sig.strength}/10</span>
+                </span>
               </div>
               {sig.found && (
                 <div className="flex gap-3 text-[9px]">
@@ -2400,6 +2411,14 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           // ── Duplicate prevention: don't execute same bar twice ──
           if (sig.bar_time === lastExecBarRef.current) {
             setAutoLog((prev) => [`[${ts()}] ⏭ Signal already executed for bar ${sig.bar_time.slice(5, 16)}`, ...prev.slice(0, 49)]);
+            busyRef.current = false;
+            return;
+          }
+
+          // ── Freshness check: only trade first-time signals ──
+          if (sig.is_fresh === false) {
+            const barsOld = sig.bars_since_first ?? 0;
+            setAutoLog((prev) => [`[${ts()}] ⏭ STALE signal (${barsOld} bars old) — skipped, waiting for fresh entry`, ...prev.slice(0, 49)]);
             busyRef.current = false;
             return;
           }
