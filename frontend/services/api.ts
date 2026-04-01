@@ -1338,3 +1338,94 @@ export async function optimize5Min(
   }
   return (await response.json()) as Optimize5MinResponse;
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// US Stock 1-Hour Strategy Backtest
+// ═══════════════════════════════════════════════════════════════════════
+
+export type US1HCandle = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  ema_fast?: number | null;
+  ema_slow?: number | null;
+  rsi?: number | null;
+  macd_hist?: number | null;
+  st_dir?: number | null;
+  signal: number;
+};
+
+export type US1HTrade = {
+  entry_time: string;
+  exit_time: string;
+  entry_price: number;
+  exit_price: number;
+  qty: number;
+  pnl: number;
+  pnl_pct: number;
+  reason: string;
+  signal_type: string;
+  direction: string;
+  mae: number;
+  mkt_structure: number;
+};
+
+export type US1HMetrics = {
+  initial_capital: number;
+  final_equity: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  total_trades: number;
+  winners: number;
+  losers: number;
+  win_rate: number;
+  avg_win: number;
+  avg_loss: number;
+  profit_factor: number;
+  risk_reward_ratio: number;
+  oos_win_rate: number;
+  oos_total_trades: number;
+  oos_return_pct: number;
+};
+
+export type US1HBacktestResponse = {
+  symbol: string;
+  interval: string;
+  period: string;
+  candles: US1HCandle[];
+  trades: US1HTrade[];
+  equity_curve: number[];
+  metrics: US1HMetrics;
+  daily_pnl: Array<Record<string, unknown>>;
+  params: Record<string, unknown>;
+  timestamp: string;
+};
+
+export async function fetchUS1HBacktest(
+  symbol: string = "AAPL",
+  period: string = "2y",
+  oos_split: number = 0.3,
+  atr_sl_mult: number = 3.0,
+  atr_tp_mult: number = 2.5,
+  date_from?: string,
+  date_to?: string,
+  disabledConditions?: string[],
+  skipFlat?: boolean,
+): Promise<US1HBacktestResponse> {
+  let url = `${API_BASE}/stock/backtest_1h?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  if (date_from) url += `&date_from=${date_from}`;
+  if (date_to) url += `&date_to=${date_to}`;
+  if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  if (skipFlat) url += `&skip_flat=true`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as US1HBacktestResponse;
+}
