@@ -1481,6 +1481,7 @@ class MGC5MinTrade(BaseModel):
     signal_type: str = ""
     direction: str = "CALL"  # "CALL" or "PUT"
     mae: float = 0.0  # Max Adverse Excursion (worst unrealized loss)
+    mkt_structure: int = 0  # 1=BULL, -1=BEAR, 0=SIDEWAYS
 
 
 class MGC5MinMetrics(BaseModel):
@@ -1656,6 +1657,7 @@ async def mgc_backtest_5min(
                 signal_type=t.signal_type,
                 direction=t.direction,
                 mae=round(t.mae, 2),
+                mkt_structure=getattr(t, "mkt_structure", 0),
             )
             for t in filtered_trades
         ]
@@ -2234,6 +2236,7 @@ async def mgc_trade_log_5min(
                 reason=t.reason,
                 signal_type=t.signal_type,
                 mae=round(t.mae, 2),
+                mkt_structure=getattr(t, "mkt_structure", 0),
             )
             for t in recent
         ]

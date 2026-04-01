@@ -179,9 +179,6 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
       <td className={`px-2 py-1 text-right text-[10px] font-bold ${win ? "text-emerald-400" : "text-rose-400"}`}>
         {win ? "+" : ""}{n(t.pnl).toFixed(2)}
       </td>
-      <td className="px-2 py-1 text-center text-[10px] font-mono text-amber-400">
-        {t.qty > 1 ? `×${t.qty}` : "1"}
-      </td>
       <td className="px-2 py-1 text-right text-[10px] font-bold text-rose-400/80">
         {n(t.mae) < 0 ? `${n(t.mae).toFixed(2)}` : "—"}
       </td>
@@ -189,9 +186,15 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${t.direction === "PUT" ? "bg-rose-900/40 text-rose-400" : "bg-emerald-900/40 text-emerald-400"}`}>{t.direction || "CALL"}</span>
       </td>
       <td className="px-2 py-1 text-center">
+        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+          t.mkt_structure === 1 ? "bg-emerald-900/40 text-emerald-400" :
+          t.mkt_structure === -1 ? "bg-rose-900/40 text-rose-400" :
+          "bg-slate-700/40 text-slate-400"
+        }`}>{t.mkt_structure === 1 ? "BULL" : t.mkt_structure === -1 ? "BEAR" : "FLAT"}</span>
+      </td>
+      <td className="px-2 py-1 text-center">
         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${reasonStyle(t.reason)}`}>{t.reason}</span>
       </td>
-      <td className="px-2 py-1 text-center text-[9px] text-slate-500">{t.signal_type.slice(0, 3) || "—"}</td>
     </tr>
   );
 }
@@ -258,11 +261,10 @@ function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrad
                       <th className="px-2 py-0.5 text-right">Out$</th>
                       <th className="px-2 py-0.5 text-right">Pip$</th>
                       <th className="px-2 py-0.5 text-right">P&L</th>
-                      <th className="px-2 py-0.5 text-center">Qty</th>
                       <th className="px-2 py-0.5 text-right">MAE$</th>
                       <th className="px-2 py-0.5 text-center">Dir</th>
+                      <th className="px-2 py-0.5 text-center">Struct</th>
                       <th className="px-2 py-0.5 text-center">Type</th>
-                      <th className="px-2 py-0.5 text-center">Sig</th>
                     </tr>
                   </thead>
                   <tbody>

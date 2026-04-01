@@ -159,7 +159,7 @@ class MGCStrategy5Min:
 
         # Market structure — HH/HL vs LH/LL over last 100 bars
         df["mkt_structure"] = ind5.market_structure(
-            df["high"], df["low"], c, lookback=100, swing_order=5,
+            df["high"], df["low"], c, lookback=100, swing_order=3,
         )
 
         return df
