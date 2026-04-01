@@ -11,6 +11,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { halfTrend, type HalfTrendPoint } from "../utils/indicators";
+import TradeDetailDialog from "./strategy5min/TradeDetailDialog";
 import {
   fetchMGC5MinBacktest,
   optimize5MinConditions,
@@ -1041,165 +1042,6 @@ function MiniMetric({ label, value, cls = "" }: Readonly<{ label: string; value:
     <div className="rounded bg-slate-800/60 px-2 py-1 text-center">
       <div className="text-[7px] text-slate-600 uppercase">{label}</div>
       <div className={`text-[10px] font-bold tabular-nums ${cls}`}>{value}</div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Trade Zoom Chart — 30 bars before entry → trade → 30 bars after exit
-// ═══════════════════════════════════════════════════════════════════════
-
-function TradeZoomChart({ candles, trade, onClose }: Readonly<{ candles: MGC5MinCandle[]; trade: MGC5MinTrade; onClose: () => void }>) {
-  const ref = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-
-  useEffect(() => {
-    if (!ref.current || candles.length === 0) return;
-    const el = ref.current;
-
-    const entryTs = new Date(trade.entry_time).getTime();
-    const exitTs = new Date(trade.exit_time).getTime();
-
-    // Find entry and exit bar indices
-    let entryIdx = 0;
-    let exitIdx = candles.length - 1;
-    for (let i = 0; i < candles.length; i++) {
-      if (new Date(candles[i].time).getTime() >= entryTs) { entryIdx = i; break; }
-    }
-    for (let i = candles.length - 1; i >= 0; i--) {
-      if (new Date(candles[i].time).getTime() <= exitTs) { exitIdx = i; break; }
-    }
-
-    // Slice: 30 bars before entry → exit → 30 bars after exit
-    const PAD = 30;
-    const startIdx = Math.max(0, entryIdx - PAD);
-    const endIdx = Math.min(candles.length, exitIdx + PAD + 1);
-    const slice = candles.slice(startIdx, endIdx);
-    if (slice.length === 0) return;
-
-    if (chartRef.current) { try { chartRef.current.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; }
-
-    const chart = createChart(el, {
-      width: el.clientWidth,
-      height: 220,
-      layout: { background: { color: "#0f172a" }, textColor: "#64748b", fontSize: 9 },
-      grid: { vertLines: { color: "#1e293b" }, horzLines: { color: "#1e293b" } },
-      rightPriceScale: { borderVisible: false },
-      timeScale: { borderColor: "#334155", timeVisible: true, secondsVisible: false },
-      crosshair: { mode: 0 },
-    });
-    chartRef.current = chart;
-
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#22c55e", downColor: "#ef4444",
-      borderUpColor: "#22c55e", borderDownColor: "#ef4444",
-      wickUpColor: "#22c55e80", wickDownColor: "#ef444480",
-    });
-
-    const volSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" }, priceScaleId: "vol",
-    });
-    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-
-    const seen = new Set<number>();
-    const ohlc: { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
-    const vol: { time: UTCTimestamp; value: number; color: string }[] = [];
-
-    for (const c of slice) {
-      const t = toLocal(Math.floor(new Date(c.time).getTime() / 1000));
-      if (seen.has(t as number)) continue;
-      seen.add(t as number);
-      ohlc.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
-      vol.push({ time: t, value: c.volume, color: c.close >= c.open ? "#22c55e30" : "#ef444430" });
-    }
-
-    candleSeries.setData(ohlc);
-    volSeries.setData(vol);
-
-    // EMA lines
-    const emaFastData: { time: UTCTimestamp; value: number }[] = [];
-    const emaSlowData: { time: UTCTimestamp; value: number }[] = [];
-    let si = 0;
-    for (const c of slice) {
-      const t = ohlc[si]?.time;
-      if (!t) break;
-      if (c.ema_fast != null) emaFastData.push({ time: t, value: c.ema_fast });
-      if (c.ema_slow != null) emaSlowData.push({ time: t, value: c.ema_slow });
-      si++;
-    }
-    if (emaFastData.length > 0) {
-      chart.addSeries(LineSeries, { color: "#06b6d4", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }).setData(emaFastData);
-    }
-    if (emaSlowData.length > 0) {
-      chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }).setData(emaSlowData);
-    }
-
-    // HalfTrend overlay
-    const htPoints = halfTrend(slice, 2, 10);
-    const htUp: { time: UTCTimestamp; value: number }[] = [];
-    const htDown: { time: UTCTimestamp; value: number }[] = [];
-    for (let i = 0; i < htPoints.length && i < ohlc.length; i++) {
-      const pt = htPoints[i];
-      if (!pt) continue;
-      const d = { time: ohlc[i].time, value: pt.value };
-      if (pt.trend === 0) htUp.push(d); else htDown.push(d);
-    }
-    if (htUp.length > 0) {
-      chart.addSeries(LineSeries, { color: "#22c55e", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(htUp);
-    }
-    if (htDown.length > 0) {
-      chart.addSeries(LineSeries, { color: "#ef4444", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(htDown);
-    }
-
-    // SL / TP price lines
-    const isCall = trade.direction === "CALL";
-    const atrEst = Math.abs(trade.entry_price - (isCall
-      ? trade.entry_price - (trade.exit_price - trade.entry_price) / (trade.pnl >= 0 ? 2 : -1)
-      : trade.entry_price));
-    // Show entry price line
-    candleSeries.createPriceLine({ price: trade.entry_price, color: "#a78bfa", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "Entry" });
-    candleSeries.createPriceLine({ price: trade.exit_price, color: trade.pnl >= 0 ? "#22c55e" : "#ef4444", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: trade.reason });
-
-    // Entry & exit markers
-    const entryBarTs = toLocal(Math.floor(entryTs / 1000));
-    const exitBarTs = toLocal(Math.floor(exitTs / 1000));
-    const findClosest = (target: UTCTimestamp) => {
-      let best = ohlc[0]?.time ?? target;
-      let bestDiff = Math.abs((best as number) - (target as number));
-      for (const bar of ohlc) {
-        const diff = Math.abs((bar.time as number) - (target as number));
-        if (diff < bestDiff) { best = bar.time; bestDiff = diff; }
-      }
-      return best;
-    };
-
-    const win = trade.pnl >= 0;
-    const markers: { time: UTCTimestamp; position: "belowBar" | "aboveBar"; color: string; shape: "arrowUp" | "arrowDown"; text: string }[] = [
-      { time: findClosest(entryBarTs), position: isCall ? "belowBar" : "aboveBar", color: "#a78bfa", shape: isCall ? "arrowUp" : "arrowDown", text: `${trade.direction} $${trade.entry_price}` },
-      { time: findClosest(exitBarTs), position: "aboveBar", color: win ? "#22c55e" : "#ef4444", shape: "arrowDown", text: `${trade.reason} ${win ? "+" : ""}$${trade.pnl.toFixed(2)}` },
-    ];
-    markers.sort((a, b) => (a.time as number) - (b.time as number));
-    createSeriesMarkers(candleSeries, markers);
-
-    chart.timeScale().fitContent();
-
-    const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
-    ro.observe(el);
-    return () => { ro.disconnect(); try { chart.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; };
-  }, [candles, trade]);
-
-  const win = trade.pnl >= 0;
-  return (
-    <div className="rounded-lg border border-slate-800/60 bg-slate-950 overflow-hidden">
-      <div className="px-2.5 py-1.5 border-b border-slate-800/40 flex items-center justify-between">
-        <span className="text-[9px] uppercase tracking-widest text-slate-500">
-          {trade.direction} · {trade.entry_time.slice(5, 16)} → {trade.exit_time.slice(11, 16)} ·{" "}
-          <span className={win ? "text-emerald-400" : "text-rose-400"}>{win ? "+" : ""}{trade.pnl.toFixed(2)}</span>
-          {" "}· {trade.reason}
-        </span>
-        <button onClick={onClose} className="text-[10px] text-slate-500 hover:text-slate-300 px-1">✕</button>
-      </div>
-      <div ref={ref} className="w-full" style={{ height: 220 }} />
     </div>
   );
 }
@@ -3163,11 +3005,6 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
                 </div>
               )}
 
-              {/* Trade zoom chart — shown when a trade is clicked */}
-              {zoomTrade && btData.candles.length > 0 && (
-                <TradeZoomChart candles={btData.candles} trade={zoomTrade} onClose={() => setZoomTrade(null)} />
-              )}
-
               {/* Trade log — grouped by date */}
               <div className="rounded-lg border border-slate-800/60 bg-slate-900/50">
                 <p className="text-[9px] uppercase tracking-widest text-slate-500 px-3 py-2 border-b border-slate-800/40">
@@ -3298,6 +3135,11 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       {/* ═════════════════════════════════════════════════════ */}
       {tab === "exam" && (
         <ExamTab trades={btData?.trades ?? []} candles={btData?.candles ?? []} loading={loading} onLoadTrades={runBacktest} onTradeClick={onTradeClick} />
+      )}
+
+      {/* Trade detail dialog — opens when a trade log row is clicked */}
+      {zoomTrade && btData && btData.candles.length > 0 && (
+        <TradeDetailDialog candles={btData.candles} trade={zoomTrade} onClose={() => setZoomTrade(null)} />
       )}
     </div>
   );
