@@ -91,6 +91,7 @@ class Backtester5Min:
         params: dict | None = None,
         oos_split: float = 0.0,
         disabled_conditions: set[str] | None = None,
+        skip_flat: bool = False,
     ) -> BacktestResult5Min:
         """Execute 5min backtest.
 
@@ -113,20 +114,22 @@ class Backtester5Min:
         if oos_split > 0:
             split_idx = int(len(df_ind) * (1 - oos_split))
             is_trades, is_curve, is_equity = self._simulate(
-                df_ind.iloc[:split_idx], signals.iloc[:split_idx], full_params
+                df_ind.iloc[:split_idx], signals.iloc[:split_idx], full_params,
+                skip_flat=skip_flat,
             )
             # Out-of-sample run — chain from IS ending equity
             saved_capital = self.initial_capital
             self.initial_capital = is_equity
             oos_trades, oos_curve, oos_equity = self._simulate(
-                df_ind.iloc[split_idx:], signals.iloc[split_idx:], full_params
+                df_ind.iloc[split_idx:], signals.iloc[split_idx:], full_params,
+                skip_flat=skip_flat,
             )
             self.initial_capital = saved_capital
             # Merge curves
             all_trades = is_trades + oos_trades
             all_curve = is_curve + oos_curve
         else:
-            all_trades, all_curve, _ = self._simulate(df_ind, signals, full_params)
+            all_trades, all_curve, _ = self._simulate(df_ind, signals, full_params, skip_flat=skip_flat)
             is_trades = all_trades
             oos_trades = []
 
@@ -147,6 +150,7 @@ class Backtester5Min:
         df: pd.DataFrame,
         signals: pd.Series,
         params: dict,
+        skip_flat: bool = False,
     ) -> tuple[list[Trade5Min], list[float], float]:
         """Bar-by-bar simulation loop. Supports CALL (+1) and PUT (-1) signals."""
         equity = self.initial_capital
@@ -351,6 +355,11 @@ class Backtester5Min:
 
                 # Capture market structure at entry bar
                 _mkt_s = int(prev.get("mkt_structure", 0)) if "mkt_structure" in prev.index else 0
+
+                # Skip FLAT/SIDEWAYS entries when skip_flat is enabled
+                if skip_flat and _mkt_s == 0:
+                    equity_curve.append(equity)
+                    continue
 
                 position = {
                     "entry_price": entry_price,

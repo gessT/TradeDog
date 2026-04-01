@@ -1944,6 +1944,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   const [mktStructure, setMktStructure] = useState<MarketStructure | null>(null);
   const [mktLoading, setMktLoading] = useState(false);
   const prevStructureRef = useRef<number | null>(null);  // track transitions
+  const [skipFlat, setSkipFlat] = useState(false);  // filter out FLAT entries in backtest
 
   // Fetch market structure on mount, symbol change, and every 5 min
   useEffect(() => {
@@ -2031,14 +2032,14 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       const disabled = CONDITION_DEFS
         .filter((d) => d.group === "5m" && !conditionToggles[d.key])
         .map((d) => d.key);
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol, disabled.length > 0 ? disabled : undefined);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, skipFlat);
       setBtData(res);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
       setLoading(false);
     }
-  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles]);
+  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, skipFlat]);
 
   // ── Scanner ───────────────────────────────────────────
   // Helper: compute disabled condition keys from toggles (OFF = disabled)
@@ -2737,23 +2738,50 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
               </span>
             </div>
 
-            {/* 3-column legend — compact inline */}
+            {/* 3-column legend */}
             <div className="flex gap-2 mt-1.5">
               <span className={`text-[7px] px-1.5 py-0.5 rounded ${val === 1 ? "bg-emerald-900/40 text-emerald-400 font-bold" : "text-slate-600"}`}>▲ BULL (HH+HL)</span>
               <span className={`text-[7px] px-1.5 py-0.5 rounded ${val === -1 ? "bg-rose-900/40 text-rose-400 font-bold" : "text-slate-600"}`}>▼ BEAR (LH+LL)</span>
               <span className={`text-[7px] px-1.5 py-0.5 rounded ${val === 0 && ms ? "bg-amber-900/40 text-amber-400 font-bold" : "text-slate-600"}`}>═ SIDE 横盘</span>
-              {/* Auto-close toggle — inline */}
-              <button
-                onClick={() => setConditionToggles((prev) => ({ ...prev, mkt_structure: !prev.mkt_structure }))}
-                className={`ml-auto text-[7px] px-1.5 py-0.5 rounded transition ${
+            </div>
+
+            {/* ── Options ── */}
+            <div className="flex gap-3 mt-2 pt-2 border-t border-slate-700/50">
+              {/* Auto-close on SIDEWAYS */}
+              <label
+                className={`flex items-center gap-2 cursor-pointer text-xs px-3 py-1.5 rounded-md transition ${
                   conditionToggles["mkt_structure"]
-                    ? "bg-amber-800/40 text-amber-300 font-bold border border-amber-700/40"
-                    : "text-slate-600 hover:text-slate-400"
+                    ? "bg-amber-900/50 text-amber-300 border border-amber-600/50 shadow-sm shadow-amber-900/30"
+                    : "bg-slate-800/50 text-slate-500 border border-slate-700/30 hover:text-slate-300 hover:border-slate-600/50"
                 }`}
                 title="When ON + SIDEWAYS: auto-close all positions"
               >
-                {conditionToggles["mkt_structure"] ? "⚡ Auto-close SIDEWAYS: ON" : "Auto-close: OFF"}
-              </button>
+                <input
+                  type="checkbox"
+                  checked={!!conditionToggles["mkt_structure"]}
+                  onChange={() => setConditionToggles((prev) => ({ ...prev, mkt_structure: !prev.mkt_structure }))}
+                  className="w-3.5 h-3.5 accent-amber-500 rounded"
+                />
+                <span>{conditionToggles["mkt_structure"] ? "⚡ Auto-close SIDEWAYS: ON" : "Auto-close SIDEWAYS"}</span>
+              </label>
+
+              {/* Skip FLAT in backtest */}
+              <label
+                className={`flex items-center gap-2 cursor-pointer text-xs px-3 py-1.5 rounded-md transition ${
+                  skipFlat
+                    ? "bg-cyan-900/50 text-cyan-300 border border-cyan-600/50 shadow-sm shadow-cyan-900/30"
+                    : "bg-slate-800/50 text-slate-500 border border-slate-700/30 hover:text-slate-300 hover:border-slate-600/50"
+                }`}
+                title="Backtest will skip entries during SIDEWAYS/横盘 market — only take BULL or BEAR trades"
+              >
+                <input
+                  type="checkbox"
+                  checked={skipFlat}
+                  onChange={(e) => setSkipFlat(e.target.checked)}
+                  className="w-3.5 h-3.5 accent-cyan-500 rounded"
+                />
+                <span>{skipFlat ? "📊 Skip FLAT in backtest: ON" : "📊 Skip FLAT in backtest"}</span>
+              </label>
             </div>
           </div>
         );
