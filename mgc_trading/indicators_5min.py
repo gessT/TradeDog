@@ -245,3 +245,117 @@ def higher_tf_trend(
     """
     long_ema = close.ewm(span=ema_period, adjust=False).mean()
     return (close > long_ema).astype(int)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Market Structure — Higher High / Lower Low detection
+# ═══════════════════════════════════════════════════════════════════════
+
+def _find_swing_points(
+    high: pd.Series,
+    low: pd.Series,
+    order: int = 5,
+) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
+    """Detect swing highs/lows using a ±order bar window.
+
+    A swing high is a bar whose high is the highest in [i-order, i+order].
+    A swing low is a bar whose low is the lowest in [i-order, i+order].
+
+    Returns (swing_highs, swing_lows) as lists of (index_position, price).
+    """
+    swing_highs: list[tuple[int, float]] = []
+    swing_lows: list[tuple[int, float]] = []
+
+    h_vals = high.values
+    l_vals = low.values
+    n = len(h_vals)
+
+    for i in range(order, n - order):
+        # Swing high: bar i is highest in window
+        window_h = h_vals[i - order : i + order + 1]
+        if h_vals[i] == window_h.max() and h_vals[i] > h_vals[i - 1]:
+            swing_highs.append((i, float(h_vals[i])))
+
+        # Swing low: bar i is lowest in window
+        window_l = l_vals[i - order : i + order + 1]
+        if l_vals[i] == window_l.min() and l_vals[i] < l_vals[i - 1]:
+            swing_lows.append((i, float(l_vals[i])))
+
+    return swing_highs, swing_lows
+
+
+def market_structure(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    lookback: int = 100,
+    swing_order: int = 5,
+) -> pd.Series:
+    """Detect market structure over *lookback* bars.
+
+    Returns a Series with values:
+       1 = BULL  (Higher Highs + Higher Lows)
+      -1 = BEAR  (Lower Highs + Lower Lows)
+       0 = SIDEWAYS (横盘) — mixed or no clear structure
+
+    Logic:
+    - Find swing highs and swing lows within the lookback window
+    - Compare the last 3+ swing points to determine trend
+    - HH + HL = bullish structure → BUY
+    - LH + LL = bearish structure → SELL
+    - Mixed = sideways → CLEAR orders
+    """
+    n = len(close)
+    result = pd.Series(0, index=close.index, dtype=int)
+
+    for i in range(lookback, n):
+        # Window of lookback bars ending at i
+        start = max(0, i - lookback)
+        h_window = high.iloc[start : i + 1]
+        l_window = low.iloc[start : i + 1]
+
+        swing_highs, swing_lows = _find_swing_points(h_window, l_window, order=swing_order)
+
+        # Need at least 2 swing highs and 2 swing lows to determine structure
+        if len(swing_highs) < 2 or len(swing_lows) < 2:
+            result.iloc[i] = 0
+            continue
+
+        # Take last 3 swing points (or all if < 3)
+        recent_highs = swing_highs[-3:]
+        recent_lows = swing_lows[-3:]
+
+        # Check higher highs: each swing high > previous
+        hh_count = sum(
+            1 for j in range(1, len(recent_highs))
+            if recent_highs[j][1] > recent_highs[j - 1][1]
+        )
+        # Check higher lows
+        hl_count = sum(
+            1 for j in range(1, len(recent_lows))
+            if recent_lows[j][1] > recent_lows[j - 1][1]
+        )
+        # Check lower highs
+        lh_count = sum(
+            1 for j in range(1, len(recent_highs))
+            if recent_highs[j][1] < recent_highs[j - 1][1]
+        )
+        # Check lower lows
+        ll_count = sum(
+            1 for j in range(1, len(recent_lows))
+            if recent_lows[j][1] < recent_lows[j - 1][1]
+        )
+
+        max_pairs = len(recent_highs) - 1  # max possible comparisons
+
+        # Bull: majority HH + HL
+        if hh_count >= max_pairs and hl_count >= max_pairs:
+            result.iloc[i] = 1
+        # Bear: majority LH + LL
+        elif lh_count >= max_pairs and ll_count >= max_pairs:
+            result.iloc[i] = -1
+        # Sideways (横盘): mixed
+        else:
+            result.iloc[i] = 0
+
+    return result

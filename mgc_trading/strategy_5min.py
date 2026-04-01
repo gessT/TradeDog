@@ -157,6 +157,11 @@ class MGCStrategy5Min:
         # ATR range filter
         df["atr_ok"] = ind5.atr_range_ok(df["atr"], p["min_atr_pct"], c)
 
+        # Market structure — HH/HL vs LH/LL over last 100 bars
+        df["mkt_structure"] = ind5.market_structure(
+            df["high"], df["low"], c, lookback=100, swing_order=5,
+        )
+
         return df
 
     def generate_signals(self, df: pd.DataFrame, disabled: set[str] | None = None) -> pd.Series:

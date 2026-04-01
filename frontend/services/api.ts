@@ -1187,6 +1187,7 @@ export type Scan5MinConditions = {
   htf_15m_supertrend: boolean;
   htf_1h_trend: boolean;
   htf_1h_supertrend: boolean;
+  mkt_structure: number;  // 1=BULL, -1=BEAR, 0=SIDEWAYS
 };
 
 export type Scan5MinResponse = {

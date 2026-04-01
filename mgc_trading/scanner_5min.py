@@ -379,6 +379,8 @@ class ConditionStatus:
     htf_15m_supertrend: bool  # 15m supertrend aligned
     htf_1h_trend: bool    # 1h EMA trend aligned
     htf_1h_supertrend: bool   # 1h supertrend aligned
+    # Market Structure (HH/HL/LH/LL)
+    mkt_structure: int = 0    # 1=BULL(HH+HL), -1=BEAR(LH+LL), 0=SIDEWAYS
 
 
 @dataclass
@@ -444,6 +446,7 @@ def scan_5min_mtf(
         htf_15m_supertrend=False,
         htf_1h_trend=False,
         htf_1h_supertrend=False,
+        mkt_structure=int(bar.get("mkt_structure", 0)),
     )
 
     # ── 15m higher timeframe confirmation ──────────────────

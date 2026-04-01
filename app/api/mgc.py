@@ -1725,6 +1725,7 @@ class Scan5MinConditions(BaseModel):
     htf_15m_supertrend: bool = False
     htf_1h_trend: bool = False
     htf_1h_supertrend: bool = False
+    mkt_structure: int = 0  # 1=BULL(HH+HL), -1=BEAR(LH+LL), 0=SIDEWAYS
 
 
 class Scan5MinResponse(BaseModel):
@@ -1823,6 +1824,7 @@ async def mgc_scan_5min(
             atr_range=c.atr_range, session_ok=c.session_ok, adx_ok=c.adx_ok,
             htf_15m_trend=c.htf_15m_trend, htf_15m_supertrend=c.htf_15m_supertrend,
             htf_1h_trend=c.htf_1h_trend, htf_1h_supertrend=c.htf_1h_supertrend,
+            mkt_structure=c.mkt_structure,
         )
         return (result.found, sig, all_sigs, candles_out, cond_model,
                 mtf_result.bias, mtf_result.conditions_met, mtf_result.conditions_total)
@@ -1949,6 +1951,7 @@ async def mgc_scan_5min_live(
             atr_range=c.atr_range, session_ok=c.session_ok, adx_ok=c.adx_ok,
             htf_15m_trend=c.htf_15m_trend, htf_15m_supertrend=c.htf_15m_supertrend,
             htf_1h_trend=c.htf_1h_trend, htf_1h_supertrend=c.htf_1h_supertrend,
+            mkt_structure=c.mkt_structure,
         )
         return (result.found, sig, all_sigs, candles_out, cond_model,
                 mtf_result.bias, mtf_result.conditions_met, mtf_result.conditions_total)
