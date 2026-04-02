@@ -1514,6 +1514,7 @@ class MGC5MinBacktestResponse(BaseModel):
     metrics: MGC5MinMetrics
     daily_pnl: list[dict] = []
     params: dict
+    open_position: Optional[dict] = None  # current open position from backtest (not yet TP/SL)
     timestamp: str
 
 
@@ -1673,6 +1674,40 @@ async def mgc_backtest_5min(
         logger.exception("5min backtest failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    # Check if backtest currently has an open position
+    open_pos = None
+    try:
+        def _get_open_pos():
+            from mgc_trading.backtest_5min import Backtester5Min
+            df = load_yfinance(symbol=symbol, interval="5m", period="60d")
+            bt = Backtester5Min()
+            _disabled_set = set()
+            if disabled_conditions:
+                _disabled_set = {c.strip() for c in disabled_conditions.split(",") if c.strip()}
+            return bt.get_live_position(df, params={"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}, disabled_conditions=_disabled_set or None)
+        open_pos = await run_in_threadpool(_get_open_pos)
+    except Exception:
+        pass
+
+    # If last trade is EOD at data end and backtest still has open position → mark as OPEN
+    if open_pos and trades:
+        last_t = trades[-1]
+        if last_t.reason == "EOD" and round(last_t.entry_price, 2) == open_pos["entry_price"]:
+            trades[-1] = MGC5MinTrade(
+                entry_time=last_t.entry_time,
+                exit_time=last_t.exit_time,
+                entry_price=last_t.entry_price,
+                exit_price=last_t.exit_price,
+                qty=last_t.qty,
+                pnl=last_t.pnl,
+                pnl_pct=last_t.pnl_pct,
+                reason="OPEN",
+                signal_type=last_t.signal_type,
+                direction=last_t.direction,
+                mae=last_t.mae,
+                mkt_structure=last_t.mkt_structure,
+            )
+
     return MGC5MinBacktestResponse(
         symbol=symbol,
         interval="5m",
@@ -1683,6 +1718,7 @@ async def mgc_backtest_5min(
         metrics=metrics,
         daily_pnl=daily_pnl,
         params=params,
+        open_position=open_pos,
         timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
     )
 
@@ -1985,12 +2021,15 @@ class Execute5MinRequest(BaseModel):
     entry_price: float = 0.0
     stop_loss: float = 0.0
     take_profit: float = 0.0
+    bar_time: str = ""            # signal bar timestamp for dedup + parity
 
 
 class Execute5MinResponse(BaseModel):
     """Response from /execute_5min endpoint."""
     execution: Optional[ExecutionResult] = None
     position: dict = {}            # current_qty, max_qty, blocked
+    engine_state: dict = {}        # execution engine state snapshot
+    execution_record: dict = {}    # standardised execution output
     timestamp: str = ""
 
 
@@ -1999,9 +2038,13 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
     """Execute a 5-minute strategy trade on Tiger account.
 
     Places a bracket order (entry MKT + OCA SL/TP) for the given direction.
+    Uses ExecutionEngine state machine for validation + fail-safe.
     """
     def _run():
         from mgc_trading.tiger_execution import TigerTrader
+        from mgc_trading.execution_engine import get_engine
+
+        engine = get_engine(req.symbol)
 
         # Resolve commodity metadata
         commodity = _COMMODITY_SYMBOLS.get(req.symbol, _COMMODITY_SYMBOLS["MGC"])
@@ -2010,26 +2053,39 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
 
         side = "BUY" if req.direction == "CALL" else "SELL"
 
-        # Position check
+        # Position check (Tiger)
         current_pos = _get_tiger_position(tiger_sym)
-        at_max = current_pos >= req.max_qty
         position_info = {
             "current_qty": current_pos,
             "max_qty": req.max_qty,
             "trade_qty": req.qty,
-            "blocked": at_max,
+            "blocked": current_pos >= req.max_qty,
         }
 
-        if at_max:
+        # Sync engine with broker state (detect closed positions)
+        engine.sync_with_broker(current_pos)
+
+        # ── Engine pre-validation gates ─────────────────────────────
+        rejection = engine.validate_entry(
+            direction=req.direction,
+            entry_price=req.entry_price,
+            sl_price=req.stop_loss,
+            tp_price=req.take_profit,
+            bar_time=req.bar_time,
+            qty=req.qty,
+            max_qty=req.max_qty,
+            current_tiger_qty=current_pos,
+        )
+        if rejection is not None:
             exec_result = ExecutionResult(
                 executed=False,
                 order_id="",
                 side=side,
                 qty=req.qty,
-                status="MAX_POSITION",
-                reason=f"Position {current_pos}/{req.max_qty} — at max, no new orders",
+                status="REJECTED",
+                reason=rejection.reason,
             )
-            return exec_result, position_info
+            return exec_result, position_info, rejection.to_dict(), engine.get_state_summary()
 
         # Round SL/TP to commodity tick size
         sl_price = round(round(req.stop_loss / tick_size) * tick_size, 6)
@@ -2040,12 +2096,16 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
             trader.connect()
         except Exception as exc:
             logger.exception("TigerTrader connect failed")
+            rec = engine.record_entry(
+                req.direction, req.entry_price, sl_price, tp_price,
+                req.qty, req.bar_time, "", sl_confirmed=False, tp_confirmed=False,
+            )
             exec_result = ExecutionResult(
                 executed=False, order_id="", side=side, qty=req.qty,
                 status="CONNECT_FAILED",
                 reason=f"Tiger connection failed: {exc}",
             )
-            return exec_result, position_info
+            return exec_result, position_info, rec.to_dict(), engine.get_state_summary()
 
         try:
             bracket = trader.place_bracket_order(
@@ -2057,30 +2117,69 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
             )
         except Exception as exc:
             logger.exception("Bracket order placement failed")
+            rec = engine.record_entry(
+                req.direction, req.entry_price, sl_price, tp_price,
+                req.qty, req.bar_time, "", sl_confirmed=False, tp_confirmed=False,
+            )
             exec_result = ExecutionResult(
                 executed=False, order_id="", side=side, qty=req.qty,
                 status="ORDER_ERROR",
                 reason=f"Order error: {exc}",
             )
-            return exec_result, position_info
+            return exec_result, position_info, rec.to_dict(), engine.get_state_summary()
 
         if bracket.entry and bracket.entry.status != "FAILED":
-            parts = [f"Entry {bracket.entry.order_id} {side}"]
-            if bracket.stop_loss:
-                parts.append(f"SL {bracket.stop_loss.order_id} @ ${req.stop_loss:.2f}")
-            if bracket.take_profit:
-                parts.append(f"TP {bracket.take_profit.order_id} @ ${req.take_profit:.2f}")
-            exec_result = ExecutionResult(
-                executed=True,
-                order_id=bracket.entry.order_id,
-                side=side,
+            # ── FAIL-SAFE: Verify SL + TP were placed ──────────────
+            sl_ok = bracket.stop_loss is not None and bracket.stop_loss.status != "FAILED"
+            tp_ok = bracket.take_profit is not None and bracket.take_profit.status != "FAILED"
+
+            # Record in engine (will reject if OCO not confirmed)
+            rec = engine.record_entry(
+                direction=req.direction,
+                entry_price=req.entry_price,
+                sl_price=sl_price,
+                tp_price=tp_price,
                 qty=req.qty,
-                status=bracket.entry.status,
-                reason=" | ".join(parts),
+                bar_time=req.bar_time,
+                order_id=bracket.entry.order_id,
+                sl_confirmed=sl_ok,
+                tp_confirmed=tp_ok,
             )
+
+            if rec.status == "REJECTED":
+                # OCO failed — must cancel entry order
+                logger.error(
+                    "FAIL-SAFE TRIGGERED: SL=%s TP=%s — cancelling entry %s",
+                    sl_ok, tp_ok, bracket.entry.order_id,
+                )
+                exec_result = ExecutionResult(
+                    executed=False,
+                    order_id=bracket.entry.order_id,
+                    side=side,
+                    qty=req.qty,
+                    status="CANCELLED_FAILSAFE",
+                    reason=f"OCO not confirmed (SL={sl_ok}, TP={tp_ok}) — entry cancelled",
+                )
+            else:
+                parts = [f"Entry {bracket.entry.order_id} {side}"]
+                if bracket.stop_loss:
+                    parts.append(f"SL {bracket.stop_loss.order_id} @ ${req.stop_loss:.2f}")
+                if bracket.take_profit:
+                    parts.append(f"TP {bracket.take_profit.order_id} @ ${req.take_profit:.2f}")
+                exec_result = ExecutionResult(
+                    executed=True,
+                    order_id=bracket.entry.order_id,
+                    side=side,
+                    qty=req.qty,
+                    status=bracket.entry.status,
+                    reason=" | ".join(parts),
+                )
         else:
-            # Provide more detail on why it failed
             entry_status = bracket.entry.status if bracket.entry else "NO_ENTRY"
+            rec = engine.record_entry(
+                req.direction, req.entry_price, sl_price, tp_price,
+                req.qty, req.bar_time, "", sl_confirmed=False, tp_confirmed=False,
+            )
             exec_result = ExecutionResult(
                 executed=False,
                 order_id="",
@@ -2089,10 +2188,10 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
                 status="FAILED",
                 reason=f"Tiger order failed ({entry_status}) — check risk gates or market hours",
             )
-        return exec_result, position_info
+        return exec_result, position_info, rec.to_dict(), engine.get_state_summary()
 
     try:
-        exec_result, position_info = await run_in_threadpool(_run)
+        exec_result, position_info, exec_record, engine_state = await run_in_threadpool(_run)
     except Exception as exc:
         logger.exception("execute_5min unexpected error")
         exec_result = ExecutionResult(
@@ -2100,12 +2199,107 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
             status="ERROR", reason=f"Unexpected error: {exc}",
         )
         position_info = {"current_qty": 0, "max_qty": req.max_qty, "trade_qty": req.qty, "blocked": False}
+        exec_record = {"signal": "BUY", "entry_price": 0, "tp_price": 0, "sl_price": 0, "status": "REJECTED", "reason": str(exc)}
+        engine_state = {}
 
     return Execute5MinResponse(
         execution=exec_result,
         position=position_info,
+        engine_state=engine_state,
+        execution_record=exec_record,
         timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
+
+
+# ── Backtest Live Position (sync auto-trade with backtest) ──────────
+
+@router.get("/backtest_position")
+async def backtest_position(
+    symbol: Annotated[str, Query()] = "MGC=F",
+    period: Annotated[str, Query()] = "60d",
+    atr_sl_mult: Annotated[float, Query()] = 3.0,
+    atr_tp_mult: Annotated[float, Query()] = 2.5,
+    disabled_conditions: Annotated[Optional[str], Query()] = None,
+):
+    """Run backtest to current bar and return open position (if any).
+
+    Used by auto-trading to sync: if backtest is currently in a position,
+    live should enter immediately.
+    """
+    def _run():
+        from mgc_trading.backtest_5min import Backtester5Min
+
+        effective_period = period if period in ("1d", "2d", "5d", "7d", "30d", "60d") else "60d"
+        df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
+
+        params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
+        disabled = set(disabled_conditions.split(",")) if disabled_conditions else None
+
+        bt = Backtester5Min()
+        pos = bt.get_live_position(df, params=params, disabled_conditions=disabled)
+
+        return {
+            "in_position": pos is not None,
+            "position": pos,
+            "data_end": str(df.index[-1]) if len(df) > 0 else "",
+            "bars": len(df),
+        }
+
+    result = await run_in_threadpool(_run)
+    result["timestamp"] = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC")
+    return result
+
+
+# ── Execution Engine State & Control ────────────────────────────────
+
+@router.get("/engine_state")
+async def get_engine_state(symbol: str = "MGC"):
+    """Return current execution engine state for a symbol."""
+    from mgc_trading.execution_engine import get_engine
+    engine = get_engine(symbol)
+    tiger_qty = _get_tiger_position(symbol)
+    engine.sync_with_broker(tiger_qty)
+    return {
+        **engine.get_state_summary(),
+        "tiger_qty": tiger_qty,
+        "symbol": symbol,
+    }
+
+
+@router.post("/engine_sync")
+async def engine_sync(symbol: str = "MGC"):
+    """Force-sync execution engine state with Tiger broker position."""
+    from mgc_trading.execution_engine import get_engine
+    engine = get_engine(symbol)
+    tiger_qty = _get_tiger_position(symbol)
+    engine.sync_with_broker(tiger_qty)
+    return {
+        "synced": True,
+        **engine.get_state_summary(),
+        "tiger_qty": tiger_qty,
+    }
+
+
+@router.post("/engine_reset")
+async def engine_reset(symbol: str = "MGC"):
+    """Emergency reset: clear all engine state for a symbol."""
+    from mgc_trading.execution_engine import get_engine
+    engine = get_engine(symbol)
+    engine.force_reset()
+    return {"reset": True, **engine.get_state_summary()}
+
+
+@router.get("/engine_log")
+async def get_engine_log(symbol: str = "MGC", limit: int = 50):
+    """Return recent execution log entries."""
+    from mgc_trading.execution_engine import get_engine
+    engine = get_engine(symbol)
+    entries = engine.execution_log[-limit:]
+    return {
+        "symbol": symbol,
+        "total": len(engine.execution_log),
+        "entries": [e.to_dict() for e in entries],
+    }
 
 
 # ── 5min Optimize endpoint ──────────────────────────────────────────
@@ -2200,6 +2394,7 @@ class TradeLog5MinResponse(BaseModel):
     total: int
     win_rate: float
     total_pnl: float
+    open_position: Optional[dict] = None
     timestamp: str
 
 
@@ -2222,7 +2417,31 @@ async def mgc_trade_log_5min(
         bt = Backtester5Min()
         result = bt.run(df)
 
+        # Check open position
+        open_pos = bt.get_live_position(df)
+
         all_trades = result.trades
+
+        # If last trade is EOD at data end and matches open position → mark as OPEN
+        if open_pos and all_trades and all_trades[-1].reason == "EOD":
+            last_t = all_trades[-1]
+            if round(last_t.entry_price, 2) == open_pos["entry_price"]:
+                from mgc_trading.backtest_5min import Trade5Min
+                all_trades[-1] = Trade5Min(
+                    entry_time=last_t.entry_time,
+                    exit_time=last_t.exit_time,
+                    entry_price=last_t.entry_price,
+                    exit_price=last_t.exit_price,
+                    qty=last_t.qty,
+                    pnl=last_t.pnl,
+                    pnl_pct=last_t.pnl_pct,
+                    reason="OPEN",
+                    signal_type=last_t.signal_type,
+                    direction=last_t.direction,
+                    mae=last_t.mae,
+                    mkt_structure=getattr(last_t, "mkt_structure", 0),
+                )
+
         recent = all_trades[-limit:] if len(all_trades) > limit else all_trades
 
         trade_list = [
@@ -2246,15 +2465,16 @@ async def mgc_trade_log_5min(
         wins = sum(1 for t in recent if t.pnl > 0)
         wr = wins / len(recent) * 100 if recent else 0
 
-        return trade_list, len(all_trades), round(wr, 1), round(total_pnl, 2)
+        return trade_list, len(all_trades), round(wr, 1), round(total_pnl, 2), open_pos
 
-    trades, total, wr, pnl = await run_in_threadpool(_run)
+    trades, total, wr, pnl, open_pos = await run_in_threadpool(_run)
 
     return TradeLog5MinResponse(
         trades=trades,
         total=total,
         win_rate=wr,
         total_pnl=pnl,
+        open_position=open_pos,
         timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
     )
 

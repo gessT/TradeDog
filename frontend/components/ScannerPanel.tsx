@@ -16,6 +16,8 @@ import {
   getMarketStructure,
   getAutoTradeSettings,
   saveAutoTradeSettings,
+  syncEngine,
+  getBacktestPosition,
   type MarketStructure,
   type Scan5MinResponse,
   type Scan5MinSignal,
@@ -314,12 +316,13 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
     try {
       const curPos = positionQtyRef.current;
       const remainingQty = Math.max(1, autoQty - curPos);
-      const res = await execute5Min(dir, remainingQty, autoQty, s.entry_price, s.stop_loss, s.take_profit, symbol);
+      const res = await execute5Min(dir, remainingQty, autoQty, s.entry_price, s.stop_loss, s.take_profit, symbol, s.bar_time);
       if (res.execution?.executed) {
         if (res.position?.current_qty != null) { const nq = Math.abs(res.position.current_qty); setPositionQty(nq); positionQtyRef.current = nq; }
-        alert(`✅ Order Placed!\n\n${res.execution.reason}`);
+        const rec = res.execution_record;
+        alert(`✅ Order Placed!\n\n${res.execution.reason}\n\nEngine: ${rec?.status} (${rec?.reason})\nSL: $${rec?.sl_price} | TP: $${rec?.tp_price}`);
       } else {
-        alert(`❌ Order Failed\n\nStatus: ${res.execution?.status || ""}\n${res.execution?.reason || "Unknown error"}`);
+        alert(`❌ Order Rejected\n\nStatus: ${res.execution?.status || ""}\n${res.execution?.reason || res.execution_record?.reason || "Unknown error"}`);
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Execution failed";
@@ -403,14 +406,15 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
     const side = dir === "PUT" ? "SELL" : "BUY";
     setExecuting(true);
     try {
-      const execRes = await execute5Min(dir, remainingQty, targetQty, sig.entry_price, sig.stop_loss, sig.take_profit, symbol);
+      const execRes = await execute5Min(dir, remainingQty, targetQty, sig.entry_price, sig.stop_loss, sig.take_profit, symbol, sig.bar_time);
       if (execRes.execution?.executed) {
         notifyTrade(side, sig.entry_price, false, sig.stop_loss, sig.take_profit, sig.risk_reward);
         const newQty = execRes.position?.current_qty != null ? Math.abs(execRes.position.current_qty) : curPos + remainingQty;
         setPositionQty(newQty); positionQtyRef.current = newQty;
-        setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} ${remainingQty}x → ${execRes.execution?.order_id?.slice(0, 12)} (${newQty}/${targetQty} qty)`, ...prev.slice(0, 49)]);
+        const rec = execRes.execution_record;
+        setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} ${remainingQty}x → ${execRes.execution?.order_id?.slice(0, 12)} | SL=$${rec?.sl_price} TP=$${rec?.tp_price} (${newQty}/${targetQty} qty)`, ...prev.slice(0, 49)]);
         if (newQty >= targetQty) setAutoLog((prev) => [`[${ts()}] ⏸ Target qty reached (${newQty}/${targetQty}) — paused`, ...prev.slice(0, 49)]);
-      } else { setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${execRes.execution?.reason || "Unknown"}`, ...prev.slice(0, 49)]); }
+      } else { setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${execRes.execution_record?.reason || execRes.execution?.reason || "Unknown"}`, ...prev.slice(0, 49)]); }
     } catch (e) { setAutoLog((prev) => [`[${ts()}] ❌ ERROR: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]); }
     finally { setExecuting(false); }
   }, [symbol, notifyTrade]);
@@ -444,15 +448,64 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
     setPendingSignal(null); setPendingExpiry(0);
     lastExecBarRef.current = "";
 
-    // Check current position on start
+    // Sync execution engine on start
+    syncEngine(symbol).then((es) => {
+      setAutoLog((prev) => [`[${ts()}] 🔧 Engine synced: position=${es.current_position} last_bar=${es.last_exec_bar || "—"}`, ...prev.slice(0, 49)]);
+    }).catch(() => {});
+
+    // Check current position on start + sync with backtest
     (async () => {
       try {
         const pos = await getMgcPosition(symbol);
         const curQty = Math.abs(pos.current_qty ?? 0);
         setPositionQty(curQty); positionQtyRef.current = curQty;
-        if (curQty >= autoQty) setAutoLog((prev) => [`[${ts()}] 📊 Position full (${curQty}/${autoQty} qty) — waiting for close`, ...prev.slice(0, 49)]);
-        else if (curQty > 0) setAutoLog((prev) => [`[${ts()}] 📊 Existing position (${curQty}/${autoQty} qty)`, ...prev.slice(0, 49)]);
-        else setAutoLog((prev) => [`[${ts()}] 📊 No open position — ready to trade`, ...prev.slice(0, 49)]);
+        if (curQty >= autoQty) {
+          setAutoLog((prev) => [`[${ts()}] 📊 Position full (${curQty}/${autoQty} qty) — waiting for close`, ...prev.slice(0, 49)]);
+          return; // Already in position — no need to check backtest
+        }
+        if (curQty > 0) {
+          setAutoLog((prev) => [`[${ts()}] 📊 Existing position (${curQty}/${autoQty} qty)`, ...prev.slice(0, 49)]);
+          return;
+        }
+
+        // No Tiger position — check if backtest currently has an open position
+        setAutoLog((prev) => [`[${ts()}] 🔍 Checking backtest position…`, ...prev.slice(0, 49)]);
+        const disabled = CONDITION_DEFS.filter((d) => d.group === "5m" && !conditionTogglesRef.current[d.key]).map((d) => d.key);
+        const btPos = await getBacktestPosition(symbol, slMult, tpMult, disabled.length > 0 ? disabled : undefined);
+        if (btPos.in_position && btPos.position) {
+          const p = btPos.position;
+          const side = p.direction === "PUT" ? "SELL" : "BUY";
+          setAutoLog((prev) => [
+            `[${ts()}] 🎯 BACKTEST IN POSITION: ${side} @ $${p.entry_price} | SL=$${p.sl} TP=$${p.tp}`,
+            ...prev.slice(0, 49),
+          ]);
+          setAutoLog((prev) => [`[${ts()}] ⚡ Entering immediately to sync with backtest…`, ...prev.slice(0, 49)]);
+
+          // Execute immediately
+          const targetQty = autoQtyRef.current;
+          const remainingQty = Math.max(1, targetQty - curQty);
+          setExecuting(true);
+          try {
+            const execRes = await execute5Min(
+              p.direction, remainingQty, targetQty,
+              p.entry_price, p.sl, p.tp,
+              symbol, p.bar_time,
+            );
+            if (execRes.execution?.executed) {
+              lastExecBarRef.current = p.bar_time;
+              notifyTrade(side, p.entry_price, false, p.sl, p.tp, 0);
+              const newQty = execRes.position?.current_qty != null ? Math.abs(execRes.position.current_qty) : curQty + remainingQty;
+              setPositionQty(newQty); positionQtyRef.current = newQty;
+              setAutoLog((prev) => [`[${ts()}] ✅ SYNCED: ${side} ${remainingQty}x @ $${p.entry_price} | SL=$${p.sl} TP=$${p.tp}`, ...prev.slice(0, 49)]);
+            } else {
+              setAutoLog((prev) => [`[${ts()}] ❌ Sync failed: ${execRes.execution_record?.reason || execRes.execution?.reason || "Unknown"}`, ...prev.slice(0, 49)]);
+            }
+          } catch (e) {
+            setAutoLog((prev) => [`[${ts()}] ❌ Sync error: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]);
+          } finally { setExecuting(false); }
+        } else {
+          setAutoLog((prev) => [`[${ts()}] 📊 No backtest position — waiting for next signal`, ...prev.slice(0, 49)]);
+        }
       } catch {
         setPositionQty(0); positionQtyRef.current = 0;
         setAutoLog((prev) => [`[${ts()}] ⚠️ Could not check position — assuming 0/${autoQty}`, ...prev.slice(0, 49)]);
@@ -488,6 +541,8 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
             if (curQty < prevQty) setAutoLog((prev) => [`[${ts()}] 🔓 Position reduced ${prevQty}→${curQty} qty`, ...prev.slice(0, 49)]);
             else setAutoLog((prev) => [`[${ts()}] 📊 Position updated ${prevQty}→${curQty}/${autoQtyRef.current} qty`, ...prev.slice(0, 49)]);
           }
+          // Sync engine state with broker — detect TP/SL exits
+          try { await syncEngine(symbol); } catch { /* */ }
         } catch { /* */ }
 
         const disabled = CONDITION_DEFS.filter((d) => d.group === "5m" && !conditionTogglesRef.current[d.key]).map((d) => d.key);
@@ -546,15 +601,16 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
             const side = dir === "PUT" ? "SELL" : "BUY";
             setExecuting(true);
             try {
-              const execRes = await execute5Min(dir, remainingQty, targetQty, sig.entry_price, sig.stop_loss, sig.take_profit, symbol);
+              const execRes = await execute5Min(dir, remainingQty, targetQty, sig.entry_price, sig.stop_loss, sig.take_profit, symbol, sig.bar_time);
               if (execRes.execution?.executed) {
                 lastExecBarRef.current = sig.bar_time;
                 notifyTrade(side, sig.entry_price, false, sig.stop_loss, sig.take_profit, sig.risk_reward);
                 const newQty = execRes.position?.current_qty != null ? Math.abs(execRes.position.current_qty) : curPos + remainingQty;
                 setPositionQty(newQty); positionQtyRef.current = newQty;
-                setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} ${remainingQty}x → ${execRes.execution?.order_id?.slice(0, 12)} (${newQty}/${targetQty} qty)`, ...prev.slice(0, 49)]);
+                const rec = execRes.execution_record;
+                setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} ${remainingQty}x → ${execRes.execution?.order_id?.slice(0, 12)} | SL=$${rec?.sl_price} TP=$${rec?.tp_price} (${newQty}/${targetQty} qty)`, ...prev.slice(0, 49)]);
                 if (newQty >= targetQty) setAutoLog((prev) => [`[${ts()}] ⏸ Target qty reached (${newQty}/${targetQty})`, ...prev.slice(0, 49)]);
-              } else { setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${execRes.execution?.reason || "Unknown"}`, ...prev.slice(0, 49)]); }
+              } else { setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${execRes.execution_record?.reason || execRes.execution?.reason || "Unknown"}`, ...prev.slice(0, 49)]); }
             } catch (e) { setAutoLog((prev) => [`[${ts()}] ❌ ERROR: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]); }
             finally { setExecuting(false); }
           }

@@ -1008,6 +1008,7 @@ export type MGC5MinBacktestResponse = {
   metrics: MGC5MinMetrics;
   daily_pnl: DailyPnl[];
   params: Record<string, unknown>;
+  open_position: BacktestPosition | null;
   timestamp: string;
 };
 
@@ -1243,9 +1244,35 @@ export async function scan5Min(
 
 // ── 5min Execute (Tiger Bracket Order) ──────────────────────────────
 
+export type ExecutionRecord = {
+  signal: string;
+  entry_price: number;
+  tp_price: number;
+  sl_price: number;
+  status: string;
+  reason: string;
+  order_id: string;
+  timestamp: string;
+  qty: number;
+};
+
+export type EngineState = {
+  current_position: string;
+  entry_price: number;
+  tp_price: number;
+  sl_price: number;
+  qty: number;
+  side: string;
+  bar_time: string;
+  order_id: string;
+  last_exec_bar: string;
+};
+
 export type Execute5MinResponse = {
   execution: ExecutionResult | null;
   position: { current_qty: number; max_qty: number; trade_qty: number; blocked: boolean };
+  engine_state: EngineState | null;
+  execution_record: ExecutionRecord | null;
   timestamp: string;
 };
 
@@ -1257,6 +1284,7 @@ export async function execute5Min(
   stopLoss: number = 0,
   takeProfit: number = 0,
   symbol: string = "MGC",
+  barTime: string = "",
 ): Promise<Execute5MinResponse> {
   const response = await fetch(`${API_BASE}/mgc/execute_5min`, {
     method: "POST",
@@ -1269,6 +1297,7 @@ export async function execute5Min(
       entry_price: entryPrice,
       stop_loss: stopLoss,
       take_profit: takeProfit,
+      bar_time: barTime,
     }),
   });
   if (!response.ok) {
@@ -1276,6 +1305,63 @@ export async function execute5Min(
     throw new Error(detail || `Execute failed with ${response.status}`);
   }
   return (await response.json()) as Execute5MinResponse;
+}
+
+// ── Execution Engine State & Control ────────────────────────────────
+
+export async function getEngineState(symbol: string = "MGC"): Promise<EngineState & { tiger_qty: number }> {
+  const response = await fetch(`${API_BASE}/mgc/engine_state?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Failed to get engine state");
+  return response.json();
+}
+
+export async function syncEngine(symbol: string = "MGC"): Promise<{ synced: boolean } & EngineState> {
+  const response = await fetch(`${API_BASE}/mgc/engine_sync?symbol=${encodeURIComponent(symbol)}`, { method: "POST" });
+  if (!response.ok) throw new Error("Failed to sync engine");
+  return response.json();
+}
+
+export async function resetEngine(symbol: string = "MGC"): Promise<{ reset: boolean } & EngineState> {
+  const response = await fetch(`${API_BASE}/mgc/engine_reset?symbol=${encodeURIComponent(symbol)}`, { method: "POST" });
+  if (!response.ok) throw new Error("Failed to reset engine");
+  return response.json();
+}
+
+// ── Backtest Live Position (sync auto-trade to backtest) ────────────
+
+export type BacktestPosition = {
+  direction: string;
+  entry_price: number;
+  sl: number;
+  tp: number;
+  qty: number;
+  entry_time: string;
+  signal_type: string;
+  bar_time: string;
+};
+
+export type BacktestPositionResponse = {
+  in_position: boolean;
+  position: BacktestPosition | null;
+  data_end: string;
+  bars: number;
+  timestamp: string;
+};
+
+export async function getBacktestPosition(
+  symbol: string = "MGC",
+  slMult: number = 3.0,
+  tpMult: number = 2.5,
+  disabledConditions?: string[],
+): Promise<BacktestPositionResponse> {
+  const yf = toYF(symbol);
+  let url = `${API_BASE}/mgc/backtest_position?symbol=${encodeURIComponent(yf)}&atr_sl_mult=${slMult}&atr_tp_mult=${tpMult}`;
+  if (disabledConditions && disabledConditions.length > 0) {
+    url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error("Failed to get backtest position");
+  return response.json();
 }
 
 

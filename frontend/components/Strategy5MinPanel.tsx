@@ -115,6 +115,7 @@ function reasonStyle(reason: string): string {
   if (reason === "TP") return "bg-emerald-500/20 text-emerald-400";
   if (reason === "SL") return "bg-rose-500/20 text-rose-400";
   if (reason === "TRAILING") return "bg-cyan-500/20 text-cyan-400";
+  if (reason === "OPEN") return "bg-blue-500/20 text-blue-400 animate-pulse";
   return "bg-amber-500/20 text-amber-400";
 }
 
@@ -776,6 +777,7 @@ function ExamTab({
     if (r === "TP") return "Hit take-profit target";
     if (r === "SL") return "Stopped out at stop-loss";
     if (r === "TRAILING") return "Trailing stop triggered after run-up";
+    if (r === "OPEN") return "Position still open — awaiting TP or SL";
     return r;
   };
 
@@ -1479,6 +1481,24 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
                       </span>
                     </span>
                   </div>
+                </div>
+              )}
+
+              {/* Open position banner */}
+              {btData.open_position && (
+                <div className="rounded-lg border border-blue-500/40 bg-blue-950/30 px-3 py-2 flex items-center gap-3">
+                  <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] font-bold text-blue-400">
+                      HOLDING POSITION — {btData.open_position.direction === "PUT" ? "SHORT" : "LONG"} @ ${btData.open_position.entry_price}
+                    </p>
+                    <p className="text-[9px] text-slate-400 mt-0.5">
+                      SL ${btData.open_position.sl} · TP ${btData.open_position.tp} · Entry {btData.open_position.entry_time.slice(5, 16)} · {btData.open_position.signal_type}
+                    </p>
+                  </div>
+                  <span className={`text-[10px] font-bold ${btData.open_position.direction === "PUT" ? "text-rose-400" : "text-emerald-400"}`}>
+                    {btData.open_position.direction === "PUT" ? "▼ SELL" : "▲ BUY"}
+                  </span>
                 </div>
               )}
 

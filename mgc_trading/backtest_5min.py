@@ -75,7 +75,7 @@ class Backtester5Min:
 
     # Risk management defaults (tighter for 5min)
     MAX_CONSEC_LOSSES = 4
-    MAX_DAILY_TRADES = 15
+    MAX_DAILY_TRADES = 30
 
     def __init__(
         self,
@@ -409,6 +409,156 @@ class Backtester5Min:
             ))
 
         return trades, equity_curve, equity
+
+    def get_live_position(
+        self,
+        df: pd.DataFrame,
+        params: dict | None = None,
+        disabled_conditions: set[str] | None = None,
+    ) -> dict | None:
+        """Run the backtest simulation and return the open position at the
+        last bar (if any), WITHOUT force-closing it.
+
+        Returns dict with entry_price, sl, tp, direction, entry_time,
+        signal_type, qty — or None if no open position.
+        """
+        full_params = {**DEFAULT_5MIN_PARAMS, **(params or {})}
+        strategy = MGCStrategy5Min(full_params)
+        df_ind = strategy.compute_indicators(
+            df[["open", "high", "low", "close", "volume"]].copy()
+        )
+        signals = strategy.generate_signals(df_ind, disabled=disabled_conditions)
+
+        # Run the same simulation loop but stop before force-close
+        equity = self.initial_capital
+        position: dict | None = None
+        consec_losses = 0
+        daily_counts: dict[str, int] = {}
+        extreme_since_entry = 0.0
+        prev_bar_date = ""
+
+        for i in range(1, len(df_ind)):
+            bar = df_ind.iloc[i]
+            prev = df_ind.iloc[i - 1]
+            bar_date = str(bar.name.date()) if hasattr(bar.name, "date") else str(bar.name)[:10]
+
+            if bar_date != prev_bar_date:
+                prev_bar_date = bar_date
+                consec_losses = 0
+                daily_counts[bar_date] = daily_counts.get(bar_date, 0)
+
+            # EOD close on day change
+            if position is not None:
+                prev_date = str(prev.name.date()) if hasattr(prev.name, "date") else str(prev.name)[:10]
+                if bar_date != prev_date:
+                    d = position["direction"]
+                    pnl = d * (float(prev["close"]) - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                    equity += pnl
+                    consec_losses = consec_losses + 1 if pnl < 0 else 0
+                    position = None
+                    daily_counts[bar_date] = 0
+
+            # Check exits
+            if position is not None:
+                sl = position["sl"]
+                tp = position["tp"]
+                direction = position["direction"]
+
+                if direction == 1:
+                    if full_params.get("use_breakeven") and not position.get("be_triggered"):
+                        be_thresh = position["entry_price"] + full_params.get("be_atr_mult", 1.0) * position["entry_atr"]
+                        if bar["high"] >= be_thresh:
+                            position["be_triggered"] = True
+                            new_sl = position["entry_price"] + full_params.get("be_offset_atr", 0.1) * position["entry_atr"]
+                            if new_sl > sl:
+                                sl = new_sl
+                                position["sl"] = sl
+                    if full_params.get("use_trailing") and bar["high"] > extreme_since_entry:
+                        extreme_since_entry = bar["high"]
+                        new_sl = extreme_since_entry - full_params["trailing_atr_mult"] * prev["atr"]
+                        if new_sl > sl:
+                            sl = new_sl
+                            position["sl"] = sl
+                    hit_sl = bar["low"] <= sl
+                    hit_tp = bar["high"] >= tp
+                else:
+                    if full_params.get("use_breakeven") and not position.get("be_triggered"):
+                        be_thresh = position["entry_price"] - full_params.get("be_atr_mult", 1.0) * position["entry_atr"]
+                        if bar["low"] <= be_thresh:
+                            position["be_triggered"] = True
+                            new_sl = position["entry_price"] - full_params.get("be_offset_atr", 0.1) * position["entry_atr"]
+                            if new_sl < sl:
+                                sl = new_sl
+                                position["sl"] = sl
+                    if full_params.get("use_trailing") and bar["low"] < extreme_since_entry:
+                        extreme_since_entry = bar["low"]
+                        new_sl = extreme_since_entry + full_params["trailing_atr_mult"] * prev["atr"]
+                        if new_sl < sl:
+                            sl = new_sl
+                            position["sl"] = sl
+                    hit_sl = bar["high"] >= sl
+                    hit_tp = bar["low"] <= tp
+
+                if hit_sl or hit_tp:
+                    pnl = direction * ((sl if hit_sl else tp) - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                    equity += pnl
+                    consec_losses = consec_losses + 1 if pnl < 0 else 0
+                    position = None
+
+            # Consider entry
+            sig_val = signals.iloc[i - 1] if i > 0 else 0
+            if position is None and sig_val != 0:
+                if consec_losses >= self.MAX_CONSEC_LOSSES:
+                    continue
+                if daily_counts.get(bar_date, 0) >= self.MAX_DAILY_TRADES:
+                    continue
+                entry_price = float(bar["open"])
+                atr_val = float(prev["atr"]) if not math.isnan(float(prev["atr"])) else 0.0
+                if atr_val <= 0:
+                    continue
+
+                direction = int(sig_val)
+                if direction == 1:
+                    sl_price = entry_price - full_params["atr_sl_mult"] * atr_val
+                    tp_price = entry_price + full_params["atr_tp_mult"] * atr_val
+                else:
+                    sl_price = entry_price + full_params["atr_sl_mult"] * atr_val
+                    tp_price = entry_price - full_params["atr_tp_mult"] * atr_val
+
+                sig_type = "PULLBACK"
+                if direction == 1 and int(prev.get("breakout", 0)) == 1:
+                    sig_type = "BREAKOUT"
+                elif direction == -1 and int(prev.get("breakout_low", 0)) == 1:
+                    sig_type = "BREAKOUT"
+
+                position = {
+                    "entry_price": entry_price,
+                    "sl": sl_price,
+                    "orig_sl": sl_price,
+                    "tp": tp_price,
+                    "qty": 1,
+                    "entry_time": bar.name,
+                    "signal_type": sig_type,
+                    "entry_atr": atr_val,
+                    "be_triggered": False,
+                    "direction": direction,
+                }
+                extreme_since_entry = entry_price
+                daily_counts[bar_date] = daily_counts.get(bar_date, 0) + 1
+
+        # Return open position (do NOT force-close)
+        if position is None:
+            return None
+        return {
+            "direction": "CALL" if position["direction"] == 1 else "PUT",
+            "entry_price": round(position["entry_price"], 2),
+            "sl": round(position["sl"], 2),
+            "tp": round(position["tp"], 2),
+            "qty": position["qty"],
+            "entry_time": str(position["entry_time"]),
+            "signal_type": position.get("signal_type", ""),
+            "bar_time": str(df_ind.index[-1]),
+        }
 
     @staticmethod
     def _compute_metrics(
