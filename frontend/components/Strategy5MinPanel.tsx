@@ -168,7 +168,7 @@ function DailyPnlCard({ days, totalPnl, maxAbs, period, visibleDays }: Readonly<
   period: string;
   visibleDays: number;
 }>) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(days.length <= 3);
 
   return (
     <div className="rounded-xl border border-slate-800/60 bg-slate-900/40 p-3">
@@ -1814,7 +1814,8 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   };
   const defaultRisk = SYMBOL_RISK[symbol] ?? { sl: 4.0, tp: 3.0 };
 
-  // Backtest state
+  // Backtest state — cache restored from localStorage via useEffect
+  const BT_CACHE_KEY = `bt5min_${symbol}`;
   const [btData, setBtData] = useState<MGC5MinBacktestResponse | null>(null);
   const [zoomTrade, setZoomTrade] = useState<MGC5MinTrade | null>(null);
   const [period, setPeriod] = useState("3d");
@@ -1959,9 +1960,12 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   // ── Duplicate prevention: track last executed bar_time ─
   const lastExecBarRef = useRef<string>("");
 
-  // ── Clear data when symbol changes ──
+  // ── Restore cached data when symbol changes ──
   useEffect(() => {
-    setBtData(null);
+    try {
+      const cached = localStorage.getItem(`bt5min_${symbol}`);
+      setBtData(cached ? JSON.parse(cached) : null);
+    } catch { setBtData(null); }
     setScanData(null);
     setError(null);
     setVerified(false);
@@ -1981,6 +1985,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
         .map((d) => d.key);
       const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol, disabled.length > 0 ? disabled : undefined);
       setBtData(res);
+      try { localStorage.setItem(BT_CACHE_KEY, JSON.stringify(res)); } catch { /* storage full */ }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
@@ -2569,13 +2574,37 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       <div className="px-3 pt-3 pb-0">
         <div className="flex items-center gap-2 mb-3">
           <span className="text-base">🎯</span>
-          <span className="text-sm font-bold text-cyan-400 tracking-wide">{symbolName} · 5MIN STRATEGY</span>
+          <span className="text-sm font-bold text-cyan-400 tracking-wide">{symbolName} · 5MIN</span>
           {autoExec && (
-            <span className="ml-auto flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30">
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-[8px] font-bold text-emerald-400 uppercase">Auto Live</span>
             </span>
           )}
+          <div className="ml-auto flex items-center gap-1.5">
+            <button
+              onClick={runBacktest}
+              disabled={loading}
+              className={`px-3 py-1 text-[11px] font-bold rounded-md transition-all ${
+                loading
+                  ? "bg-slate-800 text-slate-500 cursor-wait"
+                  : "bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95 shadow-sm shadow-cyan-900/40"
+              }`}
+            >
+              {loading ? "Running…" : "🎯 Run 5min"}
+            </button>
+            <button
+              onClick={runConditionOptimization}
+              disabled={optimizing || loading}
+              className={`px-3 py-1 text-[11px] font-bold rounded-md transition-all ${
+                optimizing || loading
+                  ? "bg-slate-800 text-slate-500 cursor-wait"
+                  : "bg-purple-600 text-white hover:bg-purple-500 active:scale-95 shadow-sm shadow-purple-900/40"
+              }`}
+            >
+              {optimizing ? "Optimizing…" : "🔍 Best 5"}
+            </button>
+          </div>
         </div>
 
         {/* Tab bar */}
@@ -2947,30 +2976,6 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
                 <span className="text-slate-400 tabular-nums w-8">{tpMult}×</span>
               </label>
             </div>
-
-            <button
-              onClick={runBacktest}
-              disabled={loading}
-              className={`ml-auto px-3 py-1 text-[11px] font-bold rounded-lg transition-all ${
-                loading
-                  ? "bg-slate-800 text-slate-500 cursor-wait"
-                  : "bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95 shadow-md shadow-cyan-900/40"
-              }`}
-            >
-              {loading ? "Running…" : "🎯 Run 5min"}
-            </button>
-
-            <button
-              onClick={runConditionOptimization}
-              disabled={optimizing || loading}
-              className={`px-3 py-1 text-[11px] font-bold rounded-lg transition-all ${
-                optimizing || loading
-                  ? "bg-slate-800 text-slate-500 cursor-wait"
-                  : "bg-purple-600 text-white hover:bg-purple-500 active:scale-95 shadow-md shadow-purple-900/40"
-              }`}
-            >
-              {optimizing ? "Optimizing…" : "🔍 Find Best 5"}
-            </button>
           </div>
 
           {/* Idle state */}
