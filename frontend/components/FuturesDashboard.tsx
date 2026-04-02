@@ -68,7 +68,7 @@ export default function FuturesDashboard() {
       {/* COL 3 — Account / Trade panel                                */}
       {/* ═══════════════════════════════════════════════════════════════ */}
       <section className="hidden md:flex md:w-1/3 flex-col overflow-y-auto bg-slate-900/40">
-        <ScanTradePanel />
+        <ScanTradePanel symbol={selectedSymbol} />
       </section>
 
     </div>

@@ -168,7 +168,7 @@ function DailyPnlCard({ days, totalPnl, maxAbs, period, visibleDays }: Readonly<
   period: string;
   visibleDays: number;
 }>) {
-  const [expanded, setExpanded] = useState(days.length <= 3);
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="rounded-xl border border-slate-800/60 bg-slate-900/40 p-3">
@@ -439,7 +439,7 @@ function nextCandleClose(intervalMin: number = 5): number {
 // Sub-tabs
 // ═══════════════════════════════════════════════════════════════════════
 
-type Tab5Min = "backtest" | "scanner" | "exam";
+type Tab5Min = "backtest" | "scanner";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Scan Mini Chart (last 30 candles with entry/SL/TP lines)
@@ -1194,7 +1194,7 @@ function ExamMiniChart({ candles, entryTime }: Readonly<{ candles: MGC5MinCandle
 
     const chart = createChart(el, {
       width: el.clientWidth,
-      height: 180,
+      height: 150,
       layout: { background: { color: "#0f172a" }, textColor: "#64748b", fontSize: 9 },
       grid: { vertLines: { color: "#1e293b" }, horzLines: { color: "#1e293b" } },
       rightPriceScale: { borderVisible: false },
@@ -1292,11 +1292,8 @@ function ExamMiniChart({ candles, entryTime }: Readonly<{ candles: MGC5MinCandle
   }, [candles, entryTime]);
 
   return (
-    <div className="rounded-lg border border-slate-800/60 bg-slate-950 overflow-hidden">
-      <div className="px-2.5 py-1.5 border-b border-slate-800/40 flex items-center justify-between">
-        <span className="text-[9px] uppercase tracking-widest text-slate-500">Price Action (last 50 bars → entry)</span>
-      </div>
-      <div ref={ref} className="w-full" style={{ height: 180 }} />
+    <div className="rounded-lg border border-slate-800/60 bg-slate-950 overflow-hidden h-full">
+      <div ref={ref} className="w-full h-full" style={{ minHeight: 150 }} />
     </div>
   );
 }
@@ -1446,14 +1443,13 @@ function ExamResultChart({ candles, trade }: Readonly<{ candles: MGC5MinCandle[]
   }, [candles, trade]);
 
   return (
-    <div className="rounded-lg border border-slate-800/60 bg-slate-950 overflow-hidden">
-      <div className="px-2.5 py-1.5 border-b border-slate-800/40 flex items-center justify-between">
-        <span className="text-[9px] uppercase tracking-widest text-slate-500">Result (50 bars before → entry → 50 bars after)</span>
-      </div>
-      <div ref={ref} className="w-full" style={{ height: 200 }} />
+    <div className="rounded-lg border border-slate-800/60 bg-slate-950 overflow-hidden h-full">
+      <div ref={ref} className="w-full h-full" style={{ minHeight: 150 }} />
     </div>
   );
 }
+
+type ExamHistoryItem = { trade: MGC5MinTrade; skipped: boolean; cumPnl: number };
 
 function ExamTab({
   trades,
@@ -1472,6 +1468,7 @@ function ExamTab({
   const [pickedTrade, setPickedTrade] = useState<MGC5MinTrade | null>(null);
   const [stats, setStats] = useState({ total: 0, correct: 0, pnl: 0 });
   const [skipped, setSkipped] = useState(false);
+  const [history, setHistory] = useState<ExamHistoryItem[]>([]);
 
   const pickRandom = useCallback(() => {
     if (trades.length === 0) return;
@@ -1484,15 +1481,14 @@ function ExamTab({
     if (!pickedTrade) return;
     const win = pickedTrade.pnl >= 0;
     setSkipped(false);
-    setStats((s) => ({
-      total: s.total + 1,
-      correct: s.correct + (win ? 1 : 0),
-      pnl: s.pnl + pickedTrade.pnl,
-    }));
+    setStats((s) => {
+      const newPnl = s.pnl + pickedTrade.pnl;
+      setHistory((h) => [...h, { trade: pickedTrade, skipped: false, cumPnl: newPnl * 10 }]);
+      return { total: s.total + 1, correct: s.correct + (win ? 1 : 0), pnl: newPnl };
+    });
     setExamState("result");
   }, [pickedTrade]);
 
-  // After viewing result, either go to next trade or show final
   const handleNext = useCallback(() => {
     if (stats.total >= EXAM_TOTAL) {
       setExamState("final");
@@ -1505,290 +1501,351 @@ function ExamTab({
     setStats({ total: 0, correct: 0, pnl: 0 });
     setPickedTrade(null);
     setSkipped(false);
+    setHistory([]);
     setExamState("idle");
   }, []);
 
   const handleSkip = useCallback(() => {
+    if (pickedTrade) {
+      setHistory((h) => [...h, { trade: pickedTrade, skipped: true, cumPnl: stats.pnl * 10 }]);
+    }
     setSkipped(true);
     setExamState("result");
-  }, []);
+  }, [pickedTrade, stats.pnl]);
 
-  const pnlPerPoint = 10; // MGC = $10 per point
+  const pnlPerPoint = 10;
+  const cumDollar = stats.pnl * pnlPerPoint;
+
+  /* shared: structure label */
+  const structLabel = (v: number) => v > 0 ? "BULL" : v < 0 ? "BEAR" : "SIDE";
+  const structColor = (v: number) => v > 0 ? "text-emerald-400 bg-emerald-900/40" : v < 0 ? "text-rose-400 bg-rose-900/40" : "text-slate-400 bg-slate-800/60";
+
+  /* reason explanation */
+  const reasonExplain = (r: string) => {
+    if (r === "TP") return "Hit take-profit target";
+    if (r === "SL") return "Stopped out at stop-loss";
+    if (r === "TRAILING") return "Trailing stop triggered after run-up";
+    return r;
+  };
 
   return (
-    <div className="flex-1 overflow-y-auto p-3 space-y-3">
-      {/* Need trades first */}
+    <div className="flex flex-col h-full">
+      {/* ── Status bar — visible during question/result ── */}
+      {(examState === "question" || examState === "result") && (
+        <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-800/40 bg-slate-900/30">
+          {/* Progress dots */}
+          <div className="flex items-center gap-1 flex-1">
+            {Array.from({ length: EXAM_TOTAL }, (_, i) => {
+              const h = history[i];
+              let dotClass = "bg-slate-800";
+              if (h) dotClass = h.skipped ? "bg-slate-600" : h.trade.pnl >= 0 ? "bg-emerald-500" : "bg-rose-500";
+              else if (i === stats.total) dotClass = "bg-violet-400/60 animate-pulse";
+              return <div key={i} className={`h-2 flex-1 rounded-full transition-colors ${dotClass}`} />;
+            })}
+          </div>
+          {/* Running stats */}
+          <div className="flex items-center gap-2 text-[10px] tabular-nums whitespace-nowrap">
+            <span className="text-slate-500">{stats.total}/{EXAM_TOTAL}</span>
+            <span className="text-slate-700">|</span>
+            <span className="text-emerald-400">{stats.correct}W</span>
+            <span className="text-rose-400">{stats.total - stats.correct}L</span>
+            <span className="text-slate-700">|</span>
+            <span className={`font-bold ${cumDollar >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {cumDollar >= 0 ? "+" : ""}${cumDollar.toFixed(0)}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* No trades — need backtest */}
       {trades.length === 0 && (
-        <div className="flex flex-col items-center justify-center min-h-[300px] space-y-3">
-          <p className="text-4xl">🧪</p>
-          <p className="text-sm text-slate-400">Run a backtest first to load trade data</p>
+        <div className="flex-1 flex flex-col items-center justify-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-slate-800/80 flex items-center justify-center text-2xl">🧪</div>
+          <p className="text-xs text-slate-400">Run a backtest first to load trades</p>
           <button
             onClick={onLoadTrades}
             disabled={loading}
-            className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${
-              loading ? "bg-slate-800 text-slate-500 cursor-wait" : "bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95 shadow-lg shadow-cyan-900/40"
+            className={`px-5 py-2 text-xs font-semibold rounded-lg transition-all ${
+              loading ? "bg-slate-800 text-slate-500 cursor-wait" : "bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95"
             }`}
           >
-            {loading ? "Loading…" : "🎯 Run Backtest"}
+            {loading ? "Loading…" : "Run Backtest"}
           </button>
         </div>
       )}
 
-      {/* Exam ready — idle */}
+      {/* ── IDLE ── */}
       {trades.length > 0 && examState === "idle" && (
-        <div className="flex flex-col items-center justify-center min-h-[300px] space-y-4">
-          <p className="text-5xl">🧪</p>
-          <p className="text-lg font-bold text-slate-200">Trade Exam</p>
-          <p className="text-[11px] text-slate-500 text-center max-w-[240px]">
-            {EXAM_TOTAL} random trades. Take or skip — score 80% to pass!
-          </p>
-          <p className="text-[10px] text-slate-600">{trades.length} trades available</p>
+        <div className="flex-1 flex flex-col items-center justify-center gap-4">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-600/20 to-cyan-600/20 border border-violet-500/30 flex items-center justify-center text-3xl">
+            🧪
+          </div>
+          <div className="text-center">
+            <h3 className="text-base font-bold text-slate-100">Trade Exam</h3>
+            <p className="text-[11px] text-slate-500 mt-1">{EXAM_TOTAL} random trades · Score 80% to pass</p>
+          </div>
           <button
             onClick={pickRandom}
-            className="px-6 py-3 text-sm font-bold rounded-xl bg-gradient-to-r from-violet-600 to-cyan-600 text-white hover:from-violet-500 hover:to-cyan-500 active:scale-95 shadow-lg shadow-violet-900/40 transition-all"
+            className="px-8 py-2.5 text-sm font-bold rounded-lg bg-gradient-to-r from-violet-600 to-cyan-600 text-white hover:from-violet-500 hover:to-cyan-500 active:scale-95 shadow-lg shadow-violet-900/30 transition-all"
           >
-            🎲 Start Exam
+            Start Exam
           </button>
-
+          <p className="text-[10px] text-slate-600">{trades.length} trades in pool</p>
           {stats.total > 0 && (
-            <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 px-4 py-2.5 text-center">
-              <p className="text-[9px] text-slate-500 uppercase tracking-widest mb-1">Session Score</p>
-              <p className="text-sm font-bold text-slate-200">{stats.correct}/{stats.total} wins · <span className={stats.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}>{stats.pnl >= 0 ? "+" : ""}${(stats.pnl * pnlPerPoint).toFixed(2)}</span></p>
+            <div className="flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-900/60 rounded-lg px-3 py-1.5 border border-slate-800/50">
+              Previous: {stats.correct}/{stats.total} wins ·{" "}
+              <span className={stats.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                {stats.pnl >= 0 ? "+" : ""}${(stats.pnl * pnlPerPoint).toFixed(0)}
+              </span>
             </div>
           )}
         </div>
       )}
 
-      {/* Question — show entry info, hide outcome */}
+      {/* ── QUESTION ── */}
       {trades.length > 0 && examState === "question" && pickedTrade && (() => {
         const str = candles.length > 0 ? computeSignalStrength(candles, pickedTrade.entry_time) : 0;
         return (
-        <div className="space-y-4">
-          <div className="text-center">
-            <p className="text-[9px] uppercase tracking-widest text-violet-400 mb-1">Trade Exam</p>
-            <p className="text-lg font-bold text-slate-200">Would you take this trade?</p>
-          </div>
-
-          {/* Entry card */}
-          <div className={`rounded-xl border p-4 ${
-            pickedTrade.direction === "PUT"
-              ? "border-rose-700/50 bg-rose-950/20"
-              : "border-emerald-700/50 bg-emerald-950/20"
-          }`}>
-            <div className="flex items-center justify-between mb-3">
-              <span className={`text-sm font-bold ${
-                pickedTrade.direction === "PUT" ? "text-rose-400" : "text-emerald-400"
-              }`}>
-                {pickedTrade.direction || "CALL"} Signal
-              </span>
-              <div className="flex items-center gap-2">
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${strengthBg(str)} ${strengthColor(str)}`}>
-                  ⚡ {str}/10
-                </span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                  pickedTrade.signal_type === "PULLBACK" ? "bg-cyan-500/20 text-cyan-400" : "bg-amber-500/20 text-amber-400"
-                }`}>
-                  {pickedTrade.signal_type}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg bg-slate-900/80 border border-slate-800/60 p-2.5 text-center">
-                <div className="text-[8px] text-slate-500 uppercase">Entry Price</div>
-                <div className="text-base font-bold text-slate-100 tabular-nums mt-0.5">${n(pickedTrade.entry_price).toFixed(2)}</div>
-              </div>
-              <button
-                onClick={() => onTradeClick?.(pickedTrade)}
-                className="rounded-lg bg-slate-900/80 border border-slate-800/60 p-2.5 text-center hover:bg-slate-800/80 hover:border-cyan-700/50 transition-colors cursor-pointer"
-              >
-                <div className="text-[8px] text-slate-500 uppercase">Entry Time</div>
-                <div className="text-[11px] font-bold text-cyan-400 mt-1">{fmtDateTime(pickedTrade.entry_time)} ↗</div>
-              </button>
-            </div>
-          </div>
-
-          {/* Mini chart — 50 bars up to entry */}
-          {candles.length > 0 && (
-            <ExamMiniChart candles={candles} entryTime={pickedTrade.entry_time} />
-          )}
-
-          {/* Hidden outcome hint */}
-          <div className="rounded-lg border border-dashed border-slate-700 bg-slate-900/30 p-4 text-center">
-            <p className="text-sm text-slate-500">🔒 Outcome hidden</p>
-            <p className="text-[10px] text-slate-600 mt-1">Click below to see the result</p>
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex gap-3">
-            <button
-              onClick={handleSkip}
-              className="flex-1 px-4 py-2.5 text-sm font-bold rounded-lg border border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-all"
-            >
-              ⏭️ Skip
-            </button>
-            <button
-              onClick={handleContinue}
-              className="flex-1 px-4 py-2.5 text-sm font-bold rounded-lg bg-gradient-to-r from-violet-600 to-cyan-600 text-white hover:from-violet-500 hover:to-cyan-500 active:scale-95 shadow-lg shadow-violet-900/40 transition-all"
-            >
-              ✅ Take Trade
-            </button>
-          </div>
-        </div>
-        );
-      })()}
-
-      {/* Result — reveal outcome */}
-      {trades.length > 0 && examState === "result" && pickedTrade && (() => {
-        const win = pickedTrade.pnl >= 0;
-        const dollarPnl = pickedTrade.pnl * pnlPerPoint;
-        const str = candles.length > 0 ? computeSignalStrength(candles, pickedTrade.entry_time) : 0;
-        return (
-          <div className={`space-y-4 rounded-xl p-3 ${skipped ? "border-2 border-dashed border-slate-600 bg-slate-900/30" : ""}`}>
-            <div className="text-center">
-              <p className="text-5xl mb-2">{skipped ? "⏭️" : win ? "🎉" : "💥"}</p>
-              <p className={`text-2xl font-bold ${skipped ? "text-slate-400" : win ? "text-emerald-400" : "text-rose-400"}`}>
-                {skipped ? "SKIPPED" : win ? "WIN!" : "LOSS"}
-              </p>
-              {skipped && <p className="text-[10px] text-slate-500 mt-1">Not counted toward score</p>}
-            </div>
-
-            {/* P&L card */}
-            <div className={`rounded-xl border p-5 text-center ${
-              skipped ? "border-slate-700/50 bg-slate-950/30" : win ? "border-emerald-700/50 bg-emerald-950/20" : "border-rose-700/50 bg-rose-950/20"
+          <div className="flex-1 flex flex-col gap-2 p-3 min-h-0">
+            {/* Signal info bar */}
+            <div className={`rounded-lg border p-2.5 flex items-center justify-between ${
+              pickedTrade.direction === "PUT"
+                ? "border-rose-800/40 bg-rose-950/10"
+                : "border-emerald-800/40 bg-emerald-950/10"
             }`}>
-              <p className="text-[9px] text-slate-500 uppercase tracking-widest mb-1">{skipped ? "Would have been" : "Profit / Loss"}</p>
-              <p className={`text-3xl font-bold tabular-nums ${skipped ? "text-slate-400" : win ? "text-emerald-400" : "text-rose-400"}`}>
-                {dollarPnl >= 0 ? "+" : ""}${dollarPnl.toFixed(2)}
-              </p>
-              <p className={`text-sm font-bold mt-1 ${win ? "text-emerald-500/60" : "text-rose-500/60"}`}>
-                {pickedTrade.pnl >= 0 ? "+" : ""}{n(pickedTrade.pnl).toFixed(2)} pts
-              </p>
-            </div>
-
-            {/* Result chart — 50 bars before + 50 bars after entry */}
-            {candles.length > 0 && (
-              <ExamResultChart candles={candles} trade={pickedTrade} />
-            )}
-
-            {/* Trade details */}
-            <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-3">
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div>
-                  <div className="text-[8px] text-slate-500 uppercase">Direction</div>
-                  <div className={`text-[11px] font-bold ${pickedTrade.direction === "PUT" ? "text-rose-400" : "text-emerald-400"}`}>
-                    {pickedTrade.direction || "CALL"}
-                  </div>
+              <div className="flex items-center gap-2">
+                <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                  pickedTrade.direction === "PUT" ? "bg-rose-900/50 text-rose-400" : "bg-emerald-900/50 text-emerald-400"
+                }`}>{pickedTrade.direction || "CALL"}</span>
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                  pickedTrade.signal_type === "PULLBACK" ? "bg-cyan-900/30 text-cyan-400" : "bg-amber-900/30 text-amber-400"
+                }`}>{pickedTrade.signal_type}</span>
+                <span className={`text-[10px] font-bold ${strengthColor(str)}`}>⚡ {str}/10</span>
+                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${structColor(pickedTrade.mkt_structure)}`}>
+                  {structLabel(pickedTrade.mkt_structure)}
+                </span>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <span className="text-[8px] text-slate-500 uppercase mr-1">Entry</span>
+                  <span className="text-sm font-bold text-slate-100 tabular-nums">${n(pickedTrade.entry_price).toFixed(2)}</span>
                 </div>
-                <div>
-                  <div className="text-[8px] text-slate-500 uppercase">Type</div>
-                  <div className="text-[11px] font-bold text-slate-300">{pickedTrade.signal_type}</div>
-                </div>
-                <div>
-                  <div className="text-[8px] text-slate-500 uppercase">Strength</div>
-                  <div className={`text-[11px] font-bold ${strengthColor(str)}`}>⚡ {str}/10</div>
-                </div>
-                <div>
-                  <div className="text-[8px] text-slate-500 uppercase">Entry</div>
-                  <div className="text-[11px] font-bold text-slate-300">${n(pickedTrade.entry_price).toFixed(2)}</div>
-                </div>
-                <div>
-                  <div className="text-[8px] text-slate-500 uppercase">Exit</div>
-                  <div className="text-[11px] font-bold text-slate-300">${n(pickedTrade.exit_price).toFixed(2)}</div>
-                </div>
-                <div>
-                  <div className="text-[8px] text-slate-500 uppercase">Exit Reason</div>
-                  <div className={`text-[11px] font-bold ${
-                    pickedTrade.reason === "TP" ? "text-emerald-400" : pickedTrade.reason === "SL" ? "text-rose-400" : "text-cyan-400"
-                  }`}>{pickedTrade.reason}</div>
-                </div>
-                <button onClick={() => onTradeClick?.(pickedTrade)} className="col-span-3 hover:bg-slate-800/60 rounded transition-colors cursor-pointer py-1">
-                  <div className="text-[8px] text-slate-500 uppercase">Entry Time</div>
-                  <div className="text-[11px] font-bold text-cyan-400">{fmtDateTime(pickedTrade.entry_time)} ↗</div>
+                <button onClick={() => onTradeClick?.(pickedTrade)} className="text-[10px] text-cyan-400 hover:text-cyan-300">
+                  {fmtDateTime(pickedTrade.entry_time)} ↗
                 </button>
               </div>
             </div>
 
-            {/* Session stats */}
-            <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 px-4 py-2.5 text-center">
-              <p className="text-[9px] text-slate-500 uppercase tracking-widest mb-1">Session Score</p>
-              <p className="text-sm font-bold text-slate-200">
-                {stats.correct}/{stats.total} wins ({stats.total > 0 ? ((stats.correct / stats.total) * 100).toFixed(0) : 0}%)
-                · <span className={stats.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}>
-                  {stats.pnl >= 0 ? "+" : ""}${(stats.pnl * pnlPerPoint).toFixed(2)}
-                </span>
-              </p>
+            {/* Chart fills remaining space */}
+            {candles.length > 0 && (
+              <div className="flex-1 min-h-0">
+                <ExamMiniChart candles={candles} entryTime={pickedTrade.entry_time} />
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex gap-2">
+              <button
+                onClick={handleSkip}
+                className="flex-1 py-2 text-xs font-semibold rounded-lg border border-slate-700/60 text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition-all"
+              >
+                Skip
+              </button>
+              <button
+                onClick={handleContinue}
+                className="flex-[2] py-2 text-xs font-bold rounded-lg bg-gradient-to-r from-violet-600 to-cyan-600 text-white hover:from-violet-500 hover:to-cyan-500 active:scale-95 transition-all"
+              >
+                Take Trade
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── RESULT ── */}
+      {trades.length > 0 && examState === "result" && pickedTrade && (() => {
+        const win = pickedTrade.pnl >= 0;
+        const dollarPnl = pickedTrade.pnl * pnlPerPoint;
+        const str = candles.length > 0 ? computeSignalStrength(candles, pickedTrade.entry_time) : 0;
+        const holdMins = Math.round((new Date(pickedTrade.exit_time).getTime() - new Date(pickedTrade.entry_time).getTime()) / 60000);
+        return (
+          <div className="flex-1 flex flex-col gap-2 p-3 min-h-0">
+            {/* Outcome header */}
+            <div className="flex items-center gap-3">
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-base font-bold shrink-0 ${
+                skipped ? "bg-slate-800/80 text-slate-400" : win ? "bg-emerald-900/30 border border-emerald-700/40 text-emerald-400" : "bg-rose-900/30 border border-rose-700/40 text-rose-400"
+              }`}>
+                {skipped ? "—" : win ? "✓" : "✗"}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`text-sm font-bold ${skipped ? "text-slate-400" : win ? "text-emerald-400" : "text-rose-400"}`}>
+                  {skipped ? "Skipped" : win ? "Winner" : "Loser"}
+                  {!skipped && <span className="text-[10px] font-normal text-slate-500 ml-2">— {reasonExplain(pickedTrade.reason)}</span>}
+                </p>
+                <div className="flex items-center gap-1.5 text-[9px] text-slate-500">
+                  <span className={`font-bold px-1 py-px rounded ${pickedTrade.direction === "PUT" ? "bg-rose-900/40 text-rose-400" : "bg-emerald-900/40 text-emerald-400"}`}>{pickedTrade.direction || "CALL"}</span>
+                  <span>{pickedTrade.signal_type}</span>
+                  <span className={`font-bold ${strengthColor(str)}`}>⚡{str}/10</span>
+                  <span className={`font-bold px-1 py-px rounded ${structColor(pickedTrade.mkt_structure)}`}>{structLabel(pickedTrade.mkt_structure)}</span>
+                  <span className={`font-bold px-1 py-px rounded ${reasonStyle(pickedTrade.reason)}`}>{pickedTrade.reason}</span>
+                  <span className="text-slate-600">·</span>
+                  <span className="text-slate-400">{holdMins}min hold</span>
+                </div>
+              </div>
+              {/* P&L card */}
+              <div className={`rounded-lg px-3 py-1 text-right shrink-0 ${
+                skipped ? "bg-slate-900/50" : win ? "bg-emerald-950/20 border border-emerald-800/30" : "bg-rose-950/20 border border-rose-800/30"
+              }`}>
+                <p className={`text-lg font-bold tabular-nums leading-tight ${skipped ? "text-slate-500" : win ? "text-emerald-400" : "text-rose-400"}`}>
+                  {dollarPnl >= 0 ? "+" : ""}${dollarPnl.toFixed(0)}
+                </p>
+                <p className="text-[8px] text-slate-500">{pickedTrade.pnl >= 0 ? "+" : ""}{n(pickedTrade.pnl).toFixed(2)} pts</p>
+              </div>
             </div>
 
-            {/* Next button */}
+            {/* Entry → Exit detail row */}
+            <div className="flex items-center gap-2 text-[10px] text-slate-400 px-1">
+              <span>In <span className="text-slate-200 font-semibold">${n(pickedTrade.entry_price).toFixed(2)}</span></span>
+              <span className="text-slate-600">→</span>
+              <span>Out <span className="text-slate-200 font-semibold">${n(pickedTrade.exit_price).toFixed(2)}</span></span>
+              {pickedTrade.mae !== 0 && (
+                <span className="text-rose-400/70">MAE {n(pickedTrade.mae).toFixed(2)}</span>
+              )}
+              <span className="ml-auto flex items-center gap-2">
+                <span className={`font-bold ${cumDollar >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                  Cum P&L: {cumDollar >= 0 ? "+" : ""}${cumDollar.toFixed(0)}
+                </span>
+                <button onClick={() => onTradeClick?.(pickedTrade)} className="text-cyan-400 hover:text-cyan-300">{fmtDateTime(pickedTrade.entry_time)} ↗</button>
+              </span>
+            </div>
+
+            {/* Chart fills remaining space */}
+            {candles.length > 0 && (
+              <div className="flex-1 min-h-0">
+                <ExamResultChart candles={candles} trade={pickedTrade} />
+              </div>
+            )}
+
+            {/* Next */}
             <button
               onClick={handleNext}
-              className="w-full px-4 py-2.5 text-sm font-bold rounded-lg bg-gradient-to-r from-violet-600 to-cyan-600 text-white hover:from-violet-500 hover:to-cyan-500 active:scale-95 shadow-lg shadow-violet-900/40 transition-all"
+              className="w-full py-2 text-xs font-bold rounded-lg bg-gradient-to-r from-violet-600 to-cyan-600 text-white hover:from-violet-500 hover:to-cyan-500 active:scale-95 transition-all"
             >
-              {stats.total >= EXAM_TOTAL ? "📊 View Final Result" : `🎲 Next Trade (${stats.total}/${EXAM_TOTAL})`}
+              {stats.total >= EXAM_TOTAL ? "View Final Result" : `Next Trade (${stats.total}/${EXAM_TOTAL})`}
             </button>
           </div>
         );
       })()}
 
-      {/* Final — 10 trades completed, show pass/fail */}
+      {/* ── FINAL ── */}
       {trades.length > 0 && examState === "final" && (() => {
         const winRate = stats.total > 0 ? (stats.correct / stats.total) * 100 : 0;
         const passed = winRate >= 80;
         const dollarTotal = stats.pnl * pnlPerPoint;
         return (
-          <div className="flex flex-col items-center justify-center min-h-[300px] space-y-5">
-            <p className="text-6xl">{passed ? "🏆" : "📉"}</p>
-            <p className={`text-3xl font-bold ${passed ? "text-emerald-400" : "text-rose-400"}`}>
-              {passed ? "PASSED!" : "FAILED"}
-            </p>
-            <p className="text-[11px] text-slate-500">
-              {passed ? "You met the 80% win-rate target" : "Target: 80% win rate — try again!"}
-            </p>
-
-            {/* Score card */}
-            <div className={`w-full rounded-xl border p-6 text-center ${
-              passed ? "border-emerald-700/50 bg-emerald-950/20" : "border-rose-700/50 bg-rose-950/20"
-            }`}>
-              <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-2">Final Score</p>
-              <p className="text-4xl font-bold text-slate-100 tabular-nums">{stats.correct}/{stats.total}</p>
-              <p className={`text-xl font-bold mt-1 ${passed ? "text-emerald-400" : "text-rose-400"}`}>
-                {winRate.toFixed(0)}% Win Rate
-              </p>
-            </div>
-
-            {/* P&L summary */}
-            <div className="w-full rounded-lg border border-slate-800/60 bg-slate-900/50 p-4 text-center">
-              <p className="text-[9px] text-slate-500 uppercase tracking-widest mb-1">Total P&L</p>
-              <p className={`text-2xl font-bold tabular-nums ${dollarTotal >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                {dollarTotal >= 0 ? "+" : ""}${dollarTotal.toFixed(2)}
-              </p>
-              <p className={`text-sm mt-0.5 ${stats.pnl >= 0 ? "text-emerald-500/60" : "text-rose-500/60"}`}>
-                {stats.pnl >= 0 ? "+" : ""}{n(stats.pnl).toFixed(2)} pts
-              </p>
-            </div>
-
-            {/* Breakdown */}
-            <div className="w-full grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-3 text-center">
-                <p className="text-[8px] text-slate-500 uppercase">Wins</p>
-                <p className="text-lg font-bold text-emerald-400">{stats.correct}</p>
+          <div className="flex-1 flex flex-col p-4 min-h-0">
+            {/* Top section: pass/fail + stats */}
+            <div className="flex items-center gap-5 mb-4">
+              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shrink-0 ${
+                passed ? "bg-emerald-900/20 border-2 border-emerald-600/40" : "bg-rose-900/20 border-2 border-rose-600/40"
+              }`}>
+                {passed ? "🏆" : "📉"}
               </div>
-              <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-3 text-center">
-                <p className="text-[8px] text-slate-500 uppercase">Losses</p>
-                <p className="text-lg font-bold text-rose-400">{stats.total - stats.correct}</p>
+              <div className="flex-1">
+                <h3 className={`text-xl font-bold ${passed ? "text-emerald-400" : "text-rose-400"}`}>
+                  {passed ? "Passed!" : "Failed"}
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  {passed ? "You met the 80% win-rate target" : "Target: 80% — try again!"}
+                </p>
               </div>
-              <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-3 text-center">
-                <p className="text-[8px] text-slate-500 uppercase">Trades</p>
-                <p className="text-lg font-bold text-slate-300">{stats.total}</p>
+              <div className="flex items-center gap-3">
+                <div className={`rounded-xl border px-4 py-2 text-center ${
+                  passed ? "border-emerald-700/40 bg-emerald-950/15" : "border-rose-700/40 bg-rose-950/15"
+                }`}>
+                  <p className="text-2xl font-bold text-slate-100 tabular-nums">{winRate.toFixed(0)}%</p>
+                  <p className="text-[8px] text-slate-500">Win Rate</p>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <div className="rounded-lg bg-slate-900/60 border border-slate-800/40 px-3 py-1 flex items-center gap-2 text-[10px]">
+                    <span className="text-emerald-400 font-bold">{stats.correct}W</span>
+                    <span className="text-rose-400 font-bold">{stats.total - stats.correct}L</span>
+                  </div>
+                  <div className="rounded-lg bg-slate-900/60 border border-slate-800/40 px-3 py-1 text-center">
+                    <span className={`text-sm font-bold tabular-nums ${dollarTotal >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {dollarTotal >= 0 ? "+" : ""}${dollarTotal.toFixed(0)}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
+
+            {/* Trade history table */}
+            {history.length > 0 && (
+              <div className="flex-1 min-h-0 rounded-lg border border-slate-800/40 bg-slate-900/30 overflow-auto">
+                <table className="w-full text-[10px]">
+                  <thead className="sticky top-0 bg-slate-900/90 backdrop-blur text-slate-500 uppercase">
+                    <tr>
+                      <th className="text-left px-2 py-1.5 font-medium">#</th>
+                      <th className="text-left px-2 py-1.5 font-medium">Signal</th>
+                      <th className="text-left px-2 py-1.5 font-medium">Type</th>
+                      <th className="text-left px-2 py-1.5 font-medium">Strength</th>
+                      <th className="text-left px-2 py-1.5 font-medium">Struct</th>
+                      <th className="text-left px-2 py-1.5 font-medium">Reason</th>
+                      <th className="text-right px-2 py-1.5 font-medium">P&L</th>
+                      <th className="text-right px-2 py-1.5 font-medium">Cum P&L</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((h, i) => {
+                      const w = h.trade.pnl >= 0;
+                      const dp = h.trade.pnl * pnlPerPoint;
+                      const s = candles.length > 0 ? computeSignalStrength(candles, h.trade.entry_time) : 0;
+                      return (
+                        <tr key={i} className={`border-t border-slate-800/30 ${h.skipped ? "opacity-50" : ""}`}>
+                          <td className="px-2 py-1 text-slate-500">{i + 1}</td>
+                          <td className="px-2 py-1">
+                            <span className={`font-bold px-1 py-px rounded ${h.trade.direction === "PUT" ? "bg-rose-900/40 text-rose-400" : "bg-emerald-900/40 text-emerald-400"}`}>
+                              {h.trade.direction || "CALL"}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1">
+                            <span className={h.trade.signal_type === "PULLBACK" ? "text-cyan-400" : "text-amber-400"}>
+                              {h.trade.signal_type}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1">
+                            <span className={`font-bold ${strengthColor(s)}`}>⚡{s}/10</span>
+                          </td>
+                          <td className="px-2 py-1">
+                            <span className={`font-bold px-1 py-px rounded text-[9px] ${structColor(h.trade.mkt_structure)}`}>
+                              {structLabel(h.trade.mkt_structure)}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1">
+                            {h.skipped
+                              ? <span className="text-slate-500 italic">skipped</span>
+                              : <span className={`font-bold px-1 py-px rounded ${reasonStyle(h.trade.reason)}`}>{h.trade.reason}</span>}
+                          </td>
+                          <td className={`px-2 py-1 text-right font-bold tabular-nums ${h.skipped ? "text-slate-500" : w ? "text-emerald-400" : "text-rose-400"}`}>
+                            {h.skipped ? "—" : `${dp >= 0 ? "+" : ""}$${dp.toFixed(0)}`}
+                          </td>
+                          <td className={`px-2 py-1 text-right font-bold tabular-nums ${h.cumPnl >= 0 ? "text-emerald-400/70" : "text-rose-400/70"}`}>
+                            {h.cumPnl >= 0 ? "+" : ""}${h.cumPnl.toFixed(0)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             <button
               onClick={handleRestart}
-              className="w-full px-6 py-3 text-sm font-bold rounded-xl bg-gradient-to-r from-violet-600 to-cyan-600 text-white hover:from-violet-500 hover:to-cyan-500 active:scale-95 shadow-lg shadow-violet-900/40 transition-all"
+              className="mt-3 w-full py-2.5 text-sm font-bold rounded-lg bg-gradient-to-r from-violet-600 to-cyan-600 text-white hover:from-violet-500 hover:to-cyan-500 active:scale-95 shadow-lg shadow-violet-900/30 transition-all"
             >
-              🔄 Restart Exam
+              Restart Exam
             </button>
           </div>
         );
@@ -1803,6 +1860,7 @@ function ExamTab({
 
 export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbolName = "Micro Gold" }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; symbol?: string; symbolName?: string }>) {
   const [tab, setTab] = useState<Tab5Min>("backtest");
+  const [showExam, setShowExam] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -2604,6 +2662,12 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
             >
               {optimizing ? "Optimizing…" : "🔍 Best 5"}
             </button>
+            <button
+              onClick={() => setShowExam(true)}
+              className="px-3 py-1 text-[11px] font-bold rounded-md bg-violet-600 text-white hover:bg-violet-500 active:scale-95 shadow-sm shadow-violet-900/40 transition-all"
+            >
+              🧪 Exam
+            </button>
           </div>
         </div>
 
@@ -2612,7 +2676,6 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           {([
             { key: "backtest" as Tab5Min, icon: "📊", label: "Backtest" },
             { key: "scanner" as Tab5Min, icon: "🔍", label: "Scanner" },
-            { key: "exam" as Tab5Min, icon: "🧪", label: "Exam" },
           ]).map(({ key, icon, label }) => (
             <button
               key={key}
@@ -2636,73 +2699,6 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           {error}
         </div>
       )}
-
-      {/* ═════════════════════════════════════════════════════ */}
-      {/* MARKET STRUCTURE — top-level status card              */}
-      {/* ═════════════════════════════════════════════════════ */}
-      {(() => {
-        const ms = mktStructure;
-        const val = ms?.structure ?? null;
-        const isLoading = mktLoading && !ms;
-        const structLabel = val === 1 ? "BULL ▲" : val === -1 ? "BEAR ▼" : val === 0 ? "SIDEWAYS ═ 横盘" : "LOADING...";
-        const structColor = val === 1 ? "text-emerald-400" : val === -1 ? "text-rose-400" : val === 0 ? "text-amber-400" : "text-slate-500";
-        const borderColor = val === 1 ? "border-emerald-700/50" : val === -1 ? "border-rose-700/50" : val === 0 ? "border-amber-700/50" : "border-slate-700/40";
-        const bgColor = val === 1 ? "bg-emerald-500/5" : val === -1 ? "bg-rose-500/5" : val === 0 ? "bg-amber-500/5" : "bg-slate-800/20";
-        const icon = val === 1 ? "📈" : val === -1 ? "📉" : val === 0 ? "📊" : "⏳";
-        const hint = val === 1 ? "Favor LONG entries" : val === -1 ? "Favor SHORT entries" : val === 0 ? "No clear trend — consider staying flat" : "";
-        return (
-          <div className={`mx-3 mt-2 rounded-lg border ${borderColor} ${bgColor} px-3 py-2`}>
-            <div className="flex items-center gap-2">
-              {/* Label */}
-              <span className="text-[9px] text-slate-500 font-medium">📐 Structure</span>
-
-              {/* Status badge */}
-              <span className={`px-2 py-0.5 rounded text-[11px] font-black ${structColor}`}>
-                {isLoading ? (
-                  <span className="animate-pulse">⏳ Loading...</span>
-                ) : (
-                  <>{icon} {structLabel}</>
-                )}
-              </span>
-
-              {/* Suggestion */}
-              {hint && <span className={`text-[8px] ${structColor} opacity-70`}>— {hint}</span>}
-
-              {/* Last update time + refresh button */}
-              <span className="ml-auto flex items-center gap-1.5">
-                {ms?.timestamp && (
-                  <span className="text-[7px] text-slate-600">{ms.timestamp}</span>
-                )}
-                {ms?.last_price && (
-                  <span className="text-[8px] text-slate-400 font-mono">${ms.last_price.toFixed(2)}</span>
-                )}
-                <button
-                  onClick={() => {
-                    setMktLoading(true);
-                    getMarketStructure(symbol)
-                      .then((r) => setMktStructure(r))
-                      .catch(() => {})
-                      .finally(() => setMktLoading(false));
-                  }}
-                  className="text-[8px] text-slate-500 hover:text-cyan-400 transition"
-                  title="Refresh structure now"
-                >
-                  {mktLoading ? "⏳" : "🔄"}
-                </button>
-              </span>
-            </div>
-
-            {/* 3-column legend */}
-            <div className="flex gap-2 mt-1.5">
-              <span className={`text-[7px] px-1.5 py-0.5 rounded ${val === 1 ? "bg-emerald-900/40 text-emerald-400 font-bold" : "text-slate-600"}`}>▲ BULL (HH+HL)</span>
-              <span className={`text-[7px] px-1.5 py-0.5 rounded ${val === -1 ? "bg-rose-900/40 text-rose-400 font-bold" : "text-slate-600"}`}>▼ BEAR (LH+LL)</span>
-              <span className={`text-[7px] px-1.5 py-0.5 rounded ${val === 0 && ms ? "bg-amber-900/40 text-amber-400 font-bold" : "text-slate-600"}`}>═ SIDE 横盘</span>
-            </div>
-
-
-          </div>
-        );
-      })()}
 
       {/* ═════════════════════════════════════════════════════ */}
       {/* GLOBAL: Execution Conditions (shared across all tabs)*/}
@@ -3059,6 +3055,13 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
                     <span className={`text-[10px] font-bold ${m.oos_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                       {m.oos_return_pct >= 0 ? "+" : ""}{n(m.oos_return_pct).toFixed(2)}%
                     </span>
+                    <span className="relative group/oos ml-auto">
+                      <svg className="w-3 h-3 text-cyan-500/60 hover:text-cyan-400 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 16v0m0-8v4"/></svg>
+                      <span className="absolute bottom-full right-0 mb-1.5 hidden group-hover/oos:block w-52 px-2.5 py-2 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-relaxed shadow-lg z-50 pointer-events-none">
+                        <b className="text-cyan-400">Out-of-Sample (30%)</b><br/>
+                        Strategy tested on 30% unseen data. If metrics match in-sample, the strategy is robust and not overfitted.
+                      </span>
+                    </span>
                   </div>
                 </div>
               )}
@@ -3189,10 +3192,26 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       )}
 
       {/* ═════════════════════════════════════════════════════ */}
-      {/* TAB: Exam                                            */}
+      {/* EXAM DIALOG                                          */}
       {/* ═════════════════════════════════════════════════════ */}
-      {tab === "exam" && (
-        <ExamTab trades={btData?.trades ?? []} candles={btData?.candles ?? []} loading={loading} onLoadTrades={runBacktest} onTradeClick={onTradeClick} />
+      {showExam && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="relative w-[95vw] max-w-6xl h-[85vh] rounded-2xl border border-slate-700/50 bg-slate-950 shadow-2xl shadow-black/40 flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-800/40">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-slate-200">Trade Exam</span>
+                <span className="text-[10px] text-slate-500">Would you take this trade?</span>
+              </div>
+              <button
+                onClick={() => setShowExam(false)}
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-200 hover:bg-slate-800/80 text-sm transition"
+              >✕</button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <ExamTab trades={btData?.trades ?? []} candles={btData?.candles ?? []} loading={loading} onLoadTrades={runBacktest} onTradeClick={onTradeClick} />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Trade detail dialog — opens when a trade log row is clicked */}
