@@ -197,6 +197,11 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
   const verifyLockRef = useRef(true);
   verifyLockRef.current = verifyLock;
 
+  // Holding position (synced from backtest or live trade)
+  const [holdingPosition, setHoldingPosition] = useState<{
+    direction: string; entry_price: number; sl: number; tp: number;
+  } | null>(null);
+
   // Stable ref for condition toggles (received as prop from parent)
   const conditionTogglesRef = useRef(conditionToggles);
   conditionTogglesRef.current = conditionToggles;
@@ -411,6 +416,7 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
         notifyTrade(side, sig.entry_price, false, sig.stop_loss, sig.take_profit, sig.risk_reward);
         const newQty = execRes.position?.current_qty != null ? Math.abs(execRes.position.current_qty) : curPos + remainingQty;
         setPositionQty(newQty); positionQtyRef.current = newQty;
+        setHoldingPosition({ direction: dir, entry_price: sig.entry_price, sl: sig.stop_loss, tp: sig.take_profit });
         const rec = execRes.execution_record;
         setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} ${remainingQty}x → ${execRes.execution?.order_id?.slice(0, 12)} | SL=$${rec?.sl_price} TP=$${rec?.tp_price} (${newQty}/${targetQty} qty)`, ...prev.slice(0, 49)]);
         if (newQty >= targetQty) setAutoLog((prev) => [`[${ts()}] ⏸ Target qty reached (${newQty}/${targetQty}) — paused`, ...prev.slice(0, 49)]);
@@ -459,19 +465,33 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
         const pos = await getMgcPosition(symbol);
         const curQty = Math.abs(pos.current_qty ?? 0);
         setPositionQty(curQty); positionQtyRef.current = curQty;
-        if (curQty >= autoQty) {
-          setAutoLog((prev) => [`[${ts()}] 📊 Position full (${curQty}/${autoQty} qty) — waiting for close`, ...prev.slice(0, 49)]);
-          return; // Already in position — no need to check backtest
-        }
-        if (curQty > 0) {
-          setAutoLog((prev) => [`[${ts()}] 📊 Existing position (${curQty}/${autoQty} qty)`, ...prev.slice(0, 49)]);
+
+        // Always check backtest position for holding info
+        const disabled = CONDITION_DEFS.filter((d) => d.group === "5m" && !conditionTogglesRef.current[d.key]).map((d) => d.key);
+        setAutoLog((prev) => [`[${ts()}] 🔍 Checking backtest position…`, ...prev.slice(0, 49)]);
+        const btPos = await getBacktestPosition(symbol, slMult, tpMult, disabled.length > 0 ? disabled : undefined);
+
+        if (curQty > 0 && btPos.in_position && btPos.position) {
+          // Tiger already in position — show holding info synced with backtest
+          const p = btPos.position;
+          const side = p.direction === "PUT" ? "SELL" : "BUY";
+          setHoldingPosition({ direction: p.direction, entry_price: p.entry_price, sl: p.sl, tp: p.tp });
+          setAutoLog((prev) => [
+            `[${ts()}] 📊 HOLDING POSITION: ${side} @ $${p.entry_price} | SL=$${p.sl} TP=$${p.tp} (${curQty}/${autoQty} qty)`,
+            ...prev.slice(0, 49),
+          ]);
+          if (curQty >= autoQty) {
+            setAutoLog((prev) => [`[${ts()}] ⏸ Position full — waiting for TP/SL exit`, ...prev.slice(0, 49)]);
+          }
           return;
         }
 
-        // No Tiger position — check if backtest currently has an open position
-        setAutoLog((prev) => [`[${ts()}] 🔍 Checking backtest position…`, ...prev.slice(0, 49)]);
-        const disabled = CONDITION_DEFS.filter((d) => d.group === "5m" && !conditionTogglesRef.current[d.key]).map((d) => d.key);
-        const btPos = await getBacktestPosition(symbol, slMult, tpMult, disabled.length > 0 ? disabled : undefined);
+        if (curQty > 0) {
+          setAutoLog((prev) => [`[${ts()}] 📊 Existing position (${curQty}/${autoQty} qty) — no backtest match`, ...prev.slice(0, 49)]);
+          return;
+        }
+
+        // No Tiger position — check if backtest has an open position to sync
         if (btPos.in_position && btPos.position) {
           const p = btPos.position;
           const side = p.direction === "PUT" ? "SELL" : "BUY";
@@ -496,6 +516,7 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
               notifyTrade(side, p.entry_price, false, p.sl, p.tp, 0);
               const newQty = execRes.position?.current_qty != null ? Math.abs(execRes.position.current_qty) : curQty + remainingQty;
               setPositionQty(newQty); positionQtyRef.current = newQty;
+              setHoldingPosition({ direction: p.direction, entry_price: p.entry_price, sl: p.sl, tp: p.tp });
               setAutoLog((prev) => [`[${ts()}] ✅ SYNCED: ${side} ${remainingQty}x @ $${p.entry_price} | SL=$${p.sl} TP=$${p.tp}`, ...prev.slice(0, 49)]);
             } else {
               setAutoLog((prev) => [`[${ts()}] ❌ Sync failed: ${execRes.execution_record?.reason || execRes.execution?.reason || "Unknown"}`, ...prev.slice(0, 49)]);
@@ -538,7 +559,10 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
           const prevQty = positionQtyRef.current;
           if (curQty !== prevQty) {
             setPositionQty(curQty); positionQtyRef.current = curQty;
-            if (curQty < prevQty) setAutoLog((prev) => [`[${ts()}] 🔓 Position reduced ${prevQty}→${curQty} qty`, ...prev.slice(0, 49)]);
+            if (curQty < prevQty) {
+              setAutoLog((prev) => [`[${ts()}] 🔓 Position reduced ${prevQty}→${curQty} qty`, ...prev.slice(0, 49)]);
+              if (curQty === 0) setHoldingPosition(null);
+            }
             else setAutoLog((prev) => [`[${ts()}] 📊 Position updated ${prevQty}→${curQty}/${autoQtyRef.current} qty`, ...prev.slice(0, 49)]);
           }
           // Sync engine state with broker — detect TP/SL exits
@@ -607,6 +631,7 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
                 notifyTrade(side, sig.entry_price, false, sig.stop_loss, sig.take_profit, sig.risk_reward);
                 const newQty = execRes.position?.current_qty != null ? Math.abs(execRes.position.current_qty) : curPos + remainingQty;
                 setPositionQty(newQty); positionQtyRef.current = newQty;
+                setHoldingPosition({ direction: dir, entry_price: sig.entry_price, sl: sig.stop_loss, tp: sig.take_profit });
                 const rec = execRes.execution_record;
                 setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} ${remainingQty}x → ${execRes.execution?.order_id?.slice(0, 12)} | SL=$${rec?.sl_price} TP=$${rec?.tp_price} (${newQty}/${targetQty} qty)`, ...prev.slice(0, 49)]);
                 if (newQty >= targetQty) setAutoLog((prev) => [`[${ts()}] ⏸ Target qty reached (${newQty}/${targetQty})`, ...prev.slice(0, 49)]);
@@ -629,7 +654,7 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
     };
     poll();
     scheduleNext();
-    return () => { if (timer) clearTimeout(timer); setAutoLog((prev) => [`[${ts()}] Auto-execute OFF`, ...prev.slice(0, 49)]); };
+    return () => { if (timer) clearTimeout(timer); setHoldingPosition(null); setAutoLog((prev) => [`[${ts()}] Auto-execute OFF`, ...prev.slice(0, 49)]); };
   }, [autoExec, slMult, tpMult, notifyTrade, symbol, autoQty]);
 
   // ── Derived ──
@@ -757,18 +782,24 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
 
     {/* ═══════════════════════ Floating Auto-Trade Widget ═══════════════════════ */}
     {autoExec && (
-      <div className={`fixed top-3 right-3 z-50 rounded-2xl border border-emerald-500/25 bg-slate-950/92 backdrop-blur-lg shadow-2xl shadow-black/40 ring-1 ring-emerald-500/10 overflow-hidden transition-all duration-300 ${widgetExpanded ? "w-[380px]" : ""}`}>
+      <div className={`fixed top-3 right-3 z-50 rounded-2xl border ${holdingPosition ? "border-blue-500/30 ring-1 ring-blue-500/15" : "border-emerald-500/25 ring-1 ring-emerald-500/10"} bg-slate-950/92 backdrop-blur-lg shadow-2xl shadow-black/40 overflow-hidden transition-all duration-300 ${widgetExpanded ? "w-[380px]" : ""}`}>
         {/* Header — always visible (single row when collapsed) */}
         <div
           className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none"
           onClick={() => setWidgetExpanded((v) => !v)}
         >
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-          <span className="text-[11px] font-bold text-emerald-400 tracking-wide">AUTO</span>
+          <span className={`w-2 h-2 rounded-full ${holdingPosition ? "bg-blue-400" : "bg-emerald-400"} animate-pulse shrink-0`} />
+          <span className={`text-[11px] font-bold tracking-wide ${holdingPosition ? "text-blue-400" : "text-emerald-400"}`}>AUTO</span>
           <span className={`text-[10px] font-bold tabular-nums ${positionQty >= autoQty ? "text-amber-400" : "text-slate-300"}`}>{positionQty}/{autoQty}</span>
-          <span className={`text-[10px] font-bold ${positionQty >= autoQty ? "text-amber-400" : "text-emerald-400"}`}>
-            {positionQty >= autoQty ? "PAUSED" : "SCANNING"}
-          </span>
+          {holdingPosition ? (
+            <span className={`text-[10px] font-bold ${holdingPosition.direction === "PUT" ? "text-rose-400" : "text-emerald-400"}`}>
+              {holdingPosition.direction === "PUT" ? "SHORT" : "LONG"} @ ${holdingPosition.entry_price.toFixed(2)}
+            </span>
+          ) : (
+            <span className={`text-[10px] font-bold ${positionQty >= autoQty ? "text-amber-400" : "text-emerald-400"}`}>
+              {positionQty >= autoQty ? "PAUSED" : "SCANNING"}
+            </span>
+          )}
           {countdown && <span className="text-[10px] font-mono text-cyan-400 tabular-nums bg-cyan-950/40 px-1.5 py-0.5 rounded">⏱ {countdown}</span>}
           <span className="flex-1" />
           <svg className={`w-3 h-3 text-slate-500 transition-transform duration-200 ${widgetExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -787,6 +818,30 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
         {/* Expanded: Info + Activity Log */}
         {widgetExpanded && (
           <>
+            {holdingPosition && (
+              <div className="border-t border-blue-500/20 bg-blue-950/30 px-3 py-2">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${holdingPosition.direction === "PUT" ? "bg-rose-500/20 text-rose-400" : "bg-emerald-500/20 text-emerald-400"}`}>
+                    {holdingPosition.direction === "PUT" ? "▼ SHORT" : "▲ LONG"}
+                  </span>
+                  <span className="text-[11px] font-bold text-blue-300">HOLDING POSITION</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <span className="text-[8px] text-slate-500 uppercase block">Entry</span>
+                    <span className="text-[11px] font-bold text-white tabular-nums">${holdingPosition.entry_price.toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="text-[8px] text-rose-500 uppercase block">SL</span>
+                    <span className="text-[11px] font-bold text-rose-400 tabular-nums">${holdingPosition.sl.toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="text-[8px] text-emerald-500 uppercase block">TP</span>
+                    <span className="text-[11px] font-bold text-emerald-400 tabular-nums">${holdingPosition.tp.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="border-t border-slate-800/50 px-3 py-2 space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-[9px] text-slate-500 uppercase tracking-wider">Position</span>
