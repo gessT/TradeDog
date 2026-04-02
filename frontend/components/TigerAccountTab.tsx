@@ -346,7 +346,7 @@ export default function TigerAccountTab() {
   const [data, setData] = useState<TigerAccountResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [orderTab, setOrderTab] = useState<"open" | "today" | "filled" | "trades">("trades");
+  const [orderTab, setOrderTab] = useState<"open" | "today" | "filled">("today");
 
   // Trade history state
   const [tradeHistory, setTradeHistory] = useState<TradeHistoryResponse | null>(null);
@@ -512,21 +512,19 @@ export default function TigerAccountTab() {
       {/* Orders & Trades */}
       <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 overflow-hidden">
         <div className="px-3 py-2 border-b border-slate-800/40 flex items-center gap-2 flex-wrap">
-          {(["trades", "today", "open"] as const).map((t) => {
+          {(["today", "open"] as const).map((t) => {
             const todayStr = new Date().toISOString().slice(0, 10);
             const todayFilled = data?.filled_orders?.filter((o) => o.trade_time && o.trade_time.slice(0, 10) === todayStr) ?? [];
-            const label = t === "trades"
-              ? `Trades (${tradeHistory?.summary?.total_trades ?? 0})`
-              : t === "today"
-                ? `Today (${todayFilled.length})`
-                : `Open (${data?.open_orders?.length ?? 0})`;
+            const label = t === "today"
+              ? `Today (${todayFilled.length})`
+              : `Open (${data?.open_orders?.length ?? 0})`;
             return (
               <button
                 key={t}
-                onClick={() => { setOrderTab(t); if (t === "trades") refreshTrades(); }}
+                onClick={() => setOrderTab(t)}
                 className={`px-2.5 py-0.5 text-[10px] font-bold rounded transition-all ${
                   orderTab === t
-                    ? t === "trades" ? "bg-amber-600 text-white" : "bg-cyan-600 text-white"
+                    ? "bg-cyan-600 text-white"
                     : "bg-slate-800 text-slate-500 hover:text-slate-300"
                 }`}
               >{label}</button>
@@ -534,112 +532,8 @@ export default function TigerAccountTab() {
           })}
         </div>
 
-        {/* Trades tab — paired round-trip trades with P&L */}
-        {orderTab === "trades" && (() => {
-          const trades = tradeHistory?.trades ?? [];
-          const s = tradeHistory?.summary;
-          return (
-            <div>
-              {/* Summary bar */}
-              {s && (s.total_trades > 0 || (s as any).open_trades > 0) && (
-                <div className="px-3 py-2 border-b border-slate-800/40 flex items-center gap-3 flex-wrap">
-                  <span className={`text-[11px] font-bold ${s.total_pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                    P&L: {s.total_pnl >= 0 ? "+" : ""}${s.total_pnl.toFixed(2)}
-                  </span>
-                  <span className="text-[10px] text-slate-400">
-                    WR: <span className={`font-bold ${s.win_rate >= 50 ? "text-emerald-400" : "text-rose-400"}`}>{s.win_rate}%</span>
-                  </span>
-                  <span className="text-[10px] text-slate-400">
-                    PF: <span className="font-bold text-slate-300">{s.profit_factor}</span>
-                  </span>
-                  <span className="text-[10px] text-slate-400">
-                    W/L: <span className="text-emerald-400">{s.wins}</span>/<span className="text-rose-400">{s.losses}</span>
-                  </span>
-                  {(s as any).open_trades > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded font-bold">
-                      {(s as any).open_trades} open
-                    </span>
-                  )}
-                  <span className="text-[10px] text-slate-400">
-                    Avg: <span className={`font-bold ${s.avg_pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>${s.avg_pnl}</span>
-                  </span>
-                  <div className="ml-auto flex items-center gap-1">
-                    {[7, 14, 30].map((d) => (
-                      <button
-                        key={d}
-                        onClick={() => { setTradeDays(d); refreshTrades(d); }}
-                        className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${
-                          tradeDays === d ? "bg-amber-600/30 text-amber-400" : "bg-slate-800 text-slate-500 hover:text-slate-300"
-                        }`}
-                      >{d}d</button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {tradeLoading ? (
-                <div className="px-3 py-6 text-center text-[11px] text-slate-500">Loading trades…</div>
-              ) : trades.length === 0 ? (
-                <div className="px-3 py-6 text-center text-[11px] text-slate-600">No paired trades found</div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="text-[8px] text-slate-600 uppercase tracking-wider">
-                        <th className="px-2 py-1.5">Symbol</th>
-                        <th className="px-2 py-1.5">Side</th>
-                        <th className="px-2 py-1.5 text-center">Qty</th>
-                        <th className="px-2 py-1.5 text-right">Entry</th>
-                        <th className="px-2 py-1.5 text-right">Exit</th>
-                        <th className="px-2 py-1.5 text-right">P&L</th>
-                        <th className="px-2 py-1.5 text-right">P&L %</th>
-                        <th className="px-2 py-1.5">Entry Time</th>
-                        <th className="px-2 py-1.5">Exit Time</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {trades.map((t, i) => {
-                        const name = COMMODITY_NAMES[baseSymbol(t.symbol)] ?? "";
-                        const isOpen = t.status === "OPEN";
-                        return (
-                          <tr key={`${t.entry_order_id}-${t.exit_order_id}-${i}`}
-                              className={`border-b border-slate-800/40 hover:bg-slate-800/30 transition-colors ${isOpen ? "bg-blue-950/20" : ""}`}>
-                            <td className="px-2 py-1.5 text-[10px] font-bold text-slate-200">
-                              {t.symbol}
-                              {name && <span className="text-[9px] font-normal text-slate-500 ml-1">{name}</span>}
-                            </td>
-                            <td className={`px-2 py-1.5 text-[10px] font-bold ${t.side === "LONG" ? "text-emerald-400" : "text-rose-400"}`}>
-                              {t.side === "LONG" ? "▲ LONG" : "▼ SHORT"}
-                              {isOpen && <span className="ml-1 px-1 py-0.5 bg-blue-500/20 text-blue-400 text-[8px] rounded">OPEN</span>}
-                            </td>
-                            <td className="px-2 py-1.5 text-[10px] text-center text-slate-300">{t.qty}</td>
-                            <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">${t.entry_price.toFixed(2)}</td>
-                            <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">
-                              {isOpen ? <span className="text-blue-400">holding</span> : `$${t.exit_price.toFixed(2)}`}
-                            </td>
-                            <td className={`px-2 py-1.5 text-[10px] text-right font-bold tabular-nums ${isOpen ? "text-blue-400" : t.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                              {isOpen ? "—" : `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)}`}
-                            </td>
-                            <td className={`px-2 py-1.5 text-[10px] text-right tabular-nums ${isOpen ? "text-blue-400" : t.pnl_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                              {isOpen ? "—" : `${t.pnl_pct >= 0 ? "+" : ""}${t.pnl_pct.toFixed(2)}%`}
-                            </td>
-                            <td className="px-2 py-1.5 text-[10px] text-slate-500">{fmtTime(t.entry_time)}</td>
-                            <td className="px-2 py-1.5 text-[10px] text-slate-500">
-                              {isOpen ? <span className="text-blue-400 text-[9px]">active</span> : fmtTime(t.exit_time)}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          );
-        })()}
-
-        {/* Order tabs (today/open/filled) */}
-        {orderTab !== "trades" && (() => {
+        {/* Order tabs (today/open) */}
+        {(() => {
           const todayStr = new Date().toISOString().slice(0, 10);
           const orders = orderTab === "open"
             ? data?.open_orders

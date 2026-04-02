@@ -1892,7 +1892,6 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   const [mktStructure, setMktStructure] = useState<MarketStructure | null>(null);
   const [mktLoading, setMktLoading] = useState(false);
   const prevStructureRef = useRef<number | null>(null);  // track transitions
-  const [skipFlat, setSkipFlat] = useState(false);  // filter out FLAT entries in backtest
 
   // Fetch market structure on mount, symbol change, and every 5 min
   useEffect(() => {
@@ -1980,14 +1979,14 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
       const disabled = CONDITION_DEFS
         .filter((d) => d.group === "5m" && !conditionToggles[d.key])
         .map((d) => d.key);
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, skipFlat);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol, disabled.length > 0 ? disabled : undefined);
       setBtData(res);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
       setLoading(false);
     }
-  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, skipFlat]);
+  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles]);
 
   // ── Scanner ───────────────────────────────────────────
   // Helper: compute disabled condition keys from toggles (OFF = disabled)
@@ -2671,26 +2670,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
               <span className={`text-[7px] px-1.5 py-0.5 rounded ${val === 0 && ms ? "bg-amber-900/40 text-amber-400 font-bold" : "text-slate-600"}`}>═ SIDE 横盘</span>
             </div>
 
-            {/* ── Options ── */}
-            <div className="flex gap-3 mt-2 pt-2 border-t border-slate-700/50">
-              {/* Skip FLAT in backtest */}
-              <label
-                className={`flex items-center gap-2 cursor-pointer text-xs px-3 py-1.5 rounded-md transition ${
-                  skipFlat
-                    ? "bg-cyan-900/50 text-cyan-300 border border-cyan-600/50 shadow-sm shadow-cyan-900/30"
-                    : "bg-slate-800/50 text-slate-500 border border-slate-700/30 hover:text-slate-300 hover:border-slate-600/50"
-                }`}
-                title="Backtest will skip entries during SIDEWAYS/横盘 market — only take BULL or BEAR trades"
-              >
-                <input
-                  type="checkbox"
-                  checked={skipFlat}
-                  onChange={(e) => setSkipFlat(e.target.checked)}
-                  className="w-3.5 h-3.5 accent-cyan-500 rounded"
-                />
-                <span>{skipFlat ? "📊 Skip FLAT in backtest: ON" : "📊 Skip FLAT in backtest"}</span>
-              </label>
-            </div>
+
           </div>
         );
       })()}
