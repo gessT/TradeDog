@@ -195,6 +195,7 @@ function DailyPnlCard({ days, totalPnl, maxAbs, period, visibleDays }: Readonly<
 
 function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx: number; onTradeClick?: (t: MGC5MinTrade) => void }>) {
   const win = t.pnl >= 0;
+  const isOpen = t.reason === "OPEN";
   const pipDiff = n(t.exit_price) - n(t.entry_price);
   const pipAbs = Math.abs(pipDiff);
   return (
@@ -203,14 +204,18 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
       onClick={() => onTradeClick?.(t)}
     >
       <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{fmtDateTime(t.entry_time)}</td>
-      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{fmtDateTime(t.exit_time)}</td>
+      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{isOpen ? "—" : fmtDateTime(t.exit_time)}</td>
       <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{n(t.entry_price).toFixed(2)}</td>
-      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{n(t.exit_price).toFixed(2)}</td>
-      <td className={`px-2 py-1 text-right text-[10px] font-mono ${pipDiff >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-        {pipDiff >= 0 ? "+" : "-"}{pipAbs.toFixed(2)}
+      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{isOpen ? "—" : n(t.exit_price).toFixed(2)}</td>
+      <td className={`px-2 py-1 text-right text-[10px] font-mono ${isOpen ? "" : pipDiff >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+        {isOpen && n(t.sl) > 0 ? (
+          <span className="text-rose-400">SL {n(t.sl).toFixed(2)}</span>
+        ) : isOpen ? "—" : `${pipDiff >= 0 ? "+" : "-"}${pipAbs.toFixed(2)}`}
       </td>
-      <td className={`px-2 py-1 text-right text-[10px] font-bold ${win ? "text-emerald-400" : "text-rose-400"}`}>
-        {win ? "+" : ""}{n(t.pnl).toFixed(2)}
+      <td className={`px-2 py-1 text-right text-[10px] font-bold ${isOpen ? "" : win ? "text-emerald-400" : "text-rose-400"}`}>
+        {isOpen && n(t.tp) > 0 ? (
+          <span className="text-emerald-400">TP {n(t.tp).toFixed(2)}</span>
+        ) : isOpen ? "—" : `${win ? "+" : ""}${n(t.pnl).toFixed(2)}`}
       </td>
       <td className="px-2 py-1 text-right text-[10px] font-bold text-rose-400/80">
         {n(t.mae) < 0 ? `${n(t.mae).toFixed(2)}` : "—"}
@@ -251,12 +256,23 @@ function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrad
     return true;
   });
 
-  // Group trades by exit date, newest first
+  // Group trades by entry date, newest first
   const grouped = (() => {
     const map: Record<string, MGC5MinTrade[]> = {};
     for (const t of filtered) {
-      const day = t.exit_time.slice(0, 10);
-      (map[day] ??= []).push(t);
+      // Futures trading day: 18:00 ET → 17:59 ET next day = next date's session
+      // entry_time format: "YYYY-MM-DD HH:MM:SS-04:00" (already in ET)
+      const datePart = t.entry_time.slice(0, 10); // "YYYY-MM-DD"
+      const hour = parseInt(t.entry_time.slice(11, 13), 10); // HH in ET
+      if (hour >= 18) {
+        // Evening session belongs to next calendar date's trading day
+        const d = new Date(datePart + "T12:00:00Z"); // noon to avoid DST edge
+        d.setUTCDate(d.getUTCDate() + 1);
+        const day = d.toISOString().slice(0, 10);
+        (map[day] ??= []).push(t);
+      } else {
+        (map[datePart] ??= []).push(t);
+      }
     }
     // Reverse trades within each day so latest order is on top
     for (const arr of Object.values(map)) arr.reverse();

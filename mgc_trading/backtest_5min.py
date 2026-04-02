@@ -38,6 +38,8 @@ class Trade5Min:
     direction: str = "CALL"  # "CALL" (long) / "PUT" (short)
     mae: float = 0.0  # Max Adverse Excursion (worst unrealized loss in $)
     mkt_structure: int = 0  # Market structure at entry: 1=BULL, -1=BEAR, 0=SIDEWAYS
+    sl: float = 0.0  # Stop-loss price at exit
+    tp: float = 0.0  # Take-profit price at exit
 
 
 @dataclass
@@ -197,6 +199,8 @@ class Backtester5Min:
                         direction="CALL" if d == 1 else "PUT",
                         mae=round(worst_unrealized, 2),
                         mkt_structure=position.get("mkt_structure", 0),
+                        sl=round(position["sl"], 2),
+                        tp=round(position["tp"], 2),
                     ))
                     consec_losses = consec_losses + 1 if pnl < 0 else 0
                     position = None
@@ -286,6 +290,8 @@ class Backtester5Min:
                         direction="CALL" if direction == 1 else "PUT",
                         mae=round(worst_unrealized, 2),
                         mkt_structure=position.get("mkt_structure", 0),
+                        sl=round(sl, 2),
+                        tp=round(position["tp"], 2),
                     ))
                     consec_losses = consec_losses + 1 if pnl < 0 else 0
                     position = None
@@ -309,6 +315,8 @@ class Backtester5Min:
                         direction="CALL" if direction == 1 else "PUT",
                         mae=round(worst_unrealized, 2),
                         mkt_structure=position.get("mkt_structure", 0),
+                        sl=round(sl, 2),
+                        tp=round(tp, 2),
                     ))
                     consec_losses = 0
                     position = None
@@ -406,6 +414,8 @@ class Backtester5Min:
                 direction="CALL" if d == 1 else "PUT",
                 mae=round(worst_unrealized, 2),
                 mkt_structure=position.get("mkt_structure", 0),
+                sl=round(position["sl"], 2),
+                tp=round(position["tp"], 2),
             ))
 
         return trades, equity_curve, equity
