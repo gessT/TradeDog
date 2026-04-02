@@ -53,7 +53,7 @@ DEFAULT_PARAMS: dict = {
 # ═══════════════════════════════════════════════════════════════════════
 RISK_PER_TRADE = 0.01        # Max 1 % account risk per position
 MAX_CONSECUTIVE_LOSSES = 5   # Pause after 5 consecutive losers
-MAX_DAILY_TRADES = 10        # Hard cap per session
+MAX_DAILY_TRADES = 30        # Hard cap per session (5min can do many round-trips)
 INITIAL_CAPITAL = 50_000.0   # Default backtest starting equity (USD)
 
 # ═══════════════════════════════════════════════════════════════════════

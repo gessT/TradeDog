@@ -1,13 +1,25 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  load5MinConditionToggles,
+  save5MinConditionToggles,
   type MGC5MinTrade,
+  type Scan5MinConditions,
 } from "../services/api";
 import CommodityCards from "./CommodityCards";
 import MGCLiveChart from "./MGCLiveChart";
 import ScanTradePanel from "./ScanTradePanel";
 import Strategy5MinPanel from "./Strategy5MinPanel";
+
+const CONDITION_KEYS: (keyof Scan5MinConditions)[] = [
+  "ema_trend", "ema_slope", "pullback", "breakout", "supertrend",
+  "macd_momentum", "rsi_momentum", "volume_spike", "atr_range", "session_ok", "adx_ok",
+  "htf_15m_trend", "htf_15m_supertrend", "htf_1h_trend", "htf_1h_supertrend",
+];
+const DEFAULT_TOGGLES: Record<string, boolean> = Object.fromEntries(
+  CONDITION_KEYS.map((k) => [k, !["htf_15m_trend", "htf_15m_supertrend", "htf_1h_trend", "htf_1h_supertrend"].includes(k)])
+);
 
 // ═══════════════════════════════════════════════════════════════════════
 // Futures Dashboard — multi-commodity trading workspace
@@ -19,6 +31,24 @@ export default function FuturesDashboard() {
   const [selectedSymbol, setSelectedSymbol] = useState("MGC");
   const [selectedName, setSelectedName] = useState("Micro Gold");
   const [selectedIcon, setSelectedIcon] = useState("🥇");
+
+  // ── Shared condition toggles (used by both backtest & scanner) ──
+  const [conditionToggles, setConditionToggles] = useState<Record<string, boolean>>({ ...DEFAULT_TOGGLES });
+  const conditionsLoaded = useRef(false);
+
+  useEffect(() => {
+    conditionsLoaded.current = false;
+    load5MinConditionToggles(selectedSymbol).then((saved) => {
+      if (saved && Object.keys(saved).length > 0) setConditionToggles((prev) => ({ ...prev, ...saved }));
+      conditionsLoaded.current = true;
+    }).catch(() => { conditionsLoaded.current = true; });
+  }, [selectedSymbol]);
+
+  useEffect(() => {
+    if (!conditionsLoaded.current) return;
+    const t = setTimeout(() => { save5MinConditionToggles(conditionToggles, selectedSymbol).catch(() => {}); }, 500);
+    return () => clearTimeout(t);
+  }, [conditionToggles, selectedSymbol]);
 
   // ── Trade click → scroll chart to candle ─────────────────────
   const handleTradeClick5Min = useCallback((t: MGC5MinTrade) => {
@@ -61,14 +91,14 @@ export default function FuturesDashboard() {
       {/* COL 2 — 5min Strategy Workspace                              */}
       {/* ═══════════════════════════════════════════════════════════════ */}
       <section className="w-full md:w-1/3 overflow-y-auto border-r border-slate-800/60">
-        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} symbol={selectedSymbol} symbolName={selectedName} />
+        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} symbol={selectedSymbol} symbolName={selectedName} conditionToggles={conditionToggles} setConditionToggles={setConditionToggles} />
       </section>
 
       {/* ═══════════════════════════════════════════════════════════════ */}
       {/* COL 3 — Account / Trade panel                                */}
       {/* ═══════════════════════════════════════════════════════════════ */}
       <section className="hidden md:flex md:w-1/3 flex-col overflow-y-auto bg-slate-900/40">
-        <ScanTradePanel />
+        <ScanTradePanel symbol={selectedSymbol} conditionToggles={conditionToggles} />
       </section>
 
     </div>
