@@ -706,6 +706,15 @@ export async function fetchCommodityQuotes(): Promise<CommodityQuotesResponse> {
   return (await response.json()) as CommodityQuotesResponse;
 }
 
+/** Lightweight single-symbol live price */
+export async function fetchLivePrice(symbol: string): Promise<number> {
+  const url = `${API_BASE}/mgc/price/${encodeURIComponent(symbol)}`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error("Price fetch failed");
+  const data = await response.json();
+  return data.price as number;
+}
+
 
 // ── Tiger Account ───────────────────────────────────────────────────
 

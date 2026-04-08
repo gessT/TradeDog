@@ -204,6 +204,24 @@ def _isnan(v) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Single-symbol live price (lightweight)
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/price/{symbol}")
+async def live_price(symbol: str):
+    """Quick single-symbol price quote using yfinance fast_info."""
+    def _run():
+        import yfinance as yf
+        commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": f"{symbol}=F"})
+        t = yf.Ticker(commodity["yf"])
+        price = float(t.fast_info.last_price or 0)
+        return round(price, 2)
+
+    price = await run_in_threadpool(_run)
+    return {"symbol": symbol, "price": price}
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Multi-commodity quotes endpoint
 # ═══════════════════════════════════════════════════════════════════════
 

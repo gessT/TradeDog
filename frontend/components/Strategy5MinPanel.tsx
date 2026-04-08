@@ -15,6 +15,7 @@ import { fmtDateTimeSGT, fmtInputDateSGT, SGT_OFFSET_SEC, toSGT } from "../utils
 import TradeDetailDialog from "./strategy5min/TradeDetailDialog";
 import {
   fetchMGC5MinBacktest,
+  fetchLivePrice,
   optimize5MinConditions,
   type ConditionOptimizationResult,
   type MGC5MinBacktestResponse,
@@ -186,11 +187,16 @@ function DailyPnlCard({ days, totalPnl, maxAbs, period, visibleDays }: Readonly<
   );
 }
 
-function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx: number; onTradeClick?: (t: MGC5MinTrade) => void }>) {
+function TradeRow5Min({ t, idx, onTradeClick, livePrice }: Readonly<{ t: MGC5MinTrade; idx: number; onTradeClick?: (t: MGC5MinTrade) => void; livePrice?: number | null }>) {
   const win = t.pnl >= 0;
   const isOpen = t.reason === "OPEN";
   const pipDiff = n(t.exit_price) - n(t.entry_price);
   const pipAbs = Math.abs(pipDiff);
+
+  // Live P&L for open trades
+  const isLong = t.direction !== "PUT";
+  const unrealPnl = isOpen && livePrice != null ? (isLong ? livePrice - n(t.entry_price) : n(t.entry_price) - livePrice) : null;
+
   return (
     <tr
       className={`${isOpen ? "bg-blue-950/30 border-l-2 border-blue-500" : idx % 2 === 0 ? "bg-slate-900/30" : ""} ${onTradeClick ? "cursor-pointer hover:bg-cyan-900/20 transition-colors" : ""}`}
@@ -200,7 +206,9 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
       <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{isOpen ? <span className="text-blue-400 animate-pulse">LIVE</span> : fmtDateTime(t.exit_time)}</td>
       <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{n(t.entry_price).toFixed(2)}</td>
       <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">
-        {isOpen ? <span className="text-slate-600">—</span> : n(t.exit_price).toFixed(2)}
+        {isOpen
+          ? (livePrice != null ? <span className="text-yellow-400 animate-pulse">{livePrice.toFixed(2)}</span> : <span className="text-slate-600">—</span>)
+          : n(t.exit_price).toFixed(2)}
       </td>
       <td className="px-2 py-1 text-right text-[10px] font-mono">
         {isOpen ? (
@@ -211,7 +219,9 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
       </td>
       <td className="px-2 py-1 text-right text-[10px] font-bold">
         {isOpen ? (
-          <span className="text-emerald-400">{n(t.tp) > 0 ? `TP ${n(t.tp).toFixed(2)}` : "—"}</span>
+          unrealPnl != null
+            ? <span className={unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}>{unrealPnl >= 0 ? "+" : ""}{unrealPnl.toFixed(2)}</span>
+            : <span className="text-emerald-400">{n(t.tp) > 0 ? `TP ${n(t.tp).toFixed(2)}` : "—"}</span>
         ) : (
           <span className={win ? "text-emerald-400" : "text-rose-400"}>{win ? "+" : ""}{n(t.pnl).toFixed(2)}</span>
         )}
@@ -240,7 +250,7 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
 // Trade Log grouped by date (expandable rows)
 // ═══════════════════════════════════════════════════════════════════════
 
-function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrade[]; onTradeClick?: (t: MGC5MinTrade) => void }>) {
+function TradeLogByDate({ trades, onTradeClick, livePrice }: Readonly<{ trades: MGC5MinTrade[]; onTradeClick?: (t: MGC5MinTrade) => void; livePrice?: number | null }>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [pnlFilter, setPnlFilter] = useState<"all" | "win" | "loss">("all");
   const [dirFilter, setDirFilter] = useState<"all" | "CALL" | "PUT">("all");
@@ -370,7 +380,7 @@ function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrad
                       </thead>
                       <tbody>
                         {dayTrades.map((t, i) => (
-                          <TradeRow5Min key={`${t.entry_time}-${i}`} t={t} idx={i} onTradeClick={onTradeClick} />
+                          <TradeRow5Min key={`${t.entry_time}-${i}`} t={t} idx={i} onTradeClick={onTradeClick} livePrice={livePrice} />
                         ))}
                       </tbody>
                     </table>
@@ -1219,6 +1229,46 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, symbol
     } catch { /* corrupt cache — ignore */ }
   }, [configKey]);
 
+  // ── Live price polling for OPEN position ──────────────
+  const [livePrice, setLivePrice] = useState<number | null>(null);
+  const livePriceRef = useRef<number | null>(null);
+  const slTpHitRef = useRef(false); // prevent double-trigger
+
+  // Reset SL/TP hit flag when open position changes
+  useEffect(() => { slTpHitRef.current = false; }, [btData?.open_position?.entry_time]);
+
+  useEffect(() => {
+    const pos = btData?.open_position;
+    if (!pos) { setLivePrice(null); livePriceRef.current = null; return; }
+
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const price = await fetchLivePrice(symbol);
+        if (cancelled) return;
+        setLivePrice(price);
+        livePriceRef.current = price;
+
+        // Check SL/TP hit
+        if (!slTpHitRef.current && price > 0) {
+          const isLong = pos.direction !== "PUT";
+          const hitSL = isLong ? price <= pos.sl : price >= pos.sl;
+          const hitTP = isLong ? price >= pos.tp : price <= pos.tp;
+          if (hitSL || hitTP) {
+            slTpHitRef.current = true;
+            // Auto re-run backtest — position will now show as closed
+            setTimeout(() => { runBacktest(); }, 1000);
+          }
+        }
+      } catch { /* network error — skip this tick */ }
+    };
+
+    poll(); // immediate first fetch
+    const timer = setInterval(poll, 5000); // poll every 5 seconds
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [btData?.open_position, symbol, runBacktest]);
+
   // ── Condition optimization ───────────────────────────
   const runConditionOptimization = useCallback(async () => {
     setOptimizing(true);
@@ -1521,27 +1571,53 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, symbol
               )}
 
               {/* Open position banner */}
-              {btData.open_position && (
-                <div className="rounded-lg border border-blue-500/40 bg-blue-950/30 px-3 py-2 flex items-center gap-3">
-                  <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[10px] font-bold text-blue-400">
-                      HOLDING POSITION — {btData.open_position.direction === "PUT" ? "SHORT" : "LONG"} @ ${btData.open_position.entry_price}
-                    </p>
-                    <p className="text-[9px] text-slate-400 mt-0.5">
-                      SL ${btData.open_position.sl} · TP ${btData.open_position.tp} · Entry {fmtDateTime(btData.open_position.entry_time)} · {btData.open_position.signal_type}
-                    </p>
+              {btData.open_position && (() => {
+                const pos = btData.open_position;
+                const isLong = pos.direction !== "PUT";
+                const unrealPnl = livePrice != null ? (isLong ? livePrice - pos.entry_price : pos.entry_price - livePrice) : null;
+                const pnlPct = unrealPnl != null && pos.entry_price > 0 ? (unrealPnl / pos.entry_price) * 100 : null;
+                return (
+                  <div className="rounded-lg border border-blue-500/40 bg-blue-950/30 px-3 py-2 space-y-1.5">
+                    <div className="flex items-center gap-3">
+                      <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[10px] font-bold text-blue-400">
+                          HOLDING POSITION — {isLong ? "LONG" : "SHORT"} @ ${pos.entry_price}
+                        </p>
+                        <p className="text-[9px] text-slate-400 mt-0.5">
+                          SL ${pos.sl} · TP ${pos.tp} · Entry {fmtDateTime(pos.entry_time)} · {pos.signal_type}
+                        </p>
+                      </div>
+                      <span className={`text-[10px] font-bold ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
+                        {isLong ? "▲ BUY" : "▼ SELL"}
+                      </span>
+                    </div>
+                    {/* Live price + P&L row */}
+                    {livePrice != null && (
+                      <div className="flex items-center gap-3 pl-5">
+                        <span className="text-[9px] text-slate-500">NOW</span>
+                        <span className="text-[11px] font-bold text-yellow-400 tabular-nums">${livePrice.toFixed(2)}</span>
+                        {unrealPnl != null && (
+                          <>
+                            <span className={`text-[11px] font-bold tabular-nums ${unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                              {unrealPnl >= 0 ? "+" : ""}{unrealPnl.toFixed(2)} pts
+                            </span>
+                            <span className={`text-[9px] tabular-nums ${unrealPnl >= 0 ? "text-emerald-400/70" : "text-rose-400/70"}`}>
+                              ({pnlPct != null && pnlPct >= 0 ? "+" : ""}{pnlPct?.toFixed(2)}%)
+                            </span>
+                          </>
+                        )}
+                        <span className="ml-auto text-[8px] text-slate-600 animate-pulse">● LIVE</span>
+                      </div>
+                    )}
                   </div>
-                  <span className={`text-[10px] font-bold ${btData.open_position.direction === "PUT" ? "text-rose-400" : "text-emerald-400"}`}>
-                    {btData.open_position.direction === "PUT" ? "▼ SELL" : "▲ BUY"}
-                  </span>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Trade log — grouped by date */}
               <div className="rounded-lg border border-slate-800/60 bg-slate-900/50">
                 <div className="max-h-[420px] overflow-y-auto">
-                  <TradeLogByDate trades={btData.trades} onTradeClick={(t) => { setZoomTrade(t); onTradeClick?.(t); }} />
+                  <TradeLogByDate trades={btData.trades} onTradeClick={(t) => { setZoomTrade(t); onTradeClick?.(t); }} livePrice={livePrice} />
                 </div>
               </div>
 
