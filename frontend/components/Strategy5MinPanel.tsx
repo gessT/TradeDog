@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createChart,
   CandlestickSeries,
@@ -1177,6 +1177,12 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, symbol
     setError(null);
   }, [symbol]);
 
+  // ── Config key for cache ──
+  const configKey = useMemo(
+    () => JSON.stringify({ symbol, period, slMult, tpMult, dateFrom, dateTo, conditionToggles }),
+    [symbol, period, slMult, tpMult, dateFrom, dateTo, conditionToggles]
+  );
+
   // ── Backtest ──────────────────────────────────────────
   const runBacktest = useCallback(async () => {
     setLoading(true);
@@ -1189,19 +1195,30 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, symbol
       const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol, disabled.length > 0 ? disabled : undefined);
       setBtData(res);
       onTradesUpdate?.(res.trades);
+      // Cache result so page refresh doesn't re-run
+      try {
+        sessionStorage.setItem("bt5min_cache", JSON.stringify({ configKey, data: res }));
+      } catch { /* quota exceeded — ignore */ }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
       setLoading(false);
     }
-  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles]);
+  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, configKey]);
 
-  // ── Auto-run backtest on mount + refresh every 5 min ──
+  // ── Restore cached backtest on mount (never auto-run) ──
   useEffect(() => {
-    runBacktest();
-    const id = setInterval(runBacktest, 5 * 60 * 1000);
-    return () => clearInterval(id);
-  }, [runBacktest]);
+    try {
+      const raw = sessionStorage.getItem("bt5min_cache");
+      if (raw) {
+        const cached = JSON.parse(raw);
+        if (cached.configKey === configKey) {
+          setBtData(cached.data);
+          onTradesUpdate?.(cached.data.trades);
+        }
+      }
+    } catch { /* corrupt cache — ignore */ }
+  }, [configKey]);
 
   // ── Condition optimization ───────────────────────────
   const runConditionOptimization = useCallback(async () => {
