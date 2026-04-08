@@ -14,13 +14,10 @@ const n = (v: number | undefined | null) => v ?? 0;
 const fmt = (v: number | undefined | null, d = 2) => n(v).toFixed(d);
 const fmtK = (v: number | undefined | null) => n(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
+import { fmtDateSGT } from "../utils/time";
+
 function fmtDate(raw: string): string {
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return raw;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
+  return fmtDateSGT(raw);
 }
 
 export default function StrategyPanelV1({ symbol, period, onTradeClick }: Props) {

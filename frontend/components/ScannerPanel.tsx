@@ -25,12 +25,13 @@ import {
   type Scan5MinConditions,
   type Scan5MinCandle,
 } from "../services/api";
+import { SGT_OFFSET_SEC } from "../utils/time";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════
 
-const TZ_OFFSET_SEC = -(new Date().getTimezoneOffset() * 60);
+const TZ_OFFSET_SEC = SGT_OFFSET_SEC;
 const n = (v: unknown): number => typeof v === "number" && Number.isFinite(v) ? v : 0;
 
 function strengthColor(s: number): string {

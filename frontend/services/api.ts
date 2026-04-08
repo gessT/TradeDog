@@ -717,6 +717,7 @@ export type TigerPositionItem = {
   unrealized_pnl: number;
   realized_pnl: number;
   currency: string;
+  open_time: string;
 };
 
 export type TigerOrderItem = {

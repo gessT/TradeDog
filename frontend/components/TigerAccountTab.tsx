@@ -15,6 +15,8 @@ import {
   type TradeRecord,
 } from "../services/api";
 
+import { todaySGT, toDateSGT, fmtTimeSGT, fmtDateTimeSGT } from "../utils/time";
+
 const COMMODITY_NAMES: Record<string, string> = {
   MGC: "Micro Gold",
   MCL: "Micro Crude Oil",
@@ -27,33 +29,21 @@ const COMMODITY_NAMES: Record<string, string> = {
 /** Strip trailing digits from contract symbol (e.g. MGC2606 → MGC) */
 const baseSymbol = (s: string) => s.replace(/\d+$/, "");
 
-/** Local date string YYYY-MM-DD (avoids UTC shift) */
-function localDateStr(d: Date = new Date()): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+/** Local date string YYYY-MM-DD in SGT */
+const localDateStr = todaySGT;
 
-/** Convert a raw timestamp to local date string for comparison */
-function toLocalDate(raw: string): string {
-  if (!raw) return "";
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
-  return localDateStr(d);
-}
+/** Convert a raw timestamp to SGT date string for comparison */
+const toLocalDate = toDateSGT;
 
-/** Format trade_time string for display (full date + time, local) */
-function fmtTime(raw: string): string {
-  if (!raw) return "";
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return raw.slice(0, 16);
-  return d.toLocaleString();
-}
+/** Format trade_time string for display in SGT */
+const fmtTime = fmtTimeSGT;
 
-/** Format to local HH:MM:SS only */
+/** Format to SGT HH:MM:SS only */
 function fmtLocalTime(raw: string): string {
   if (!raw) return "";
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return raw;
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  return d.toLocaleTimeString("en-GB", { timeZone: "Asia/Singapore", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -225,6 +215,9 @@ function PositionRow({
             <span className="text-[9px] font-normal text-slate-500">{COMMODITY_NAMES[baseSymbol(p.symbol)] ?? ""}</span>
           </span>
         </td>
+        <td className="px-2 py-2 text-[10px] text-slate-400 whitespace-nowrap">
+          {p.open_time ? fmtDateTimeSGT(p.open_time) : "—"}
+        </td>
         <td className={`px-2 py-2 text-[11px] text-center font-bold ${p.quantity > 0 ? "text-emerald-400" : "text-rose-400"}`}>
           {p.quantity > 0 ? "+" : ""}{p.quantity}
         </td>
@@ -244,7 +237,7 @@ function PositionRow({
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={6} className="p-0">
+          <td colSpan={7} className="p-0">
             <div className="px-3 py-2.5 bg-slate-900/80 border-b border-slate-700/40 space-y-2">
               {/* Controls row */}
               <div className="flex items-end gap-2 flex-wrap">
@@ -509,6 +502,7 @@ export default function TigerAccountTab() {
               <thead>
                 <tr className="text-[8px] text-slate-600 uppercase tracking-wider">
                   <th className="px-2 py-1.5">Symbol</th>
+                  <th className="px-2 py-1.5">Opened</th>
                   <th className="px-2 py-1.5 text-center">Qty</th>
                   <th className="px-2 py-1.5 text-right">Avg Cost</th>
                   <th className="px-2 py-1.5 text-right">Mkt Value</th>

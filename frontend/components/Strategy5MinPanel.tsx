@@ -11,6 +11,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { halfTrend, type HalfTrendPoint } from "../utils/indicators";
+import { fmtDateTimeSGT, fmtInputDateSGT, SGT_OFFSET_SEC, toSGT } from "../utils/time";
 import TradeDetailDialog from "./strategy5min/TradeDetailDialog";
 import {
   fetchMGC5MinBacktest,
@@ -26,24 +27,16 @@ import {
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════
 
-/** Offset (seconds) to shift UTC epoch → browser local time for lightweight-charts */
-const TZ_OFFSET_SEC = -(new Date().getTimezoneOffset() * 60);
+/** Offset (seconds) to shift UTC epoch → SGT for lightweight-charts */
+const TZ_OFFSET_SEC = SGT_OFFSET_SEC;
 
-const toLocal = (utcSec: number) => (utcSec + TZ_OFFSET_SEC) as UTCTimestamp;
+const toLocal = (utcSec: number) => toSGT(utcSec) as UTCTimestamp;
 
 const n = (v: unknown): number =>
   typeof v === "number" && Number.isFinite(v) ? v : 0;
 
-/** Format "YYYY-MM-DD HH:MM:SS" → "DD/MM HH:MM" for 5min trade times */
-function fmtDateTime(raw: string): string {
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return raw.slice(5, 16);
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const HH = String(d.getHours()).padStart(2, "0");
-  const MM = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm} ${HH}:${MM}`;
-}
+/** Format trade times using SGT */
+const fmtDateTime = fmtDateTimeSGT;
 
 function winRateColor(wr: number): string {
   if (wr >= 65) return "text-emerald-400";
@@ -200,22 +193,28 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
   const pipAbs = Math.abs(pipDiff);
   return (
     <tr
-      className={`${idx % 2 === 0 ? "bg-slate-900/30" : ""} ${onTradeClick ? "cursor-pointer hover:bg-cyan-900/20 transition-colors" : ""}`}
+      className={`${isOpen ? "bg-blue-950/30 border-l-2 border-blue-500" : idx % 2 === 0 ? "bg-slate-900/30" : ""} ${onTradeClick ? "cursor-pointer hover:bg-cyan-900/20 transition-colors" : ""}`}
       onClick={() => onTradeClick?.(t)}
     >
       <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{fmtDateTime(t.entry_time)}</td>
-      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{isOpen ? "—" : fmtDateTime(t.exit_time)}</td>
+      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{isOpen ? <span className="text-blue-400 animate-pulse">LIVE</span> : fmtDateTime(t.exit_time)}</td>
       <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{n(t.entry_price).toFixed(2)}</td>
-      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{isOpen ? "—" : n(t.exit_price).toFixed(2)}</td>
-      <td className={`px-2 py-1 text-right text-[10px] font-mono ${isOpen ? "" : pipDiff >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-        {isOpen && n(t.sl) > 0 ? (
-          <span className="text-rose-400">SL {n(t.sl).toFixed(2)}</span>
-        ) : isOpen ? "—" : `${pipDiff >= 0 ? "+" : "-"}${pipAbs.toFixed(2)}`}
+      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">
+        {isOpen ? <span className="text-slate-600">—</span> : n(t.exit_price).toFixed(2)}
       </td>
-      <td className={`px-2 py-1 text-right text-[10px] font-bold ${isOpen ? "" : win ? "text-emerald-400" : "text-rose-400"}`}>
-        {isOpen && n(t.tp) > 0 ? (
-          <span className="text-emerald-400">TP {n(t.tp).toFixed(2)}</span>
-        ) : isOpen ? "—" : `${win ? "+" : ""}${n(t.pnl).toFixed(2)}`}
+      <td className="px-2 py-1 text-right text-[10px] font-mono">
+        {isOpen ? (
+          <span className="text-rose-400">{n(t.sl) > 0 ? `SL ${n(t.sl).toFixed(2)}` : "—"}</span>
+        ) : (
+          <span className={pipDiff >= 0 ? "text-emerald-400" : "text-rose-400"}>{pipDiff >= 0 ? "+" : "-"}{pipAbs.toFixed(2)}</span>
+        )}
+      </td>
+      <td className="px-2 py-1 text-right text-[10px] font-bold">
+        {isOpen ? (
+          <span className="text-emerald-400">{n(t.tp) > 0 ? `TP ${n(t.tp).toFixed(2)}` : "—"}</span>
+        ) : (
+          <span className={win ? "text-emerald-400" : "text-rose-400"}>{win ? "+" : ""}{n(t.pnl).toFixed(2)}</span>
+        )}
       </td>
       <td className="px-2 py-1 text-right text-[10px] font-bold text-rose-400/80">
         {n(t.mae) < 0 ? `${n(t.mae).toFixed(2)}` : "—"}
@@ -1149,7 +1148,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, symbol
   const [tpMult, setTpMult] = useState(defaultRisk.tp);
 
   // Date range filter
-  const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
+  const fmtDate = (d: Date) => fmtInputDateSGT(d);
   const calcFrom = (p: string) => {
     const d = new Date();
     d.setDate(d.getDate() - parseInt(p));
@@ -1530,7 +1529,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, symbol
                       HOLDING POSITION — {btData.open_position.direction === "PUT" ? "SHORT" : "LONG"} @ ${btData.open_position.entry_price}
                     </p>
                     <p className="text-[9px] text-slate-400 mt-0.5">
-                      SL ${btData.open_position.sl} · TP ${btData.open_position.tp} · Entry {btData.open_position.entry_time.slice(5, 16)} · {btData.open_position.signal_type}
+                      SL ${btData.open_position.sl} · TP ${btData.open_position.tp} · Entry {fmtDateTime(btData.open_position.entry_time)} · {btData.open_position.signal_type}
                     </p>
                   </div>
                   <span className={`text-[10px] font-bold ${btData.open_position.direction === "PUT" ? "text-rose-400" : "text-emerald-400"}`}>

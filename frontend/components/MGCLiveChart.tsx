@@ -16,9 +16,11 @@ import { fetchMGCLive, type MGCLiveResponse } from "../services/api";
 // Props
 // ═══════════════════════════════════════════════════════════════════════
 
-/** Offset (seconds) to shift UTC epoch → browser local time for lightweight-charts */
-const TZ_OFFSET_SEC = -(new Date().getTimezoneOffset() * 60);
-const toLocal = (utcSec: number) => (utcSec + TZ_OFFSET_SEC) as UTCTimestamp;
+/** Offset (seconds) to shift UTC epoch → SGT for lightweight-charts */
+import { SGT_OFFSET_SEC, toSGT } from "../utils/time";
+
+const TZ_OFFSET_SEC = SGT_OFFSET_SEC;
+const toLocal = (utcSec: number) => toSGT(utcSec) as UTCTimestamp;
 
 type TradeMarker = {
   entry_time: string;

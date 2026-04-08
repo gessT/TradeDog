@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { fmtDateSGT } from "../utils/time";
 
 import type { DashboardRow } from "../hooks/useStock";
 
@@ -33,12 +34,7 @@ export default function DataTable({ rows }: DataTableProps) {
   const [candleFilter, setCandleFilter] = useState<string>("all");
 
   function fmtDate(raw: string): string {
-    const d = new Date(raw);
-    if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const yyyy = d.getFullYear();
-    return `${dd}/${mm}/${yyyy}`;
+    return fmtDateSGT(raw);
   }
 
   const candleTypes = useMemo(() => {

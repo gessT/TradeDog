@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime, timedelta, timezone
+
+SGT = timezone(timedelta(hours=8))  # Asia/Singapore UTC+8
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -190,7 +192,7 @@ async def mgc_backtest(
         equity_curve=eq_curve,
         metrics=metrics,
         params=params,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
 
 
@@ -270,7 +272,7 @@ async def commodity_quotes() -> CommodityQuotesResponse:
                     high=round(day_high, 2),
                     low=round(day_low, 2),
                     volume=day_vol,
-                    updated=datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                    updated=datetime.now(SGT).strftime("%H:%M:%S SGT"),
                 ))
             except Exception as exc:
                 logger.warning("Quote fetch failed for %s: %s", sym_key, exc)
@@ -285,7 +287,7 @@ async def commodity_quotes() -> CommodityQuotesResponse:
     quotes = await run_in_threadpool(_run)
     return CommodityQuotesResponse(
         quotes=quotes,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -463,7 +465,7 @@ async def mgc_live(
         rsi=rsi_vals,
         signals=signals,
         current_price=round(price, 2),
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -574,6 +576,7 @@ class TigerPositionItem(BaseModel):
     unrealized_pnl: float
     realized_pnl: float
     currency: str = "USD"
+    open_time: str = ""
 
 
 class TigerOrderItem(BaseModel):
@@ -684,19 +687,37 @@ async def tiger_account() -> TigerAccountResponse:
         filled_orders: list[TigerOrderItem] = []
         try:
             _start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-            _end = datetime.now().strftime("%Y-%m-%d")
+            _end = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
             raw_filled = trade_client.get_filled_orders(account=TIGER_ACCOUNT, sec_type="FUT", start_date=_start, end_date=_end)
-            for o in (raw_filled or [])[-50:]:
-                filled_orders.append(_order_to_item(o))
+            all_items = [_order_to_item(o) for o in (raw_filled or [])]
+            filled_orders = all_items[:50]  # Tiger returns newest-first; keep most recent 50
         except Exception:
             logger.exception("Failed to get Tiger filled orders")
+
+        # Cross-reference positions with filled orders to find open time
+        for pos in positions:
+            if not pos.symbol:
+                continue
+            # Find the direction that opened this position (BUY for long, SELL for short)
+            open_action = "BUY" if pos.quantity > 0 else "SELL"
+            # Strip trailing digits from position symbol (e.g. MGC2606 → MGC) to match order symbol
+            import re
+            pos_base = re.sub(r"\d+$", "", pos.symbol)
+            # Find earliest filled order for this symbol + direction
+            matching = [
+                o for o in filled_orders
+                if o.symbol == pos_base and o.action == open_action and o.trade_time
+            ]
+            if matching:
+                matching.sort(key=lambda o: o.trade_time, reverse=True)
+                pos.open_time = matching[0].trade_time
 
         return TigerAccountResponse(
             account=account_info,
             positions=positions,
             open_orders=open_orders,
             filled_orders=filled_orders,
-            timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+            timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
         )
 
     return await run_in_threadpool(_run)
@@ -771,7 +792,7 @@ async def tiger_trade_history(
         if not raw_filled:
             return TradeHistoryResponse(
                 trades=[], summary=_empty_summary(),
-                timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+                timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
             )
 
         # Normalize fills
@@ -909,7 +930,7 @@ async def tiger_trade_history(
 
         return TradeHistoryResponse(
             trades=trades, summary=summary,
-            timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+            timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
         )
 
     return await run_in_threadpool(_run)
@@ -947,13 +968,13 @@ def _order_to_item(o) -> TigerOrderItem:
 
 
 def _fmt_tiger_time(raw) -> str:
-    """Convert Tiger SDK time (ms timestamp or string) to ISO format with UTC offset."""
+    """Convert Tiger SDK time (ms timestamp or string) to ISO format in SGT."""
     if not raw:
         return ""
     if isinstance(raw, (int, float)):
         # Millisecond timestamp
         ts = raw / 1000 if raw > 1e12 else raw
-        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return datetime.fromtimestamp(ts, tz=SGT).strftime("%Y-%m-%dT%H:%M:%S+08:00")
     return str(raw)
 
 
@@ -1448,7 +1469,7 @@ async def scan_trade(req: ScanTradeRequest) -> ScanTradeResponse:
         execution=exec_result,
         risk_check=risk_check,
         position=position_info,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -1727,7 +1748,7 @@ async def mgc_backtest_5min(
         daily_pnl=daily_pnl,
         params=params,
         open_position=open_pos,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
 
 
@@ -1887,7 +1908,7 @@ async def mgc_scan_5min(
         bias=bias,
         conditions_met=met,
         conditions_total=total,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -2014,7 +2035,7 @@ async def mgc_scan_5min_live(
         bias=bias,
         conditions_met=met,
         conditions_total=total,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -2215,7 +2236,7 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
         position=position_info,
         engine_state=engine_state,
         execution_record=exec_record,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -2254,7 +2275,7 @@ async def backtest_position(
         }
 
     result = await run_in_threadpool(_run)
-    result["timestamp"] = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC")
+    result["timestamp"] = datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT")
     return result
 
 
@@ -2426,7 +2447,7 @@ async def mgc_optimize_5min(
         total_combos=total_combos,
         passed_filter=passed,
         results=top,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
 
 
@@ -2522,7 +2543,7 @@ async def mgc_trade_log_5min(
         win_rate=wr,
         total_pnl=pnl,
         open_position=open_pos,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -3019,7 +3040,7 @@ async def mgc_backtest_v2(
         symbol=symbol, interval="5m", period=period,
         candles=candles, trades=trades, equity_curve=eq_curve,
         metrics=metrics, params=params,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
 
 
@@ -3079,7 +3100,7 @@ async def mgc_scan_v2(
     return V2ScanResponse(
         opportunity=found, signal=sig, signals=all_sigs,
         candles=candles_out,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -3115,7 +3136,7 @@ async def mgc_optimize_v2(
             },
             "top_results": top_results,
             "total_combos": len(top_results),
-            "timestamp": datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+            "timestamp": datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
         }
 
     try:
@@ -3166,7 +3187,7 @@ async def get_market_structure(
             "label": label,
             "bars": len(df),
             "last_price": round(float(df["close"].iloc[-1]), 4),
-            "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
+            "timestamp": datetime.now(SGT).strftime("%H:%M:%S SGT"),
         }
 
     try:

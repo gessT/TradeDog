@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
+
+SGT = timezone(timedelta(hours=8))
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
@@ -1157,7 +1159,7 @@ async def get_stock(symbol: str) -> dict[str, object]:
         "symbol": symbol.upper(),
         "price": latest_price,
         "smoothed_price": latest_smoothed,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(SGT).isoformat(),
     }
     await redis_service.publish_json(settings.quote_channel, quote)
 
@@ -1375,7 +1377,7 @@ async def daily_scan(top: int = Query(default=6, ge=1, le=20), market: str = Que
 
     setups = await run_in_threadpool(_run)
     return {
-        "timestamp": _dt.now().strftime("%d/%m/%Y %H:%M"),
+        "timestamp": datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
         "scanned": len(stocks_dict),
         "qualified": len(setups),
         "setups": setups[:top],
@@ -1468,7 +1470,7 @@ async def us_stock_quotes():
         return quotes
 
     quotes = await run_in_threadpool(_run)
-    return {"quotes": quotes, "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S")}
+    return {"quotes": quotes, "timestamp": datetime.now(SGT).strftime("%H:%M:%S SGT")}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1705,5 +1707,5 @@ async def us_stock_backtest_1h(
         metrics=metrics,
         daily_pnl=daily_pnl,
         params=params,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )

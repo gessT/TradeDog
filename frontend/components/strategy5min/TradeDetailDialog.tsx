@@ -11,14 +11,15 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { halfTrend, sma, computeSupertrend } from "../../utils/indicators";
+import { SGT_OFFSET_SEC, toSGT, fmtDateTimeSGT } from "../../utils/time";
 import type { MGC5MinCandle, MGC5MinTrade } from "../../services/api";
 
-// ═══════════════════════════════════════════════════════════════════════
-// Helpers (duplicated from Strategy5MinPanel to keep this self-contained)
-// ═══════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════
+// Helpers
+// ═════════════════════════════════════════════════════════════════════
 
-const TZ_OFFSET_SEC = -(new Date().getTimezoneOffset() * 60);
-const toLocal = (utcSec: number) => (utcSec + TZ_OFFSET_SEC) as UTCTimestamp;
+const TZ_OFFSET_SEC = SGT_OFFSET_SEC;
+const toLocal = (utcSec: number) => toSGT(utcSec) as UTCTimestamp;
 const n = (v: unknown): number =>
   typeof v === "number" && Number.isFinite(v) ? v : 0;
 
@@ -115,8 +116,9 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
     if (!ref.current || candles.length === 0) return;
     const el = ref.current;
 
+    const isOpen = trade.reason === "OPEN";
     const entryTs = new Date(trade.entry_time).getTime();
-    const exitTs = new Date(trade.exit_time).getTime();
+    const exitTs = isOpen ? Date.now() : new Date(trade.exit_time).getTime();
 
     // Find entry and exit bar indices
     let entryIdx = 0;
@@ -124,13 +126,15 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
     for (let i = 0; i < candles.length; i++) {
       if (new Date(candles[i].time).getTime() >= entryTs) { entryIdx = i; break; }
     }
-    for (let i = candles.length - 1; i >= 0; i--) {
-      if (new Date(candles[i].time).getTime() <= exitTs) { exitIdx = i; break; }
+    if (!isOpen) {
+      for (let i = candles.length - 1; i >= 0; i--) {
+        if (new Date(candles[i].time).getTime() <= exitTs) { exitIdx = i; break; }
+      }
     }
 
-    // Slice: 50 bars before entry + trade bars + 50 bars after exit
+    // Slice: 50 bars before entry + trade bars + bars after (all remaining if open)
     const PAD_BEFORE = 50;
-    const PAD_AFTER = 50;
+    const PAD_AFTER = isOpen ? candles.length : 50;
     const startIdx = Math.max(0, entryIdx - PAD_BEFORE);
     const endIdx = Math.min(candles.length, exitIdx + PAD_AFTER + 1);
     const slice = candles.slice(startIdx, endIdx);
@@ -246,12 +250,22 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
 
     // SL / TP price lines
     const isCall = trade.direction === "CALL";
-    candleSeries.createPriceLine({ price: trade.entry_price, color: "#a78bfa", lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: `▶ IN  $${n(trade.entry_price).toFixed(2)}` });
-    candleSeries.createPriceLine({ price: trade.exit_price, color: trade.pnl >= 0 ? "#22c55e" : "#ef4444", lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: `◀ OUT  $${n(trade.exit_price).toFixed(2)} (${trade.reason})` });
+    candleSeries.createPriceLine({ price: trade.entry_price, color: "#a78bfa", lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: `▶ ENTRY  $${n(trade.entry_price).toFixed(2)}` });
+
+    if (isOpen) {
+      // Show SL and TP target lines for open position
+      if (n(trade.sl) > 0) {
+        candleSeries.createPriceLine({ price: trade.sl, color: "#ef4444", lineWidth: 2, lineStyle: 1, axisLabelVisible: true, title: `⛔ SL  $${n(trade.sl).toFixed(2)}` });
+      }
+      if (n(trade.tp) > 0) {
+        candleSeries.createPriceLine({ price: trade.tp, color: "#22c55e", lineWidth: 2, lineStyle: 1, axisLabelVisible: true, title: `🎯 TP  $${n(trade.tp).toFixed(2)}` });
+      }
+    } else {
+      candleSeries.createPriceLine({ price: trade.exit_price, color: trade.pnl >= 0 ? "#22c55e" : "#ef4444", lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: `◀ EXIT  $${n(trade.exit_price).toFixed(2)} (${trade.reason})` });
+    }
 
     // Entry & exit markers
     const entryBarTs = toLocal(Math.floor(entryTs / 1000));
-    const exitBarTs = toLocal(Math.floor(exitTs / 1000));
     const findClosest = (target: UTCTimestamp) => {
       let best = ohlc[0]?.time ?? target;
       let bestDiff = Math.abs((best as number) - (target as number));
@@ -264,9 +278,12 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
 
     const win = trade.pnl >= 0;
     const markers: { time: UTCTimestamp; position: "belowBar" | "aboveBar"; color: string; shape: "arrowUp" | "arrowDown"; text: string; size: number }[] = [
-      { time: findClosest(entryBarTs), position: isCall ? "belowBar" : "aboveBar", color: "#a78bfa", shape: isCall ? "arrowUp" : "arrowDown", text: `▶ IN ${trade.direction} $${n(trade.entry_price).toFixed(2)}`, size: 3 },
-      { time: findClosest(exitBarTs), position: "aboveBar", color: win ? "#22c55e" : "#ef4444", shape: "arrowDown", text: `◀ OUT ${trade.reason} ${win ? "+" : ""}$${trade.pnl.toFixed(2)}`, size: 3 },
+      { time: findClosest(entryBarTs), position: isCall ? "belowBar" : "aboveBar", color: "#a78bfa", shape: isCall ? "arrowUp" : "arrowDown", text: `▶ ENTRY ${trade.direction} $${n(trade.entry_price).toFixed(2)}`, size: 3 },
     ];
+    if (!isOpen) {
+      const exitBarTs = toLocal(Math.floor(new Date(trade.exit_time).getTime() / 1000));
+      markers.push({ time: findClosest(exitBarTs), position: "aboveBar", color: win ? "#22c55e" : "#ef4444", shape: "arrowDown", text: `◀ EXIT ${trade.reason} ${win ? "+" : ""}$${trade.pnl.toFixed(2)}`, size: 3 });
+    }
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     createSeriesMarkers(candleSeries, markers);
 
@@ -279,10 +296,11 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
     return () => { ro.disconnect(); try { chart.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; };
   }, [candles, trade, showSMA, smaPeriod, showHalfTrend, showSuperTrend, stPeriod, stMultiplier]);
 
+  const isOpenTrade = trade.reason === "OPEN";
   const win = trade.pnl >= 0;
   const pipDiff = n(trade.exit_price) - n(trade.entry_price);
   const pipAbs = Math.abs(pipDiff);
-  const holdMs = new Date(trade.exit_time).getTime() - new Date(trade.entry_time).getTime();
+  const holdMs = (isOpenTrade ? Date.now() : new Date(trade.exit_time).getTime()) - new Date(trade.entry_time).getTime();
   const holdMins = Math.round(holdMs / 60000);
   const holdStr = holdMins >= 60 ? `${Math.floor(holdMins / 60)}h ${holdMins % 60}m` : `${holdMins}m`;
   const strength = computeSignalStrength(candles, trade.entry_time);
@@ -297,15 +315,20 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
         <div className="shrink-0 px-4 py-3 border-b border-slate-800/60 flex items-center justify-between bg-slate-900/80">
           <div className="flex items-center gap-3">
             <span className="text-sm font-bold text-slate-200">Trade Detail</span>
+            {isOpenTrade && (
+              <span className="text-xs font-bold px-2 py-1 rounded bg-blue-900/50 text-blue-400 border border-blue-500/40 animate-pulse">🔴 OPEN POSITION</span>
+            )}
             <span className={`text-xs font-bold px-2 py-1 rounded ${trade.direction === "PUT" ? "bg-rose-900/50 text-rose-400" : "bg-emerald-900/50 text-emerald-400"}`}>
               {trade.direction || "CALL"}
             </span>
             <span className="text-sm text-slate-300 font-semibold">
-              {trade.entry_time.slice(0, 16)} → {trade.exit_time.slice(11, 16)}
+              {fmtDateTimeSGT(trade.entry_time)}{isOpenTrade ? " → NOW" : ` → ${fmtDateTimeSGT(trade.exit_time)}`}
             </span>
-            <span className={`text-sm font-bold ${win ? "text-emerald-400" : "text-rose-400"}`}>
-              {win ? "+" : ""}{trade.pnl.toFixed(2)}
-            </span>
+            {!isOpenTrade && (
+              <span className={`text-sm font-bold ${win ? "text-emerald-400" : "text-rose-400"}`}>
+                {win ? "+" : ""}{trade.pnl.toFixed(2)}
+              </span>
+            )}
             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${reasonStyle(trade.reason)}`}>{trade.reason}</span>
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-200 text-lg px-2 transition-colors">✕</button>
@@ -318,22 +341,41 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
               <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Entry</div>
               <div className="text-xs font-bold text-slate-200 tabular-nums">${n(trade.entry_price).toFixed(2)}</div>
             </div>
-            <div className="rounded-lg border border-slate-700/50 bg-slate-800/40 px-2 py-2 text-center">
-              <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Exit</div>
-              <div className="text-xs font-bold text-slate-200 tabular-nums">${n(trade.exit_price).toFixed(2)}</div>
-            </div>
-            <div className="rounded-lg border border-slate-700/50 bg-slate-800/40 px-2 py-2 text-center">
-              <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Pips</div>
-              <div className={`text-xs font-bold tabular-nums ${pipDiff >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                {pipDiff >= 0 ? "+" : "-"}{pipAbs.toFixed(2)}
-              </div>
-            </div>
-            <div className={`rounded-lg border-2 px-2 py-2 text-center ${win ? "border-emerald-500/60 bg-emerald-950/40" : "border-rose-500/60 bg-rose-950/40"}`}>
-              <div className="text-[9px] text-slate-400 uppercase tracking-wider mb-1">P&L</div>
-              <div className={`text-sm font-extrabold tabular-nums ${win ? "text-emerald-400" : "text-rose-400"}`}>
-                {win ? "+" : ""}{n(trade.pnl).toFixed(2)}
-              </div>
-            </div>
+            {isOpenTrade ? (
+              <>
+                <div className="rounded-lg border border-rose-700/50 bg-rose-950/30 px-2 py-2 text-center">
+                  <div className="text-[9px] text-rose-400 uppercase tracking-wider mb-1">Stop Loss</div>
+                  <div className="text-xs font-bold text-rose-400 tabular-nums">{n(trade.sl) > 0 ? `$${n(trade.sl).toFixed(2)}` : "—"}</div>
+                </div>
+                <div className="rounded-lg border border-emerald-700/50 bg-emerald-950/30 px-2 py-2 text-center">
+                  <div className="text-[9px] text-emerald-400 uppercase tracking-wider mb-1">Take Profit</div>
+                  <div className="text-xs font-bold text-emerald-400 tabular-nums">{n(trade.tp) > 0 ? `$${n(trade.tp).toFixed(2)}` : "—"}</div>
+                </div>
+                <div className="rounded-lg border-2 border-blue-500/60 bg-blue-950/40 px-2 py-2 text-center">
+                  <div className="text-[9px] text-blue-400 uppercase tracking-wider mb-1">Status</div>
+                  <div className="text-sm font-extrabold text-blue-400 animate-pulse">LIVE</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="rounded-lg border border-slate-700/50 bg-slate-800/40 px-2 py-2 text-center">
+                  <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Exit</div>
+                  <div className="text-xs font-bold text-slate-200 tabular-nums">${n(trade.exit_price).toFixed(2)}</div>
+                </div>
+                <div className="rounded-lg border border-slate-700/50 bg-slate-800/40 px-2 py-2 text-center">
+                  <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Pips</div>
+                  <div className={`text-xs font-bold tabular-nums ${pipDiff >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                    {pipDiff >= 0 ? "+" : "-"}{pipAbs.toFixed(2)}
+                  </div>
+                </div>
+                <div className={`rounded-lg border-2 px-2 py-2 text-center ${win ? "border-emerald-500/60 bg-emerald-950/40" : "border-rose-500/60 bg-rose-950/40"}`}>
+                  <div className="text-[9px] text-slate-400 uppercase tracking-wider mb-1">P&L</div>
+                  <div className={`text-sm font-extrabold tabular-nums ${win ? "text-emerald-400" : "text-rose-400"}`}>
+                    {win ? "+" : ""}{n(trade.pnl).toFixed(2)}
+                  </div>
+                </div>
+              </>
+            )}
             <div className="rounded-lg border border-slate-700/50 bg-slate-800/40 px-2 py-2 text-center">
               <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">MAE</div>
               <div className="text-xs font-bold text-rose-400/80 tabular-nums">

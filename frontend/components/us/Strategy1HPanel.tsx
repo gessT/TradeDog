@@ -11,6 +11,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { halfTrend, type HalfTrendPoint } from "../../utils/indicators";
+import { SGT_OFFSET_SEC, toSGT, fmtDateTimeSGT, fmtInputDateSGT } from "../../utils/time";
 import TradeDetailDialog from "../strategy5min/TradeDetailDialog";
 import {
   fetchUS1HBacktest,
@@ -23,8 +24,8 @@ import {
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════
 
-const TZ_OFFSET_SEC = -(new Date().getTimezoneOffset() * 60);
-const toLocal = (utcSec: number) => (utcSec + TZ_OFFSET_SEC) as UTCTimestamp;
+const TZ_OFFSET_SEC = SGT_OFFSET_SEC;
+const toLocal = (utcSec: number) => toSGT(utcSec) as UTCTimestamp;
 /** Parse timestamp string robustly — handles both "2026-03-02 09:30:00-05:00" and ISO "2026-03-02T09:30:00-05:00" */
 const parseTS = (s: string): number => {
   let ms = new Date(s).getTime();
@@ -34,16 +35,7 @@ const parseTS = (s: string): number => {
 const n = (v: unknown): number =>
   typeof v === "number" && Number.isFinite(v) ? v : 0;
 
-function fmtDateTime(raw: string): string {
-  let d = new Date(raw);
-  if (Number.isNaN(d.getTime())) d = new Date(raw.replace(" ", "T"));
-  if (Number.isNaN(d.getTime())) return raw.slice(5, 16);
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const HH = String(d.getHours()).padStart(2, "0");
-  const MM = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm} ${HH}:${MM}`;
-}
+const fmtDateTime = fmtDateTimeSGT;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Metrics Card (compact)
@@ -227,7 +219,7 @@ export default function Strategy1HPanel({
   const [tpMult, setTpMult] = useState(2.5);
 
   // Date range
-  const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
+  const fmtDate = (d: Date) => fmtInputDateSGT(d);
   const calcFrom = (p: string) => {
     const d = new Date();
     const map: Record<string, number> = { "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730 };
