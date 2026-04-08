@@ -209,8 +209,22 @@ def _isnan(v) -> bool:
 
 @router.get("/price/{symbol}")
 async def live_price(symbol: str):
-    """Quick single-symbol price quote using yfinance fast_info."""
+    """Quick single-symbol price — Tiger first, yfinance fallback."""
     def _run():
+        # Try Tiger API first for real broker price
+        if _tiger_quote_ok:
+            try:
+                quote_client, trade_client = _get_tiger_clients()
+                contracts = trade_client.get_contracts(symbol, sec_type="FUT")
+                identifier = contracts[0].identifier if contracts else symbol
+                period_1m = _BAR_PERIOD_MAP.get("1m")
+                if period_1m:
+                    df = quote_client.get_future_bars(identifier, period=period_1m, limit=1)
+                    if df is not None and not df.empty:
+                        return round(float(df["close"].iloc[-1]), 2)
+            except Exception:
+                pass  # fallback to yfinance
+
         import yfinance as yf
         commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": f"{symbol}=F"})
         t = yf.Ticker(commodity["yf"])
@@ -590,6 +604,7 @@ class TigerPositionItem(BaseModel):
     symbol: str
     quantity: int
     average_cost: float
+    latest_price: float = 0.0
     market_value: float
     unrealized_pnl: float
     realized_pnl: float
@@ -685,6 +700,7 @@ async def tiger_account() -> TigerAccountResponse:
                     symbol=sym,
                     quantity=int(getattr(p, "quantity", 0) or 0),
                     average_cost=float(getattr(p, "average_cost", 0) or 0),
+                    latest_price=float(getattr(p, "latest_price", 0) or getattr(p, "market_price", 0) or 0),
                     market_value=float(getattr(p, "market_value", 0) or 0),
                     unrealized_pnl=float(getattr(p, "unrealized_pnl", 0) or 0),
                     realized_pnl=float(getattr(p, "realized_pnl", 0) or 0),

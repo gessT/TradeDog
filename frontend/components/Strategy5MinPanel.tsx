@@ -24,10 +24,18 @@ import {
   type MGC5MinCandle,
   type MGC5MinTrade,
   type Scan5MinConditions,
+  type BacktestPosition,
 } from "../services/api";
 
 // ═══════════════════════════════════════════════════════════════════════
-// Helpers
+// Exported types
+// ═══════════════════════════════════════════════════════════════════════
+
+export type PositionChartData = {
+  position: BacktestPosition;
+  candles: MGC5MinCandle[];
+  livePrice: number | null;
+};
 // ═══════════════════════════════════════════════════════════════════════
 
 /** Offset (seconds) to shift UTC epoch → SGT for lightweight-charts */
@@ -1139,7 +1147,7 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequestAutoTrade, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onRequestAutoTrade?: () => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
+export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequestAutoTrade, onDirectExecute, onPositionUpdate, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onRequestAutoTrade?: () => void; onDirectExecute?: () => void; onPositionUpdate?: (data: PositionChartData | null) => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
   const [showExam, setShowExam] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1261,6 +1269,51 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
   const livePriceRef = useRef<number | null>(null);
   const slTpHitRef = useRef(false); // prevent double-trigger
   const [exitStatus, setExitStatus] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+
+  // ── Push position + candles + livePrice up to parent ──
+  useEffect(() => {
+    const pos = btData?.open_position;
+    if (pos && btData) {
+      onPositionUpdate?.({ position: pos, candles: btData.candles, livePrice });
+    } else {
+      onPositionUpdate?.(null);
+    }
+  }, [btData?.open_position, btData?.candles, livePrice, onPositionUpdate]);
+
+  // ── Manual sync: enter at market price with backtest SL/TP ──
+  const handleSync = useCallback(async () => {
+    const pos = btData?.open_position;
+    if (!pos || syncing) return;
+    setSyncing(true);
+    setSyncStatus("Checking Tiger position…");
+    try {
+      const tigerPos = await getMgcPosition(symbol);
+      const curQty = Math.abs(tigerPos.current_qty ?? 0);
+      if (curQty > 0) {
+        setSyncStatus(`⚠️ Already holding ${curQty} qty — skipped`);
+        setTimeout(() => setSyncStatus(null), 3000);
+        return;
+      }
+      const side = pos.direction === "PUT" ? "SHORT" : "LONG";
+      // Use live price as entry (engine validates SL < entry < TP)
+      const currentPrice = livePriceRef.current ?? pos.entry_price;
+      setSyncStatus(`Executing ${side} @ $${currentPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}…`);
+      const execRes = await execute5Min(pos.direction, 1, 1, currentPrice, pos.sl, pos.tp, symbol, "");
+      if (execRes.execution?.executed) {
+        setSyncStatus(`✅ ${side} synced @ market | SL $${pos.sl} TP $${pos.tp}`);
+        onDirectExecute?.();
+      } else {
+        setSyncStatus(`❌ ${execRes.execution_record?.reason || execRes.execution?.reason || "Failed"}`);
+      }
+    } catch (e) {
+      setSyncStatus(`❌ ${e instanceof Error ? e.message : "Failed"}`);
+    } finally {
+      setSyncing(false);
+      setTimeout(() => setSyncStatus(null), 4000);
+    }
+  }, [btData?.open_position, symbol, syncing, onDirectExecute]);
 
   // Reset SL/TP hit flag when open position changes
   useEffect(() => { slTpHitRef.current = false; setExitStatus(null); }, [btData?.open_position?.entry_time]);
@@ -1684,6 +1737,17 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                       <span className={`text-[10px] font-bold ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
                         {isLong ? "▲ BUY" : "▼ SELL"}
                       </span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleSync(); }}
+                        disabled={syncing}
+                        className={`ml-1 px-2 py-0.5 text-[9px] font-bold rounded transition-all ${
+                          syncing
+                            ? "bg-slate-700 text-slate-500 cursor-wait"
+                            : "bg-orange-600 text-white hover:bg-orange-500 active:scale-95 shadow-sm"
+                        }`}
+                      >
+                        {syncing ? "⏳" : "🔄 Sync"}
+                      </button>
                     </div>
                     {/* Live price + P&L row */}
                     {livePrice != null && (
@@ -1702,6 +1766,10 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                         )}
                         <span className="ml-auto text-[8px] text-slate-600 animate-pulse">● LIVE</span>
                       </div>
+                    )}
+                    {/* Sync status */}
+                    {syncStatus && (
+                      <div className="pl-5 text-[9px] font-bold text-orange-400 animate-pulse">{syncStatus}</div>
                     )}
                   </div>
                 );

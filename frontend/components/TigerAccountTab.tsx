@@ -222,7 +222,7 @@ function PositionRow({
           {p.quantity > 0 ? "+" : ""}{p.quantity}
         </td>
         <td className="px-2 py-2 text-[11px] text-right text-slate-300 tabular-nums">${p.average_cost.toFixed(2)}</td>
-        <td className="px-2 py-2 text-[11px] text-right text-slate-300 tabular-nums">${p.market_value.toFixed(2)}</td>
+        <td className="px-2 py-2 text-[11px] text-right text-yellow-400 font-bold tabular-nums">${p.latest_price > 0 ? p.latest_price.toFixed(2) : p.market_value.toFixed(2)}</td>
         <td className={`px-2 py-2 text-[11px] text-right font-bold tabular-nums ${pnlColor}`}>
           {p.unrealized_pnl >= 0 ? "+" : ""}${p.unrealized_pnl.toFixed(2)}
         </td>
@@ -504,9 +504,9 @@ export default function TigerAccountTab() {
                   <th className="px-2 py-1.5">Symbol</th>
                   <th className="px-2 py-1.5">Opened</th>
                   <th className="px-2 py-1.5 text-center">Qty</th>
-                  <th className="px-2 py-1.5 text-right">Avg Cost</th>
-                  <th className="px-2 py-1.5 text-right">Mkt Value</th>
-                  <th className="px-2 py-1.5 text-right">Unreal P&L</th>
+                  <th className="px-2 py-1.5 text-right">Entry</th>
+                  <th className="px-2 py-1.5 text-right">Live Price</th>
+                  <th className="px-2 py-1.5 text-right">P&L</th>
                   <th className="px-2 py-1.5 text-center">Action</th>
                 </tr>
               </thead>

@@ -722,6 +722,7 @@ export type TigerPositionItem = {
   symbol: string;
   quantity: number;
   average_cost: number;
+  latest_price: number;
   market_value: number;
   unrealized_pnl: number;
   realized_pnl: number;
