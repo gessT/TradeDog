@@ -17,6 +17,7 @@ import {
   getAutoTradeSettings,
   saveAutoTradeSettings,
   syncEngine,
+  seedEngine,
   getBacktestPosition,
   type MarketStructure,
   type Scan5MinResponse,
@@ -212,8 +213,8 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
   const prevStructureRef = useRef<number | null>(null);
 
   // Candle interval + timer
-  const [candleInterval, setCandleInterval] = useState<number>(5);
-  const candleIntervalRef = useRef(5);
+  const [candleInterval, setCandleInterval] = useState<number>(1);
+  const candleIntervalRef = useRef(1);
   useEffect(() => { candleIntervalRef.current = candleInterval; }, [candleInterval]);
   const [countdown, setCountdown] = useState("");
 
@@ -472,10 +473,20 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
         const btPos = await getBacktestPosition(symbol, slMult, tpMult, disabled.length > 0 ? disabled : undefined);
 
         if (curQty > 0 && btPos.in_position && btPos.position) {
-          // Tiger already in position — show holding info synced with backtest
+          // Tiger already in position — seed engine + show holding info synced with backtest
           const p = btPos.position;
           const side = p.direction === "PUT" ? "SELL" : "BUY";
           setHoldingPosition({ direction: p.direction, entry_price: p.entry_price, sl: p.sl, tp: p.tp });
+          // Seed the execution engine so it tracks this position's SL/TP
+          try {
+            const seeded = await seedEngine(symbol, p.direction, p.entry_price, p.sl, p.tp, curQty, p.bar_time, p.entry_time);
+            setAutoLog((prev) => [
+              `[${ts()}] 🔧 Engine seeded: ${seeded.current_position} @ $${seeded.entry_price} | SL=$${seeded.sl_price} TP=$${seeded.tp_price}`,
+              ...prev.slice(0, 49),
+            ]);
+          } catch {
+            setAutoLog((prev) => [`[${ts()}] ⚠️ Engine seed failed — tracking UI only`, ...prev.slice(0, 49)]);
+          }
           setAutoLog((prev) => [
             `[${ts()}] 📊 HOLDING POSITION: ${side} @ $${p.entry_price} | SL=$${p.sl} TP=$${p.tp} (${curQty}/${autoQty} qty)`,
             ...prev.slice(0, 49),
@@ -640,7 +651,43 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
             finally { setExecuting(false); }
           }
         } else {
-          setAutoLog((prev) => [`[${ts()}] ⏳ No signal`, ...prev.slice(0, 49)]);
+          // No scanner signal — if no position, check backtest for open position to sync
+          const curPos = positionQtyRef.current;
+          if (curPos === 0) {
+            try {
+              const disabled = CONDITION_DEFS.filter((d) => d.group === "5m" && !conditionTogglesRef.current[d.key]).map((d) => d.key);
+              const btPos = await getBacktestPosition(symbol, slMult, tpMult, disabled.length > 0 ? disabled : undefined);
+              if (btPos.in_position && btPos.position) {
+                const p = btPos.position;
+                const side = p.direction === "PUT" ? "SELL" : "BUY";
+                setAutoLog((prev) => [`[${ts()}] 🎯 BACKTEST POSITION: ${side} @ $${p.entry_price} | SL=$${p.sl} TP=$${p.tp}`, ...prev.slice(0, 49)]);
+                const targetQty = autoQtyRef.current;
+                const remainingQty = Math.max(1, targetQty);
+                setExecuting(true);
+                try {
+                  const execRes = await execute5Min(p.direction, remainingQty, targetQty, p.entry_price, p.sl, p.tp, symbol, p.bar_time);
+                  if (execRes.execution?.executed) {
+                    lastExecBarRef.current = p.bar_time;
+                    notifyTrade(side, p.entry_price, false, p.sl, p.tp, 0);
+                    const newQty = execRes.position?.current_qty != null ? Math.abs(execRes.position.current_qty) : remainingQty;
+                    setPositionQty(newQty); positionQtyRef.current = newQty;
+                    setHoldingPosition({ direction: p.direction, entry_price: p.entry_price, sl: p.sl, tp: p.tp });
+                    setAutoLog((prev) => [`[${ts()}] ✅ SYNCED: ${side} ${remainingQty}x @ $${p.entry_price} | SL=$${p.sl} TP=$${p.tp}`, ...prev.slice(0, 49)]);
+                  } else {
+                    setAutoLog((prev) => [`[${ts()}] ❌ Sync failed: ${execRes.execution_record?.reason || execRes.execution?.reason || "Unknown"}`, ...prev.slice(0, 49)]);
+                  }
+                } catch (e) {
+                  setAutoLog((prev) => [`[${ts()}] ❌ Sync error: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]);
+                } finally { setExecuting(false); }
+              } else {
+                setAutoLog((prev) => [`[${ts()}] ⏳ No signal · No backtest position`, ...prev.slice(0, 49)]);
+              }
+            } catch {
+              setAutoLog((prev) => [`[${ts()}] ⏳ No signal`, ...prev.slice(0, 49)]);
+            }
+          } else {
+            setAutoLog((prev) => [`[${ts()}] ⏳ No signal`, ...prev.slice(0, 49)]);
+          }
         }
       } catch (e) { setAutoLog((prev) => [`[${ts()}] ⚠️ Scan error: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]); }
       finally { busyRef.current = false; }

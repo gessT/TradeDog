@@ -195,6 +195,7 @@ function DailyPnlCard({ days, totalPnl, maxAbs, period, visibleDays }: Readonly<
 
 function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx: number; onTradeClick?: (t: MGC5MinTrade) => void }>) {
   const win = t.pnl >= 0;
+  const isOpen = t.reason === "OPEN";
   const pipDiff = n(t.exit_price) - n(t.entry_price);
   const pipAbs = Math.abs(pipDiff);
   return (
@@ -203,14 +204,18 @@ function TradeRow5Min({ t, idx, onTradeClick }: Readonly<{ t: MGC5MinTrade; idx:
       onClick={() => onTradeClick?.(t)}
     >
       <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{fmtDateTime(t.entry_time)}</td>
-      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{fmtDateTime(t.exit_time)}</td>
+      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{isOpen ? "—" : fmtDateTime(t.exit_time)}</td>
       <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{n(t.entry_price).toFixed(2)}</td>
-      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{n(t.exit_price).toFixed(2)}</td>
-      <td className={`px-2 py-1 text-right text-[10px] font-mono ${pipDiff >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-        {pipDiff >= 0 ? "+" : "-"}{pipAbs.toFixed(2)}
+      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{isOpen ? "—" : n(t.exit_price).toFixed(2)}</td>
+      <td className={`px-2 py-1 text-right text-[10px] font-mono ${isOpen ? "" : pipDiff >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+        {isOpen && n(t.sl) > 0 ? (
+          <span className="text-rose-400">SL {n(t.sl).toFixed(2)}</span>
+        ) : isOpen ? "—" : `${pipDiff >= 0 ? "+" : "-"}${pipAbs.toFixed(2)}`}
       </td>
-      <td className={`px-2 py-1 text-right text-[10px] font-bold ${win ? "text-emerald-400" : "text-rose-400"}`}>
-        {win ? "+" : ""}{n(t.pnl).toFixed(2)}
+      <td className={`px-2 py-1 text-right text-[10px] font-bold ${isOpen ? "" : win ? "text-emerald-400" : "text-rose-400"}`}>
+        {isOpen && n(t.tp) > 0 ? (
+          <span className="text-emerald-400">TP {n(t.tp).toFixed(2)}</span>
+        ) : isOpen ? "—" : `${win ? "+" : ""}${n(t.pnl).toFixed(2)}`}
       </td>
       <td className="px-2 py-1 text-right text-[10px] font-bold text-rose-400/80">
         {n(t.mae) < 0 ? `${n(t.mae).toFixed(2)}` : "—"}
@@ -251,12 +256,23 @@ function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrad
     return true;
   });
 
-  // Group trades by exit date, newest first
+  // Group trades by entry date, newest first
   const grouped = (() => {
     const map: Record<string, MGC5MinTrade[]> = {};
     for (const t of filtered) {
-      const day = t.exit_time.slice(0, 10);
-      (map[day] ??= []).push(t);
+      // Futures trading day: 18:00 ET → 17:59 ET next day = next date's session
+      // entry_time format: "YYYY-MM-DD HH:MM:SS-04:00" (already in ET)
+      const datePart = t.entry_time.slice(0, 10); // "YYYY-MM-DD"
+      const hour = parseInt(t.entry_time.slice(11, 13), 10); // HH in ET
+      if (hour >= 18) {
+        // Evening session belongs to next calendar date's trading day
+        const d = new Date(datePart + "T12:00:00Z"); // noon to avoid DST edge
+        d.setUTCDate(d.getUTCDate() + 1);
+        const day = d.toISOString().slice(0, 10);
+        (map[day] ??= []).push(t);
+      } else {
+        (map[datePart] ??= []).push(t);
+      }
     }
     // Reverse trades within each day so latest order is on top
     for (const arr of Object.values(map)) arr.reverse();
@@ -269,7 +285,8 @@ function TradeLogByDate({ trades, onTradeClick }: Readonly<{ trades: MGC5MinTrad
     <div>
       {/* Filter bar */}
       <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-slate-800/30 flex-wrap">
-        <span className="text-[8px] text-slate-600 uppercase mr-1">Filter:</span>
+        <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mr-1">Trade Log ({trades.length})</span>
+        <span className="text-slate-700 mr-0.5">|</span>
         {/* P&L filter */}
         {(["all", "win", "loss"] as const).map((f) => (
           <button key={f} onClick={() => setPnlFilter(f)} className={`px-1.5 py-0.5 text-[8px] font-bold rounded transition ${
@@ -1124,8 +1141,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   };
   const defaultRisk = SYMBOL_RISK[symbol] ?? { sl: 4.0, tp: 3.0 };
 
-  // Backtest state — cache restored from localStorage via useEffect
-  const BT_CACHE_KEY = `bt5min_${symbol}`;
+  // Backtest state
   const [btData, setBtData] = useState<MGC5MinBacktestResponse | null>(null);
   const [zoomTrade, setZoomTrade] = useState<MGC5MinTrade | null>(null);
   const [period, setPeriod] = useState("3d");
@@ -1155,12 +1171,9 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   const [optimizationResults, setOptimizationResults] = useState<ConditionOptimizationResult[]>([]);
   const [optimizing, setOptimizing] = useState(false);
 
-  // ── Restore cached data when symbol changes ──
+  // ── Reset data when symbol changes ──
   useEffect(() => {
-    try {
-      const cached = localStorage.getItem(`bt5min_${symbol}`);
-      setBtData(cached ? JSON.parse(cached) : null);
-    } catch { setBtData(null); }
+    setBtData(null);
     setError(null);
   }, [symbol]);
 
@@ -1175,13 +1188,19 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
         .map((d) => d.key);
       const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol, disabled.length > 0 ? disabled : undefined);
       setBtData(res);
-      try { localStorage.setItem(BT_CACHE_KEY, JSON.stringify(res)); } catch { /* storage full */ }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
       setLoading(false);
     }
   }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles]);
+
+  // ── Auto-run backtest on mount + refresh every 5 min ──
+  useEffect(() => {
+    runBacktest();
+    const id = setInterval(runBacktest, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [runBacktest]);
 
   // ── Condition optimization ───────────────────────────
   const runConditionOptimization = useCallback(async () => {
@@ -1504,9 +1523,6 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
 
               {/* Trade log — grouped by date */}
               <div className="rounded-lg border border-slate-800/60 bg-slate-900/50">
-                <p className="text-[9px] uppercase tracking-widest text-slate-500 px-3 py-2 border-b border-slate-800/40">
-                  Trade Log ({btData.trades.length})
-                </p>
                 <div className="max-h-[420px] overflow-y-auto">
                   <TradeLogByDate trades={btData.trades} onTradeClick={(t) => { setZoomTrade(t); onTradeClick?.(t); }} />
                 </div>

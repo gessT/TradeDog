@@ -209,10 +209,6 @@ def _isnan(v) -> bool:
 _COMMODITY_SYMBOLS = {
     "MGC": {"yf": "MGC=F", "name": "Micro Gold", "icon": "🥇", "tiger": "MGC", "tick": 0.10},
     "MCL": {"yf": "MCL=F", "name": "Micro Crude Oil", "icon": "🛢️", "tiger": "MCL", "tick": 0.01},
-    "NG":  {"yf": "NG=F",  "name": "Natural Gas",  "icon": "🔥", "tiger": "NG",  "tick": 0.001},
-    "SI":  {"yf": "SI=F",  "name": "Silver",       "icon": "🪙", "tiger": "SI",  "tick": 0.005},
-    "CL":  {"yf": "CL=F",  "name": "Crude Oil WTI", "icon": "⛽", "tiger": "CL",  "tick": 0.01},
-    "HG":  {"yf": "HG=F",  "name": "Copper",       "icon": "🔶", "tiger": "HG",  "tick": 0.0005},
 }
 
 
@@ -945,13 +941,13 @@ def _order_to_item(o) -> TigerOrderItem:
 
 
 def _fmt_tiger_time(raw) -> str:
-    """Convert Tiger SDK time (ms timestamp or string) to ISO format."""
+    """Convert Tiger SDK time (ms timestamp or string) to ISO format with UTC offset."""
     if not raw:
         return ""
     if isinstance(raw, (int, float)):
         # Millisecond timestamp
         ts = raw / 1000 if raw > 1e12 else raw
-        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return str(raw)
 
 
@@ -1482,6 +1478,8 @@ class MGC5MinTrade(BaseModel):
     direction: str = "CALL"  # "CALL" or "PUT"
     mae: float = 0.0  # Max Adverse Excursion (worst unrealized loss)
     mkt_structure: int = 0  # 1=BULL, -1=BEAR, 0=SIDEWAYS
+    sl: float = 0.0  # Stop-loss price
+    tp: float = 0.0  # Take-profit price
 
 
 class MGC5MinMetrics(BaseModel):
@@ -1660,6 +1658,8 @@ async def mgc_backtest_5min(
                 direction=t.direction,
                 mae=round(t.mae, 2),
                 mkt_structure=getattr(t, "mkt_structure", 0),
+                sl=round(getattr(t, "sl", 0.0), 2),
+                tp=round(getattr(t, "tp", 0.0), 2),
             )
             for t in filtered_trades
         ]
@@ -1706,6 +1706,8 @@ async def mgc_backtest_5min(
                 direction=last_t.direction,
                 mae=last_t.mae,
                 mkt_structure=last_t.mkt_structure,
+                sl=round(open_pos["sl"], 2),
+                tp=round(open_pos["tp"], 2),
             )
 
     return MGC5MinBacktestResponse(
@@ -2280,6 +2282,41 @@ async def engine_sync(symbol: str = "MGC"):
     }
 
 
+class EngineSeedRequest(BaseModel):
+    direction: str  # "CALL" or "PUT"
+    entry_price: float
+    sl_price: float
+    tp_price: float
+    qty: int = 1
+    bar_time: str = ""
+    entry_time: str = ""
+
+
+@router.post("/engine_seed")
+async def engine_seed(req: EngineSeedRequest, symbol: str = "MGC"):
+    """Seed engine with an existing position (Tiger already in position).
+
+    Used when auto-trading starts and Tiger already holds a position
+    that matches the backtest — seeds the engine so it tracks SL/TP exits.
+    """
+    from mgc_trading.execution_engine import get_engine
+    engine = get_engine(symbol)
+    engine.seed_position(
+        direction=req.direction,
+        entry_price=req.entry_price,
+        sl_price=req.sl_price,
+        tp_price=req.tp_price,
+        qty=req.qty,
+        bar_time=req.bar_time,
+        entry_time=req.entry_time,
+    )
+    return {
+        "seeded": True,
+        **engine.get_state_summary(),
+        "symbol": symbol,
+    }
+
+
 @router.post("/engine_reset")
 async def engine_reset(symbol: str = "MGC"):
     """Emergency reset: clear all engine state for a symbol."""
@@ -2440,6 +2477,8 @@ async def mgc_trade_log_5min(
                     direction=last_t.direction,
                     mae=last_t.mae,
                     mkt_structure=getattr(last_t, "mkt_structure", 0),
+                    sl=round(open_pos["sl"], 2),
+                    tp=round(open_pos["tp"], 2),
                 )
 
         recent = all_trades[-limit:] if len(all_trades) > limit else all_trades
@@ -2457,6 +2496,8 @@ async def mgc_trade_log_5min(
                 signal_type=t.signal_type,
                 mae=round(t.mae, 2),
                 mkt_structure=getattr(t, "mkt_structure", 0),
+                sl=round(getattr(t, "sl", 0.0), 2),
+                tp=round(getattr(t, "tp", 0.0), 2),
             )
             for t in recent
         ]

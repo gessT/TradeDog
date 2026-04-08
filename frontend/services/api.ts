@@ -968,6 +968,8 @@ export type MGC5MinTrade = {
   direction: string;
   mae: number;
   mkt_structure: number;
+  sl: number;
+  tp: number;
 };
 
 export type MGC5MinMetrics = {
@@ -1324,6 +1326,28 @@ export async function syncEngine(symbol: string = "MGC"): Promise<{ synced: bool
 export async function resetEngine(symbol: string = "MGC"): Promise<{ reset: boolean } & EngineState> {
   const response = await fetch(`${API_BASE}/mgc/engine_reset?symbol=${encodeURIComponent(symbol)}`, { method: "POST" });
   if (!response.ok) throw new Error("Failed to reset engine");
+  return response.json();
+}
+
+export async function seedEngine(
+  symbol: string,
+  direction: string,
+  entryPrice: number,
+  slPrice: number,
+  tpPrice: number,
+  qty: number = 1,
+  barTime: string = "",
+  entryTime: string = "",
+): Promise<{ seeded: boolean } & EngineState> {
+  const response = await fetch(`${API_BASE}/mgc/engine_seed?symbol=${encodeURIComponent(symbol)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      direction, entry_price: entryPrice, sl_price: slPrice, tp_price: tpPrice,
+      qty, bar_time: barTime, entry_time: entryTime,
+    }),
+  });
+  if (!response.ok) throw new Error("Failed to seed engine");
   return response.json();
 }
 

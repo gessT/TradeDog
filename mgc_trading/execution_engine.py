@@ -308,6 +308,42 @@ class ExecutionEngine:
                 )
                 self._position = PositionInfo()
 
+    def seed_position(
+        self,
+        direction: str,
+        entry_price: float,
+        sl_price: float,
+        tp_price: float,
+        qty: int,
+        bar_time: str = "",
+        entry_time: str = "",
+    ) -> None:
+        """Seed engine with an existing position (e.g. from backtest sync).
+
+        Used when Tiger already holds a position and we need the engine
+        to track the same entry/SL/TP so that exit detection works.
+        """
+        side = "BUY" if direction == "CALL" else "SELL"
+        state = PositionState.LONG if direction == "CALL" else PositionState.SHORT
+        with self._lock:
+            self._position = PositionInfo(
+                state=state,
+                entry_price=entry_price,
+                tp_price=tp_price,
+                sl_price=sl_price,
+                qty=qty,
+                entry_time=entry_time or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                side=side,
+                bar_time=bar_time,
+                order_id="",
+            )
+            if bar_time:
+                self._last_exec_bar = bar_time
+        logger.info(
+            "SEED POSITION: %s %dx @ %.2f | SL=%.2f TP=%.2f | bar=%s",
+            side, qty, entry_price, sl_price, tp_price, bar_time,
+        )
+
     def force_reset(self) -> None:
         """Emergency reset — clear all state."""
         with self._lock:
