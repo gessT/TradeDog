@@ -945,13 +945,13 @@ def _order_to_item(o) -> TigerOrderItem:
 
 
 def _fmt_tiger_time(raw) -> str:
-    """Convert Tiger SDK time (ms timestamp or string) to ISO format."""
+    """Convert Tiger SDK time (ms timestamp or string) to ISO format with UTC offset."""
     if not raw:
         return ""
     if isinstance(raw, (int, float)):
         # Millisecond timestamp
         ts = raw / 1000 if raw > 1e12 else raw
-        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return str(raw)
 
 

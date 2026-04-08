@@ -27,12 +27,33 @@ const COMMODITY_NAMES: Record<string, string> = {
 /** Strip trailing digits from contract symbol (e.g. MGC2606 → MGC) */
 const baseSymbol = (s: string) => s.replace(/\d+$/, "");
 
-/** Format trade_time string for display */
+/** Local date string YYYY-MM-DD (avoids UTC shift) */
+function localDateStr(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Convert a raw timestamp to local date string for comparison */
+function toLocalDate(raw: string): string {
+  if (!raw) return "";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
+  return localDateStr(d);
+}
+
+/** Format trade_time string for display (full date + time, local) */
 function fmtTime(raw: string): string {
   if (!raw) return "";
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return raw.slice(0, 16);
   return d.toLocaleString();
+}
+
+/** Format to local HH:MM:SS only */
+function fmtLocalTime(raw: string): string {
+  if (!raw) return "";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -513,8 +534,8 @@ export default function TigerAccountTab() {
       <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 overflow-hidden">
         <div className="px-3 py-2 border-b border-slate-800/40 flex items-center gap-2 flex-wrap">
           {(["today", "open"] as const).map((t) => {
-            const todayStr = new Date().toISOString().slice(0, 10);
-            const todayFilled = data?.filled_orders?.filter((o) => o.trade_time && o.trade_time.slice(0, 10) === todayStr) ?? [];
+            const todayStr = localDateStr();
+            const todayFilled = data?.filled_orders?.filter((o) => o.trade_time && toLocalDate(o.trade_time) === todayStr) ?? [];
             const label = t === "today"
               ? `Today (${todayFilled.length})`
               : `Open (${data?.open_orders?.length ?? 0})`;
@@ -534,11 +555,11 @@ export default function TigerAccountTab() {
 
         {/* Order tabs (today/open) */}
         {(() => {
-          const todayStr = new Date().toISOString().slice(0, 10);
+          const todayStr = localDateStr();
           const orders = orderTab === "open"
             ? data?.open_orders
             : orderTab === "today"
-              ? data?.filled_orders?.filter((o) => o.trade_time && o.trade_time.slice(0, 10) === todayStr)
+              ? data?.filled_orders?.filter((o) => o.trade_time && toLocalDate(o.trade_time) === todayStr)
               : data?.filled_orders;
           if (!orders || orders.length === 0) {
             return (
@@ -578,6 +599,102 @@ export default function TigerAccountTab() {
           );
         })()}
       </div>
+
+      {/* Today's Trades — paired buy/sell with P&L */}
+      {(() => {
+        const todayStr = localDateStr();
+        const todayTrades = tradeHistory?.trades?.filter((t) => {
+          // Match trades where entry or exit is today (local time)
+          return toLocalDate(t.entry_time) === todayStr || toLocalDate(t.exit_time) === todayStr;
+        }) ?? [];
+        const todayPnl = todayTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
+        const wins = todayTrades.filter((t) => t.pnl > 0).length;
+        const losses = todayTrades.filter((t) => t.pnl <= 0 && t.status === "CLOSED").length;
+        return (
+          <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 overflow-hidden">
+            <div className="px-3 py-2 border-b border-slate-800/40 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                  Today&apos;s Trades ({todayTrades.length})
+                </span>
+                {todayTrades.length > 0 && (
+                  <>
+                    <span className={`text-[10px] font-bold tabular-nums ${todayPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {todayPnl >= 0 ? "+" : ""}${todayPnl.toFixed(2)}
+                    </span>
+                    <span className="text-[9px] text-slate-600">
+                      {wins}W/{losses}L
+                    </span>
+                  </>
+                )}
+              </div>
+              <button
+                onClick={() => refreshTrades(1)}
+                disabled={tradeLoading}
+                className="text-[9px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-500 hover:text-slate-300 transition-all"
+              >{tradeLoading ? "…" : "↻"}</button>
+            </div>
+            {todayTrades.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="text-[8px] text-slate-600 uppercase tracking-wider">
+                      <th className="px-2 py-1">Symbol</th>
+                      <th className="px-2 py-1">Side</th>
+                      <th className="px-2 py-1 text-center">Qty</th>
+                      <th className="px-2 py-1 text-right">Entry</th>
+                      <th className="px-2 py-1 text-right">Exit</th>
+                      <th className="px-2 py-1 text-right">P&L</th>
+                      <th className="px-2 py-1">Time</th>
+                      <th className="px-2 py-1">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {todayTrades.map((t, i) => {
+                      const pnlColor = t.pnl > 0 ? "text-emerald-400" : t.pnl < 0 ? "text-rose-400" : "text-slate-400";
+                      return (
+                        <tr key={`${t.entry_order_id}-${i}`} className={`border-b border-slate-800/30 ${i % 2 === 0 ? "bg-slate-900/30" : ""}`}>
+                          <td className="px-2 py-1.5 text-[10px] font-bold text-slate-200">
+                            {t.symbol}
+                            <span className="text-[8px] font-normal text-slate-600 ml-1">{COMMODITY_NAMES[baseSymbol(t.symbol)] ?? ""}</span>
+                          </td>
+                          <td className={`px-2 py-1.5 text-[10px] font-bold ${t.side === "LONG" ? "text-emerald-400" : "text-rose-400"}`}>
+                            {t.side === "LONG" ? "BUY" : "SELL"}
+                          </td>
+                          <td className="px-2 py-1.5 text-[10px] text-center text-slate-300">{t.qty}</td>
+                          <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">${t.entry_price.toFixed(2)}</td>
+                          <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">
+                            {t.status === "CLOSED" ? `$${t.exit_price.toFixed(2)}` : "—"}
+                          </td>
+                          <td className={`px-2 py-1.5 text-[10px] text-right font-bold tabular-nums ${pnlColor}`}>
+                            {t.status === "CLOSED" ? `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)}` : "—"}
+                          </td>
+                          <td className="px-2 py-1.5 text-[9px] text-slate-500 whitespace-nowrap">
+                            {t.entry_time ? fmtLocalTime(t.entry_time) : ""}
+                            {t.exit_time && t.status === "CLOSED" ? (
+                              <span className="text-slate-600"> → {fmtLocalTime(t.exit_time)}</span>
+                            ) : null}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                              t.status === "CLOSED" ? t.pnl >= 0 ? "bg-emerald-900/40 text-emerald-400" : "bg-rose-900/40 text-rose-400"
+                              : "bg-blue-900/40 text-blue-400 animate-pulse"
+                            }`}>{t.status === "OPEN" ? "OPEN" : t.pnl >= 0 ? "WIN" : "LOSS"}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="px-3 py-4 text-center text-[11px] text-slate-600">
+                {tradeLoading ? "Loading trades…" : "No trades today"}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Timestamp */}
       {data?.timestamp && (
