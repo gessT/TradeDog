@@ -93,7 +93,7 @@ export default function CommodityCards({ selected, onSelect }: Readonly<Props>) 
   if (loading && quotes.length === 0) {
     return (
       <div className="flex items-center gap-2 px-4 py-3">
-        {Array.from({ length: 6 }).map((_, i) => (
+        {Array.from({ length: 2 }).map((_, i) => (
           <div key={i} className="min-w-[130px] h-[82px] rounded-xl bg-slate-800/50 animate-pulse" />
         ))}
       </div>
