@@ -73,7 +73,7 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
   const [data, setData] = useState<MGCLiveResponse | null>(null);
   const [prevPrice, setPrevPrice] = useState(0);
   const [lastUpdate, setLastUpdate] = useState("");
-  const [showMarkers, setShowMarkers] = useState(true);
+  const [showMarkers, setShowMarkers] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<{ candle: any; vol: any; emaF: any; emaS: any; markersHandle: any } | null>(null);

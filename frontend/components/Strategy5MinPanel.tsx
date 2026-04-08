@@ -16,6 +16,8 @@ import TradeDetailDialog from "./strategy5min/TradeDetailDialog";
 import {
   fetchMGC5MinBacktest,
   fetchLivePrice,
+  execute5Min,
+  getMgcPosition,
   optimize5MinConditions,
   type ConditionOptimizationResult,
   type MGC5MinBacktestResponse,
@@ -1137,7 +1139,7 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequestAutoTrade, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onRequestAutoTrade?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
+export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequestAutoTrade, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onRequestAutoTrade?: () => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
   const [showExam, setShowExam] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1258,9 +1260,10 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const livePriceRef = useRef<number | null>(null);
   const slTpHitRef = useRef(false); // prevent double-trigger
+  const [exitStatus, setExitStatus] = useState<string | null>(null);
 
   // Reset SL/TP hit flag when open position changes
-  useEffect(() => { slTpHitRef.current = false; }, [btData?.open_position?.entry_time]);
+  useEffect(() => { slTpHitRef.current = false; setExitStatus(null); }, [btData?.open_position?.entry_time]);
 
   useEffect(() => {
     const pos = btData?.open_position;
@@ -1275,24 +1278,71 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
         setLivePrice(price);
         livePriceRef.current = price;
 
-        // Check SL/TP hit
+        // Check SL/TP hit — instant re-run + direct execute next position
         if (!slTpHitRef.current && price > 0) {
           const isLong = pos.direction !== "PUT";
           const hitSL = isLong ? price <= pos.sl : price >= pos.sl;
           const hitTP = isLong ? price >= pos.tp : price <= pos.tp;
           if (hitSL || hitTP) {
             slTpHitRef.current = true;
-            // Auto re-run backtest — position will now show as closed
-            setTimeout(() => { runBacktest(); }, 1000);
+            const reason = hitTP ? "TP" : "SL";
+            setExitStatus(`${reason} HIT @ $${price.toFixed(2)} — re-running…`);
+
+            // Immediately re-run backtest (no delay)
+            try {
+              const fmtDate = (d: Date) => fmtInputDateSGT(d);
+              const freshTo = fmtDate(new Date());
+              const freshFrom = calcFrom(period === "1d" ? "1" : period.replace("d", ""));
+              const disabled = CONDITION_DEFS
+                .filter((d) => d.group === "5m" && !conditionToggles[d.key])
+                .map((d) => d.key);
+              const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined);
+              if (cancelled) return;
+              setBtData(res);
+              onTradesUpdate?.(res.trades);
+              try { sessionStorage.setItem("bt5min_cache", JSON.stringify({ configKey, data: res })); } catch { /* */ }
+
+              // If new open position appeared → execute directly on Tiger (skip scanner)
+              if (res.open_position) {
+                const np = res.open_position;
+                setExitStatus(`${reason} HIT → New ${np.direction === "PUT" ? "SHORT" : "LONG"} @ $${np.entry_price} — executing…`);
+                try {
+                  const tigerPos = await getMgcPosition(symbol);
+                  const curQty = Math.abs(tigerPos.current_qty ?? 0);
+                  if (curQty === 0) {
+                    const execRes = await execute5Min(np.direction, 1, 1, np.entry_price, np.sl, np.tp, symbol, np.bar_time);
+                    if (execRes.execution?.executed) {
+                      setExitStatus(`✅ ${np.direction === "PUT" ? "SHORT" : "LONG"} @ $${np.entry_price} | SL $${np.sl} TP $${np.tp}`);
+                      onDirectExecute?.();
+                    } else {
+                      setExitStatus(`❌ Execute failed — falling back to scanner`);
+                      onRequestAutoTrade?.();
+                    }
+                  } else {
+                    setExitStatus(`📊 Tiger already in position (${curQty} qty) — skipped`);
+                  }
+                } catch {
+                  setExitStatus(`⚠️ Direct execute failed — starting scanner`);
+                  onRequestAutoTrade?.();
+                }
+              } else {
+                setExitStatus(`${reason} HIT — no new position, scanning…`);
+                onRequestAutoTrade?.();
+              }
+            } catch {
+              setExitStatus(`⚠️ Backtest failed — starting scanner`);
+              onRequestAutoTrade?.();
+            }
+            setTimeout(() => setExitStatus(null), 5000);
           }
         }
       } catch { /* network error — skip this tick */ }
     };
 
     poll(); // immediate first fetch
-    const timer = setInterval(poll, 5000); // poll every 5 seconds
+    const timer = setInterval(poll, 2000); // poll every 2 seconds (fast)
     return () => { cancelled = true; clearInterval(timer); };
-  }, [btData?.open_position, symbol, runBacktest]);
+  }, [btData?.open_position, symbol, period, slMult, tpMult, conditionToggles, configKey]);
 
   // ── Condition optimization ───────────────────────────
   const runConditionOptimization = useCallback(async () => {
@@ -1366,6 +1416,12 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
       {autoTradeRequested && btData?.open_position && (
         <div className="mx-3 mt-2 rounded-lg border border-blue-500/40 bg-blue-950/30 px-3 py-2 text-[10px] text-blue-400 font-bold animate-pulse">
           🔄 Syncing to Tiger — {btData.open_position.direction === "PUT" ? "SHORT" : "LONG"} @ ${btData.open_position.entry_price} | SL ${btData.open_position.sl} · TP {btData.open_position.tp} →
+        </div>
+      )}
+      {/* ── Exit + re-entry status ──────────────────── */}
+      {exitStatus && (
+        <div className="mx-3 mt-2 rounded-lg border border-amber-500/40 bg-amber-950/20 px-3 py-2 text-[10px] text-amber-400 font-bold animate-pulse">
+          ⚡ {exitStatus}
         </div>
       )}
 
