@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createChart,
+  createSeriesMarkers,
   CandlestickSeries,
   LineSeries,
   HistogramSeries,
@@ -19,6 +20,15 @@ import { fetchMGCLive, type MGCLiveResponse } from "../services/api";
 const TZ_OFFSET_SEC = -(new Date().getTimezoneOffset() * 60);
 const toLocal = (utcSec: number) => (utcSec + TZ_OFFSET_SEC) as UTCTimestamp;
 
+type TradeMarker = {
+  entry_time: string;
+  exit_time: string;
+  entry_price: number;
+  exit_price: number;
+  direction: string;
+  pnl: number;
+};
+
 type Props = {
   symbol?: string;
   symbolName?: string;
@@ -26,6 +36,7 @@ type Props = {
   onPriceUpdate?: (price: number) => void;
   focusTime?: number | null;
   focusInterval?: string | null;
+  trades?: TradeMarker[];
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -52,7 +63,7 @@ function PriceBadge({ price, prevPrice }: Readonly<{ price: number; prevPrice: n
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold", symbolIcon = "🥇", onPriceUpdate, focusTime, focusInterval }: Readonly<Props>) {
+export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold", symbolIcon = "🥇", onPriceUpdate, focusTime, focusInterval, trades = [] }: Readonly<Props>) {
   const [chartInterval, setChartInterval] = useState("5m");
   const [live, setLive] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -60,9 +71,12 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
   const [data, setData] = useState<MGCLiveResponse | null>(null);
   const [prevPrice, setPrevPrice] = useState(0);
   const [lastUpdate, setLastUpdate] = useState("");
+  const [showMarkers, setShowMarkers] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<{ candle: any; vol: any; emaF: any; emaS: any; markersHandle: any } | null>(null);
   const timerRef = useRef<ReturnType<typeof globalThis.setInterval> | null>(null);
+  const initialRangeSet = useRef(false);
 
   // Refresh intervals per bar size
   const refreshMs: Record<string, number> = {
@@ -76,7 +90,7 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetchMGCLive(chartInterval, 2000, symbol);
+      const res = await fetchMGCLive(chartInterval, 500, symbol);
       setData((prev) => {
         if (prev) setPrevPrice(prev.current_price);
         return res;
@@ -102,11 +116,12 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
     return () => { if (timerRef.current) globalThis.clearInterval(timerRef.current); };
   }, [live, chartInterval, fetchData, refreshMs]);
 
-  // ── Build chart ────────────────────────────────────────────────
+  // ── Create chart once ──────────────────────────────────────────
   useEffect(() => {
-    if (!containerRef.current || !data || data.candles.length === 0) return;
+    if (!containerRef.current) return;
     const el = containerRef.current;
     el.innerHTML = "";
+    initialRangeSet.current = false;
 
     const chart = createChart(el, {
       width: el.clientWidth,
@@ -119,7 +134,6 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
     });
     chartRef.current = chart;
 
-    // Candlesticks
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: "#22c55e",
       downColor: "#ef4444",
@@ -128,7 +142,29 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
       wickUpColor: "#22c55e88",
       wickDownColor: "#ef444488",
     });
-    candleSeries.setData(
+
+    const volSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: "volume" },
+      priceScaleId: "vol",
+    });
+    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+
+    const emaF = chart.addSeries(LineSeries, { color: "#38bdf8", lineWidth: 1, priceLineVisible: false });
+    const emaS = chart.addSeries(LineSeries, { color: "#f97316", lineWidth: 1, priceLineVisible: false });
+
+    seriesRef.current = { candle: candleSeries, vol: volSeries, emaF, emaS, markersHandle: null };
+
+    const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
+    ro.observe(el);
+    return () => { ro.disconnect(); seriesRef.current = null; chartRef.current = null; try { chart.remove(); } catch { /* cleanup */ } };
+  }, []);
+
+  // ── Update data in-place (no chart rebuild) ────────────────────
+  useEffect(() => {
+    if (!data || data.candles.length === 0 || !seriesRef.current || !chartRef.current) return;
+    const { candle, vol, emaF, emaS } = seriesRef.current;
+
+    candle.setData(
       data.candles.map((c) => ({
         time: toLocal(c.time / 1000),
         open: c.open,
@@ -138,13 +174,7 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
       })),
     );
 
-    // Volume
-    const volSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" },
-      priceScaleId: "vol",
-    });
-    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-    volSeries.setData(
+    vol.setData(
       data.candles.map((c) => ({
         time: toLocal(c.time / 1000),
         value: c.volume,
@@ -152,35 +182,63 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
       })),
     );
 
-    // EMA fast (cyan)
     const emaFData = data.ema_fast
       .map((v, i) => v !== null && v !== undefined ? { time: toLocal(data.candles[i].time / 1000), value: v } : null)
       .filter(Boolean) as { time: UTCTimestamp; value: number }[];
-    if (emaFData.length > 0) {
-      const emaF = chart.addSeries(LineSeries, { color: "#38bdf8", lineWidth: 1, priceLineVisible: false });
-      emaF.setData(emaFData);
-    }
+    emaF.setData(emaFData);
 
-    // EMA slow (orange)
     const emaSData = data.ema_slow
       .map((v, i) => v !== null && v !== undefined ? { time: toLocal(data.candles[i].time / 1000), value: v } : null)
       .filter(Boolean) as { time: UTCTimestamp; value: number }[];
-    if (emaSData.length > 0) {
-      const emaS = chart.addSeries(LineSeries, { color: "#f97316", lineWidth: 1, priceLineVisible: false });
-      emaS.setData(emaSData);
+    emaS.setData(emaSData);
+
+    // Set visible range only on first load
+    if (!initialRangeSet.current) {
+      const totalBars = data.candles.length;
+      chartRef.current.timeScale().setVisibleLogicalRange({
+        from: totalBars - 100,
+        to: totalBars + 5,
+      });
+      initialRangeSet.current = true;
+    }
+  }, [data]);
+
+  // ── Update markers when trades or toggle changes ───────────────
+  useEffect(() => {
+    if (!seriesRef.current) return;
+    const { candle } = seriesRef.current;
+
+    // Remove previous markers
+    if (seriesRef.current.markersHandle) {
+      try { seriesRef.current.markersHandle.detach(); } catch { /* already detached */ }
+      seriesRef.current.markersHandle = null;
     }
 
-    // Show only the last 100 bars
-    const totalBars = data.candles.length;
-    chart.timeScale().setVisibleLogicalRange({
-      from: totalBars - 100,
-      to: totalBars + 5,
-    });
-
-    const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
-    ro.observe(el);
-    return () => { ro.disconnect(); try { chart.remove(); } catch { /* lightweight-charts internal cleanup */ } };
-  }, [data]);
+    if (showMarkers && trades.length > 0) {
+      const markers: { time: UTCTimestamp; position: string; color: string; shape: string; text: string }[] = [];
+      for (const t of trades) {
+        const entryEpoch = Math.floor(new Date(t.entry_time).getTime() / 1000);
+        const exitEpoch = Math.floor(new Date(t.exit_time).getTime() / 1000);
+        const isLong = t.direction !== "PUT";
+        markers.push({
+          time: toLocal(entryEpoch),
+          position: isLong ? "belowBar" : "aboveBar",
+          color: isLong ? "#22c55e" : "#ef4444",
+          shape: isLong ? "arrowUp" : "arrowDown",
+          text: `${isLong ? "BUY" : "SELL"} $${t.entry_price.toFixed(1)}`,
+        });
+        markers.push({
+          time: toLocal(exitEpoch),
+          position: isLong ? "aboveBar" : "belowBar",
+          color: t.pnl >= 0 ? "#22c55e" : "#ef4444",
+          shape: "circle",
+          text: `EXIT $${t.exit_price.toFixed(1)} (${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(0)})`,
+        });
+      }
+      markers.sort((a, b) => (a.time as number) - (b.time as number));
+      seriesRef.current.markersHandle = createSeriesMarkers(candle, markers as any);
+    }
+  }, [trades, showMarkers]);
 
   // ── Switch interval when a trade from a different timeframe is clicked ──
   useEffect(() => {
@@ -188,6 +246,11 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
       setChartInterval(focusInterval);
     }
   }, [focusInterval]);
+
+  // Reset visible range when interval changes
+  useEffect(() => {
+    initialRangeSet.current = false;
+  }, [chartInterval]);
 
   // ── Scroll chart to focused trade candle (±1 week) ─────────────
   useEffect(() => {
@@ -241,6 +304,20 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
         >
           {live ? "● LIVE" : "○ Paused"}
         </button>
+
+        {/* Markers toggle */}
+        {trades.length > 0 && (
+          <button
+            onClick={() => setShowMarkers((v) => !v)}
+            className={`px-2 py-0.5 text-[10px] font-bold rounded-md border transition ${
+              showMarkers
+                ? "border-violet-500/50 bg-violet-500/10 text-violet-400"
+                : "border-slate-700 bg-slate-800 text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            {showMarkers ? "⚑ Trades" : "⚐ Trades"}
+          </button>
+        )}
 
         {/* Manual refresh */}
         <button

@@ -1128,7 +1128,7 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
+export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
   const [showExam, setShowExam] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1144,7 +1144,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
   // Backtest state
   const [btData, setBtData] = useState<MGC5MinBacktestResponse | null>(null);
   const [zoomTrade, setZoomTrade] = useState<MGC5MinTrade | null>(null);
-  const [period, setPeriod] = useState("3d");
+  const [period, setPeriod] = useState("1d");
   const [slMult, setSlMult] = useState(defaultRisk.sl);
   const [tpMult, setTpMult] = useState(defaultRisk.tp);
 
@@ -1155,7 +1155,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
     d.setDate(d.getDate() - parseInt(p));
     return fmtDate(d);
   };
-  const [dateFrom, setDateFrom] = useState(() => calcFrom("3"));
+  const [dateFrom, setDateFrom] = useState(() => calcFrom("1"));
   const [dateTo, setDateTo] = useState(() => fmtDate(new Date()));
 
   // Auto-switch SL/TP when symbol changes
@@ -1188,6 +1188,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
         .map((d) => d.key);
       const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol, disabled.length > 0 ? disabled : undefined);
       setBtData(res);
+      onTradesUpdate?.(res.trades);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
@@ -1353,7 +1354,7 @@ export default function Strategy5MinPanel({ onTradeClick, symbol = "MGC", symbol
           {/* Controls */}
           <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-800/40">
             <div className="flex gap-0.5">
-              {["3d", "7d", "30d", "60d"].map((p) => (
+              {["1d", "3d", "7d", "30d", "60d"].map((p) => (
                 <button
                   key={p}
                   onClick={() => {

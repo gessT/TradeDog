@@ -28,6 +28,7 @@ const DEFAULT_TOGGLES: Record<string, boolean> = Object.fromEntries(
 export default function FuturesDashboard() {
   const [focusTime, setFocusTime] = useState<number | null>(null);
   const [focusInterval, setFocusInterval] = useState<string | null>(null);
+  const [backtestTrades, setBacktestTrades] = useState<MGC5MinTrade[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState("MGC");
   const [selectedName, setSelectedName] = useState("Micro Gold");
   const [selectedIcon, setSelectedIcon] = useState("🥇");
@@ -83,6 +84,7 @@ export default function FuturesDashboard() {
             symbolIcon={selectedIcon}
             focusTime={focusTime}
             focusInterval={focusInterval}
+            trades={backtestTrades}
           />
         </div>
       </section>
@@ -91,7 +93,7 @@ export default function FuturesDashboard() {
       {/* COL 2 — 5min Strategy Workspace                              */}
       {/* ═══════════════════════════════════════════════════════════════ */}
       <section className="w-full md:w-1/3 overflow-y-auto border-r border-slate-800/60">
-        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} symbol={selectedSymbol} symbolName={selectedName} conditionToggles={conditionToggles} setConditionToggles={setConditionToggles} />
+        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} onTradesUpdate={setBacktestTrades} symbol={selectedSymbol} symbolName={selectedName} conditionToggles={conditionToggles} setConditionToggles={setConditionToggles} />
       </section>
 
       {/* ═══════════════════════════════════════════════════════════════ */}

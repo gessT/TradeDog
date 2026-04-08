@@ -445,10 +445,16 @@ async def mgc_live(
 
         return identifier, candles, ema_fast_list, ema_slow_list, rsi_list, signal_list, current_price
 
-    identifier, candles, ema_fast, ema_slow, rsi_vals, signals, price = await run_in_threadpool(_run)
+    try:
+        identifier, candles, ema_fast, ema_slow, rsi_vals, signals, price = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("Live data fetch failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
 
     return MGCLiveResponse(
-        symbol="MGC",
+        symbol=symbol,
         identifier=identifier,
         interval=interval,
         candles=candles,
