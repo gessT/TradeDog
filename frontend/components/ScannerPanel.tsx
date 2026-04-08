@@ -617,7 +617,7 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles, request
             setAutoLog((prev) => [`[${ts()}] ⏭ Already executed for bar ${sig.bar_time.slice(5, 16)}`, ...prev.slice(0, 49)]);
             busyRef.current = false; return;
           }
-          if (sig.is_fresh === false) {
+          if ((sig.bars_since_first ?? 0) > 2) {
             setAutoLog((prev) => [`[${ts()}] ⏭ STALE signal (${sig.bars_since_first ?? 0} bars old) — skipped`, ...prev.slice(0, 49)]);
             busyRef.current = false; return;
           }
