@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createChart,
   CandlestickSeries,
@@ -10,7 +10,7 @@ import {
   type IChartApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { halfTrend } from "../../utils/indicators";
+import { halfTrend, sma, computeSupertrend } from "../../utils/indicators";
 import type { MGC5MinCandle, MGC5MinTrade } from "../../services/api";
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -96,6 +96,14 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
+  // Indicator toggle state
+  const [showSMA, setShowSMA] = useState(true);
+  const [smaPeriod, setSmaPeriod] = useState(20);
+  const [showHalfTrend, setShowHalfTrend] = useState(true);
+  const [showSuperTrend, setShowSuperTrend] = useState(true);
+  const [stPeriod, setStPeriod] = useState(10);
+  const [stMultiplier, setStMultiplier] = useState(3.0);
+
   // Close on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -167,7 +175,7 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
     candleSeries.setData(ohlc);
     volSeries.setData(vol);
 
-    // EMA lines
+    // EMA lines (always shown)
     const emaFastData: { time: UTCTimestamp; value: number }[] = [];
     const emaSlowData: { time: UTCTimestamp; value: number }[] = [];
     let si = 0;
@@ -185,21 +193,55 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
       chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }).setData(emaSlowData);
     }
 
-    // HalfTrend overlay
-    const htPoints = halfTrend(slice, 2, 10);
-    const htUp: { time: UTCTimestamp; value: number }[] = [];
-    const htDown: { time: UTCTimestamp; value: number }[] = [];
-    for (let i = 0; i < htPoints.length && i < ohlc.length; i++) {
-      const pt = htPoints[i];
-      if (!pt) continue;
-      const d = { time: ohlc[i].time, value: pt.value };
-      if (pt.trend === 0) htUp.push(d); else htDown.push(d);
+    // ── SMA indicator ──
+    if (showSMA) {
+      const closes = slice.map((c) => c.close);
+      const smaValues = sma(closes, smaPeriod);
+      const smaData: { time: UTCTimestamp; value: number }[] = [];
+      for (let i = 0; i < ohlc.length && i < smaValues.length; i++) {
+        if (i >= smaPeriod - 1) smaData.push({ time: ohlc[i].time, value: smaValues[i] });
+      }
+      if (smaData.length > 0) {
+        chart.addSeries(LineSeries, { color: "#e879f9", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false }).setData(smaData);
+      }
     }
-    if (htUp.length > 0) {
-      chart.addSeries(LineSeries, { color: "#22c55e", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(htUp);
+
+    // ── HalfTrend indicator ──
+    if (showHalfTrend) {
+      const htPoints = halfTrend(slice, 2, 10);
+      const htUp: { time: UTCTimestamp; value: number }[] = [];
+      const htDown: { time: UTCTimestamp; value: number }[] = [];
+      for (let i = 0; i < htPoints.length && i < ohlc.length; i++) {
+        const pt = htPoints[i];
+        if (!pt) continue;
+        const d = { time: ohlc[i].time, value: pt.value };
+        if (pt.trend === 0) htUp.push(d); else htDown.push(d);
+      }
+      if (htUp.length > 0) {
+        chart.addSeries(LineSeries, { color: "#22c55e", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(htUp);
+      }
+      if (htDown.length > 0) {
+        chart.addSeries(LineSeries, { color: "#ef4444", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(htDown);
+      }
     }
-    if (htDown.length > 0) {
-      chart.addSeries(LineSeries, { color: "#ef4444", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(htDown);
+
+    // ── SuperTrend indicator ──
+    if (showSuperTrend) {
+      const stBars = slice.map((c) => ({ time: String(c.time), open: c.open, high: c.high, low: c.low, close: c.close }));
+      const stResults = computeSupertrend(stBars, stPeriod, stMultiplier);
+      const stUpData: { time: UTCTimestamp; value: number }[] = [];
+      const stDownData: { time: UTCTimestamp; value: number }[] = [];
+      for (let i = 0; i < stResults.length && i < ohlc.length; i++) {
+        const r = stResults[i];
+        const d = { time: ohlc[i].time, value: r.value };
+        if (r.dir === -1) stUpData.push(d); else stDownData.push(d);
+      }
+      if (stUpData.length > 0) {
+        chart.addSeries(LineSeries, { color: "#4ade80", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(stUpData);
+      }
+      if (stDownData.length > 0) {
+        chart.addSeries(LineSeries, { color: "#f87171", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(stDownData);
+      }
     }
 
     // SL / TP price lines
@@ -235,7 +277,7 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
     });
     ro.observe(el);
     return () => { ro.disconnect(); try { chart.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; };
-  }, [candles, trade]);
+  }, [candles, trade, showSMA, smaPeriod, showHalfTrend, showSuperTrend, stPeriod, stMultiplier]);
 
   const win = trade.pnl >= 0;
   const pipDiff = n(trade.exit_price) - n(trade.entry_price);
@@ -254,6 +296,7 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
         {/* Header */}
         <div className="shrink-0 px-4 py-3 border-b border-slate-800/60 flex items-center justify-between bg-slate-900/80">
           <div className="flex items-center gap-3">
+            <span className="text-sm font-bold text-slate-200">Trade Detail</span>
             <span className={`text-xs font-bold px-2 py-1 rounded ${trade.direction === "PUT" ? "bg-rose-900/50 text-rose-400" : "bg-emerald-900/50 text-emerald-400"}`}>
               {trade.direction || "CALL"}
             </span>
@@ -318,6 +361,66 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
                 <span className={`text-xs font-extrabold ${strengthColor(strength)}`}>{strength}/10</span>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Indicator Controls */}
+        <div className="shrink-0 px-4 py-2 border-b border-slate-800/40 bg-slate-900/30 flex items-center gap-4 flex-wrap">
+          <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Indicators</span>
+
+          {/* SMA toggle + period */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setShowSMA((v) => !v)}
+              className={`px-2 py-0.5 text-[10px] font-bold rounded transition ${showSMA ? "bg-fuchsia-600 text-white" : "bg-slate-800 text-slate-500 hover:text-slate-200"}`}
+            >SMA</button>
+            {showSMA && (
+              <select
+                value={smaPeriod}
+                onChange={(e) => setSmaPeriod(Number(e.target.value))}
+                className="bg-slate-800 text-[10px] text-slate-300 rounded px-1.5 py-0.5 border border-slate-700 focus:outline-none"
+              >
+                {[5, 10, 20, 50, 100, 200].map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* HalfTrend toggle */}
+          <button
+            onClick={() => setShowHalfTrend((v) => !v)}
+            className={`px-2 py-0.5 text-[10px] font-bold rounded transition ${showHalfTrend ? "bg-emerald-600 text-white" : "bg-slate-800 text-slate-500 hover:text-slate-200"}`}
+          >HalfTrend</button>
+
+          {/* SuperTrend toggle + params */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setShowSuperTrend((v) => !v)}
+              className={`px-2 py-0.5 text-[10px] font-bold rounded transition ${showSuperTrend ? "bg-cyan-600 text-white" : "bg-slate-800 text-slate-500 hover:text-slate-200"}`}
+            >SuperTrend</button>
+            {showSuperTrend && (
+              <>
+                <select
+                  value={stPeriod}
+                  onChange={(e) => setStPeriod(Number(e.target.value))}
+                  className="bg-slate-800 text-[10px] text-slate-300 rounded px-1.5 py-0.5 border border-slate-700 focus:outline-none"
+                >
+                  {[7, 10, 14, 20].map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+                <select
+                  value={stMultiplier}
+                  onChange={(e) => setStMultiplier(Number(e.target.value))}
+                  className="bg-slate-800 text-[10px] text-slate-300 rounded px-1.5 py-0.5 border border-slate-700 focus:outline-none"
+                >
+                  {[1.5, 2.0, 2.5, 3.0, 4.0, 5.0].map((m) => (
+                    <option key={m} value={m}>×{m}</option>
+                  ))}
+                </select>
+              </>
+            )}
           </div>
         </div>
 

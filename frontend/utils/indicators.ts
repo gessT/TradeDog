@@ -322,7 +322,7 @@ function aggregateWeekly(bars: OHLCBar[]): { weekly: OHLCBar[]; weekIndex: numbe
  * Compute Supertrend on OHLC bars.
  * Pine Script logic: ATR period=10, multiplier=3.0
  */
-function computeSupertrend(bars: OHLCBar[], period = 10, multiplier = 3.0): SupertrendResult[] {
+export function computeSupertrend(bars: OHLCBar[], period = 10, multiplier = 3.0): SupertrendResult[] {
   const len = bars.length;
   const results: SupertrendResult[] = [];
 
