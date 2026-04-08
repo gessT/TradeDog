@@ -170,10 +170,10 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
       emaS.setData(emaSData);
     }
 
-    // Show only the last 50 bars
+    // Show only the last 100 bars
     const totalBars = data.candles.length;
     chart.timeScale().setVisibleLogicalRange({
-      from: totalBars - 50,
+      from: totalBars - 100,
       to: totalBars + 5,
     });
 
