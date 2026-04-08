@@ -153,7 +153,7 @@ function MiniMetric({ label, value, cls = "" }: Readonly<{ label: string; value:
 // Main ScannerPanel Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Readonly<{ symbol?: string; conditionToggles: Record<string, boolean> }>) {
+export default function ScannerPanel({ symbol = "MGC", conditionToggles, requestAutoTrade, onAutoTradeAck, onTradeExecuted }: Readonly<{ symbol?: string; conditionToggles: Record<string, boolean>; requestAutoTrade?: boolean; onAutoTradeAck?: () => void; onTradeExecuted?: () => void }>) {
   const SYMBOL_RISK: Record<string, { sl: number; tp: number }> = {
     MGC: { sl: 4.0, tp: 3.0 },
     MCL: { sl: 0.8, tp: 2.0 },
@@ -226,6 +226,18 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
   const [selectedIdx, setSelectedIdx] = useState<number>(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [widgetExpanded, setWidgetExpanded] = useState(false);
+
+  // ── Auto-start from backtest panel (no open position) ──
+  useEffect(() => {
+    if (requestAutoTrade && !autoExec) {
+      setMode("auto");
+      setAutoExec(true);
+      setAutoLog((prev) => [`[${new Date().toLocaleTimeString("en-GB")}] 🚀 Auto-trade started — no open position, scanning for next opportunity`, ...prev.slice(0, 49)]);
+      onAutoTradeAck?.();
+    } else if (requestAutoTrade) {
+      onAutoTradeAck?.(); // already running — just ack
+    }
+  }, [requestAutoTrade]);
 
   // ── Fetch market structure ──
   useEffect(() => {
@@ -422,6 +434,7 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
         const rec = execRes.execution_record;
         setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} ${remainingQty}x → ${execRes.execution?.order_id?.slice(0, 12)} | SL=$${rec?.sl_price} TP=$${rec?.tp_price} (${newQty}/${targetQty} qty)`, ...prev.slice(0, 49)]);
         if (newQty >= targetQty) setAutoLog((prev) => [`[${ts()}] ⏸ Target qty reached (${newQty}/${targetQty}) — paused`, ...prev.slice(0, 49)]);
+        onTradeExecuted?.();
       } else { setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${execRes.execution_record?.reason || execRes.execution?.reason || "Unknown"}`, ...prev.slice(0, 49)]); }
     } catch (e) { setAutoLog((prev) => [`[${ts()}] ❌ ERROR: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]); }
     finally { setExecuting(false); }
@@ -647,6 +660,7 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles }: Reado
                 const rec = execRes.execution_record;
                 setAutoLog((prev) => [`[${ts()}] ✅ EXECUTED: ${side} ${remainingQty}x → ${execRes.execution?.order_id?.slice(0, 12)} | SL=$${rec?.sl_price} TP=$${rec?.tp_price} (${newQty}/${targetQty} qty)`, ...prev.slice(0, 49)]);
                 if (newQty >= targetQty) setAutoLog((prev) => [`[${ts()}] ⏸ Target qty reached (${newQty}/${targetQty})`, ...prev.slice(0, 49)]);
+                onTradeExecuted?.();
               } else { setAutoLog((prev) => [`[${ts()}] ❌ BLOCKED: ${execRes.execution_record?.reason || execRes.execution?.reason || "Unknown"}`, ...prev.slice(0, 49)]); }
             } catch (e) { setAutoLog((prev) => [`[${ts()}] ❌ ERROR: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]); }
             finally { setExecuting(false); }

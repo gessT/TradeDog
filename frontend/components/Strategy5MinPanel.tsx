@@ -1137,7 +1137,7 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
+export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequestAutoTrade, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onRequestAutoTrade?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
   const [showExam, setShowExam] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1193,17 +1193,32 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, symbol
   );
 
   // ── Backtest ──────────────────────────────────────────
+  const [autoTradeRequested, setAutoTradeRequested] = useState(false);
+
   const runBacktest = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // Always use fresh dates so auto-reruns get latest data
+    const freshTo = fmtDate(new Date());
+    const freshFrom = calcFrom(period === "1d" ? "1" : period.replace("d", ""));
+    if (dateTo !== freshTo) setDateTo(freshTo);
+    if (dateFrom !== freshFrom) setDateFrom(freshFrom);
     try {
       // Compute disabled conditions from toggles (OFF = disabled)
       const disabled = CONDITION_DEFS
         .filter((d) => d.group === "5m" && !conditionToggles[d.key])
         .map((d) => d.key);
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, dateFrom || undefined, dateTo || undefined, symbol, disabled.length > 0 ? disabled : undefined);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined);
       setBtData(res);
       onTradesUpdate?.(res.trades);
+      // Auto-start scanner:
+      // - No open position → scan for next opportunity
+      // - Open position → sync to Tiger if not already holding
+      onRequestAutoTrade?.();
+      if (!res.open_position) {
+        setAutoTradeRequested(true);
+        setTimeout(() => setAutoTradeRequested(false), 3000);
+      }
       // Cache result so page refresh doesn't re-run
       try {
         sessionStorage.setItem("bt5min_cache", JSON.stringify({ configKey, data: res }));
@@ -1228,6 +1243,16 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, symbol
       }
     } catch { /* corrupt cache — ignore */ }
   }, [configKey]);
+
+  // ── Auto re-run backtest after trade executed (from scanner) ──
+  const tradeTickRef = useRef(tradeExecutedTick);
+  useEffect(() => {
+    if (tradeExecutedTick > 0 && tradeExecutedTick !== tradeTickRef.current) {
+      tradeTickRef.current = tradeExecutedTick;
+      // Delay to let broker orders settle, then re-run to pick up new open position
+      setTimeout(() => { runBacktest(); }, 3000);
+    }
+  }, [tradeExecutedTick, runBacktest]);
 
   // ── Live price polling for OPEN position ──────────────
   const [livePrice, setLivePrice] = useState<number | null>(null);
@@ -1329,6 +1354,18 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, symbol
       {error && (
         <div className="mx-3 mt-2 rounded-lg border border-rose-800/60 bg-rose-950/30 px-3 py-2 text-[11px] text-rose-300">
           {error}
+        </div>
+      )}
+
+      {/* ── Auto-trade triggered banner ──────────────────── */}
+      {autoTradeRequested && !btData?.open_position && (
+        <div className="mx-3 mt-2 rounded-lg border border-emerald-500/40 bg-emerald-950/30 px-3 py-2 text-[10px] text-emerald-400 font-bold animate-pulse">
+          🚀 No open position — Auto-scanner started to find next opportunity →
+        </div>
+      )}
+      {autoTradeRequested && btData?.open_position && (
+        <div className="mx-3 mt-2 rounded-lg border border-blue-500/40 bg-blue-950/30 px-3 py-2 text-[10px] text-blue-400 font-bold animate-pulse">
+          🔄 Syncing to Tiger — {btData.open_position.direction === "PUT" ? "SHORT" : "LONG"} @ ${btData.open_position.entry_price} | SL ${btData.open_position.sl} · TP {btData.open_position.tp} →
         </div>
       )}
 
@@ -1460,8 +1497,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, symbol
               <label className="flex items-center gap-1 text-[10px]">
                 <span className="text-rose-400 font-bold">SL</span>
                 <input
-                  type="range" min="0.5" max="6" step="0.1" value={slMult}
-                  onChange={(e) => setSlMult(parseFloat(e.target.value))}
+                  type="range" min="1" max="6" step="1" value={slMult}
+                  onChange={(e) => setSlMult(parseInt(e.target.value))}
                   className="w-14 h-1 accent-rose-500 cursor-pointer"
                 />
                 <span className="text-slate-400 tabular-nums w-8">{slMult}×</span>
@@ -1469,8 +1506,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, symbol
               <label className="flex items-center gap-1 text-[10px]">
                 <span className="text-emerald-400 font-bold">TP</span>
                 <input
-                  type="range" min="0.5" max="6" step="0.1" value={tpMult}
-                  onChange={(e) => setTpMult(parseFloat(e.target.value))}
+                  type="range" min="1" max="6" step="1" value={tpMult}
+                  onChange={(e) => setTpMult(parseInt(e.target.value))}
                   className="w-14 h-1 accent-emerald-500 cursor-pointer"
                 />
                 <span className="text-slate-400 tabular-nums w-8">{tpMult}×</span>
