@@ -13,6 +13,7 @@ import {
 import { halfTrend, type HalfTrendPoint } from "../utils/indicators";
 import { fmtDateTimeSGT, fmtInputDateSGT, SGT_OFFSET_SEC, toSGT } from "../utils/time";
 import TradeDetailDialog from "./strategy5min/TradeDetailDialog";
+import HoldingMiniChart from "./strategy5min/HoldingMiniChart";
 import {
   fetchMGC5MinBacktest,
   fetchLivePrice,
@@ -24,18 +25,7 @@ import {
   type MGC5MinCandle,
   type MGC5MinTrade,
   type Scan5MinConditions,
-  type BacktestPosition,
 } from "../services/api";
-
-// ═══════════════════════════════════════════════════════════════════════
-// Exported types
-// ═══════════════════════════════════════════════════════════════════════
-
-export type PositionChartData = {
-  position: BacktestPosition;
-  candles: MGC5MinCandle[];
-  livePrice: number | null;
-};
 // ═══════════════════════════════════════════════════════════════════════
 
 /** Offset (seconds) to shift UTC epoch → SGT for lightweight-charts */
@@ -145,12 +135,13 @@ function Metric({ label, value, cls = "" }: Readonly<{ label: string; value: str
   );
 }
 
-function DailyPnlCard({ days, totalPnl, maxAbs, period, visibleDays }: Readonly<{
+function DailyPnlCard({ days, totalPnl, maxAbs, period, visibleDays, oos }: Readonly<{
   days: { date: string; pnl: number; win_rate: number; wins: number; losses: number }[];
   totalPnl: number;
   maxAbs: number;
   period: string;
   visibleDays: number;
+  oos?: { win_rate: number; total_trades: number; return_pct: number } | null;
 }>) {
   const [expanded, setExpanded] = useState(false);
 
@@ -160,8 +151,26 @@ function DailyPnlCard({ days, totalPnl, maxAbs, period, visibleDays }: Readonly<
         className="w-full flex items-center justify-between"
         onClick={() => setExpanded((v) => !v)}
       >
-        <span className="text-[9px] uppercase tracking-widest text-slate-500">
-          {period} Daily P&L · {days.length} trading day{days.length > 1 ? "s" : ""}
+        <span className="flex items-center gap-1.5">
+          <span className="text-[9px] uppercase tracking-widest text-slate-500">
+            {period} Daily P&L · {days.length} trading day{days.length > 1 ? "s" : ""}
+          </span>
+          {oos && oos.total_trades > 0 && (
+            <span className="relative group/oos" onClick={(e) => e.stopPropagation()}>
+              <svg className="w-3.5 h-3.5 text-cyan-500/50 hover:text-cyan-400 cursor-help transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 16v0m0-8v4"/></svg>
+              <span className="absolute bottom-full left-0 mb-1.5 hidden group-hover/oos:block w-56 px-3 py-2.5 rounded-lg bg-slate-950 border border-cyan-800/50 text-[8px] text-slate-300 leading-relaxed shadow-xl z-50 pointer-events-none">
+                <b className="text-cyan-400 text-[9px]">Out-of-Sample (30%)</b>
+                <div className="flex items-center gap-3 mt-1.5">
+                  <span className={`text-[11px] font-bold ${oos.win_rate >= 55 ? "text-emerald-400" : oos.win_rate >= 45 ? "text-amber-400" : "text-rose-400"}`}>{oos.win_rate.toFixed(1)}% WR</span>
+                  <span className="text-slate-500">·</span>
+                  <span className="text-slate-400">{oos.total_trades} trades</span>
+                  <span className="text-slate-500">·</span>
+                  <span className={`font-bold ${oos.return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{oos.return_pct >= 0 ? "+" : ""}{oos.return_pct.toFixed(2)}%</span>
+                </div>
+                <p className="mt-1.5 text-slate-500 leading-snug">Strategy tested on 30% unseen data. If metrics match in-sample, the strategy is robust and not overfitted.</p>
+              </span>
+            </span>
+          )}
         </span>
         <span className="flex items-center gap-2">
           <span className={`text-sm font-bold ${totalPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
@@ -1147,7 +1156,7 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequestAutoTrade, onDirectExecute, onPositionUpdate, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onRequestAutoTrade?: () => void; onDirectExecute?: () => void; onPositionUpdate?: (data: PositionChartData | null) => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
+export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequestAutoTrade, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onRequestAutoTrade?: () => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
   const [showExam, setShowExam] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1271,16 +1280,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
   const [exitStatus, setExitStatus] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
-
-  // ── Push position + candles + livePrice up to parent ──
-  useEffect(() => {
-    const pos = btData?.open_position;
-    if (pos && btData) {
-      onPositionUpdate?.({ position: pos, candles: btData.candles, livePrice });
-    } else {
-      onPositionUpdate?.(null);
-    }
-  }, [btData?.open_position, btData?.candles, livePrice, onPositionUpdate]);
 
   // ── Manual sync: enter at market price with backtest SL/TP ──
   const handleSync = useCallback(async () => {
@@ -1691,30 +1690,10 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                     maxAbs={maxAbs}
                     period={period}
                     visibleDays={VISIBLE_DAYS}
+                    oos={m.oos_total_trades > 0 ? { win_rate: m.oos_win_rate, total_trades: m.oos_total_trades, return_pct: m.oos_return_pct } : null}
                   />
                 );
               })()}
-
-              {/* OOS validation — compact */}
-              {m.oos_total_trades > 0 && (
-                <div className="rounded-md border border-cyan-800/40 bg-cyan-950/20 px-2.5 py-1.5">
-                  <div className="flex items-center gap-3">
-                    <span className="text-[8px] uppercase tracking-widest text-cyan-500 shrink-0">OOS 30%</span>
-                    <span className={`text-[10px] font-bold ${winRateColor(m.oos_win_rate)}`}>{n(m.oos_win_rate).toFixed(1)}%</span>
-                    <span className="text-[9px] text-slate-400">{m.oos_total_trades} trades</span>
-                    <span className={`text-[10px] font-bold ${m.oos_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                      {m.oos_return_pct >= 0 ? "+" : ""}{n(m.oos_return_pct).toFixed(2)}%
-                    </span>
-                    <span className="relative group/oos ml-auto">
-                      <svg className="w-3 h-3 text-cyan-500/60 hover:text-cyan-400 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 16v0m0-8v4"/></svg>
-                      <span className="absolute bottom-full right-0 mb-1.5 hidden group-hover/oos:block w-52 px-2.5 py-2 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-relaxed shadow-lg z-50 pointer-events-none">
-                        <b className="text-cyan-400">Out-of-Sample (30%)</b><br/>
-                        Strategy tested on 30% unseen data. If metrics match in-sample, the strategy is robust and not overfitted.
-                      </span>
-                    </span>
-                  </div>
-                </div>
-              )}
 
               {/* Open position banner */}
               {btData.open_position && (() => {
@@ -1723,54 +1702,70 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                 const unrealPnl = livePrice != null ? (isLong ? livePrice - pos.entry_price : pos.entry_price - livePrice) : null;
                 const pnlPct = unrealPnl != null && pos.entry_price > 0 ? (unrealPnl / pos.entry_price) * 100 : null;
                 return (
-                  <div className="rounded-lg border border-blue-500/40 bg-blue-950/30 px-3 py-2 space-y-1.5">
-                    <div className="flex items-center gap-3">
-                      <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[10px] font-bold text-blue-400">
-                          HOLDING POSITION — {isLong ? "LONG" : "SHORT"} @ ${pos.entry_price}
-                        </p>
-                        <p className="text-[9px] text-slate-400 mt-0.5">
-                          SL ${pos.sl} · TP ${pos.tp} · Entry {fmtDateTime(pos.entry_time)} · {pos.signal_type}
-                        </p>
-                      </div>
-                      <span className={`text-[10px] font-bold ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
-                        {isLong ? "▲ BUY" : "▼ SELL"}
-                      </span>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleSync(); }}
-                        disabled={syncing}
-                        className={`ml-1 px-2 py-0.5 text-[9px] font-bold rounded transition-all ${
-                          syncing
-                            ? "bg-slate-700 text-slate-500 cursor-wait"
-                            : "bg-orange-600 text-white hover:bg-orange-500 active:scale-95 shadow-sm"
-                        }`}
-                      >
-                        {syncing ? "⏳" : "🔄 Sync"}
-                      </button>
-                    </div>
-                    {/* Live price + P&L row */}
-                    {livePrice != null && (
-                      <div className="flex items-center gap-3 pl-5">
-                        <span className="text-[9px] text-slate-500">NOW</span>
-                        <span className="text-[11px] font-bold text-yellow-400 tabular-nums">${livePrice.toFixed(2)}</span>
-                        {unrealPnl != null && (
-                          <>
-                            <span className={`text-[11px] font-bold tabular-nums ${unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                              {unrealPnl >= 0 ? "+" : ""}{unrealPnl.toFixed(2)} pts
-                            </span>
-                            <span className={`text-[9px] tabular-nums ${unrealPnl >= 0 ? "text-emerald-400/70" : "text-rose-400/70"}`}>
-                              ({pnlPct != null && pnlPct >= 0 ? "+" : ""}{pnlPct?.toFixed(2)}%)
-                            </span>
-                          </>
+                  <div className="rounded-lg border border-blue-500/40 bg-blue-950/30 px-3 py-2">
+                    <div className="flex gap-3">
+                      {/* Left 50% — Position info */}
+                      <div className="w-1/2 space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
+                          <span className={`text-[10px] font-bold ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
+                            {isLong ? "▲ LONG" : "▼ SHORT"}
+                          </span>
+                          <span className="text-[10px] font-bold text-blue-400">@ ${pos.entry_price}</span>
+                        </div>
+                        <div className="text-[9px] text-slate-400 pl-4">
+                          SL ${pos.sl} · TP ${pos.tp}
+                        </div>
+                        <div className="text-[9px] text-slate-500 pl-4">
+                          {fmtDateTime(pos.entry_time)} · {pos.signal_type}
+                        </div>
+                        {livePrice != null && (
+                          <div className="flex items-center gap-2 pl-4">
+                            <span className="text-[9px] text-slate-500">NOW</span>
+                            <span className="text-[11px] font-bold text-yellow-400 tabular-nums">${livePrice.toFixed(2)}</span>
+                            {unrealPnl != null && (
+                              <>
+                                <span className={`text-[11px] font-bold tabular-nums ${unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                                  {unrealPnl >= 0 ? "+" : ""}{unrealPnl.toFixed(2)}
+                                </span>
+                                <span className={`text-[9px] tabular-nums ${unrealPnl >= 0 ? "text-emerald-400/70" : "text-rose-400/70"}`}>
+                                  ({pnlPct != null && pnlPct >= 0 ? "+" : ""}{pnlPct?.toFixed(2)}%)
+                                </span>
+                              </>
+                            )}
+                          </div>
                         )}
-                        <span className="ml-auto text-[8px] text-slate-600 animate-pulse">● LIVE</span>
+                        <div className="flex items-center gap-2 pl-4">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleSync(); }}
+                            disabled={syncing}
+                            className={`px-2 py-0.5 text-[9px] font-bold rounded transition-all ${
+                              syncing
+                                ? "bg-slate-700 text-slate-500 cursor-wait"
+                                : "bg-orange-600 text-white hover:bg-orange-500 active:scale-95 shadow-sm"
+                            }`}
+                          >
+                            {syncing ? "⏳" : "🔄 Sync"}
+                          </button>
+                          <span className="text-[8px] text-slate-600 animate-pulse">● LIVE</span>
+                        </div>
+                        {syncStatus && (
+                          <div className="pl-4 text-[9px] font-bold text-orange-400 animate-pulse">{syncStatus}</div>
+                        )}
                       </div>
-                    )}
-                    {/* Sync status */}
-                    {syncStatus && (
-                      <div className="pl-5 text-[9px] font-bold text-orange-400 animate-pulse">{syncStatus}</div>
-                    )}
+                      {/* Right 50% — Mini chart */}
+                      <div className="w-1/2">
+                          <HoldingMiniChart
+                            symbol={symbol}
+                            entryTime={pos.entry_time}
+                            entryPrice={pos.entry_price}
+                            sl={pos.sl}
+                            tp={pos.tp}
+                            isLong={isLong}
+                            livePrice={livePrice}
+                          />
+                      </div>
+                    </div>
                   </div>
                 );
               })()}

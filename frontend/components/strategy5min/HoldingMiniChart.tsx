@@ -1,19 +1,20 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createChart,
   CandlestickSeries,
+  createSeriesMarkers,
   type IChartApi,
   type UTCTimestamp,
 } from "lightweight-charts";
 import { toSGT } from "../../utils/time";
-import type { MGC5MinCandle } from "../../services/api";
+import { fetchMGCLive, type MGCLiveCandle } from "../../services/api";
 
 const toLocal = (utcSec: number) => toSGT(utcSec) as UTCTimestamp;
 
 interface HoldingMiniChartProps {
-  candles: MGC5MinCandle[];
+  symbol: string;
   entryTime: string;
   entryPrice: number;
   sl: number;
@@ -23,7 +24,7 @@ interface HoldingMiniChartProps {
 }
 
 export default function HoldingMiniChart({
-  candles,
+  symbol,
   entryTime,
   entryPrice,
   sl,
@@ -33,6 +34,22 @@ export default function HoldingMiniChart({
 }: Readonly<HoldingMiniChartProps>) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const [candles, setCandles] = useState<MGCLiveCandle[]>([]);
+  const timerRef = useRef<ReturnType<typeof globalThis.setInterval> | null>(null);
+
+  const fetchCandles = useCallback(async () => {
+    try {
+      const res = await fetchMGCLive("5m", 200, symbol);
+      setCandles(res.candles);
+    } catch { /* ignore */ }
+  }, [symbol]);
+
+  // Initial fetch + auto-refresh every 15s (same as MGCLiveChart 5m interval)
+  useEffect(() => {
+    void fetchCandles();
+    timerRef.current = globalThis.setInterval(() => { void fetchCandles(); }, 15_000);
+    return () => { if (timerRef.current) globalThis.clearInterval(timerRef.current); };
+  }, [fetchCandles]);
 
   useEffect(() => {
     if (!containerRef.current || candles.length === 0) return;
@@ -42,7 +59,7 @@ export default function HoldingMiniChart({
     const entryTs = new Date(entryTime).getTime();
     let entryIdx = candles.length - 1;
     for (let i = 0; i < candles.length; i++) {
-      if (new Date(candles[i].time).getTime() >= entryTs) {
+      if (candles[i].time >= entryTs) {
         entryIdx = i;
         break;
       }
@@ -81,12 +98,24 @@ export default function HoldingMiniChart({
     const seen = new Set<number>();
     const ohlc: { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
     for (const c of slice) {
-      const t = toLocal(Math.floor(new Date(c.time).getTime() / 1000));
+      const t = toLocal(Math.floor(c.time / 1000));
       if (seen.has(t as number)) continue;
       seen.add(t as number);
       ohlc.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
     }
     candleSeries.setData(ohlc);
+
+    // Entry marker — green dot on the entry bar
+    const entryBarTime = toLocal(Math.floor(entryTs / 1000));
+    createSeriesMarkers(candleSeries, [
+      {
+        time: entryBarTime,
+        position: isLong ? "belowBar" : "aboveBar",
+        color: "#22c55e",
+        shape: "circle",
+        size: 1,
+      },
+    ]);
 
     // Entry price line (blue dashed)
     candleSeries.createPriceLine({
@@ -117,36 +146,11 @@ export default function HoldingMiniChart({
     };
   }, [candles, entryTime, entryPrice, sl, tp, isLong]);
 
-  useEffect(() => {
-    if (chartRef.current) chartRef.current.timeScale().fitContent();
-  }, [livePrice, candles]);
-
-  // Derive live P&L for labels
-  const unrealPnl = livePrice != null ? (isLong ? livePrice - entryPrice : entryPrice - livePrice) : null;
-
   return (
-    <div className="flex justify-center">
-      <div className="relative w-full max-w-[320px] rounded-lg border border-slate-700/50 bg-slate-900/60 overflow-hidden">
-        {/* Price labels overlay */}
-        <div className="absolute top-1 left-1.5 z-10 flex flex-col gap-0.5">
-          <span className="text-[8px] font-bold text-blue-400">▸ Entry ${entryPrice.toFixed(2)}</span>
-          <span className="text-[8px] font-bold text-emerald-400">▸ TP ${tp.toFixed(2)}</span>
-          <span className="text-[8px] font-bold text-rose-400">▸ SL ${sl.toFixed(2)}</span>
-        </div>
-        {/* Live price overlay */}
-        {livePrice != null && (
-          <div className="absolute top-1 right-1.5 z-10 text-right">
-            <span className="text-[9px] font-bold text-yellow-400 tabular-nums">${livePrice.toFixed(2)}</span>
-            {unrealPnl != null && (
-              <span className={`ml-1 text-[8px] font-bold tabular-nums ${unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                {unrealPnl >= 0 ? "+" : ""}{unrealPnl.toFixed(2)}
-              </span>
-            )}
-          </div>
-        )}
-        {/* Chart */}
-        <div ref={containerRef} style={{ height: 100 }} />
-      </div>
-    </div>
+    <div
+      ref={containerRef}
+      className="w-full rounded-lg border border-slate-700/40 bg-slate-900/40 overflow-hidden"
+      style={{ height: 120 }}
+    />
   );
 }
