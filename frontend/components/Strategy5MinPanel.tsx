@@ -442,7 +442,7 @@ function TradeLogByDate({ trades, onTradeClick, livePrice }: Readonly<{ trades: 
 // ═══════════════════════════════════════════════════════════════════════
 
 /** All conditions that gate auto-execution. User can toggle each. */
-const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m" | "smc" | "15m" | "1h" | "structure"; desc: string }[] = [
+const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m" | "smc" | "structure"; desc: string }[] = [
   // 5m core
   { key: "ema_trend", label: "EMA Trend", group: "5m", desc: "Price is above fast EMA for CALL or below for PUT, confirming trend direction." },
   { key: "ema_slope", label: "EMA Slope", group: "5m", desc: "Fast EMA is sloping upward (CALL) or downward (PUT), showing momentum." },
@@ -459,12 +459,6 @@ const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m
   { key: "smc_bos", label: "Break of Structure", group: "smc", desc: "Recent BOS detected — price broke a swing high (bullish) or swing low (bearish), confirming trend continuation." },
   { key: "smc_ob", label: "Order Block", group: "smc", desc: "Price is in an institutional Order Block zone — the last opposing candle before an impulsive move (demand/supply zone)." },
   { key: "smc_fvg", label: "Fair Value Gap", group: "smc", desc: "Price is filling a Fair Value Gap (imbalance) — a 3-candle gap that tends to get revisited by smart money." },
-  // 15m confirmation
-  { key: "htf_15m_trend", label: "15m EMA Trend", group: "15m", desc: "15-minute EMA trend aligns with the 5m signal direction." },
-  { key: "htf_15m_supertrend", label: "15m Supertrend", group: "15m", desc: "15-minute Supertrend confirms the same bias as the 5m signal." },
-  // 1h confirmation
-  { key: "htf_1h_trend", label: "1h EMA Trend", group: "1h", desc: "1-hour EMA trend aligns with the trade direction for higher conviction." },
-  { key: "htf_1h_supertrend", label: "1h Supertrend", group: "1h", desc: "1-hour Supertrend confirms the macro trend supports the trade." },
   // Market Structure
   // mkt_structure removed from CONDITION_DEFS — it's a display-only analysis widget, not a gate
 ];
@@ -1629,9 +1623,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             {/* Expanded condition toggles */}
             {conditionsOpen && (
               <div className="mt-1 rounded-lg border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
-                {(["5m", "smc", "15m", "1h"] as const).map((group) => {
-                  const groupLabel = group === "5m" ? "5-Minute (Execution)" : group === "smc" ? "Smart Money (SMC)" : group === "15m" ? "15-Minute (Confirmation)" : "1-Hour (Trend)";
-                  const groupColor = group === "5m" ? "slate" : group === "smc" ? "purple" : group === "15m" ? "cyan" : "amber";
+                {(["5m", "smc"] as const).map((group) => {
+                  const groupLabel = group === "5m" ? "5-Minute (Execution)" : "Smart Money (SMC)";
+                  const groupColor = group === "5m" ? "slate" : "purple";
                   return (
                     <div key={group}>
                       {group !== "5m" && <div className="mt-2" />}

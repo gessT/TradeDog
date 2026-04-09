@@ -2345,7 +2345,16 @@ async def engine_sync(symbol: str = "MGC"):
     from mgc_trading.execution_engine import get_engine
     engine = get_engine(symbol)
     tiger_qty = _get_tiger_position(symbol)
-    engine.sync_with_broker(tiger_qty)
+    # Try to get current price for P&L estimation on sync
+    current_price = 0.0
+    try:
+        import yfinance as yf
+        commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": f"{symbol}=F"})
+        tk = yf.Ticker(commodity["yf"])
+        current_price = tk.fast_info.get("lastPrice", 0.0) or 0.0
+    except Exception:
+        pass
+    engine.sync_with_broker(tiger_qty, current_price=current_price)
     return {
         "synced": True,
         **engine.get_state_summary(),
@@ -2790,6 +2799,59 @@ def save_auto_trade_settings(
             {"sym": sym, "vl": payload.verify_lock, "aq": payload.auto_qty},
         )
     return {"status": "ok"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Daily P&L Tracking & Loss Limit
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/daily_pnl")
+async def get_daily_pnl(symbol: str = "MGC"):
+    """Return today's realized P&L and daily loss limit status."""
+    from mgc_trading.execution_engine import get_engine
+    engine = get_engine(symbol)
+    return engine.get_daily_pnl()
+
+
+class DailyLossLimitPayload(BaseModel):
+    limit: float = 350.0
+
+
+@router.post("/daily_loss_limit")
+async def set_daily_loss_limit(
+    payload: DailyLossLimitPayload,
+    symbol: str = Query("MGC"),
+):
+    """Set the daily loss limit. 0 = disabled."""
+    from mgc_trading.execution_engine import get_engine
+    engine = get_engine(symbol)
+    engine.set_daily_loss_limit(payload.limit)
+    return {"status": "ok", "daily_loss_limit": payload.limit}
+
+
+class ManualPnlPayload(BaseModel):
+    pnl: float
+
+
+@router.post("/daily_pnl/add")
+async def add_daily_pnl(
+    payload: ManualPnlPayload,
+    symbol: str = Query("MGC"),
+):
+    """Manually add a realized P&L entry (e.g. from externally-detected exit)."""
+    from mgc_trading.execution_engine import get_engine
+    engine = get_engine(symbol)
+    engine.add_manual_pnl(payload.pnl)
+    return engine.get_daily_pnl()
+
+
+@router.post("/daily_pnl/reset")
+async def reset_daily_pnl(symbol: str = Query("MGC")):
+    """Reset today's daily P&L counter."""
+    from mgc_trading.execution_engine import get_engine
+    engine = get_engine(symbol)
+    engine.reset_daily_pnl()
+    return {"status": "ok", "message": "Daily P&L reset"}
 
 
 # ── Strategy Config (persist period, SL/TP, risk filters) ────────────

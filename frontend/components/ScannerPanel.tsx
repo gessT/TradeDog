@@ -19,6 +19,11 @@ import {
   syncEngine,
   seedEngine,
   getBacktestPosition,
+  getDailyPnl,
+  setDailyLossLimit,
+  addManualPnl,
+  resetDailyPnl,
+  type DailyPnlStatus,
   type MarketStructure,
   type Scan5MinResponse,
   type Scan5MinSignal,
@@ -46,7 +51,7 @@ function strengthBgClass(s: number): string {
   return "bg-rose-500";
 }
 
-const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m" | "15m" | "1h" | "structure"; desc: string }[] = [
+const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m" | "structure"; desc: string }[] = [
   { key: "ema_trend", label: "EMA Trend", group: "5m", desc: "Price is above fast EMA for CALL or below for PUT." },
   { key: "ema_slope", label: "EMA Slope", group: "5m", desc: "Fast EMA is sloping in trend direction." },
   { key: "pullback", label: "Pullback", group: "5m", desc: "Price pulled back near fast EMA then bounced." },
@@ -58,10 +63,6 @@ const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m
   { key: "atr_range", label: "ATR Range", group: "5m", desc: "ATR within acceptable range." },
   { key: "session_ok", label: "Session", group: "5m", desc: "Within active trading hours." },
   { key: "adx_ok", label: "ADX", group: "5m", desc: "ADX above threshold, confirming trend." },
-  { key: "htf_15m_trend", label: "15m EMA", group: "15m", desc: "15-minute EMA trend aligns with signal." },
-  { key: "htf_15m_supertrend", label: "15m ST", group: "15m", desc: "15-minute Supertrend confirms bias." },
-  { key: "htf_1h_trend", label: "1h EMA", group: "1h", desc: "1-hour EMA trend aligns with trade direction." },
-  { key: "htf_1h_supertrend", label: "1h ST", group: "1h", desc: "1-hour Supertrend confirms macro trend." },
 ];
 
 function nextCandleClose(intervalMin: number = 5): number {
@@ -199,6 +200,11 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles, request
   const verifyLockRef = useRef(true);
   verifyLockRef.current = verifyLock;
 
+  // Daily P&L tracking
+  const [dailyPnlStatus, setDailyPnlStatus] = useState<DailyPnlStatus | null>(null);
+  const [dailyLossLimitVal, setDailyLossLimitVal] = useState(350);
+  const dailyLimitHitRef = useRef(false);
+
   // Holding position (synced from backtest or live trade)
   const [holdingPosition, setHoldingPosition] = useState<{
     direction: string; entry_price: number; sl: number; tp: number;
@@ -262,11 +268,16 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles, request
     return () => { cancelled = true; clearInterval(interval); };
   }, [symbol]);
 
-  // Load auto-trade settings
+  // Load auto-trade settings + daily P&L
   useEffect(() => {
     getAutoTradeSettings(symbol).then((s) => {
       setVerifyLock(s.verify_lock);
       setAutoQty(s.auto_qty);
+    }).catch(() => {});
+    getDailyPnl(symbol).then((pnl) => {
+      setDailyPnlStatus(pnl);
+      setDailyLossLimitVal(pnl.daily_loss_limit);
+      dailyLimitHitRef.current = pnl.limit_hit;
     }).catch(() => {});
   }, [symbol]);
 
@@ -474,6 +485,24 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles, request
     // Sync execution engine on start
     syncEngine(symbol).then((es) => {
       setAutoLog((prev) => [`[${ts()}] 🔧 Engine synced: position=${es.current_position} last_bar=${es.last_exec_bar || "—"}`, ...prev.slice(0, 49)]);
+      // Show daily P&L status from engine sync
+      if (es.daily_pnl !== undefined) {
+        setDailyPnlStatus((prev) => ({
+          date: new Date().toISOString().slice(0, 10),
+          pnl: es.daily_pnl ?? 0,
+          trades_count: prev?.trades_count ?? 0,
+          trades: prev?.trades ?? [],
+          daily_loss_limit: es.daily_loss_limit ?? 350,
+          limit_hit: es.daily_limit_hit ?? false,
+          remaining: (es.daily_loss_limit ?? 350) + (es.daily_pnl ?? 0),
+        }));
+        if (es.daily_limit_hit) {
+          setAutoLog((prev) => [`[${ts()}] 🛑 DAILY LOSS LIMIT already hit ($${(es.daily_pnl ?? 0).toFixed(2)}) — trades blocked until reset`, ...prev.slice(0, 49)]);
+          dailyLimitHitRef.current = true;
+        } else if ((es.daily_pnl ?? 0) < 0) {
+          setAutoLog((prev) => [`[${ts()}] 💰 Day P&L: $${(es.daily_pnl ?? 0).toFixed(2)} (limit: -$${es.daily_loss_limit ?? 350})`, ...prev.slice(0, 49)]);
+        }
+      }
     }).catch(() => {});
 
     // Check current position on start + sync with backtest
@@ -594,6 +623,18 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles, request
           }
           // Sync engine state with broker — detect TP/SL exits
           try { await syncEngine(symbol); } catch { /* */ }
+        } catch { /* */ }
+
+        // ── Daily P&L check — block if loss limit hit ──
+        try {
+          const pnlStatus = await getDailyPnl(symbol);
+          setDailyPnlStatus(pnlStatus);
+          dailyLimitHitRef.current = pnlStatus.limit_hit;
+          if (pnlStatus.limit_hit) {
+            setAutoLog((prev) => [`[${ts()}] 🛑 DAILY LOSS LIMIT HIT ($${pnlStatus.pnl.toFixed(2)} / -$${pnlStatus.daily_loss_limit}) — NO MORE TRADES TODAY`, ...prev.slice(0, 49)]);
+            busyRef.current = false;
+            return;
+          }
         } catch { /* */ }
 
         const disabled = CONDITION_DEFS.filter((d) => d.group === "5m" && !conditionTogglesRef.current[d.key]).map((d) => d.key);
@@ -804,7 +845,6 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles, request
                 {[
                   { k: "ema_trend", l: "EMA" }, { k: "supertrend", l: "ST" }, { k: "macd_momentum", l: "MACD" },
                   { k: "rsi_momentum", l: "RSI" }, { k: "volume_spike", l: "VOL" },
-                  { k: "htf_15m_trend", l: "15m" }, { k: "htf_1h_trend", l: "1H" },
                 ].map(({ k, l }) => (
                   <span key={k} className={`text-[6px] font-bold px-1 py-px rounded-sm ${
                     (conds as Record<string, unknown>)[k] ? "bg-emerald-900/50 text-emerald-400" : "bg-rose-900/30 text-rose-500/60"
@@ -852,6 +892,23 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles, request
           </button>
         </div>
       </div>
+
+      {/* ═══════════════════════ Daily Loss Limit Hit ═══════════════════════ */}
+      {autoExec && dailyPnlStatus?.limit_hit && (
+        <div className="mx-2 mt-1.5 rounded-xl border-2 border-rose-500/60 bg-rose-950/30 p-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-black text-rose-400">🛑 DAILY LOSS LIMIT HIT</span>
+            <span className="text-[10px] font-bold text-rose-300 tabular-nums">${dailyPnlStatus.pnl.toFixed(2)} / -${dailyPnlStatus.daily_loss_limit}</span>
+          </div>
+          <p className="text-[8px] text-rose-400/70 mt-0.5">No more trades will execute today. Reset daily P&L to resume.</p>
+          <button
+            onClick={async () => { await resetDailyPnl(symbol); const fresh = await getDailyPnl(symbol); setDailyPnlStatus(fresh); dailyLimitHitRef.current = false; setAutoLog((prev) => [`[${new Date().toLocaleTimeString("en-GB")}] 🔄 Daily P&L reset — trading resumed`, ...prev.slice(0, 49)]); }}
+            className="mt-1 px-2 py-0.5 text-[8px] font-bold rounded bg-slate-700 text-slate-300 hover:bg-slate-600 active:scale-95"
+          >
+            Reset Daily P&L
+          </button>
+        </div>
+      )}
 
       {/* ═══════════════════════ Pending Verify ═══════════════════════ */}
       {pendingSignal && pendingSecsLeft > 0 && (
@@ -952,6 +1009,20 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles, request
                 <span className="text-[9px] text-slate-500 uppercase tracking-wider">Verify</span>
                 <span className={`text-[10px] font-bold ${verifyLock ? "text-amber-400" : "text-emerald-400"}`}>
                   {verifyLock ? (verified ? "✅ Verified" : "🔒 Required") : "🔓 Off"}
+                </span>
+              </div>
+              {/* Daily P&L & Loss Limit */}
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] text-slate-500 uppercase tracking-wider">Day P&L</span>
+                <span className={`text-[10px] font-bold tabular-nums ${
+                  dailyPnlStatus?.limit_hit ? "text-rose-500 animate-pulse" :
+                  (dailyPnlStatus?.pnl ?? 0) < 0 ? "text-rose-400" :
+                  (dailyPnlStatus?.pnl ?? 0) > 0 ? "text-emerald-400" : "text-slate-400"
+                }`}>
+                  {dailyPnlStatus?.limit_hit ? "🛑 " : ""}
+                  ${(dailyPnlStatus?.pnl ?? 0).toFixed(2)}
+                  {dailyPnlStatus?.daily_loss_limit ? ` / -$${dailyPnlStatus.daily_loss_limit}` : ""}
+                  {dailyPnlStatus?.limit_hit ? " STOPPED" : ""}
                 </span>
               </div>
               {scanData?.bias && (
@@ -1184,6 +1255,35 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles, request
                 </span>
               )}
             </div>
+
+            {/* Daily Loss Limit */}
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-[9px] text-slate-400 whitespace-nowrap">Day Loss Limit $:</label>
+              <input type="number" min={0} max={5000} step={50} value={dailyLossLimitVal}
+                onChange={(e) => { setDailyLossLimitVal(Math.max(0, parseInt(e.target.value) || 0)); }}
+                disabled={autoExec}
+                className="w-20 px-1.5 py-0.5 text-xs font-bold text-center rounded bg-slate-800 border border-slate-700 text-slate-200 disabled:opacity-50" />
+              <button
+                onClick={() => { setDailyLossLimit(dailyLossLimitVal, symbol).catch(() => {}); }}
+                disabled={autoExec}
+                className="px-2 py-0.5 text-[8px] font-bold rounded bg-slate-700 text-slate-300 hover:bg-slate-600 disabled:opacity-50"
+              >
+                Set
+              </button>
+            </div>
+            {dailyPnlStatus && (
+              <div className={`text-center text-[9px] font-bold tabular-nums px-2 py-1 rounded-lg border ${
+                dailyPnlStatus.limit_hit ? "border-rose-600/50 bg-rose-950/30 text-rose-400" :
+                dailyPnlStatus.pnl < 0 ? "border-amber-600/30 bg-amber-950/20 text-amber-400" :
+                dailyPnlStatus.pnl > 0 ? "border-emerald-600/30 bg-emerald-950/20 text-emerald-400" :
+                "border-slate-700/40 bg-slate-900/30 text-slate-400"
+              }`}>
+                {dailyPnlStatus.limit_hit
+                  ? `🛑 STOPPED: Day P&L $${dailyPnlStatus.pnl.toFixed(2)} (${dailyPnlStatus.trades_count} trades)`
+                  : `Day P&L: $${dailyPnlStatus.pnl.toFixed(2)} | ${dailyPnlStatus.trades_count} trades | $${(dailyPnlStatus.remaining ?? 0).toFixed(0)} left`
+                }
+              </div>
+            )}
           </div>
 
           {/* Pending Signal Verification */}

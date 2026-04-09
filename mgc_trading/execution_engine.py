@@ -17,7 +17,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -87,6 +87,10 @@ class ExecutionEngine:
         self._position = PositionInfo()
         self._last_exec_bar: str = ""
         self._execution_log: list[ExecutionRecord] = []
+        # ── Daily P&L tracking ──
+        self._daily_pnl: dict[str, float] = {}       # { "2026-04-10": -150.0, ... }
+        self._daily_trades_log: dict[str, list[dict]] = {}  # per-day trade log
+        self._daily_loss_limit: float = 350.0         # default $350
 
     # ── Read-only state ─────────────────────────────────────────────
 
@@ -155,6 +159,22 @@ class ExecutionEngine:
                     signal=side, entry_price=entry_price,
                     tp_price=tp_price, sl_price=sl_price,
                     status="REJECTED", reason="invalid_tp_sl_direction",
+                    timestamp=ts, qty=qty,
+                )
+
+        # Rule 2b: Daily loss limit — stop trading if exceeded
+        if self._daily_loss_limit > 0:
+            today_pnl = self._daily_pnl.get(str(date.today()), 0.0)
+            if today_pnl <= -self._daily_loss_limit:
+                logger.warning(
+                    "⚠️ DAILY LOSS LIMIT reached ($%.2f / -$%.2f) — BLOCKING new entry",
+                    today_pnl, self._daily_loss_limit,
+                )
+                return ExecutionRecord(
+                    signal=side, entry_price=entry_price,
+                    tp_price=tp_price, sl_price=sl_price,
+                    status="REJECTED",
+                    reason=f"daily_loss_limit (${today_pnl:.2f} / -${self._daily_loss_limit:.0f})",
                     timestamp=ts, qty=qty,
                 )
 
@@ -342,28 +362,55 @@ class ExecutionEngine:
         )
         return record
 
-    def record_exit(self, reason: str = "TP") -> None:
-        """Record position exit (TP hit, SL hit, or manual close)."""
+    def record_exit(self, reason: str = "TP", exit_price: float = 0.0, contract_size: float = 10.0) -> None:
+        """Record position exit (TP hit, SL hit, or manual close).
+
+        If exit_price is provided, computes realized P&L and adds it to daily total.
+        contract_size: dollar value per point (MGC = 10).
+        """
         with self._lock:
             if self._position.state == PositionState.NONE:
                 return
+            pnl = 0.0
+            if exit_price > 0 and self._position.entry_price > 0:
+                if self._position.state == PositionState.LONG:
+                    pnl = (exit_price - self._position.entry_price) * self._position.qty * contract_size
+                else:
+                    pnl = (self._position.entry_price - exit_price) * self._position.qty * contract_size
+                self._record_daily_pnl(pnl, exit_price)
             logger.info(
-                "EXIT RECORDED: %s closed by %s | entry=%.2f",
-                self._position.side, reason, self._position.entry_price,
+                "EXIT RECORDED: %s closed by %s | entry=%.2f exit=%.2f | PnL=$%.2f",
+                self._position.side, reason, self._position.entry_price, exit_price, pnl,
             )
             self._position = PositionInfo()
 
-    def sync_with_broker(self, tiger_qty: int) -> None:
+    def sync_with_broker(self, tiger_qty: int, current_price: float = 0.0, contract_size: float = 10.0) -> None:
         """Sync internal state with actual broker position.
 
         If broker shows 0 but engine thinks we have a position,
-        it means TP or SL was hit — reset state.
+        it means TP or SL was hit — estimate P&L and reset state.
+        current_price: latest market price to estimate exit if available.
         """
         with self._lock:
             if self._position.state != PositionState.NONE and tiger_qty == 0:
+                # Estimate exit price: use TP/SL or current_price
+                exit_price = current_price
+                pnl = 0.0
+                if self._position.entry_price > 0:
+                    if exit_price > 0:
+                        if self._position.state == PositionState.LONG:
+                            pnl = (exit_price - self._position.entry_price) * self._position.qty * contract_size
+                        else:
+                            pnl = (self._position.entry_price - exit_price) * self._position.qty * contract_size
+                    elif self._position.tp_price > 0 and self._position.sl_price > 0:
+                        # No current price — estimate from TP/SL (assume TP if profitable)
+                        # This is a rough estimate; actual PnL recorded by record_exit is more accurate
+                        pass
+                    if pnl != 0.0:
+                        self._record_daily_pnl(pnl, exit_price)
                 logger.info(
-                    "SYNC: Broker shows 0 qty — position closed (was %s @ %.2f)",
-                    self._position.side, self._position.entry_price,
+                    "SYNC: Broker shows 0 qty — position closed (was %s @ %.2f) | estimated PnL=$%.2f",
+                    self._position.side, self._position.entry_price, pnl,
                 )
                 self._position = PositionInfo()
 
@@ -410,9 +457,75 @@ class ExecutionEngine:
             self._last_exec_bar = ""
             logger.warning("FORCE RESET: All state cleared for %s", self.symbol)
 
+    # ── Daily P&L helpers ───────────────────────────────────────────
+
+    def _record_daily_pnl(self, pnl: float, exit_price: float = 0.0) -> None:
+        """Add realized P&L to today's running total. Must be called while lock is held or from locked context."""
+        today = str(date.today())
+        self._daily_pnl[today] = self._daily_pnl.get(today, 0.0) + pnl
+        if today not in self._daily_trades_log:
+            self._daily_trades_log[today] = []
+        self._daily_trades_log[today].append({
+            "side": self._position.side,
+            "entry": self._position.entry_price,
+            "exit": exit_price,
+            "qty": self._position.qty,
+            "pnl": round(pnl, 2),
+            "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+        })
+        logger.info(
+            "DAILY P&L [%s]: trade $%.2f → running total $%.2f (limit -$%.0f)",
+            today, pnl, self._daily_pnl[today], self._daily_loss_limit,
+        )
+
+    def get_daily_pnl(self, day: str | None = None) -> dict:
+        """Return daily P&L summary for today (or specified date)."""
+        today = day or str(date.today())
+        total = self._daily_pnl.get(today, 0.0)
+        trades = self._daily_trades_log.get(today, [])
+        limit_hit = self._daily_loss_limit > 0 and total <= -self._daily_loss_limit
+        return {
+            "date": today,
+            "pnl": round(total, 2),
+            "trades_count": len(trades),
+            "trades": trades,
+            "daily_loss_limit": self._daily_loss_limit,
+            "limit_hit": limit_hit,
+            "remaining": round(self._daily_loss_limit + total, 2) if self._daily_loss_limit > 0 else None,
+        }
+
+    def set_daily_loss_limit(self, limit: float) -> None:
+        """Set the daily loss limit (0 = disabled)."""
+        self._daily_loss_limit = max(0.0, limit)
+        logger.info("Daily loss limit set to $%.2f for %s", self._daily_loss_limit, self.symbol)
+
+    def add_manual_pnl(self, pnl: float) -> None:
+        """Manually add a P&L entry (e.g. from broker sync where exit was detected externally)."""
+        today = str(date.today())
+        self._daily_pnl[today] = self._daily_pnl.get(today, 0.0) + pnl
+        if today not in self._daily_trades_log:
+            self._daily_trades_log[today] = []
+        self._daily_trades_log[today].append({
+            "side": "MANUAL",
+            "entry": 0,
+            "exit": 0,
+            "qty": 0,
+            "pnl": round(pnl, 2),
+            "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+        })
+        logger.info("MANUAL P&L [%s]: $%.2f → total $%.2f", today, pnl, self._daily_pnl[today])
+
+    def reset_daily_pnl(self, day: str | None = None) -> None:
+        """Reset daily P&L for today (or specified date)."""
+        today = day or str(date.today())
+        self._daily_pnl.pop(today, None)
+        self._daily_trades_log.pop(today, None)
+        logger.info("Daily P&L reset for %s", today)
+
     def get_state_summary(self) -> dict:
         """Return current state as a dict for API response."""
         p = self._position
+        daily = self.get_daily_pnl()
         return {
             "current_position": p.state.value,
             "entry_price": p.entry_price,
@@ -423,6 +536,9 @@ class ExecutionEngine:
             "bar_time": p.bar_time,
             "order_id": p.order_id,
             "last_exec_bar": self._last_exec_bar,
+            "daily_pnl": daily["pnl"],
+            "daily_loss_limit": daily["daily_loss_limit"],
+            "daily_limit_hit": daily["limit_hit"],
         }
 
 

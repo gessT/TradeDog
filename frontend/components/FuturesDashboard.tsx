@@ -17,10 +17,9 @@ import Strategy5MinPanel from "./Strategy5MinPanel";
 const CONDITION_KEYS: (keyof Scan5MinConditions)[] = [
   "ema_trend", "ema_slope", "pullback", "breakout", "supertrend",
   "macd_momentum", "rsi_momentum", "volume_spike", "atr_range", "session_ok", "adx_ok",
-  "htf_15m_trend", "htf_15m_supertrend", "htf_1h_trend", "htf_1h_supertrend",
 ];
 const DEFAULT_TOGGLES: Record<string, boolean> = Object.fromEntries(
-  CONDITION_KEYS.map((k) => [k, !["htf_15m_trend", "htf_15m_supertrend", "htf_1h_trend", "htf_1h_supertrend"].includes(k)])
+  CONDITION_KEYS.map((k) => [k, true])
 );
 
 // ═══════════════════════════════════════════════════════════════════════

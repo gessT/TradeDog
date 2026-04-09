@@ -1264,10 +1264,6 @@ export type Scan5MinConditions = {
   smc_ob: boolean;
   smc_fvg: boolean;
   smc_bos: boolean;
-  htf_15m_trend: boolean;
-  htf_15m_supertrend: boolean;
-  htf_1h_trend: boolean;
-  htf_1h_supertrend: boolean;
   mkt_structure: number;  // 1=BULL, -1=BEAR, 0=SIDEWAYS
 };
 
@@ -1326,6 +1322,9 @@ export type EngineState = {
   bar_time: string;
   order_id: string;
   last_exec_bar: string;
+  daily_pnl?: number;
+  daily_loss_limit?: number;
+  daily_limit_hit?: boolean;
 };
 
 export type Execute5MinResponse = {
@@ -1411,6 +1410,45 @@ export async function seedEngine(
   });
   if (!response.ok) throw new Error("Failed to seed engine");
   return response.json();
+}
+
+// ── Daily P&L Tracking & Loss Limit ─────────────────────────────────
+
+export type DailyPnlStatus = {
+  date: string;
+  pnl: number;
+  trades_count: number;
+  trades: Array<{ side: string; entry: number; exit: number; qty: number; pnl: number; time: string }>;
+  daily_loss_limit: number;
+  limit_hit: boolean;
+  remaining: number | null;
+};
+
+export async function getDailyPnl(symbol: string = "MGC"): Promise<DailyPnlStatus> {
+  const res = await fetch(`${API_BASE}/mgc/daily_pnl?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+  if (!res.ok) return { date: "", pnl: 0, trades_count: 0, trades: [], daily_loss_limit: 350, limit_hit: false, remaining: 350 };
+  return (await res.json()) as DailyPnlStatus;
+}
+
+export async function setDailyLossLimit(limit: number, symbol: string = "MGC"): Promise<void> {
+  await fetch(`${API_BASE}/mgc/daily_loss_limit?symbol=${encodeURIComponent(symbol)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ limit }),
+  });
+}
+
+export async function addManualPnl(pnl: number, symbol: string = "MGC"): Promise<DailyPnlStatus> {
+  const res = await fetch(`${API_BASE}/mgc/daily_pnl/add?symbol=${encodeURIComponent(symbol)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pnl }),
+  });
+  return (await res.json()) as DailyPnlStatus;
+}
+
+export async function resetDailyPnl(symbol: string = "MGC"): Promise<void> {
+  await fetch(`${API_BASE}/mgc/daily_pnl/reset?symbol=${encodeURIComponent(symbol)}`, { method: "POST" });
 }
 
 // ── Backtest Live Position (sync auto-trade to backtest) ────────────

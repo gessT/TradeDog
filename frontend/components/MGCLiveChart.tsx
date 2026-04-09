@@ -62,6 +62,38 @@ function PriceBadge({ price, prevPrice }: Readonly<{ price: number; prevPrice: n
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Pivot Point Calculator (Classic Floor Pivots from last N bars)
+// ═══════════════════════════════════════════════════════════════════════
+
+type PivotLevels = {
+  pp: number;   // Pivot Point
+  r1: number;   // Resistance 1
+  r2: number;   // Resistance 2
+  s1: number;   // Support 1
+  s2: number;   // Support 2
+};
+
+function calcPivots(candles: { high: number; low: number; close: number }[], lookback: number = 40): PivotLevels | null {
+  if (candles.length < 2) return null;
+  const n = Math.min(lookback, candles.length - 1); // exclude current forming bar
+  const slice = candles.slice(-n - 1, -1); // last N completed bars
+  let high = -Infinity, low = Infinity;
+  const lastClose = slice[slice.length - 1].close;
+  for (const c of slice) {
+    if (c.high > high) high = c.high;
+    if (c.low < low) low = c.low;
+  }
+  const pp = (high + low + lastClose) / 3;
+  return {
+    pp,
+    r1: 2 * pp - low,
+    r2: pp + (high - low),
+    s1: 2 * pp - high,
+    s2: pp - (high - low),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -74,9 +106,10 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
   const [prevPrice, setPrevPrice] = useState(0);
   const [lastUpdate, setLastUpdate] = useState("");
   const [showMarkers, setShowMarkers] = useState(false);
+  const [showPivots, setShowPivots] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<{ candle: any; vol: any; emaF: any; emaS: any; markersHandle: any } | null>(null);
+  const seriesRef = useRef<{ candle: any; vol: any; emaF: any; emaS: any; markersHandle: any; pivotLines: any[] } | null>(null);
   const timerRef = useRef<ReturnType<typeof globalThis.setInterval> | null>(null);
   const initialRangeSet = useRef(false);
 
@@ -154,7 +187,7 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
     const emaF = chart.addSeries(LineSeries, { color: "#38bdf8", lineWidth: 1, priceLineVisible: false });
     const emaS = chart.addSeries(LineSeries, { color: "#f97316", lineWidth: 1, priceLineVisible: false });
 
-    seriesRef.current = { candle: candleSeries, vol: volSeries, emaF, emaS, markersHandle: null };
+    seriesRef.current = { candle: candleSeries, vol: volSeries, emaF, emaS, markersHandle: null, pivotLines: [] };
 
     const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
     ro.observe(el);
@@ -204,6 +237,55 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
       initialRangeSet.current = true;
     }
   }, [data]);
+
+  // ── Pivot lines ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!data || data.candles.length < 5 || !seriesRef.current || !chartRef.current) return;
+    const chart = chartRef.current;
+    const sr = seriesRef.current;
+
+    // Remove old pivot series
+    for (const s of sr.pivotLines) {
+      try { chart.removeSeries(s); } catch { /* already removed */ }
+    }
+    sr.pivotLines = [];
+
+    if (!showPivots) return;
+
+    const pivots = calcPivots(data.candles, 40);
+    if (!pivots) return;
+
+    // Draw each pivot level as a horizontal line across last 50 bars
+    const candleCount = data.candles.length;
+    const startIdx = Math.max(0, candleCount - 50);
+    const startTime = toLocal(data.candles[startIdx].time / 1000);
+    const endTime = toLocal(data.candles[candleCount - 1].time / 1000);
+
+    const levels: { price: number; color: string; label: string }[] = [
+      { price: pivots.r2, color: "#ef4444", label: "R2" },
+      { price: pivots.r1, color: "#fb923c", label: "R1" },
+      { price: pivots.pp, color: "#fbbf24", label: "PP" },
+      { price: pivots.s1, color: "#34d399", label: "S1" },
+      { price: pivots.s2, color: "#22c55e", label: "S2" },
+    ];
+
+    for (const lvl of levels) {
+      const series = chart.addSeries(LineSeries, {
+        color: lvl.color,
+        lineWidth: 1,
+        lineStyle: 2, // dashed
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: lvl.label,
+        crosshairMarkerVisible: false,
+      });
+      series.setData([
+        { time: startTime, value: lvl.price },
+        { time: endTime, value: lvl.price },
+      ]);
+      sr.pivotLines.push(series);
+    }
+  }, [data, showPivots]);
 
   // ── Update markers when trades or toggle changes ───────────────
   useEffect(() => {
@@ -334,6 +416,18 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
             {showMarkers ? "⚑ Trades" : "⚐ Trades"}
           </button>
         )}
+
+        {/* Pivot lines toggle */}
+        <button
+          onClick={() => setShowPivots((v) => !v)}
+          className={`px-2 py-0.5 text-[10px] font-bold rounded-md border transition ${
+            showPivots
+              ? "border-amber-500/50 bg-amber-500/10 text-amber-400"
+              : "border-slate-700 bg-slate-800 text-slate-500 hover:text-slate-300"
+          }`}
+        >
+          {showPivots ? "◆ Pivots" : "◇ Pivots"}
+        </button>
 
         {/* Manual refresh */}
         <button
