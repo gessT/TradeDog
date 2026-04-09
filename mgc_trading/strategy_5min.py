@@ -71,6 +71,9 @@ DEFAULT_5MIN_PARAMS: dict = {
     "skip_counter_trend": True,
     # Skip flat/sideways market structure
     "skip_flat": False,
+    # EMA cross exit — cut loss when close crosses EMA (against position)
+    "use_ema_exit": False,
+    "ema_exit_period": 28,
     # Higher TF OFF (999 disables)
     "htf_ema_period": 999,
     # Cooldown OFF
@@ -165,6 +168,9 @@ class MGCStrategy5Min:
         df["mkt_structure"] = ind5.market_structure(
             df["high"], df["low"], c, lookback=100, swing_order=3,
         )
+
+        # EMA for exit signal (cut loss on cross)
+        df["ema_exit"] = ind.ema(c, p.get("ema_exit_period", 28))
 
         return df
 

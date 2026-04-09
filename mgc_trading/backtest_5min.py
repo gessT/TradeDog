@@ -271,7 +271,43 @@ class Backtester5Min:
                     hit_sl = bar["high"] >= sl
                     hit_tp = bar["low"] <= tp
 
-                if hit_sl:
+                # ── EMA cross exit: close crossing EMA = cut loss ───
+                hit_ema_exit = False
+                if params.get("use_ema_exit") and "ema_exit" in bar.index:
+                    ema_val = float(bar["ema_exit"])
+                    bar_close = float(bar["close"])
+                    if not (ema_val != ema_val):  # not NaN
+                        if direction == 1 and bar_close < ema_val:
+                            hit_ema_exit = True
+                        elif direction == -1 and bar_close > ema_val:
+                            hit_ema_exit = True
+
+                if hit_ema_exit and not hit_sl and not hit_tp:
+                    exit_price = float(bar["close"])
+                    pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                    pnl_pct = pnl / (self.initial_capital or 1) * 100
+                    equity += pnl
+                    trades.append(Trade5Min(
+                        entry_time=position["entry_time"],
+                        exit_time=bar.name,
+                        entry_price=position["entry_price"],
+                        exit_price=round(exit_price, 2),
+                        qty=position["qty"],
+                        pnl=round(pnl, 2),
+                        pnl_pct=round(pnl_pct, 2),
+                        reason="EMA_EXIT",
+                        signal_type=position.get("signal_type", ""),
+                        direction="CALL" if direction == 1 else "PUT",
+                        mae=round(worst_unrealized, 2),
+                        mkt_structure=position.get("mkt_structure", 0),
+                        sl=round(sl, 2),
+                        tp=round(position["tp"], 2),
+                    ))
+                    consec_losses = consec_losses + 1 if pnl < 0 else 0
+                    position = None
+                    worst_unrealized = 0.0
+
+                elif hit_sl:
                     exit_price = sl
                     pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
                     pnl_pct = pnl / (self.initial_capital or 1) * 100

@@ -446,6 +446,7 @@ const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m
 const RISK_FILTER_DEFS: { key: string; label: string; desc: string; default: boolean }[] = [
   { key: "skip_counter_trend", label: "No Counter-Trend", desc: "Block CALL in BEAR market structure and PUT in BULL. Eliminates low-WR counter-trend trades.", default: true },
   { key: "skip_flat", label: "Skip Sideways", desc: "Skip entries when market structure is flat/sideways (no clear HH/HL or LH/LL pattern).", default: false },
+  { key: "use_ema_exit", label: "EMA 28 Exit", desc: "Cut loss when candle close crosses EMA 28 against your position (long: close < EMA, short: close > EMA).", default: false },
 ];
 
 const DEFAULT_RISK_FILTERS: Record<string, boolean> = Object.fromEntries(
@@ -1240,7 +1241,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
       const disabled = CONDITION_DEFS
         .filter((d) => d.group === "5m" && !conditionToggles[d.key])
         .map((d) => d.key);
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false);
       setBtData(res);
       onTradesUpdate?.(res.trades);
       // Auto-start scanner:
@@ -1361,7 +1362,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
               const disabled = CONDITION_DEFS
                 .filter((d) => d.group === "5m" && !conditionToggles[d.key])
                 .map((d) => d.key);
-              const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true);
+              const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false);
               if (cancelled) return;
               setBtData(res);
               onTradesUpdate?.(res.trades);
