@@ -5,6 +5,15 @@ Micro Gold Futures (MGC) automated trading system settings.
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from project root so os.getenv() picks up all values
+_root = Path(__file__).resolve().parent.parent
+load_dotenv(_root / ".env")
+
 # ═══════════════════════════════════════════════════════════════════════
 # Contract Specifications
 # ═══════════════════════════════════════════════════════════════════════
@@ -63,12 +72,12 @@ DEFAULT_INTERVAL = "15m"     # 15-minute bars
 DATA_PERIOD = "60d"          # Max intraday history from yfinance
 
 # ═══════════════════════════════════════════════════════════════════════
-# Tiger Open API  (fill in before live / demo trading)
+# Tiger Open API  (read from .env — never hardcode secrets)
 # ═══════════════════════════════════════════════════════════════════════
-TIGER_ID = "20158240"                # Your Tiger developer ID
-TIGER_PRIVATE_KEY = "mgc_trading/tiger_private.pem"  # RSA private-key PEM file
-TIGER_ACCOUNT = "21216597850872657"           # Trading account number
-TIGER_IS_SANDBOX = False     # sandbox_debug deprecated in newer SDK
+TIGER_ID = os.getenv("TIGER_ID", "")
+TIGER_PRIVATE_KEY = os.getenv("TIGER_PRIVATE_KEY", "mgc_trading/tiger_private.pem")
+TIGER_ACCOUNT = os.getenv("TIGER_ACCOUNT", "")
+TIGER_IS_SANDBOX = False
 
 # ═══════════════════════════════════════════════════════════════════════
 # Webhook Server

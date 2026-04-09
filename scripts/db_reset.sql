@@ -1,9 +1,10 @@
 -- ═══════════════════════════════════════════════════════════════════════
 -- TradeDog — Database Cleanup & Reset
 -- ═══════════════════════════════════════════════════════════════════════
--- Target: PostgreSQL
--- Tables: backtest_trades, trading_signals, stock_snapshots,
---         stock_preferences, condition_preferences, logic_preferences
+-- Target: PostgreSQL (Neon)
+-- Tables: backtest_trades, stock_preferences, condition_preferences,
+--         logic_preferences, auto_trade_settings, strategy_configs,
+--         starred_stocks
 -- Safety: Wrapped in transaction, rollback on failure
 -- ═══════════════════════════════════════════════════════════════════════
 
@@ -11,12 +12,13 @@ BEGIN;
 
 -- 1. Truncate all tables (RESTART IDENTITY resets auto-increment sequences)
 --    CASCADE handles any future FK constraints.
-TRUNCATE TABLE backtest_trades    RESTART IDENTITY CASCADE;
-TRUNCATE TABLE trading_signals    RESTART IDENTITY CASCADE;
-TRUNCATE TABLE stock_snapshots    RESTART IDENTITY CASCADE;
-TRUNCATE TABLE stock_preferences  CASCADE;
+TRUNCATE TABLE backtest_trades       RESTART IDENTITY CASCADE;
+TRUNCATE TABLE stock_preferences     CASCADE;
 TRUNCATE TABLE condition_preferences CASCADE;
-TRUNCATE TABLE logic_preferences  CASCADE;
+TRUNCATE TABLE logic_preferences     CASCADE;
+TRUNCATE TABLE auto_trade_settings   CASCADE;
+TRUNCATE TABLE strategy_configs      CASCADE;
+TRUNCATE TABLE starred_stocks        RESTART IDENTITY CASCADE;
 
 -- 2. Seed default stock_preferences (system config)
 INSERT INTO stock_preferences (key, value) VALUES

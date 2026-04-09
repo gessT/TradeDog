@@ -2592,7 +2592,7 @@ async def mgc_trade_log_5min(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 5-Minute Condition Preferences (persisted in SQLite)
+# 5-Minute Condition Preferences (persisted in PostgreSQL)
 # ═══════════════════════════════════════════════════════════════════════
 
 # Valid 5min condition keys
@@ -2740,7 +2740,7 @@ def delete_5min_condition_preset(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Auto-Trade Settings (verify lock, qty — persisted in SQLite)
+# Auto-Trade Settings (verify lock, qty — persisted in PostgreSQL)
 # ═══════════════════════════════════════════════════════════════════════
 
 class AutoTradeSettingsPayload(BaseModel):

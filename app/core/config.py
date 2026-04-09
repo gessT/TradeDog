@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
     debug: bool = False
     database_url: str = Field(
-        default="postgresql+psycopg2://user:pass@db/trading",
+        default="postgresql+psycopg2://user:pass@localhost/neondb?sslmode=require",
         validation_alias=AliasChoices("DATABASE_URL", "DATABSE_URL"),
     )
     allowed_origins: list[str] = Field(default_factory=lambda: ["*"])
@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     signal_channel: str = "tradingview_signals"
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+
+    # Tiger Open API
+    tiger_id: str = ""
+    tiger_account: str = ""
+    tiger_private_key: str = "mgc_trading/tiger_private.pem"
 
     model_config = SettingsConfigDict(
         env_file=".env",

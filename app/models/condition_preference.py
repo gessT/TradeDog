@@ -19,7 +19,7 @@ class ConditionPreset(Base):
 
     symbol: Mapped[str] = mapped_column(String(16), primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(64), primary_key=True)
-    toggles: Mapped[str] = mapped_column(Text, nullable=False)  # JSON string of toggles
+    toggles: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
 
