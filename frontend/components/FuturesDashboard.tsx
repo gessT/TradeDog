@@ -68,7 +68,7 @@ export default function FuturesDashboard() {
   }, [conditionToggles, selectedSymbol]);
 
   // ── Auto-trade trigger from backtest panel ──────────────────
-  const [requestAutoTrade, setRequestAutoTrade] = useState(false);  const [tradeExecutedTick, setTradeExecutedTick] = useState(0);
+  const [tradeExecutedTick, setTradeExecutedTick] = useState(0);
   // ── Trade click → scroll chart to candle ─────────────────────
   const handleTradeClick5Min = useCallback((t: MGC5MinTrade) => {
     const ts = Math.floor(new Date(t.entry_time).getTime() / 1000);
@@ -111,14 +111,14 @@ export default function FuturesDashboard() {
       {/* COL 2 — 5min Strategy Workspace                              */}
       {/* ═══════════════════════════════════════════════════════════════ */}
       <section className="w-full md:w-1/3 overflow-y-auto border-r border-slate-800/60">
-        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} onTradesUpdate={setBacktestTrades} onRequestAutoTrade={() => setRequestAutoTrade(true)} onDirectExecute={() => setTradeExecutedTick((n) => n + 1)} tradeExecutedTick={tradeExecutedTick} symbol={selectedSymbol} symbolName={selectedName} conditionToggles={conditionToggles} setConditionToggles={setConditionToggles} />
+        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} onTradesUpdate={setBacktestTrades} onDirectExecute={() => setTradeExecutedTick((n) => n + 1)} tradeExecutedTick={tradeExecutedTick} symbol={selectedSymbol} symbolName={selectedName} conditionToggles={conditionToggles} setConditionToggles={setConditionToggles} />
       </section>
 
       {/* ═══════════════════════════════════════════════════════════════ */}
       {/* COL 3 — Account / Trade panel                                */}
       {/* ═══════════════════════════════════════════════════════════════ */}
       <section className="hidden md:flex md:w-1/3 flex-col overflow-y-auto bg-slate-900/40">
-        <ScanTradePanel symbol={selectedSymbol} conditionToggles={conditionToggles} requestAutoTrade={requestAutoTrade} onAutoTradeAck={() => setRequestAutoTrade(false)} onTradeExecuted={() => setTradeExecutedTick((n) => n + 1)} />
+        <ScanTradePanel symbol={selectedSymbol} conditionToggles={conditionToggles} onTradeExecuted={() => setTradeExecutedTick((n) => n + 1)} />
       </section>
 
     </div>

@@ -680,6 +680,7 @@ class Backtester5Min:
                     "entry_atr": atr_val,
                     "be_triggered": False,
                     "direction": direction,
+                    "signal_close": float(prev["close"]),  # scanner uses this as entry
                 }
                 extreme_since_entry = entry_price
                 daily_counts[bar_date] = daily_counts.get(bar_date, 0) + 1
@@ -687,11 +688,23 @@ class Backtester5Min:
         # Return open position (do NOT force-close)
         if position is None:
             return None
+
+        # Compute scanner-consistent SL/TP using signal bar's close (not next bar's open)
+        sig_close = position.get("signal_close", position["entry_price"])
+        atr = position["entry_atr"]
+        d = position["direction"]
+        if d == 1:
+            scanner_sl = sig_close - full_params["atr_sl_mult"] * atr
+            scanner_tp = sig_close + full_params["atr_tp_mult"] * atr
+        else:
+            scanner_sl = sig_close + full_params["atr_sl_mult"] * atr
+            scanner_tp = sig_close - full_params["atr_tp_mult"] * atr
+
         return {
-            "direction": "CALL" if position["direction"] == 1 else "PUT",
-            "entry_price": round(position["entry_price"], 2),
-            "sl": round(position["sl"], 2),
-            "tp": round(position["tp"], 2),
+            "direction": "CALL" if d == 1 else "PUT",
+            "entry_price": round(sig_close, 2),
+            "sl": round(scanner_sl, 2),
+            "tp": round(scanner_tp, 2),
             "qty": position["qty"],
             "entry_time": str(position["entry_time"]),
             "signal_type": position.get("signal_type", ""),

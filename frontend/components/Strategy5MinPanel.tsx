@@ -15,7 +15,7 @@ import { fmtDateTimeSGT, fmtInputDateSGT, SGT_OFFSET_SEC, toSGT } from "../utils
 import TradeDetailDialog from "./strategy5min/TradeDetailDialog";
 import HoldingMiniChart from "./strategy5min/HoldingMiniChart";
 import OptimizationDialog from "./strategy5min/OptimizationDialog";
-import AutoTradeConfirmDialog from "./strategy5min/AutoTradeConfirmDialog";
+import ResultDialog from "./strategy5min/ResultDialog";
 import {
   fetchMGC5MinBacktest,
   fetchLivePrice,
@@ -220,9 +220,11 @@ function TradeRow5Min({ t, idx, onTradeClick, livePrice }: Readonly<{ t: MGC5Min
   const pipDiff = n(t.exit_price) - n(t.entry_price);
   const pipAbs = Math.abs(pipDiff);
 
-  // Live P&L for open trades
+  // Live P&L for open trades (in dollars: price diff × qty × contract_size)
   const isLong = t.direction !== "PUT";
-  const unrealPnl = isOpen && livePrice != null ? (isLong ? livePrice - n(t.entry_price) : n(t.entry_price) - livePrice) : null;
+  const unrealPnl = isOpen && livePrice != null
+    ? (isLong ? livePrice - n(t.entry_price) : n(t.entry_price) - livePrice) * n(t.qty) * 10
+    : null;
 
   return (
     <tr
@@ -367,8 +369,21 @@ function TradeLogByDate({ trades, onTradeClick, livePrice }: Readonly<{ trades: 
           <tbody>
             {grouped.map(([date, dayTrades]) => {
               const open = !!expanded[date];
-              const dayPnl = dayTrades.reduce((s, t) => s + n(t.pnl), 0);
-              const wins = dayTrades.filter((t) => t.pnl >= 0).length;
+              const dayPnl = dayTrades.reduce((s, t) => {
+                if (t.reason === "OPEN" && livePrice != null) {
+                  const isLong = t.direction !== "PUT";
+                  const unreal = (isLong ? livePrice - n(t.entry_price) : n(t.entry_price) - livePrice) * n(t.qty) * 10;
+                  return s + unreal;
+                }
+                return s + n(t.pnl);
+              }, 0);
+              const wins = dayTrades.filter((t) => {
+                if (t.reason === "OPEN" && livePrice != null) {
+                  const isLong = t.direction !== "PUT";
+                  return isLong ? livePrice >= n(t.entry_price) : livePrice <= n(t.entry_price);
+                }
+                return t.pnl >= 0;
+              }).length;
               const wr = dayTrades.length ? Math.round((wins / dayTrades.length) * 100) : 0;
               return (
                 <tr key={date}><td colSpan={11} className="p-0">
@@ -1180,7 +1195,7 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequestAutoTrade, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onRequestAutoTrade?: () => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
+export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
   const [showExam, setShowExam] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1291,9 +1306,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
   );
 
   // ── Backtest ──────────────────────────────────────────
-  const [autoTradeRequested, setAutoTradeRequested] = useState(false);
-  const [showAutoTradeConfirm, setShowAutoTradeConfirm] = useState(false);
-  const [autoTradeLocked, setAutoTradeLocked] = useState(false);
+  const [showResultDialog, setShowResultDialog] = useState(false);
 
   const runBacktest = useCallback(async () => {
     setLoading(true);
@@ -1311,9 +1324,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
       const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, riskFilters.use_structure_exit ?? false);
       setBtData(res);
       onTradesUpdate?.(res.trades);
-      // Show confirmation dialog instead of auto-starting scanner
+      // Show result dialog with SYNC booking
       if (res.metrics) {
-        setShowAutoTradeConfirm(true);
+        setShowResultDialog(true);
       }
       // Cache result so page refresh doesn't re-run
       try {
@@ -1452,23 +1465,19 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                       setExitStatus(`✅ ${np.direction === "PUT" ? "SHORT" : "LONG"} @ $${np.entry_price} | SL $${np.sl} TP $${np.tp}`);
                       onDirectExecute?.();
                     } else {
-                      setExitStatus(`❌ Execute failed — falling back to scanner`);
-                      onRequestAutoTrade?.();
+                      setExitStatus(`❌ Execute failed`);
                     }
                   } else {
                     setExitStatus(`📊 Tiger already in position (${curQty} qty) — skipped`);
                   }
                 } catch {
-                  setExitStatus(`⚠️ Direct execute failed — starting scanner`);
-                  onRequestAutoTrade?.();
+                  setExitStatus(`⚠️ Direct execute failed`);
                 }
               } else {
-                setExitStatus(`${reason} HIT — no new position, scanning…`);
-                onRequestAutoTrade?.();
+                setExitStatus(`${reason} HIT — no new position`);
               }
             } catch {
-              setExitStatus(`⚠️ Backtest failed — starting scanner`);
-              onRequestAutoTrade?.();
+              setExitStatus(`⚠️ Backtest failed`);
             }
             setTimeout(() => setExitStatus(null), 5000);
           }
@@ -1573,17 +1582,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
         </div>
       )}
 
-      {/* ── Auto-trade triggered banner ──────────────────── */}
-      {autoTradeRequested && !btData?.open_position && (
-        <div className="mx-3 mt-2 rounded-lg border border-emerald-500/40 bg-emerald-950/30 px-3 py-2 text-[10px] text-emerald-400 font-bold animate-pulse">
-          🚀 No open position — Auto-scanner started to find next opportunity →
-        </div>
-      )}
-      {autoTradeRequested && btData?.open_position && (
-        <div className="mx-3 mt-2 rounded-lg border border-blue-500/40 bg-blue-950/30 px-3 py-2 text-[10px] text-blue-400 font-bold animate-pulse">
-          🔄 Syncing to Tiger — {btData.open_position.direction === "PUT" ? "SHORT" : "LONG"} @ ${btData.open_position.entry_price} | SL ${btData.open_position.sl} · TP {btData.open_position.tp} →
-        </div>
-      )}
       {/* ── Exit + re-entry status ──────────────────── */}
       {exitStatus && (
         <div className="mx-3 mt-2 rounded-lg border border-amber-500/40 bg-amber-950/20 px-3 py-2 text-[10px] text-amber-400 font-bold animate-pulse">
@@ -1594,15 +1592,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
       {/* ═════════════════════════════════════════════════════ */}
       {/* Backtest Conditions                                   */}
       {/* ═════════════════════════════════════════════════════ */}
-      {autoTradeLocked && (
-        <div className="mx-3 mt-2 rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-1.5 flex items-center justify-between">
-          <span className="text-[9px] font-bold text-emerald-400">🔒 Auto-Trade ACTIVE — params locked</span>
-          <button
-            onClick={() => setAutoTradeLocked(false)}
-            className="text-[9px] font-bold text-rose-400 hover:text-rose-300 transition"
-          >Unlock</button>
-        </div>
-      )}
       {(() => {
         const enabledCount = Object.values(conditionToggles).filter(Boolean).length;
         return (
@@ -1653,8 +1642,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                           return (
                             <button
                               key={def.key}
-                              onClick={() => { if (!autoTradeLocked) setConditionToggles((prev) => ({ ...prev, [def.key]: !prev[def.key] })); }}
-                              className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${autoTradeLocked ? "cursor-not-allowed opacity-60" : ""} ${
+                              onClick={() => { setConditionToggles((prev) => ({ ...prev, [def.key]: !prev[def.key] })); }}
+                              className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
                                 on ? `border border-${groupColor}-700/40 bg-${groupColor}-950/20` : "border border-slate-800/30 bg-slate-900/30 opacity-50"
                               }`}
                             >
@@ -1847,8 +1836,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                 <input
                   type="range" min="1" max="6" step="1" value={slMult}
                   onChange={(e) => setSlMult(parseInt(e.target.value))}
-                  disabled={autoTradeLocked}
-                  className={`w-14 h-1 accent-rose-500 ${autoTradeLocked ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+                  disabled={false}
+                  className={`w-14 h-1 accent-rose-500 cursor-pointer`}
                 />
                 <span className="text-slate-400 tabular-nums w-8">{slMult}×</span>
               </label>
@@ -1857,8 +1846,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                 <input
                   type="range" min="1" max="6" step="1" value={tpMult}
                   onChange={(e) => setTpMult(parseInt(e.target.value))}
-                  disabled={autoTradeLocked}
-                  className={`w-14 h-1 accent-emerald-500 ${autoTradeLocked ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+                  disabled={false}
+                  className={`w-14 h-1 accent-emerald-500 cursor-pointer`}
                 />
                 <span className="text-slate-400 tabular-nums w-8">{tpMult}×</span>
               </label>
@@ -2079,25 +2068,19 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
         />
       )}
       {/* ═════════════════════════════════════════════════════ */}
-      {/* AUTO-TRADE CONFIRMATION DIALOG                       */}
+      {/* RESULT DIALOG (with SYNC booking)                  */}
       {/* ═════════════════════════════════════════════════════ */}
-      {showAutoTradeConfirm && btData?.metrics && (
-        <AutoTradeConfirmDialog
-          metrics={btData.metrics}
+      {showResultDialog && btData && (
+        <ResultDialog
+          btData={btData}
+          symbol={symbol}
+          symbolName={symbolName}
           period={period}
           slMult={slMult}
           tpMult={tpMult}
-          hasOpenPosition={!!btData.open_position}
-          onConfirm={() => {
-            setShowAutoTradeConfirm(false);
-            setAutoTradeLocked(true);
-            onRequestAutoTrade?.();
-            if (!btData.open_position) {
-              setAutoTradeRequested(true);
-              setTimeout(() => setAutoTradeRequested(false), 3000);
-            }
-          }}
-          onCancel={() => setShowAutoTradeConfirm(false)}
+          onClose={() => setShowResultDialog(false)}
+          onTradeClick={onTradeClick}
+          onSynced={() => onDirectExecute?.()}
         />
       )}
       {/* ═════════════════════════════════════════════════════ */}
