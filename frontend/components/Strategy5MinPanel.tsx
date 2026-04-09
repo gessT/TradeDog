@@ -442,6 +442,16 @@ const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m
   // mkt_structure removed from CONDITION_DEFS — it's a display-only analysis widget, not a gate
 ];
 
+/** Risk filter toggles — separate from condition gates. These are boolean query params. */
+const RISK_FILTER_DEFS: { key: string; label: string; desc: string; default: boolean }[] = [
+  { key: "skip_counter_trend", label: "No Counter-Trend", desc: "Block CALL in BEAR market structure and PUT in BULL. Eliminates low-WR counter-trend trades.", default: true },
+  { key: "skip_flat", label: "Skip Sideways", desc: "Skip entries when market structure is flat/sideways (no clear HH/HL or LH/LL pattern).", default: false },
+];
+
+const DEFAULT_RISK_FILTERS: Record<string, boolean> = Object.fromEntries(
+  RISK_FILTER_DEFS.map((d) => [d.key, d.default])
+);
+
 /** Default: all core 5m conditions ON, HTF optional off */
 const DEFAULT_CONDITION_TOGGLES: Record<string, boolean> = Object.fromEntries(
   CONDITION_DEFS.map((d) => [d.key, d.group === "5m"])
@@ -1195,6 +1205,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
 
   const [conditionsOpen, setConditionsOpen] = useState(false);
 
+  // Risk filters (skip_counter_trend, skip_flat) — separate from condition gates
+  const [riskFilters, setRiskFilters] = useState<Record<string, boolean>>({ ...DEFAULT_RISK_FILTERS });
+
   // ── Condition optimization ──────────────
   const [optimizationResults, setOptimizationResults] = useState<ConditionOptimizationResult[]>([]);
   const [optimizing, setOptimizing] = useState(false);
@@ -1207,8 +1220,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
 
   // ── Config key for cache ──
   const configKey = useMemo(
-    () => JSON.stringify({ symbol, period, slMult, tpMult, dateFrom, dateTo, conditionToggles }),
-    [symbol, period, slMult, tpMult, dateFrom, dateTo, conditionToggles]
+    () => JSON.stringify({ symbol, period, slMult, tpMult, dateFrom, dateTo, conditionToggles, riskFilters }),
+    [symbol, period, slMult, tpMult, dateFrom, dateTo, conditionToggles, riskFilters]
   );
 
   // ── Backtest ──────────────────────────────────────────
@@ -1227,7 +1240,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
       const disabled = CONDITION_DEFS
         .filter((d) => d.group === "5m" && !conditionToggles[d.key])
         .map((d) => d.key);
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true);
       setBtData(res);
       onTradesUpdate?.(res.trades);
       // Auto-start scanner:
@@ -1247,7 +1260,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
     } finally {
       setLoading(false);
     }
-  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, configKey]);
+  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, riskFilters, configKey]);
 
   // ── Restore cached backtest on mount (never auto-run) ──
   useEffect(() => {
@@ -1348,7 +1361,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
               const disabled = CONDITION_DEFS
                 .filter((d) => d.group === "5m" && !conditionToggles[d.key])
                 .map((d) => d.key);
-              const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined);
+              const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true);
               if (cancelled) return;
               setBtData(res);
               onTradesUpdate?.(res.trades);
@@ -1394,7 +1407,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
     poll(); // immediate first fetch
     const timer = setInterval(poll, 2000); // poll every 2 seconds (fast)
     return () => { cancelled = true; clearInterval(timer); };
-  }, [btData?.open_position, symbol, period, slMult, tpMult, conditionToggles, configKey]);
+  }, [btData?.open_position, symbol, period, slMult, tpMult, conditionToggles, riskFilters, configKey]);
 
   // ── Condition optimization ───────────────────────────
   const runConditionOptimization = useCallback(async () => {
@@ -1552,6 +1565,36 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                     </div>
                   );
                 })}
+
+                {/* Risk Filters — separate boolean params */}
+                <div className="mt-2 pt-2 border-t border-slate-800/40">
+                  <p className="text-[8px] text-rose-500/70 uppercase tracking-wider">Risk Filters</p>
+                  <div className="grid grid-cols-2 gap-1">
+                    {RISK_FILTER_DEFS.map((def) => {
+                      const on = riskFilters[def.key] ?? def.default;
+                      return (
+                        <button
+                          key={def.key}
+                          onClick={() => setRiskFilters((prev) => ({ ...prev, [def.key]: !prev[def.key] }))}
+                          className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
+                            on ? "border border-rose-700/40 bg-rose-950/20" : "border border-slate-800/30 bg-slate-900/30 opacity-50"
+                          }`}
+                        >
+                          <span className={`w-3 h-3 rounded-sm flex items-center justify-center text-[7px] font-bold ${
+                            on ? "bg-rose-600 text-white" : "bg-slate-800 text-slate-600"
+                          }`}>
+                            {on ? "✓" : "—"}
+                          </span>
+                          <span className={on ? "text-rose-300" : "text-slate-600"}>{def.label}</span>
+                          <span className="relative ml-auto group/tip">
+                            <svg className="w-3 h-3 text-slate-500 hover:text-rose-300 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 16v0m0-8a2.5 2.5 0 011.5 4.5L12 14"/></svg>
+                            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/tip:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">{def.desc}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -1641,38 +1684,62 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
               {/* Metrics — single compact row */}
               <div className="flex gap-1 items-stretch">
                 {/* Highlighted key metrics */}
-                <div className="flex-1 rounded-md border border-cyan-700/40 bg-cyan-950/15 px-2 py-1 text-center">
-                  <div className="text-[7px] text-cyan-500/70 uppercase">WR</div>
+                <div className="flex-1 rounded-md border border-cyan-700/40 bg-cyan-950/15 px-2 py-1 text-center relative group/wr">
+                  <div className="text-[7px] text-cyan-500/70 uppercase cursor-help">WR</div>
                   <div className={`text-xs font-bold tabular-nums ${winRateColor(m.win_rate)}`}>{n(m.win_rate).toFixed(1)}%</div>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/wr:block w-44 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
+                    <b className="text-cyan-400">Win Rate</b> — Percentage of trades that were profitable. Above 55% is good, 60%+ is strong.
+                  </div>
                 </div>
-                <div className="flex-1 rounded-md border border-cyan-700/40 bg-cyan-950/15 px-2 py-1 text-center">
-                  <div className="text-[7px] text-cyan-500/70 uppercase">Return</div>
+                <div className="flex-1 rounded-md border border-cyan-700/40 bg-cyan-950/15 px-2 py-1 text-center relative group/ret">
+                  <div className="text-[7px] text-cyan-500/70 uppercase cursor-help">Return</div>
                   <div className={`text-xs font-bold tabular-nums ${m.total_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{m.total_return_pct >= 0 ? "+" : ""}{n(m.total_return_pct).toFixed(2)}%</div>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/ret:block w-44 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
+                    <b className="text-emerald-400">Total Return</b> — Net profit as % of initial capital ($50K). Higher is better.
+                  </div>
                 </div>
-                <div className="flex-1 rounded-md border border-rose-700/40 bg-rose-950/15 px-2 py-1 text-center">
-                  <div className="text-[7px] text-rose-500/70 uppercase">Max DD</div>
+                <div className="flex-1 rounded-md border border-rose-700/40 bg-rose-950/15 px-2 py-1 text-center relative group/dd">
+                  <div className="text-[7px] text-rose-500/70 uppercase cursor-help">Max DD</div>
                   <div className="text-xs font-bold tabular-nums text-rose-400">{n(m.max_drawdown_pct).toFixed(2)}%</div>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/dd:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
+                    <b className="text-rose-400">Max Drawdown</b> — Largest peak-to-trough equity drop. Your worst losing streak. Below 10% is safe, above 20% is risky.
+                  </div>
                 </div>
                 {/* Secondary metrics */}
-                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center">
-                  <div className="text-[7px] text-slate-600 uppercase">Sharpe</div>
+                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center relative group/sh">
+                  <div className="text-[7px] text-slate-600 uppercase cursor-help">Sharpe</div>
                   <div className={`text-xs font-bold tabular-nums ${m.sharpe_ratio >= 1 ? "text-emerald-400" : "text-slate-300"}`}>{n(m.sharpe_ratio).toFixed(2)}</div>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/sh:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
+                    <b className="text-cyan-400">Sharpe Ratio</b> — Return per unit of risk. &lt;0.5 poor, 0.5–1.0 okay, 1.0–2.0 good, &gt;2.0 excellent.
+                  </div>
                 </div>
-                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center">
-                  <div className="text-[7px] text-slate-600 uppercase">Trades</div>
+                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center relative group/tr">
+                  <div className="text-[7px] text-slate-600 uppercase cursor-help">Trades</div>
                   <div className="text-xs font-bold tabular-nums text-slate-200">{m.total_trades}</div>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/tr:block w-40 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
+                    <b className="text-slate-200">Total Trades</b> — Number of completed trades in the backtest period.
+                  </div>
                 </div>
-                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center">
-                  <div className="text-[7px] text-slate-600 uppercase">W/L</div>
+                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center relative group/wl">
+                  <div className="text-[7px] text-slate-600 uppercase cursor-help">W/L</div>
                   <div className="text-xs font-bold tabular-nums text-slate-200">{m.winners}/{m.losers}</div>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/wl:block w-40 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
+                    <b className="text-slate-200">Winners / Losers</b> — Count of winning trades vs losing trades.
+                  </div>
                 </div>
-                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center">
-                  <div className="text-[7px] text-slate-600 uppercase">PF</div>
+                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center relative group/pf">
+                  <div className="text-[7px] text-slate-600 uppercase cursor-help">PF</div>
                   <div className={`text-xs font-bold tabular-nums ${m.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400"}`}>{n(m.profit_factor).toFixed(2)}</div>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/pf:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
+                    <b className="text-amber-400">Profit Factor</b> — Gross profit ÷ gross loss. Above 1.0 = profitable. 1.5+ is good, 2.0+ is excellent.
+                  </div>
                 </div>
-                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center">
-                  <div className="text-[7px] text-slate-600 uppercase">R:R</div>
+                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center relative group/rr">
+                  <div className="text-[7px] text-slate-600 uppercase cursor-help">R:R</div>
                   <div className="text-xs font-bold tabular-nums text-cyan-400">1:{n(m.risk_reward_ratio).toFixed(2)}</div>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/rr:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
+                    <b className="text-cyan-400">Risk:Reward</b> — How much you risk per $1 of potential reward. 1:1.5+ means your winners are larger than losers.
+                  </div>
                 </div>
               </div>
 

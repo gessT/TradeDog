@@ -94,6 +94,7 @@ class Backtester5Min:
         oos_split: float = 0.0,
         disabled_conditions: set[str] | None = None,
         skip_flat: bool = False,
+        skip_counter_trend: bool = False,
     ) -> BacktestResult5Min:
         """Execute 5min backtest.
 
@@ -106,6 +107,10 @@ class Backtester5Min:
         full_params = {**DEFAULT_5MIN_PARAMS, **(params or {})}
         strategy = MGCStrategy5Min(full_params)
 
+        # Resolve filter flags: explicit args override, else read from params
+        _skip_flat = skip_flat or full_params.get("skip_flat", False)
+        _skip_counter = skip_counter_trend or full_params.get("skip_counter_trend", False)
+
         # Compute indicators on full dataset (including warmup bars)
         df_ind = strategy.compute_indicators(
             df[["open", "high", "low", "close", "volume"]].copy()
@@ -117,21 +122,21 @@ class Backtester5Min:
             split_idx = int(len(df_ind) * (1 - oos_split))
             is_trades, is_curve, is_equity = self._simulate(
                 df_ind.iloc[:split_idx], signals.iloc[:split_idx], full_params,
-                skip_flat=skip_flat,
+                skip_flat=_skip_flat, skip_counter_trend=_skip_counter,
             )
             # Out-of-sample run — chain from IS ending equity
             saved_capital = self.initial_capital
             self.initial_capital = is_equity
             oos_trades, oos_curve, oos_equity = self._simulate(
                 df_ind.iloc[split_idx:], signals.iloc[split_idx:], full_params,
-                skip_flat=skip_flat,
+                skip_flat=_skip_flat, skip_counter_trend=_skip_counter,
             )
             self.initial_capital = saved_capital
             # Merge curves
             all_trades = is_trades + oos_trades
             all_curve = is_curve + oos_curve
         else:
-            all_trades, all_curve, _ = self._simulate(df_ind, signals, full_params, skip_flat=skip_flat)
+            all_trades, all_curve, _ = self._simulate(df_ind, signals, full_params, skip_flat=_skip_flat, skip_counter_trend=_skip_counter)
             is_trades = all_trades
             oos_trades = []
 
@@ -153,6 +158,7 @@ class Backtester5Min:
         signals: pd.Series,
         params: dict,
         skip_flat: bool = False,
+        skip_counter_trend: bool = False,
     ) -> tuple[list[Trade5Min], list[float], float]:
         """Bar-by-bar simulation loop. Supports CALL (+1) and PUT (-1) signals."""
         equity = self.initial_capital
@@ -368,6 +374,12 @@ class Backtester5Min:
                 if skip_flat and _mkt_s == 0:
                     equity_curve.append(equity)
                     continue
+
+                # Skip counter-trend entries (CALL in BEAR, PUT in BULL)
+                if skip_counter_trend:
+                    if (direction == 1 and _mkt_s == -1) or (direction == -1 and _mkt_s == 1):
+                        equity_curve.append(equity)
+                        continue
 
                 position = {
                     "entry_price": entry_price,

@@ -67,6 +67,10 @@ DEFAULT_5MIN_PARAMS: dict = {
     # ADX OFF (over-restrictive, reduces signal count too much)
     "adx_period": 14,
     "adx_min": 0,
+    # Counter-trend filter — block CALL in BEAR structure, PUT in BULL
+    "skip_counter_trend": True,
+    # Skip flat/sideways market structure
+    "skip_flat": False,
     # Higher TF OFF (999 disables)
     "htf_ema_period": 999,
     # Cooldown OFF
