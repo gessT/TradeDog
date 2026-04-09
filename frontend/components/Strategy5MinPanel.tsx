@@ -21,6 +21,8 @@ import {
   execute5Min,
   getMgcPosition,
   optimize5MinConditions,
+  loadStrategyConfig,
+  saveStrategyConfig,
   type ConditionOptimizationResult,
   type MGC5MinBacktestResponse,
   type MGC5MinCandle,
@@ -1185,7 +1187,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
   // Backtest state
   const [btData, setBtData] = useState<MGC5MinBacktestResponse | null>(null);
   const [zoomTrade, setZoomTrade] = useState<MGC5MinTrade | null>(null);
-  const [period, setPeriod] = useState("1d");
+  const [period, setPeriod] = useState("3d");
   const [slMult, setSlMult] = useState(defaultRisk.sl);
   const [tpMult, setTpMult] = useState(defaultRisk.tp);
 
@@ -1210,6 +1212,31 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
 
   // Risk filters (skip_counter_trend, skip_flat) — separate from condition gates
   const [riskFilters, setRiskFilters] = useState<Record<string, boolean>>({ ...DEFAULT_RISK_FILTERS });
+
+  // ── Load persisted config on mount / symbol change ──
+  const [configLoaded, setConfigLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setConfigLoaded(false);
+    loadStrategyConfig(symbol).then(cfg => {
+      if (cancelled) return;
+      if (cfg.period) setPeriod(cfg.period);
+      if (cfg.sl_mult != null) setSlMult(cfg.sl_mult);
+      if (cfg.tp_mult != null) setTpMult(cfg.tp_mult);
+      if (cfg.risk_filters) setRiskFilters(cfg.risk_filters);
+      setConfigLoaded(true);
+    }).catch(() => { if (!cancelled) setConfigLoaded(true); });
+    return () => { cancelled = true; };
+  }, [symbol]);
+
+  // ── Auto-save config when it changes ──
+  useEffect(() => {
+    if (!configLoaded) return;  // Don't save during initial load
+    const timer = setTimeout(() => {
+      saveStrategyConfig({ period, sl_mult: slMult, tp_mult: tpMult, risk_filters: riskFilters }, symbol).catch(() => {});
+    }, 500);  // debounce 500ms
+    return () => clearTimeout(timer);
+  }, [period, slMult, tpMult, riskFilters, symbol, configLoaded]);
 
   // ── Condition optimization ──────────────
   const [optimizationResults, setOptimizationResults] = useState<ConditionOptimizationResult[]>([]);

@@ -39,3 +39,12 @@ class AutoTradeSetting(Base):
     verify_lock: Mapped[bool] = mapped_column(Boolean, default=True)  # True = require verification
     auto_qty: Mapped[int] = mapped_column(default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+
+class StrategyConfig(Base):
+    """Per-symbol strategy configuration (period, SL/TP, risk filters)."""
+    __tablename__ = "strategy_configs"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True, index=True)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())

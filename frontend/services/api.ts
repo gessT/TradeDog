@@ -1052,6 +1052,29 @@ export async function save5MinConditionToggles(toggles: Record<string, boolean>,
   });
 }
 
+// ── Strategy Config (period, SL/TP, risk filters — persisted) ───────
+
+export type StrategyConfig = {
+  period?: string;
+  sl_mult?: number;
+  tp_mult?: number;
+  risk_filters?: Record<string, boolean>;
+};
+
+export async function loadStrategyConfig(symbol: string = "MGC"): Promise<StrategyConfig> {
+  const res = await fetch(`${API_BASE}/mgc/strategy_config?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+  if (!res.ok) return {};
+  return (await res.json()) as StrategyConfig;
+}
+
+export async function saveStrategyConfig(config: StrategyConfig, symbol: string = "MGC"): Promise<void> {
+  await fetch(`${API_BASE}/mgc/strategy_config?symbol=${encodeURIComponent(symbol)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+}
+
 // ── Auto-Trade Settings (verify lock, qty — persisted) ──────────────
 
 export type AutoTradeSettings = {

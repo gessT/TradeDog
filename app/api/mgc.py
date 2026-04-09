@@ -2785,6 +2785,68 @@ def save_auto_trade_settings(
     return {"status": "ok"}
 
 
+# ── Strategy Config (persist period, SL/TP, risk filters) ────────────
+
+
+class StrategyConfigPayload(BaseModel):
+    period: str = "3d"
+    sl_mult: float = 4.0
+    tp_mult: float = 3.0
+    risk_filters: dict[str, bool] = {}
+
+
+@router.get("/strategy_config")
+def get_strategy_config(symbol: str = Query("MGC")) -> dict:
+    """Load persisted strategy config for a symbol."""
+    import json
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    sym = f"{symbol.upper()}_5MIN"
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT config_json FROM strategy_configs WHERE symbol = :sym"),
+            {"sym": sym},
+        ).fetchone()
+    if row:
+        try:
+            return json.loads(row[0])
+        except Exception:
+            pass
+    return {}
+
+
+@router.post("/strategy_config")
+def save_strategy_config(
+    payload: StrategyConfigPayload,
+    symbol: str = Query("MGC"),
+) -> dict[str, str]:
+    """Save strategy config for a symbol."""
+    import json
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    sym = f"{symbol.upper()}_5MIN"
+    config = json.dumps({
+        "period": payload.period,
+        "sl_mult": payload.sl_mult,
+        "tp_mult": payload.tp_mult,
+        "risk_filters": payload.risk_filters,
+    })
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO strategy_configs (symbol, config_json, updated_at)
+                VALUES (:sym, :cfg, CURRENT_TIMESTAMP)
+                ON CONFLICT (symbol) DO UPDATE SET
+                    config_json = EXCLUDED.config_json,
+                    updated_at = CURRENT_TIMESTAMP
+            """),
+            {"sym": sym, "cfg": config},
+        )
+    return {"status": "ok"}
+
+
 @router.get("/optimize_conditions_5min")
 async def optimize_5min_conditions(
     symbol: Annotated[str, Query()] = "MGC=F",
