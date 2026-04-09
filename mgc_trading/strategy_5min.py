@@ -74,6 +74,8 @@ DEFAULT_5MIN_PARAMS: dict = {
     # EMA cross exit — cut loss when close crosses EMA (against position)
     "use_ema_exit": False,
     "ema_exit_period": 28,
+    # Structure change exit — cut loss when market structure goes flat or flips
+    "use_structure_exit": False,
     # Higher TF OFF (999 disables)
     "htf_ema_period": 999,
     # Cooldown OFF

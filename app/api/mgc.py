@@ -1591,6 +1591,7 @@ async def mgc_backtest_5min(
     skip_flat: Annotated[bool, Query()] = False,
     skip_counter_trend: Annotated[bool, Query()] = True,
     use_ema_exit: Annotated[bool, Query()] = False,
+    use_structure_exit: Annotated[bool, Query()] = False,
 ) -> MGC5MinBacktestResponse:
     """Run 5-minute strategy backtest with out-of-sample validation.
 
@@ -1622,7 +1623,7 @@ async def mgc_backtest_5min(
             df = df[df.index < trade_end]
 
         # ── Run full 60d simulation for consistent results ──────
-        custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult, "use_ema_exit": use_ema_exit}
+        custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult, "use_ema_exit": use_ema_exit, "use_structure_exit": use_structure_exit}
         bt = Backtester5Min(capital=capital)
         result = bt.run(df, params=custom_params, oos_split=oos_split, disabled_conditions=_disabled or None, skip_flat=skip_flat, skip_counter_trend=skip_counter_trend)
 

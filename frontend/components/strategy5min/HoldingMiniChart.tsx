@@ -57,18 +57,9 @@ export default function HoldingMiniChart({
 
     // Find entry bar index
     const entryTs = new Date(entryTime).getTime();
-    let entryIdx = candles.length - 1;
-    for (let i = 0; i < candles.length; i++) {
-      if (candles[i].time >= entryTs) {
-        entryIdx = i;
-        break;
-      }
-    }
 
-    // 30 bars before entry + all bars after
-    const PAD_BEFORE = 30;
-    const startIdx = Math.max(0, entryIdx - PAD_BEFORE);
-    const slice = candles.slice(startIdx);
+    // Use all candles so user can scroll left to see full history
+    const slice = candles;
     if (slice.length === 0) return;
 
     if (chartRef.current) {
@@ -82,9 +73,9 @@ export default function HoldingMiniChart({
       layout: { background: { color: "transparent" }, textColor: "#475569", fontSize: 8, attributionLogo: false },
       grid: { vertLines: { visible: false }, horzLines: { color: "#1e293b30" } },
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.05, bottom: 0.05 }, visible: false },
-      timeScale: { visible: false },
+      timeScale: { visible: false, rightOffset: 50, shiftVisibleRangeOnNewBar: true },
       crosshair: { mode: 0 },
-      handleScroll: false,
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: false,
     });
     chartRef.current = chart;
@@ -133,7 +124,15 @@ export default function HoldingMiniChart({
       axisLabelVisible: false, title: "",
     });
 
-    chart.timeScale().fitContent();
+    // Show latest bar in the middle: 50 bars visible on left, rightOffset=50 gives empty space on right
+    if (ohlc.length > 0) {
+      const barsToShow = 50;
+      const fromIdx = Math.max(0, ohlc.length - barsToShow);
+      chart.timeScale().setVisibleRange({
+        from: ohlc[fromIdx].time,
+        to: ohlc[ohlc.length - 1].time,
+      });
+    }
 
     const ro = new ResizeObserver(() => {
       if (chartRef.current) chartRef.current.applyOptions({ width: el.clientWidth, height: el.clientHeight });

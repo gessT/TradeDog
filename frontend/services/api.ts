@@ -1130,6 +1130,7 @@ export async function fetchMGC5MinBacktest(
   skipFlat?: boolean,
   skipCounterTrend: boolean = true,
   useEmaExit: boolean = false,
+  useStructureExit: boolean = false,
 ): Promise<MGC5MinBacktestResponse> {
   let url = `${API_BASE}/mgc/backtest_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
   if (date_from) url += `&date_from=${date_from}`;
@@ -1138,6 +1139,7 @@ export async function fetchMGC5MinBacktest(
   if (skipFlat) url += `&skip_flat=true`;
   url += `&skip_counter_trend=${skipCounterTrend}`;
   if (useEmaExit) url += `&use_ema_exit=true`;
+  if (useStructureExit) url += `&use_structure_exit=true`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();

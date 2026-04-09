@@ -271,9 +271,49 @@ class Backtester5Min:
                     hit_sl = bar["high"] >= sl
                     hit_tp = bar["low"] <= tp
 
+                # ── Structure change exit: flat or flipped = cut loss ───
+                hit_structure_exit = False
+                if params.get("use_structure_exit") and "mkt_structure" in bar.index:
+                    cur_struct = int(bar["mkt_structure"])
+                    entry_struct = position.get("mkt_structure", 0)
+                    if cur_struct == 0:
+                        # Structure went flat/sideways
+                        hit_structure_exit = True
+                    elif direction == 1 and cur_struct == -1:
+                        # CALL but structure flipped to BEAR
+                        hit_structure_exit = True
+                    elif direction == -1 and cur_struct == 1:
+                        # PUT but structure flipped to BULL
+                        hit_structure_exit = True
+
+                if hit_structure_exit and not hit_sl and not hit_tp:
+                    exit_price = float(bar["close"])
+                    pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                    pnl_pct = pnl / (self.initial_capital or 1) * 100
+                    equity += pnl
+                    trades.append(Trade5Min(
+                        entry_time=position["entry_time"],
+                        exit_time=bar.name,
+                        entry_price=position["entry_price"],
+                        exit_price=round(exit_price, 2),
+                        qty=position["qty"],
+                        pnl=round(pnl, 2),
+                        pnl_pct=round(pnl_pct, 2),
+                        reason="STRUCT_EXIT",
+                        signal_type=position.get("signal_type", ""),
+                        direction="CALL" if direction == 1 else "PUT",
+                        mae=round(worst_unrealized, 2),
+                        mkt_structure=position.get("mkt_structure", 0),
+                        sl=round(sl, 2),
+                        tp=round(position["tp"], 2),
+                    ))
+                    consec_losses = consec_losses + 1 if pnl < 0 else 0
+                    position = None
+                    worst_unrealized = 0.0
+
                 # ── EMA cross exit: close crossing EMA = cut loss ───
                 hit_ema_exit = False
-                if params.get("use_ema_exit") and "ema_exit" in bar.index:
+                if position is not None and params.get("use_ema_exit") and "ema_exit" in bar.index:
                     ema_val = float(bar["ema_exit"])
                     bar_close = float(bar["close"])
                     if not (ema_val != ema_val):  # not NaN
@@ -282,7 +322,7 @@ class Backtester5Min:
                         elif direction == -1 and bar_close > ema_val:
                             hit_ema_exit = True
 
-                if hit_ema_exit and not hit_sl and not hit_tp:
+                if hit_ema_exit and not hit_sl and not hit_tp and not hit_structure_exit:
                     exit_price = float(bar["close"])
                     pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
                     pnl_pct = pnl / (self.initial_capital or 1) * 100
@@ -307,7 +347,7 @@ class Backtester5Min:
                     position = None
                     worst_unrealized = 0.0
 
-                elif hit_sl:
+                if position is not None and hit_sl:
                     exit_price = sl
                     pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
                     pnl_pct = pnl / (self.initial_capital or 1) * 100
@@ -339,7 +379,7 @@ class Backtester5Min:
                     position = None
                     worst_unrealized = 0.0
 
-                elif hit_tp:
+                if position is not None and hit_tp:
                     exit_price = tp
                     pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
                     pnl_pct = pnl / (self.initial_capital or 1) * 100
