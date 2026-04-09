@@ -174,6 +174,15 @@ class MGCStrategy5Min:
         # EMA for exit signal (cut loss on cross)
         df["ema_exit"] = ind.ema(c, p.get("ema_exit_period", 28))
 
+        # ── Smart Money Concepts (SMC) ──────────────────────────
+        df["smc_ob"] = ind5.smc_order_blocks(
+            df["open"], df["high"], df["low"], c, lookback=10,
+        )
+        df["smc_fvg"] = ind5.smc_fair_value_gap(df["high"], df["low"], c)
+        df["smc_bos"] = ind5.smc_break_of_structure(
+            df["high"], df["low"], c, swing_order=3, persist_bars=60,
+        )
+
         return df
 
     def generate_signals(self, df: pd.DataFrame, disabled: set[str] | None = None) -> pd.Series:
@@ -221,6 +230,26 @@ class MGCStrategy5Min:
 
         filters = cond_vol & cond_session & cond_atr & cond_adx
 
+        # ── SMC filters (Smart Money Concepts) ─────────────────
+        # BOS = trend confirmation (directional), OB/FVG = entry zone (OR group)
+        call_bos = _true if "smc_bos" in off else (df["smc_bos"] == 1)
+        put_bos = _true if "smc_bos" in off else (df["smc_bos"] == -1)
+
+        # OB + FVG as OR group — price is in an institutional zone
+        smc_entry_call_parts: list = []
+        if "smc_ob" not in off:
+            smc_entry_call_parts.append(df["smc_ob"] == 1)
+        if "smc_fvg" not in off:
+            smc_entry_call_parts.append(df["smc_fvg"] == 1)
+        smc_entry_call = _or_group(smc_entry_call_parts)
+
+        smc_entry_put_parts: list = []
+        if "smc_ob" not in off:
+            smc_entry_put_parts.append(df["smc_ob"] == -1)
+        if "smc_fvg" not in off:
+            smc_entry_put_parts.append(df["smc_fvg"] == -1)
+        smc_entry_put = _or_group(smc_entry_put_parts)
+
         # ── CALL (long) ────────────────────────────────────────
         call_trend = _true if "ema_trend" in off else (df["ema_fast"] > df["ema_slow"])
         call_slope = _true if "ema_slope" in off else (df["ema_slope"] == 1)
@@ -242,7 +271,7 @@ class MGCStrategy5Min:
         htf_ema_period = p.get("htf_ema_period", 999)
         call_htf = df["htf_trend"] == 1 if htf_ema_period < 500 else True
 
-        call_signal = call_trend & call_slope & call_entry & call_st & call_mom & filters
+        call_signal = call_trend & call_slope & call_entry & call_st & call_mom & filters & call_bos & smc_entry_call
         if htf_ema_period < 500:
             call_signal = call_signal & call_htf
 
@@ -265,7 +294,7 @@ class MGCStrategy5Min:
             put_mom_parts.append(df["rsi_falling"] == 1)
         put_mom = _or_group(put_mom_parts)
 
-        put_signal = put_trend & put_slope & put_entry & put_st & put_mom & filters
+        put_signal = put_trend & put_slope & put_entry & put_st & put_mom & filters & put_bos & smc_entry_put
 
         # ── Combine: +1 = CALL, -1 = PUT ──────────────────────
         signal = pd.Series(0, index=df.index, dtype=int)

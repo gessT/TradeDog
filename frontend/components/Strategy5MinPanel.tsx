@@ -23,7 +23,11 @@ import {
   optimize5MinConditions,
   loadStrategyConfig,
   saveStrategyConfig,
+  save5MinConditionPreset,
+  load5MinConditionPresets,
+  delete5MinConditionPreset,
   type ConditionOptimizationResult,
+  type ConditionPreset,
   type MGC5MinBacktestResponse,
   type MGC5MinCandle,
   type MGC5MinTrade,
@@ -422,7 +426,7 @@ function TradeLogByDate({ trades, onTradeClick, livePrice }: Readonly<{ trades: 
 // ═══════════════════════════════════════════════════════════════════════
 
 /** All conditions that gate auto-execution. User can toggle each. */
-const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m" | "15m" | "1h" | "structure"; desc: string }[] = [
+const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m" | "smc" | "15m" | "1h" | "structure"; desc: string }[] = [
   // 5m core
   { key: "ema_trend", label: "EMA Trend", group: "5m", desc: "Price is above fast EMA for CALL or below for PUT, confirming trend direction." },
   { key: "ema_slope", label: "EMA Slope", group: "5m", desc: "Fast EMA is sloping upward (CALL) or downward (PUT), showing momentum." },
@@ -435,6 +439,10 @@ const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m
   { key: "atr_range", label: "ATR Range", group: "5m", desc: "ATR is within acceptable range — not too flat (no movement) or too volatile (choppy)." },
   { key: "session_ok", label: "Session Hours", group: "5m", desc: "Current time is within active trading hours (US market session)." },
   { key: "adx_ok", label: "ADX Filter", group: "5m", desc: "ADX is above threshold, confirming the market is trending (not ranging)." },
+  // Smart Money Concepts
+  { key: "smc_bos", label: "Break of Structure", group: "smc", desc: "Recent BOS detected — price broke a swing high (bullish) or swing low (bearish), confirming trend continuation." },
+  { key: "smc_ob", label: "Order Block", group: "smc", desc: "Price is in an institutional Order Block zone — the last opposing candle before an impulsive move (demand/supply zone)." },
+  { key: "smc_fvg", label: "Fair Value Gap", group: "smc", desc: "Price is filling a Fair Value Gap (imbalance) — a 3-candle gap that tends to get revisited by smart money." },
   // 15m confirmation
   { key: "htf_15m_trend", label: "15m EMA Trend", group: "15m", desc: "15-minute EMA trend aligns with the 5m signal direction." },
   { key: "htf_15m_supertrend", label: "15m Supertrend", group: "15m", desc: "15-minute Supertrend confirms the same bias as the 5m signal." },
@@ -457,7 +465,7 @@ const DEFAULT_RISK_FILTERS: Record<string, boolean> = Object.fromEntries(
   RISK_FILTER_DEFS.map((d) => [d.key, d.default])
 );
 
-/** Default: all core 5m conditions ON, HTF optional off */
+/** Default: all core 5m conditions ON, SMC/HTF optional off */
 const DEFAULT_CONDITION_TOGGLES: Record<string, boolean> = Object.fromEntries(
   CONDITION_DEFS.map((d) => [d.key, d.group === "5m"])
 );
@@ -1244,6 +1252,16 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
   const [showOptDialog, setShowOptDialog] = useState(false);
   const [pendingOptRun, setPendingOptRun] = useState(false);
 
+  // ── Condition presets ──────────────────
+  const [presets, setPresets] = useState<ConditionPreset[]>([]);
+  const [presetName, setPresetName] = useState("");
+  const [showPresetSave, setShowPresetSave] = useState(false);
+
+  // Load presets on mount / symbol change
+  useEffect(() => {
+    load5MinConditionPresets(symbol).then(setPresets).catch(() => {});
+  }, [symbol]);
+
   // ── Reset data when symbol changes ──
   useEffect(() => {
     setBtData(null);
@@ -1270,7 +1288,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
     try {
       // Compute disabled conditions from toggles (OFF = disabled)
       const disabled = CONDITION_DEFS
-        .filter((d) => d.group === "5m" && !conditionToggles[d.key])
+        .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
         .map((d) => d.key);
       const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, riskFilters.use_structure_exit ?? false);
       setBtData(res);
@@ -1399,7 +1417,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
               const freshTo = fmtDate(new Date());
               const freshFrom = calcFrom(period === "1d" ? "1" : period.replace("d", ""));
               const disabled = CONDITION_DEFS
-                .filter((d) => d.group === "5m" && !conditionToggles[d.key])
+                .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
                 .map((d) => d.key);
               const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, riskFilters.use_structure_exit ?? false);
               if (cancelled) return;
@@ -1463,7 +1481,28 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
         riskFilters.use_structure_exit ?? false,
       );
       setOptimizationResults(results);
-      if (results.length > 0) setShowOptDialog(true);
+      if (results.length > 0) {
+        setShowOptDialog(true);
+        // Auto-save each result as a preset with a descriptive name
+        const catLabels: Record<string, string> = {
+          best_winrate: "Best WR",
+          best_return: "Best Return",
+          low_risk: "Low Risk",
+        };
+        for (const r of results) {
+          const cat = r.category ?? "best";
+          const label = catLabels[cat] ?? cat;
+          const toggles: Record<string, boolean> = {};
+          CONDITION_DEFS.forEach(def => {
+            if (def.group === "5m" || def.group === "smc") {
+              toggles[def.key] = r.conditions.includes(def.key);
+            }
+          });
+          save5MinConditionPreset(`⚡ ${label}`, toggles, symbol).catch(() => {});
+        }
+        // Refresh presets list
+        load5MinConditionPresets(symbol).then(setPresets).catch(() => {});
+      }
     } catch (e: unknown) {
       alert(`❌ Optimization failed: ${e instanceof Error ? e.message : "Unknown error"}`);
     } finally {
@@ -1578,9 +1617,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
             {/* Expanded condition toggles */}
             {conditionsOpen && (
               <div className="mt-1 rounded-lg border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
-                {(["5m", "15m", "1h"] as const).map((group) => {
-                  const groupLabel = group === "5m" ? "5-Minute (Execution)" : group === "15m" ? "15-Minute (Confirmation)" : "1-Hour (Trend)";
-                  const groupColor = group === "5m" ? "slate" : group === "15m" ? "cyan" : "amber";
+                {(["5m", "smc", "15m", "1h"] as const).map((group) => {
+                  const groupLabel = group === "5m" ? "5-Minute (Execution)" : group === "smc" ? "Smart Money (SMC)" : group === "15m" ? "15-Minute (Confirmation)" : "1-Hour (Trend)";
+                  const groupColor = group === "5m" ? "slate" : group === "smc" ? "purple" : group === "15m" ? "cyan" : "amber";
                   return (
                     <div key={group}>
                       {group !== "5m" && <div className="mt-2" />}
@@ -1642,6 +1681,86 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                       );
                     })}
                   </div>
+                </div>
+
+                {/* Condition Presets — save/load */}
+                <div className="mt-2 pt-2 border-t border-slate-800/40">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-[8px] text-blue-500/70 uppercase tracking-wider">Presets</p>
+                    <button
+                      onClick={() => setShowPresetSave(!showPresetSave)}
+                      className="text-[8px] font-bold text-blue-400 hover:text-blue-300 transition"
+                    >
+                      {showPresetSave ? "Cancel" : "+ Save Current"}
+                    </button>
+                  </div>
+                  {showPresetSave && (
+                    <div className="flex gap-1 mb-2">
+                      <input
+                        type="text"
+                        value={presetName}
+                        onChange={(e) => setPresetName(e.target.value)}
+                        placeholder="Preset name…"
+                        className="flex-1 px-2 py-1 text-[9px] rounded bg-slate-900 border border-slate-700 text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-blue-600"
+                        maxLength={50}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && presetName.trim()) {
+                            save5MinConditionPreset(presetName.trim(), conditionToggles, symbol)
+                              .then(() => load5MinConditionPresets(symbol).then(setPresets))
+                              .catch(() => {});
+                            setPresetName("");
+                            setShowPresetSave(false);
+                          }
+                        }}
+                      />
+                      <button
+                        onClick={() => {
+                          if (!presetName.trim()) return;
+                          save5MinConditionPreset(presetName.trim(), conditionToggles, symbol)
+                            .then(() => load5MinConditionPresets(symbol).then(setPresets))
+                            .catch(() => {});
+                          setPresetName("");
+                          setShowPresetSave(false);
+                        }}
+                        disabled={!presetName.trim()}
+                        className="px-2 py-1 text-[9px] font-bold rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 transition"
+                      >
+                        Save
+                      </button>
+                    </div>
+                  )}
+                  {presets.length > 0 && (
+                    <div className="space-y-1">
+                      {presets.map((p) => {
+                        const enabledCount = Object.values(p.toggles).filter(Boolean).length;
+                        const total = Object.keys(p.toggles).length;
+                        return (
+                          <div key={p.name} className="flex items-center gap-1.5 group">
+                            <button
+                              onClick={() => {
+                                setConditionToggles((prev) => ({ ...prev, ...p.toggles }));
+                              }}
+                              className="flex-1 flex items-center gap-1.5 px-2 py-1 rounded text-left text-[9px] border border-blue-800/30 bg-blue-950/10 hover:bg-blue-950/30 transition"
+                            >
+                              <span className="text-blue-400 font-bold truncate">{p.name}</span>
+                              <span className="text-[7px] text-slate-500 ml-auto">{enabledCount}/{total}</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                delete5MinConditionPreset(p.name, symbol)
+                                  .then(() => load5MinConditionPresets(symbol).then(setPresets))
+                                  .catch(() => {});
+                              }}
+                              className="w-5 h-5 rounded flex items-center justify-center text-slate-600 hover:text-rose-400 hover:bg-rose-950/30 opacity-0 group-hover:opacity-100 transition text-[9px]"
+                              title="Delete preset"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1913,7 +2032,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
           onApply={(result) => {
             const newToggles: Record<string, boolean> = {};
             CONDITION_DEFS.forEach(def => {
-              if (def.group === "5m") {
+              if (def.group === "5m" || def.group === "smc") {
                 newToggles[def.key] = result.conditions.includes(def.key);
               } else {
                 newToggles[def.key] = conditionToggles[def.key];

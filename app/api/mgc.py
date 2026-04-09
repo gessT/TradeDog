@@ -1602,7 +1602,8 @@ async def mgc_backtest_5min(
     _disabled: set[str] = set()
     if disabled_conditions:
         _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
-                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok"}
+                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok",
+                  "smc_ob","smc_fvg","smc_bos"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
 
     def _run():
@@ -1858,7 +1859,8 @@ async def mgc_scan_5min(
     _disabled: set[str] | None = None
     if disabled_conditions:
         _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
-                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok"}
+                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok",
+                  "smc_ob","smc_fvg","smc_bos"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid} or None
 
     def _run():
@@ -1961,7 +1963,8 @@ async def mgc_scan_5min_live(
     _disabled: set[str] | None = None
     if disabled_conditions:
         _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
-                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok"}
+                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok",
+                  "smc_ob","smc_fvg","smc_bos"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid} or None
 
     def _run():
@@ -2900,22 +2903,40 @@ async def optimize_5min_conditions(
             "rsi_momentum",
             "volume_spike",
             "atr_range",
+            "smc_ob",
+            "smc_fvg",
+            "smc_bos",
         ]
 
         results = []
 
-        for r in range(7, len(condition_keys) + 1):
+        # Pre-compute indicators ONCE (the expensive part — SMC, swing detection etc.)
+        from mgc_trading.strategy_5min import MGCStrategy5Min
+        full_params = {**DEFAULT_5MIN_PARAMS, **custom_params}
+        strategy = MGCStrategy5Min(full_params)
+        df_ind = strategy.compute_indicators(
+            df[["open", "high", "low", "close", "volume"]].copy()
+        )
+
+        _skip_flat = skip_flat or full_params.get("skip_flat", False)
+        _skip_counter = skip_counter_trend or full_params.get("skip_counter_trend", False)
+
+        min_enabled = max(7, len(condition_keys) - 3)  # allow disabling up to 3 conditions
+        for r in range(min_enabled, len(condition_keys) + 1):
             for combo in combinations(condition_keys, r):
                 enabled = set(combo)
                 disabled = set(condition_keys) - enabled
 
                 try:
+                    # Only regenerate signals (fast) — reuse precomputed indicators
+                    signals = strategy.generate_signals(df_ind, disabled=disabled or None)
+
                     bt = Backtester5Min()
-                    result = bt.run(
-                        df, params=custom_params, oos_split=0.3,
-                        disabled_conditions=disabled or None,
-                        skip_flat=skip_flat,
-                        skip_counter_trend=skip_counter_trend,
+                    result = bt.run_from_precomputed(
+                        df_ind, signals, full_params,
+                        oos_split=0.3,
+                        skip_flat=_skip_flat,
+                        skip_counter_trend=_skip_counter,
                     )
 
                     if result.total_trades < 10:

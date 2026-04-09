@@ -152,6 +152,46 @@ class Backtester5Min:
 
         return result
 
+    def run_from_precomputed(
+        self,
+        df_ind: pd.DataFrame,
+        signals: pd.Series,
+        full_params: dict,
+        oos_split: float = 0.0,
+        skip_flat: bool = False,
+        skip_counter_trend: bool = False,
+    ) -> BacktestResult5Min:
+        """Run backtest with pre-computed indicators and signals (fast path for optimizer)."""
+        if oos_split > 0:
+            split_idx = int(len(df_ind) * (1 - oos_split))
+            is_trades, is_curve, is_equity = self._simulate(
+                df_ind.iloc[:split_idx], signals.iloc[:split_idx], full_params,
+                skip_flat=skip_flat, skip_counter_trend=skip_counter_trend,
+            )
+            saved_capital = self.initial_capital
+            self.initial_capital = is_equity
+            oos_trades, oos_curve, _ = self._simulate(
+                df_ind.iloc[split_idx:], signals.iloc[split_idx:], full_params,
+                skip_flat=skip_flat, skip_counter_trend=skip_counter_trend,
+            )
+            self.initial_capital = saved_capital
+            all_trades = is_trades + oos_trades
+            all_curve = is_curve + oos_curve
+        else:
+            all_trades, all_curve, _ = self._simulate(
+                df_ind, signals, full_params,
+                skip_flat=skip_flat, skip_counter_trend=skip_counter_trend,
+            )
+            oos_trades = []
+
+        result = self._compute_metrics(all_trades, all_curve, self.initial_capital, full_params)
+        if oos_trades:
+            oos_wins = [t for t in oos_trades if t.pnl > 0]
+            result.oos_total_trades = len(oos_trades)
+            result.oos_win_rate = len(oos_wins) / len(oos_trades) * 100 if oos_trades else 0
+            result.oos_return_pct = round(sum(t.pnl for t in oos_trades) / self.initial_capital * 100, 2)
+        return result
+
     def _simulate(
         self,
         df: pd.DataFrame,

@@ -1260,6 +1260,9 @@ export type Scan5MinConditions = {
   atr_range: boolean;
   session_ok: boolean;
   adx_ok: boolean;
+  smc_ob: boolean;
+  smc_fvg: boolean;
+  smc_bos: boolean;
   htf_15m_trend: boolean;
   htf_15m_supertrend: boolean;
   htf_1h_trend: boolean;

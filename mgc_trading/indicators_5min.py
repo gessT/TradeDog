@@ -378,3 +378,190 @@ def market_structure(
             result.iloc[i] = 0
 
     return result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Smart Money Concepts (SMC) — LuxAlgo-inspired
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def smc_order_blocks(
+    open_: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    lookback: int = 10,
+) -> pd.Series:
+    """Detect bullish/bearish Order Blocks (OB).
+
+    An Order Block is the last opposing candle before an impulsive move:
+    - **Bullish OB**: Last bearish candle before a strong bullish impulse.
+      Price returning to this zone = institutional demand (buy zone).
+    - **Bearish OB**: Last bullish candle before a strong bearish impulse.
+      Price returning to this zone = institutional supply (sell zone).
+
+    Returns:
+       1 = price is at a bullish OB (buy zone)
+      -1 = price is at a bearish OB (sell zone)
+       0 = no OB context
+    """
+    n = len(close)
+    result = np.zeros(n, dtype=int)
+    o = open_.values
+    h = high.values
+    l = low.values
+    c = close.values
+
+    # Threshold for "impulsive move" — body > 1.5× average body
+    body = np.abs(c - o)
+    avg_body = pd.Series(body).rolling(20, min_periods=5).mean().values
+
+    for i in range(lookback + 2, n):
+        # Detect impulsive bullish candle (big green body)
+        if body[i] > 1.5 * avg_body[i] and c[i] > o[i]:
+            # Find last bearish candle before this impulse
+            for j in range(i - 1, max(i - lookback, 0) - 1, -1):
+                if c[j] < o[j]:  # bearish candle = bullish OB
+                    ob_top = max(o[j], c[j])
+                    ob_bot = min(l[j], min(o[j], c[j]))
+                    if ob_bot <= c[i] <= ob_top * 1.005:
+                        result[i] = 1
+                    break
+
+        # Detect impulsive bearish candle (big red body)
+        if body[i] > 1.5 * avg_body[i] and c[i] < o[i]:
+            for j in range(i - 1, max(i - lookback, 0) - 1, -1):
+                if c[j] > o[j]:  # bullish candle = bearish OB
+                    ob_top = max(h[j], max(o[j], c[j]))
+                    ob_bot = min(o[j], c[j])
+                    if ob_bot * 0.995 <= c[i] <= ob_top:
+                        result[i] = -1
+                    break
+
+    return pd.Series(result, index=close.index)
+
+
+def smc_fair_value_gap(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+) -> pd.Series:
+    """Detect Fair Value Gaps (FVG / imbalance zones).
+
+    An FVG is a 3-candle pattern where there's an un-overlapped gap:
+    - **Bullish FVG**: candle[i-2].high < candle[i].low — gap up unfilled.
+      Price returning to fill the gap = buy opportunity.
+    - **Bearish FVG**: candle[i-2].low > candle[i].high — gap down unfilled.
+      Price returning to fill the gap = sell opportunity.
+
+    Returns:
+       1 = price is in/near a bullish FVG zone (potential buy)
+      -1 = price is in/near a bearish FVG zone (potential sell)
+       0 = no FVG context
+    """
+    n = len(close)
+    result = np.zeros(n, dtype=int)
+    h = high.values
+    l = low.values
+    c = close.values
+
+    bull_fvgs: list[tuple[float, float, int]] = []  # (bottom, top, bar_idx)
+    bear_fvgs: list[tuple[float, float, int]] = []
+    max_age = 50  # FVGs expire after 50 bars
+
+    for i in range(2, n):
+        # Detect new bullish FVG: candle[i-2].high < candle[i].low
+        if h[i - 2] < l[i]:
+            bull_fvgs.append((h[i - 2], l[i], i))
+
+        # Detect new bearish FVG: candle[i-2].low > candle[i].high
+        if l[i - 2] > h[i]:
+            bear_fvgs.append((h[i], l[i - 2], i))
+
+        # Check if price is in any active bullish FVG
+        remaining_bull: list[tuple[float, float, int]] = []
+        for bot, top, created in bull_fvgs:
+            if i - created > max_age:
+                continue
+            remaining_bull.append((bot, top, created))
+            if bot <= c[i] <= top:
+                result[i] = 1
+        bull_fvgs = remaining_bull
+
+        # Check if price is in any active bearish FVG
+        remaining_bear: list[tuple[float, float, int]] = []
+        for bot, top, created in bear_fvgs:
+            if i - created > max_age:
+                continue
+            remaining_bear.append((bot, top, created))
+            if bot <= c[i] <= top:
+                result[i] = -1
+        bear_fvgs = remaining_bear
+
+    return pd.Series(result, index=close.index)
+
+
+def smc_break_of_structure(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    swing_order: int = 3,
+    persist_bars: int = 60,
+) -> pd.Series:
+    """Detect Break of Structure (BOS) — the core SMC concept.
+
+    - **Bullish BOS**: Price breaks above a recent swing high,
+      confirming continuation of the uptrend (Higher High formed).
+    - **Bearish BOS**: Price breaks below a recent swing low,
+      confirming continuation of the downtrend (Lower Low formed).
+
+    Signal persists for *persist_bars* after the break (default 60 = ~5 hours on 5m).
+
+    Returns:
+       1 = recent bullish BOS (upside break — favor longs)
+      -1 = recent bearish BOS (downside break — favor shorts)
+       0 = no recent BOS
+    """
+    n = len(close)
+    c = close.values
+
+    swing_highs, swing_lows = _find_swing_points(high, low, order=swing_order)
+
+    # For each bar, track the last confirmed swing high/low
+    sh_prices = [sh[1] for sh in swing_highs]
+    sh_bars = [sh[0] for sh in swing_highs]
+    sl_prices = [sl[1] for sl in swing_lows]
+    sl_bars = [sl[0] for sl in swing_lows]
+
+    result = np.zeros(n, dtype=int)
+    last_bos_bar = -persist_bars - 1
+    last_bos_dir = 0
+    sh_ptr = 0
+    sl_ptr = 0
+    cur_sh: float | None = None
+    cur_sl: float | None = None
+
+    for i in range(swing_order, n):
+        # Advance to latest confirmed swing (lagged by swing_order)
+        while sh_ptr < len(sh_bars) and sh_bars[sh_ptr] <= i - swing_order:
+            cur_sh = sh_prices[sh_ptr]
+            sh_ptr += 1
+        while sl_ptr < len(sl_bars) and sl_bars[sl_ptr] <= i - swing_order:
+            cur_sl = sl_prices[sl_ptr]
+            sl_ptr += 1
+
+        # Bullish BOS: close breaks above last swing high
+        if cur_sh is not None and c[i] > cur_sh:
+            last_bos_bar = i
+            last_bos_dir = 1
+
+        # Bearish BOS: close breaks below last swing low
+        if cur_sl is not None and c[i] < cur_sl:
+            last_bos_bar = i
+            last_bos_dir = -1
+
+        # Persist BOS signal
+        if i - last_bos_bar <= persist_bars:
+            result[i] = last_bos_dir
+
+    return pd.Series(result, index=close.index)
