@@ -118,8 +118,16 @@ class ExecutionEngine:
         qty: int = 1,
         max_qty: int = 5,
         current_tiger_qty: int = 0,
+        allow_scale_in: bool = False,
+        current_price: float = 0.0,
     ) -> ExecutionRecord | None:
-        """Pre-execution validation. Returns rejection record or None if valid."""
+        """Pre-execution validation. Returns rejection record or None if valid.
+
+        When allow_scale_in=True, permits additional entries if:
+        - Same direction as existing position
+        - Position is in a retracement (unrealised loss)
+        - Total qty still below max_qty
+        """
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         side = "BUY" if direction == "CALL" else "SELL"
 
@@ -160,14 +168,48 @@ class ExecutionEngine:
                     timestamp=ts, qty=qty,
                 )
 
-            # Rule 4: One position at a time — check both internal state and Tiger
+            # Rule 4: Position management — one position at a time OR scale-in
             if self._position.state != PositionState.NONE:
-                return ExecutionRecord(
-                    signal=side, entry_price=entry_price,
-                    tp_price=tp_price, sl_price=sl_price,
-                    status="REJECTED",
-                    reason=f"position_open_{self._position.state.value}",
-                    timestamp=ts, qty=qty,
+                if not allow_scale_in:
+                    return ExecutionRecord(
+                        signal=side, entry_price=entry_price,
+                        tp_price=tp_price, sl_price=sl_price,
+                        status="REJECTED",
+                        reason=f"position_open_{self._position.state.value}",
+                        timestamp=ts, qty=qty,
+                    )
+
+                # Scale-in checks
+                # a) Must be same direction
+                expected_state = PositionState.LONG if direction == "CALL" else PositionState.SHORT
+                if self._position.state != expected_state:
+                    return ExecutionRecord(
+                        signal=side, entry_price=entry_price,
+                        tp_price=tp_price, sl_price=sl_price,
+                        status="REJECTED",
+                        reason="scale_in_wrong_direction",
+                        timestamp=ts, qty=qty,
+                    )
+
+                # b) Position must be in retracement (unrealised loss)
+                if current_price > 0:
+                    if self._position.state == PositionState.LONG:
+                        in_loss = current_price < self._position.entry_price
+                    else:
+                        in_loss = current_price > self._position.entry_price
+                    if not in_loss:
+                        return ExecutionRecord(
+                            signal=side, entry_price=entry_price,
+                            tp_price=tp_price, sl_price=sl_price,
+                            status="REJECTED",
+                            reason="scale_in_not_in_retracement",
+                            timestamp=ts, qty=qty,
+                        )
+
+                # c) Total qty check (checked below in Rule 5)
+                logger.info(
+                    "SCALE-IN ALLOWED: %s into %s @ %.2f (existing entry %.2f)",
+                    side, self._position.state.value, entry_price, self._position.entry_price,
                 )
 
             # Rule 5: Max qty check
@@ -257,23 +299,40 @@ class ExecutionEngine:
 
         with self._lock:
             state = PositionState.LONG if direction == "CALL" else PositionState.SHORT
-            self._position = PositionInfo(
-                state=state,
-                entry_price=entry_price,
-                tp_price=tp_price,
-                sl_price=sl_price,
-                qty=qty,
-                entry_time=ts,
-                side=side,
-                bar_time=bar_time,
-                order_id=order_id,
-            )
+            is_scale_in = self._position.state == state and self._position.qty > 0
+
+            if is_scale_in:
+                # Scale-in: average entry price, accumulate qty, keep SL/TP
+                old_qty = self._position.qty
+                new_qty = old_qty + qty
+                avg_entry = (self._position.entry_price * old_qty + entry_price * qty) / new_qty
+                self._position.entry_price = avg_entry
+                self._position.qty = new_qty
+                # Keep original SL/TP — consistent risk management
+                logger.info(
+                    "SCALE-IN: %s +%dx @ %.2f → avg %.2f (%d total) | SL=%.2f TP=%.2f",
+                    side, qty, entry_price, avg_entry, new_qty,
+                    self._position.sl_price, self._position.tp_price,
+                )
+            else:
+                self._position = PositionInfo(
+                    state=state,
+                    entry_price=entry_price,
+                    tp_price=tp_price,
+                    sl_price=sl_price,
+                    qty=qty,
+                    entry_time=ts,
+                    side=side,
+                    bar_time=bar_time,
+                    order_id=order_id,
+                )
             self._last_exec_bar = bar_time
 
+        reason_str = "scale_in" if is_scale_in else "match_backtest"
         record = ExecutionRecord(
             signal=side, entry_price=entry_price,
             tp_price=tp_price, sl_price=sl_price,
-            status="EXECUTED", reason="match_backtest",
+            status="EXECUTED", reason=reason_str,
             order_id=order_id, timestamp=ts, qty=qty,
         )
         self._execution_log.append(record)

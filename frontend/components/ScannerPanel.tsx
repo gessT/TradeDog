@@ -203,6 +203,8 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles, request
   const [holdingPosition, setHoldingPosition] = useState<{
     direction: string; entry_price: number; sl: number; tp: number;
   } | null>(null);
+  const holdingPositionRef = useRef(holdingPosition);
+  holdingPositionRef.current = holdingPosition;
 
   // Stable ref for condition toggles (received as prop from parent)
   const conditionTogglesRef = useRef(conditionToggles);
@@ -641,13 +643,44 @@ export default function ScannerPanel({ symbol = "MGC", conditionToggles, request
             let curPos = positionQtyRef.current;
             try { const freshPos = await getMgcPosition(symbol); curPos = Math.abs(freshPos.current_qty ?? 0); setPositionQty(curPos); positionQtyRef.current = curPos; } catch { /* */ }
             const targetQty = autoQtyRef.current;
+            const dir = sig.direction || "CALL";
+            const side = dir === "PUT" ? "SELL" : "BUY";
+
+            // ── Scale-in logic: if position full, check for retracement scale-in ──
             if (curPos >= targetQty) {
-              setAutoLog((prev) => [`[${ts()}] ⏸ Position full (${curPos}/${targetQty} qty)`, ...prev.slice(0, 49)]);
+              const holding = holdingPositionRef.current;
+              const livePrice = sig.entry_price;
+              const isRetracement = holding && (
+                (holding.direction === "CALL" && livePrice < holding.entry_price) ||
+                (holding.direction === "PUT" && livePrice > holding.entry_price)
+              );
+              const sameDirection = holding && dir === holding.direction;
+
+              if (isRetracement && sameDirection && curPos < targetQty * 2) {
+                // Scale-in during retracement — same SL/TP as original
+                setAutoLog((prev) => [`[${ts()}] 📉 RETRACEMENT detected — attempting scale-in ${side} @ $${livePrice.toFixed(2)}`, ...prev.slice(0, 49)]);
+                setExecuting(true);
+                try {
+                  const execRes = await execute5Min(dir, 1, targetQty * 2, sig.entry_price, holding.sl, holding.tp, symbol, sig.bar_time, true, livePrice);
+                  if (execRes.execution?.executed) {
+                    lastExecBarRef.current = sig.bar_time;
+                    notifyTrade(side, sig.entry_price, false, holding.sl, holding.tp, sig.risk_reward);
+                    const newQty = execRes.position?.current_qty != null ? Math.abs(execRes.position.current_qty) : curPos + 1;
+                    setPositionQty(newQty); positionQtyRef.current = newQty;
+                    const rec = execRes.execution_record;
+                    setAutoLog((prev) => [`[${ts()}] ✅ SCALE-IN: ${side} +1x → ${execRes.execution?.order_id?.slice(0, 12)} | SL=$${rec?.sl_price} TP=$${rec?.tp_price} (${newQty} total qty)`, ...prev.slice(0, 49)]);
+                    onTradeExecuted?.();
+                  } else {
+                    setAutoLog((prev) => [`[${ts()}] ⏸ Scale-in rejected: ${execRes.execution_record?.reason || execRes.execution?.reason || "Unknown"}`, ...prev.slice(0, 49)]);
+                  }
+                } catch (e) { setAutoLog((prev) => [`[${ts()}] ❌ Scale-in error: ${e instanceof Error ? e.message : "Failed"}`, ...prev.slice(0, 49)]); }
+                finally { setExecuting(false); }
+              } else {
+                setAutoLog((prev) => [`[${ts()}] ⏸ Position full (${curPos}/${targetQty} qty)${holding && !isRetracement ? " — no retracement" : ""}`, ...prev.slice(0, 49)]);
+              }
               busyRef.current = false; return;
             }
             const remainingQty = Math.max(1, targetQty - curPos);
-            const dir = sig.direction || "CALL";
-            const side = dir === "PUT" ? "SELL" : "BUY";
             setExecuting(true);
             try {
               const execRes = await execute5Min(dir, remainingQty, targetQty, sig.entry_price, sig.stop_loss, sig.take_profit, symbol, sig.bar_time);

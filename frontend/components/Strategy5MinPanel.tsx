@@ -15,6 +15,7 @@ import { fmtDateTimeSGT, fmtInputDateSGT, SGT_OFFSET_SEC, toSGT } from "../utils
 import TradeDetailDialog from "./strategy5min/TradeDetailDialog";
 import HoldingMiniChart from "./strategy5min/HoldingMiniChart";
 import OptimizationDialog from "./strategy5min/OptimizationDialog";
+import AutoTradeConfirmDialog from "./strategy5min/AutoTradeConfirmDialog";
 import {
   fetchMGC5MinBacktest,
   fetchLivePrice,
@@ -1276,6 +1277,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
 
   // ── Backtest ──────────────────────────────────────────
   const [autoTradeRequested, setAutoTradeRequested] = useState(false);
+  const [showAutoTradeConfirm, setShowAutoTradeConfirm] = useState(false);
+  const [autoTradeLocked, setAutoTradeLocked] = useState(false);
 
   const runBacktest = useCallback(async () => {
     setLoading(true);
@@ -1293,13 +1296,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
       const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, riskFilters.use_structure_exit ?? false);
       setBtData(res);
       onTradesUpdate?.(res.trades);
-      // Auto-start scanner:
-      // - No open position → scan for next opportunity
-      // - Open position → sync to Tiger if not already holding
-      onRequestAutoTrade?.();
-      if (!res.open_position) {
-        setAutoTradeRequested(true);
-        setTimeout(() => setAutoTradeRequested(false), 3000);
+      // Show confirmation dialog instead of auto-starting scanner
+      if (res.metrics) {
+        setShowAutoTradeConfirm(true);
       }
       // Cache result so page refresh doesn't re-run
       try {
@@ -1580,6 +1579,15 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
       {/* ═════════════════════════════════════════════════════ */}
       {/* Backtest Conditions                                   */}
       {/* ═════════════════════════════════════════════════════ */}
+      {autoTradeLocked && (
+        <div className="mx-3 mt-2 rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-1.5 flex items-center justify-between">
+          <span className="text-[9px] font-bold text-emerald-400">🔒 Auto-Trade ACTIVE — params locked</span>
+          <button
+            onClick={() => setAutoTradeLocked(false)}
+            className="text-[9px] font-bold text-rose-400 hover:text-rose-300 transition"
+          >Unlock</button>
+        </div>
+      )}
       {(() => {
         const enabledCount = Object.values(conditionToggles).filter(Boolean).length;
         return (
@@ -1630,8 +1638,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                           return (
                             <button
                               key={def.key}
-                              onClick={() => setConditionToggles((prev) => ({ ...prev, [def.key]: !prev[def.key] }))}
-                              className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
+                              onClick={() => { if (!autoTradeLocked) setConditionToggles((prev) => ({ ...prev, [def.key]: !prev[def.key] })); }}
+                              className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${autoTradeLocked ? "cursor-not-allowed opacity-60" : ""} ${
                                 on ? `border border-${groupColor}-700/40 bg-${groupColor}-950/20` : "border border-slate-800/30 bg-slate-900/30 opacity-50"
                               }`}
                             >
@@ -1817,7 +1825,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                 <input
                   type="range" min="1" max="6" step="1" value={slMult}
                   onChange={(e) => setSlMult(parseInt(e.target.value))}
-                  className="w-14 h-1 accent-rose-500 cursor-pointer"
+                  disabled={autoTradeLocked}
+                  className={`w-14 h-1 accent-rose-500 ${autoTradeLocked ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
                 />
                 <span className="text-slate-400 tabular-nums w-8">{slMult}×</span>
               </label>
@@ -1826,7 +1835,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                 <input
                   type="range" min="1" max="6" step="1" value={tpMult}
                   onChange={(e) => setTpMult(parseInt(e.target.value))}
-                  className="w-14 h-1 accent-emerald-500 cursor-pointer"
+                  disabled={autoTradeLocked}
+                  className={`w-14 h-1 accent-emerald-500 ${autoTradeLocked ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
                 />
                 <span className="text-slate-400 tabular-nums w-8">{tpMult}×</span>
               </label>
@@ -2044,6 +2054,28 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
             setPendingOptRun(true);
           }}
           onClose={() => setShowOptDialog(false)}
+        />
+      )}
+      {/* ═════════════════════════════════════════════════════ */}
+      {/* AUTO-TRADE CONFIRMATION DIALOG                       */}
+      {/* ═════════════════════════════════════════════════════ */}
+      {showAutoTradeConfirm && btData?.metrics && (
+        <AutoTradeConfirmDialog
+          metrics={btData.metrics}
+          period={period}
+          slMult={slMult}
+          tpMult={tpMult}
+          hasOpenPosition={!!btData.open_position}
+          onConfirm={() => {
+            setShowAutoTradeConfirm(false);
+            setAutoTradeLocked(true);
+            onRequestAutoTrade?.();
+            if (!btData.open_position) {
+              setAutoTradeRequested(true);
+              setTimeout(() => setAutoTradeRequested(false), 3000);
+            }
+          }}
+          onCancel={() => setShowAutoTradeConfirm(false)}
         />
       )}
       {/* ═════════════════════════════════════════════════════ */}

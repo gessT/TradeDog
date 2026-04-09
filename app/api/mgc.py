@@ -2091,6 +2091,8 @@ class Execute5MinRequest(BaseModel):
     stop_loss: float = 0.0
     take_profit: float = 0.0
     bar_time: str = ""            # signal bar timestamp for dedup + parity
+    allow_scale_in: bool = False  # permit adding to existing position during retracement
+    current_price: float = 0.0    # live price for retracement check
 
 
 class Execute5MinResponse(BaseModel):
@@ -2144,6 +2146,8 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
             qty=req.qty,
             max_qty=req.max_qty,
             current_tiger_qty=current_pos,
+            allow_scale_in=req.allow_scale_in,
+            current_price=req.current_price,
         )
         if rejection is not None:
             exec_result = ExecutionResult(

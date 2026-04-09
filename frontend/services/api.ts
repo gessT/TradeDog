@@ -1344,6 +1344,8 @@ export async function execute5Min(
   takeProfit: number = 0,
   symbol: string = "MGC",
   barTime: string = "",
+  allowScaleIn: boolean = false,
+  currentPrice: number = 0,
 ): Promise<Execute5MinResponse> {
   const response = await fetch(`${API_BASE}/mgc/execute_5min`, {
     method: "POST",
@@ -1357,6 +1359,8 @@ export async function execute5Min(
       stop_loss: stopLoss,
       take_profit: takeProfit,
       bar_time: barTime,
+      allow_scale_in: allowScaleIn,
+      current_price: currentPrice,
     }),
   });
   if (!response.ok) {
