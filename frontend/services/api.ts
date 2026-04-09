@@ -1161,14 +1161,28 @@ export type ConditionOptimizationResult = {
   sharpe_ratio: number;
   total_trades: number;
   profit_factor: number;
+  oos_win_rate: number;
+  oos_return_pct: number;
+  oos_total_trades: number;
+  category?: string;
 };
 
 export async function optimize5MinConditions(
   symbol: string = "MGC",
   period: string = "60d",
   top_n: number = 5,
+  atr_sl_mult: number = 4.0,
+  atr_tp_mult: number = 3.0,
+  skipFlat: boolean = false,
+  skipCounterTrend: boolean = true,
+  useEmaExit: boolean = false,
+  useStructureExit: boolean = false,
 ): Promise<ConditionOptimizationResult[]> {
-  const url = `${API_BASE}/mgc/optimize_conditions_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&top_n=${top_n}`;
+  let url = `${API_BASE}/mgc/optimize_conditions_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&top_n=${top_n}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  if (skipFlat) url += `&skip_flat=true`;
+  url += `&skip_counter_trend=${skipCounterTrend}`;
+  if (useEmaExit) url += `&use_ema_exit=true`;
+  if (useStructureExit) url += `&use_structure_exit=true`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();

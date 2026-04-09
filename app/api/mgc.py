@@ -2790,20 +2790,44 @@ async def optimize_5min_conditions(
     symbol: Annotated[str, Query()] = "MGC=F",
     period: Annotated[str, Query()] = "60d",
     top_n: Annotated[int, Query(ge=1, le=10)] = 5,
+    atr_sl_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 4.0,
+    atr_tp_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 3.0,
+    skip_flat: Annotated[bool, Query()] = False,
+    skip_counter_trend: Annotated[bool, Query()] = True,
+    use_ema_exit: Annotated[bool, Query()] = False,
+    use_structure_exit: Annotated[bool, Query()] = False,
 ) -> list[dict]:
-    """Optimize 5-minute condition combinations and return top performing ones."""
+    """Optimize 5-minute condition combinations using current risk filters and SL/TP."""
     
     def _run():
+        import pandas as _pd
         from mgc_trading.backtest_5min import Backtester5Min
         from mgc_trading.strategy_5min import DEFAULT_5MIN_PARAMS
         from itertools import combinations
 
         # Load 5m data
-        df = load_yfinance(symbol=symbol, interval="5m", period=period)
+        df = load_yfinance(symbol=symbol, interval="5m", period="60d")
         if df.empty or len(df) < 20:
             raise ValueError("Not enough 5m data from yfinance.")
 
-        # Use 8 core conditions for optimization
+        # Determine display window (same logic as backtest_5min endpoint)
+        display_start: str | None = None
+        if period != "60d":
+            _period_days = {"1d": 1, "2d": 2, "3d": 3, "5d": 5, "7d": 7, "30d": 30}
+            days_back = _period_days.get(period, 60)
+            if days_back < 60:
+                last_date = df.index[-1]
+                cutoff = last_date - _pd.Timedelta(days=days_back)
+                display_start = cutoff.strftime("%Y-%m-%d")
+
+        # Build params matching the user's current settings
+        custom_params = {
+            "atr_sl_mult": atr_sl_mult,
+            "atr_tp_mult": atr_tp_mult,
+            "use_ema_exit": use_ema_exit,
+            "use_structure_exit": use_structure_exit,
+        }
+
         condition_keys = [
             "ema_trend",
             "ema_slope",
@@ -2813,30 +2837,49 @@ async def optimize_5min_conditions(
             "macd_momentum",
             "rsi_momentum",
             "volume_spike",
-            # optional advanced condition in the 8th slot
             "atr_range",
-            # currently supporting 10, but results will include the top 8 combos
         ]
 
-        # We'll evaluate all subsets with at least 8 active conditions (8, 9, 10)
         results = []
 
-        for r in range(8, len(condition_keys) + 1):
+        for r in range(7, len(condition_keys) + 1):
             for combo in combinations(condition_keys, r):
                 enabled = set(combo)
                 disabled = set(condition_keys) - enabled
 
                 try:
                     bt = Backtester5Min()
-                    result = bt.run(df, params=DEFAULT_5MIN_PARAMS, oos_split=0.3, disabled_conditions=disabled or None)
+                    result = bt.run(
+                        df, params=custom_params, oos_split=0.3,
+                        disabled_conditions=disabled or None,
+                        skip_flat=skip_flat,
+                        skip_counter_trend=skip_counter_trend,
+                    )
 
                     if result.total_trades < 10:
                         continue
 
-                    # Combined score for win rate + return + risk
+                    # Filter trades to the display window (same as backtest_5min)
+                    filtered = result.trades
+                    if display_start:
+                        filtered = [t for t in result.trades if str(t.exit_time)[:10] >= display_start]
+
+                    n_trades = len(filtered)
+                    if n_trades < 3:
+                        continue
+
+                    wins = [t for t in filtered if t.pnl > 0]
+                    losses = [t for t in filtered if t.pnl <= 0]
+                    total_pnl = sum(t.pnl for t in filtered)
+                    win_rate = round(len(wins) / n_trades * 100, 1) if n_trades else 0
+                    return_pct = round(total_pnl / bt.initial_capital * 100, 2)
+                    total_loss = abs(sum(t.pnl for t in losses)) if losses else 0
+                    total_win = sum(t.pnl for t in wins) if wins else 0
+                    pf = round(total_win / total_loss, 2) if total_loss > 0 else 999.0
+
                     score = (
-                        (result.total_return_pct / 100) * 0.45
-                        + (result.win_rate / 100) * 0.35
+                        (return_pct / 100) * 0.45
+                        + (win_rate / 100) * 0.35
                         - (result.max_drawdown_pct / 100) * 0.20
                     )
 
@@ -2844,19 +2887,45 @@ async def optimize_5min_conditions(
                         "conditions": sorted(list(enabled)),
                         "disabled": sorted(list(disabled)),
                         "score": round(score, 6),
-                        "win_rate": round(result.win_rate, 2),
-                        "total_return_pct": round(result.total_return_pct, 2),
+                        "win_rate": win_rate,
+                        "total_return_pct": return_pct,
                         "max_drawdown_pct": round(result.max_drawdown_pct, 2),
                         "sharpe_ratio": round(result.sharpe_ratio, 4),
-                        "profit_factor": round(result.profit_factor, 4),
-                        "total_trades": result.total_trades,
+                        "profit_factor": pf,
+                        "total_trades": n_trades,
+                        "oos_win_rate": round(result.oos_win_rate, 2),
+                        "oos_return_pct": round(result.oos_return_pct, 2),
+                        "oos_total_trades": result.oos_total_trades,
                     })
 
                 except Exception:
                     continue
 
         results.sort(key=lambda x: x["score"], reverse=True)
-        return results[:top_n]
+
+        # Pick 3 category winners: best WR, best Return, lowest risk (DD)
+        if not results:
+            return []
+
+        best_wr = max(results, key=lambda x: x["win_rate"])
+        best_wr["category"] = "best_winrate"
+
+        best_ret = max(results, key=lambda x: x["total_return_pct"])
+        best_ret["category"] = "best_return"
+
+        best_safe = min(results, key=lambda x: x["max_drawdown_pct"])
+        best_safe["category"] = "low_risk"
+
+        # De-duplicate: if same combo wins multiple categories, keep first
+        seen: set[str] = set()
+        top3: list[dict] = []
+        for r in [best_wr, best_ret, best_safe]:
+            key = ",".join(r["conditions"])
+            if key not in seen:
+                seen.add(key)
+                top3.append(r)
+
+        return top3
 
     top = await run_in_threadpool(_run)
     return top

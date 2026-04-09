@@ -14,6 +14,7 @@ import { halfTrend, type HalfTrendPoint } from "../utils/indicators";
 import { fmtDateTimeSGT, fmtInputDateSGT, SGT_OFFSET_SEC, toSGT } from "../utils/time";
 import TradeDetailDialog from "./strategy5min/TradeDetailDialog";
 import HoldingMiniChart from "./strategy5min/HoldingMiniChart";
+import OptimizationDialog from "./strategy5min/OptimizationDialog";
 import {
   fetchMGC5MinBacktest,
   fetchLivePrice,
@@ -1213,6 +1214,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
   // ── Condition optimization ──────────────
   const [optimizationResults, setOptimizationResults] = useState<ConditionOptimizationResult[]>([]);
   const [optimizing, setOptimizing] = useState(false);
+  const [showOptDialog, setShowOptDialog] = useState(false);
+  const [pendingOptRun, setPendingOptRun] = useState(false);
 
   // ── Reset data when symbol changes ──
   useEffect(() => {
@@ -1263,6 +1266,14 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
       setLoading(false);
     }
   }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, riskFilters, configKey]);
+
+  // ── Trigger backtest after optimizer apply (so new state is used) ──
+  useEffect(() => {
+    if (pendingOptRun) {
+      setPendingOptRun(false);
+      runBacktest();
+    }
+  }, [pendingOptRun, runBacktest]);
 
   // ── Restore cached backtest on mount (never auto-run) ──
   useEffect(() => {
@@ -1416,14 +1427,22 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
     setOptimizing(true);
     setOptimizationResults([]);
     try {
-      const results = await optimize5MinConditions(symbol, period, 5);
+      const results = await optimize5MinConditions(
+        symbol, period, 5,
+        slMult, tpMult,
+        riskFilters.skip_flat ?? false,
+        riskFilters.skip_counter_trend ?? true,
+        riskFilters.use_ema_exit ?? false,
+        riskFilters.use_structure_exit ?? false,
+      );
       setOptimizationResults(results);
+      if (results.length > 0) setShowOptDialog(true);
     } catch (e: unknown) {
       alert(`❌ Optimization failed: ${e instanceof Error ? e.message : "Unknown error"}`);
     } finally {
       setOptimizing(false);
     }
-  }, [symbol, period]);
+  }, [symbol, period, slMult, tpMult, riskFilters]);
 
   const m = btData?.metrics;
 
@@ -1455,7 +1474,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                   : "bg-purple-600 text-white hover:bg-purple-500 active:scale-95 shadow-sm shadow-purple-900/40"
               }`}
             >
-              {optimizing ? "Optimizing…" : "🔍 Best 5"}
+              {optimizing ? "Optimizing…" : "🔍 Best 3"}
             </button>
             <button
               onClick={() => setShowExam(true)}
@@ -1855,73 +1874,32 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
             </div>
           )}
 
-          {/* Condition Optimization Results */}
-          {optimizationResults.length > 0 && (
-            <div className="mt-4 rounded-lg border border-purple-800/60 bg-purple-950/20 p-3">
-              <p className="text-[11px] font-bold text-purple-400 uppercase tracking-wider mb-3">
-                🏆 Top 5 Condition Combinations
-              </p>
-              <div className="space-y-2">
-                {optimizationResults.map((result, idx) => (
-                  <div key={idx} className="rounded border border-purple-700/40 bg-purple-900/20 p-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-bold text-purple-300">#{idx + 1}</span>
-                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                        result.score > 0 ? "bg-emerald-900/40 text-emerald-400" : "bg-rose-900/40 text-rose-400"
-                      }`}>
-                        Score: {result.score.toFixed(2)}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-1 text-[8px] mb-2">
-                      <div>✅ <span className="text-emerald-300">{result.conditions.join(", ")}</span></div>
-                      <div>❌ <span className="text-rose-300">{result.disabled.join(", ")}</span></div>
-                    </div>
-                    <div className="grid grid-cols-4 gap-1 text-[8px]">
-                      <div className="text-center">
-                        <div className="text-slate-400">Win Rate</div>
-                        <div className={`font-bold ${result.win_rate >= 60 ? "text-emerald-400" : result.win_rate >= 50 ? "text-amber-400" : "text-rose-400"}`}>
-                          {result.win_rate.toFixed(1)}%
-                        </div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-slate-400">Return</div>
-                        <div className={`font-bold ${result.total_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                          {result.total_return_pct >= 0 ? "+" : ""}{result.total_return_pct.toFixed(1)}%
-                        </div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-slate-400">Max DD</div>
-                        <div className="font-bold text-rose-400">{result.max_drawdown_pct.toFixed(1)}%</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-slate-400">Trades</div>
-                        <div className="font-bold text-slate-300">{result.total_trades}</div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        // Apply this condition combination
-                        const newToggles: Record<string, boolean> = {};
-                        CONDITION_DEFS.forEach(def => {
-                          if (def.group === "5m") {
-                            newToggles[def.key] = result.conditions.includes(def.key);
-                          } else {
-                            newToggles[def.key] = conditionToggles[def.key]; // Keep HTF conditions as is
-                          }
-                        });
-                        setConditionToggles(newToggles);
-                        alert(`✅ Applied combination #${idx + 1} to your conditions!`);
-                      }}
-                      className="mt-2 w-full px-2 py-1 text-[9px] font-bold bg-purple-600 text-white rounded hover:bg-purple-500 transition"
-                    >
-                      Apply This Combination
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
+      {/* ═════════════════════════════════════════════════════ */}
+      {/* OPTIMIZATION DIALOG                                  */}
+      {/* ═════════════════════════════════════════════════════ */}
+      {showOptDialog && optimizationResults.length > 0 && (
+        <OptimizationDialog
+          results={optimizationResults}
+          slMult={slMult}
+          tpMult={tpMult}
+          onApply={(result) => {
+            const newToggles: Record<string, boolean> = {};
+            CONDITION_DEFS.forEach(def => {
+              if (def.group === "5m") {
+                newToggles[def.key] = result.conditions.includes(def.key);
+              } else {
+                newToggles[def.key] = conditionToggles[def.key];
+              }
+            });
+            setConditionToggles(newToggles);
+            setShowOptDialog(false);
+            // Schedule backtest after React processes all state updates
+            setPendingOptRun(true);
+          }}
+          onClose={() => setShowOptDialog(false)}
+        />
+      )}
       {/* ═════════════════════════════════════════════════════ */}
       {/* EXAM DIALOG                                          */}
       {/* ═════════════════════════════════════════════════════ */}
