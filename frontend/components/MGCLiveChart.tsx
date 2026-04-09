@@ -225,16 +225,30 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
         markers.push({
           time: toLocal(entryEpoch),
           position: isLong ? "belowBar" : "aboveBar",
-          color: isLong ? "#22c55e" : "#ef4444",
+          color: "#22c55e",
+          shape: "circle",
+          text: "",
+        });
+        markers.push({
+          time: toLocal(entryEpoch),
+          position: isLong ? "belowBar" : "aboveBar",
+          color: "#22c55e",
           shape: isLong ? "arrowUp" : "arrowDown",
-          text: `${isLong ? "BUY" : "SELL"} $${t.entry_price.toFixed(1)}`,
+          text: "",
         });
         markers.push({
           time: toLocal(exitEpoch),
           position: isLong ? "aboveBar" : "belowBar",
-          color: t.pnl >= 0 ? "#22c55e" : "#ef4444",
+          color: "#ef4444",
           shape: "circle",
-          text: `EXIT $${t.exit_price.toFixed(1)} (${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(0)})`,
+          text: "",
+        });
+        markers.push({
+          time: toLocal(exitEpoch),
+          position: isLong ? "aboveBar" : "belowBar",
+          color: "#ef4444",
+          shape: isLong ? "arrowDown" : "arrowUp",
+          text: "",
         });
       }
       markers.sort((a, b) => (a.time as number) - (b.time as number));

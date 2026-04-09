@@ -129,9 +129,9 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
       }
     }
 
-    // Slice: 50 bars before entry + trade bars + bars after (all remaining if open)
-    const PAD_BEFORE = 50;
-    const PAD_AFTER = isOpen ? candles.length : 50;
+    // Slice: 70 bars before entry + trade bars + 70 bars after (all remaining if open)
+    const PAD_BEFORE = 70;
+    const PAD_AFTER = isOpen ? candles.length : 70;
     const startIdx = Math.max(0, entryIdx - PAD_BEFORE);
     const endIdx = Math.min(candles.length, exitIdx + PAD_AFTER + 1);
     const slice = candles.slice(startIdx, endIdx);
@@ -236,12 +236,14 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
     };
 
     const win = trade.pnl >= 0;
-    const markers: { time: UTCTimestamp; position: "belowBar" | "aboveBar"; color: string; shape: "arrowUp" | "arrowDown"; text: string; size: number }[] = [
-      { time: findClosest(entryBarTs), position: isCall ? "belowBar" : "aboveBar", color: "#a78bfa", shape: isCall ? "arrowUp" : "arrowDown", text: `▶ ENTRY ${trade.direction} $${n(trade.entry_price).toFixed(2)}`, size: 3 },
+    const markers: { time: UTCTimestamp; position: "belowBar" | "aboveBar"; color: string; shape: "circle" | "arrowUp" | "arrowDown"; text: string; size: number }[] = [
+      { time: findClosest(entryBarTs), position: isCall ? "belowBar" : "aboveBar", color: "#22c55e", shape: "circle", text: "", size: 1 },
+      { time: findClosest(entryBarTs), position: isCall ? "belowBar" : "aboveBar", color: "#22c55e", shape: isCall ? "arrowUp" : "arrowDown", text: "", size: 1 },
     ];
     if (!isOpen) {
       const exitBarTs = toLocal(Math.floor(new Date(trade.exit_time).getTime() / 1000));
-      markers.push({ time: findClosest(exitBarTs), position: "aboveBar", color: win ? "#22c55e" : "#ef4444", shape: "arrowDown", text: `◀ EXIT ${trade.reason} ${win ? "+" : ""}$${trade.pnl.toFixed(2)}`, size: 3 });
+      markers.push({ time: findClosest(exitBarTs), position: "aboveBar", color: "#ef4444", shape: "circle", text: "", size: 1 });
+      markers.push({ time: findClosest(exitBarTs), position: "aboveBar", color: "#ef4444", shape: "arrowDown", text: "", size: 1 });
     }
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     createSeriesMarkers(candleSeries, markers);
