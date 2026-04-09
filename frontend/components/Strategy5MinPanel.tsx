@@ -1222,17 +1222,35 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
   // Risk filters (skip_counter_trend, skip_flat) — separate from condition gates
   const [riskFilters, setRiskFilters] = useState<Record<string, boolean>>({ ...DEFAULT_RISK_FILTERS });
 
+  // ── Condition presets ──────────────────
+  const [presets, setPresets] = useState<ConditionPreset[]>([]);
+  const [presetName, setPresetName] = useState("");
+  const [showPresetSave, setShowPresetSave] = useState(false);
+  const [activePreset, setActivePreset] = useState<string | null>(null);
+
   // ── Load persisted config on mount / symbol change ──
   const [configLoaded, setConfigLoaded] = useState(false);
   useEffect(() => {
     let cancelled = false;
     setConfigLoaded(false);
-    loadStrategyConfig(symbol).then(cfg => {
+    Promise.all([
+      loadStrategyConfig(symbol),
+      load5MinConditionPresets(symbol),
+    ]).then(([cfg, loadedPresets]) => {
       if (cancelled) return;
       if (cfg.period) setPeriod(cfg.period);
       if (cfg.sl_mult != null) setSlMult(cfg.sl_mult);
       if (cfg.tp_mult != null) setTpMult(cfg.tp_mult);
       if (cfg.risk_filters) setRiskFilters(cfg.risk_filters);
+      // Restore active preset and apply its toggles
+      if (cfg.active_preset && loadedPresets.length > 0) {
+        const match = loadedPresets.find(p => p.name === cfg.active_preset);
+        if (match) {
+          setActivePreset(match.name);
+          setConditionToggles(prev => ({ ...prev, ...match.toggles }));
+        }
+      }
+      setPresets(loadedPresets);
       setConfigLoaded(true);
     }).catch(() => { if (!cancelled) setConfigLoaded(true); });
     return () => { cancelled = true; };
@@ -1242,10 +1260,10 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
   useEffect(() => {
     if (!configLoaded) return;  // Don't save during initial load
     const timer = setTimeout(() => {
-      saveStrategyConfig({ period, sl_mult: slMult, tp_mult: tpMult, risk_filters: riskFilters }, symbol).catch(() => {});
+      saveStrategyConfig({ period, sl_mult: slMult, tp_mult: tpMult, risk_filters: riskFilters, active_preset: activePreset ?? undefined }, symbol).catch(() => {});
     }, 500);  // debounce 500ms
     return () => clearTimeout(timer);
-  }, [period, slMult, tpMult, riskFilters, symbol, configLoaded]);
+  }, [period, slMult, tpMult, riskFilters, activePreset, symbol, configLoaded]);
 
   // ── Condition optimization ──────────────
   const [optimizationResults, setOptimizationResults] = useState<ConditionOptimizationResult[]>([]);
@@ -1253,10 +1271,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
   const [showOptDialog, setShowOptDialog] = useState(false);
   const [pendingOptRun, setPendingOptRun] = useState(false);
 
-  // ── Condition presets ──────────────────
-  const [presets, setPresets] = useState<ConditionPreset[]>([]);
-  const [presetName, setPresetName] = useState("");
-  const [showPresetSave, setShowPresetSave] = useState(false);
+  // ── Condition presets (state already declared above) ──
 
   // Load presets on mount / symbol change
   useEffect(() => {
@@ -1742,15 +1757,22 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onRequ
                       {presets.map((p) => {
                         const enabledCount = Object.values(p.toggles).filter(Boolean).length;
                         const total = Object.keys(p.toggles).length;
+                        const isActive = activePreset === p.name;
                         return (
                           <div key={p.name} className="flex items-center gap-1.5 group">
                             <button
                               onClick={() => {
                                 setConditionToggles((prev) => ({ ...prev, ...p.toggles }));
+                                setActivePreset(p.name);
                               }}
-                              className="flex-1 flex items-center gap-1.5 px-2 py-1 rounded text-left text-[9px] border border-blue-800/30 bg-blue-950/10 hover:bg-blue-950/30 transition"
+                              className={`flex-1 flex items-center gap-1.5 px-2 py-1 rounded text-left text-[9px] border transition ${
+                                isActive
+                                  ? "border-cyan-500/50 bg-cyan-950/30 ring-1 ring-cyan-500/20"
+                                  : "border-blue-800/30 bg-blue-950/10 hover:bg-blue-950/30"
+                              }`}
                             >
-                              <span className="text-blue-400 font-bold truncate">{p.name}</span>
+                              {isActive && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />}
+                              <span className={`font-bold truncate ${isActive ? "text-cyan-400" : "text-blue-400"}`}>{p.name}</span>
                               <span className="text-[7px] text-slate-500 ml-auto">{enabledCount}/{total}</span>
                             </button>
                             <button

@@ -2800,6 +2800,7 @@ class StrategyConfigPayload(BaseModel):
     sl_mult: float = 4.0
     tp_mult: float = 3.0
     risk_filters: dict[str, bool] = {}
+    active_preset: str | None = None
 
 
 @router.get("/strategy_config")
@@ -2839,6 +2840,7 @@ def save_strategy_config(
         "sl_mult": payload.sl_mult,
         "tp_mult": payload.tp_mult,
         "risk_filters": payload.risk_filters,
+        "active_preset": payload.active_preset,
     })
     with engine.begin() as conn:
         conn.execute(

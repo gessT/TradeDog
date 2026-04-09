@@ -1059,6 +1059,7 @@ export type StrategyConfig = {
   sl_mult?: number;
   tp_mult?: number;
   risk_filters?: Record<string, boolean>;
+  active_preset?: string;
 };
 
 export async function loadStrategyConfig(symbol: string = "MGC"): Promise<StrategyConfig> {

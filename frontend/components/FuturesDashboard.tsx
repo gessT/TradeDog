@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   load5MinConditionToggles,
   save5MinConditionToggles,
+  loadStrategyConfig,
+  load5MinConditionPresets,
   type MGC5MinTrade,
   type Scan5MinConditions,
 } from "../services/api";
@@ -39,7 +41,21 @@ export default function FuturesDashboard() {
 
   useEffect(() => {
     conditionsLoaded.current = false;
-    load5MinConditionToggles(selectedSymbol).then((saved) => {
+    // Check for active preset first — preset is the source of truth
+    Promise.all([
+      loadStrategyConfig(selectedSymbol),
+      load5MinConditionPresets(selectedSymbol),
+      load5MinConditionToggles(selectedSymbol),
+    ]).then(([cfg, presets, saved]) => {
+      if (cfg.active_preset && presets.length > 0) {
+        const match = presets.find(p => p.name === cfg.active_preset);
+        if (match) {
+          setConditionToggles((prev) => ({ ...prev, ...match.toggles }));
+          conditionsLoaded.current = true;
+          return;
+        }
+      }
+      // Fallback to individual toggles
       if (saved && Object.keys(saved).length > 0) setConditionToggles((prev) => ({ ...prev, ...saved }));
       conditionsLoaded.current = true;
     }).catch(() => { conditionsLoaded.current = true; });
