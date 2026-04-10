@@ -964,6 +964,9 @@ export type MGC5MinCandle = {
   macd_hist: number | null;
   st_dir: number | null;
   signal: number;
+  mkt_structure: number | null;
+  sma_28: number | null;
+  adx: number | null;
 };
 
 export type MGC5MinTrade = {

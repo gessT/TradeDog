@@ -96,6 +96,7 @@ interface TradeDetailDialogProps {
 export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<TradeDetailDialogProps>) {
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
 
   // Indicator toggle state
   const [showEMA, setShowEMA] = useState(false);
@@ -146,7 +147,9 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
       grid: { vertLines: { color: "#1e293b" }, horzLines: { color: "#1e293b" } },
       rightPriceScale: { borderVisible: false },
       timeScale: { borderColor: "#334155", timeVisible: true, secondsVisible: false },
-      crosshair: { mode: 0 },
+      crosshair: { mode: 0, vertLine: { labelVisible: true }, horzLine: { labelVisible: true } },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
     });
     chartRef.current = chart;
 
@@ -249,6 +252,63 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
     createSeriesMarkers(candleSeries, markers);
 
     chart.timeScale().fitContent();
+
+    // ── Crosshair tooltip: build lookup by timestamp ──
+    const candleByTime = new Map<number, typeof slice[0]>();
+    for (let i = 0; i < slice.length && i < ohlc.length; i++) {
+      candleByTime.set(ohlc[i].time as number, slice[i]);
+    }
+
+    chart.subscribeCrosshairMove((param) => {
+      const tip = tooltipRef.current;
+      if (!tip) return;
+      if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) {
+        tip.style.display = "none";
+        return;
+      }
+      const c = candleByTime.get(param.time as number);
+      if (!c) { tip.style.display = "none"; return; }
+
+      const structLabel = c.mkt_structure === 1 ? "📈 BULL" : c.mkt_structure === -1 ? "📉 BEAR" : "📊 FLAT";
+      const structColor = c.mkt_structure === 1 ? "#4ade80" : c.mkt_structure === -1 ? "#f87171" : "#94a3b8";
+      const stLabel = c.st_dir === 1 ? "▲ Bull" : c.st_dir === -1 ? "▼ Bear" : "—";
+      const stColor = c.st_dir === 1 ? "#4ade80" : c.st_dir === -1 ? "#f87171" : "#94a3b8";
+      const rsiVal = c.rsi != null ? c.rsi.toFixed(1) : "—";
+      const rsiColor = (c.rsi ?? 50) > 60 ? "#4ade80" : (c.rsi ?? 50) < 40 ? "#f87171" : "#fbbf24";
+      const macdVal = c.macd_hist != null ? c.macd_hist.toFixed(4) : "—";
+      const macdColor = (c.macd_hist ?? 0) > 0 ? "#4ade80" : (c.macd_hist ?? 0) < 0 ? "#f87171" : "#94a3b8";
+      const adxVal = c.adx != null ? c.adx.toFixed(1) : "—";
+      const adxColor = (c.adx ?? 0) >= 25 ? "#4ade80" : (c.adx ?? 0) >= 15 ? "#fbbf24" : "#f87171";
+      const smaVal = c.sma_28 != null ? `$${c.sma_28.toFixed(2)}` : "—";
+      const pxChange = c.close - c.open;
+      const barColor = pxChange >= 0 ? "#4ade80" : "#f87171";
+
+      tip.innerHTML = `
+        <div style="color:${barColor};font-weight:800;font-size:11px;margin-bottom:3px">
+          O ${c.open.toFixed(2)} H ${c.high.toFixed(2)} L ${c.low.toFixed(2)} C ${c.close.toFixed(2)}
+        </div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:1px 8px;font-size:10px">
+          <span style="color:#64748b">Structure</span><span style="color:${structColor};font-weight:700">${structLabel}</span>
+          <span style="color:#64748b">Supertrend</span><span style="color:${stColor};font-weight:700">${stLabel}</span>
+          <span style="color:#64748b">RSI</span><span style="color:${rsiColor};font-weight:700">${rsiVal}</span>
+          <span style="color:#64748b">MACD</span><span style="color:${macdColor};font-weight:700">${macdVal}</span>
+          <span style="color:#64748b">ADX</span><span style="color:${adxColor};font-weight:700">${adxVal}</span>
+          <span style="color:#64748b">SMA 28</span><span style="color:#e879f9;font-weight:700">${smaVal}</span>
+          <span style="color:#64748b">Vol</span><span style="color:#94a3b8;font-weight:700">${c.volume.toLocaleString()}</span>
+        </div>`;
+      tip.style.display = "block";
+
+      // Position tooltip near cursor but clamped within chart area
+      const chartRect = el.getBoundingClientRect();
+      const tipW = 210, tipH = tip.offsetHeight || 140;
+      let left = param.point.x + 16;
+      let top = param.point.y - tipH / 2;
+      if (left + tipW > chartRect.width) left = param.point.x - tipW - 12;
+      if (top < 0) top = 4;
+      if (top + tipH > chartRect.height) top = chartRect.height - tipH - 4;
+      tip.style.left = `${left}px`;
+      tip.style.top = `${top}px`;
+    });
 
     const ro = new ResizeObserver(() => {
       if (ref.current) chart.applyOptions({ width: ref.current.clientWidth, height: ref.current.clientHeight });
@@ -398,7 +458,25 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
         </div>
 
         {/* Chart — fills remaining space */}
-        <div ref={ref} className="flex-1 min-h-[400px] w-full" />
+        <div className="relative flex-1 min-h-[400px] w-full">
+          <div ref={ref} className="absolute inset-0" />
+          <div
+            ref={tooltipRef}
+            style={{
+              display: "none",
+              position: "absolute",
+              zIndex: 50,
+              pointerEvents: "none",
+              background: "rgba(15,23,42,0.95)",
+              border: "1px solid #334155",
+              borderRadius: "8px",
+              padding: "8px 10px",
+              width: "210px",
+              backdropFilter: "blur(8px)",
+              boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
+            }}
+          />
+        </div>
       </div>
     </div>
   );

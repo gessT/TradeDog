@@ -1524,6 +1524,9 @@ class MGC5MinCandle(BaseModel):
     macd_hist: Optional[float] = None
     st_dir: Optional[int] = None
     signal: int = 0
+    mkt_structure: Optional[int] = None
+    sma_28: Optional[float] = None
+    adx: Optional[float] = None
 
 
 class MGC5MinTrade(BaseModel):
@@ -1714,6 +1717,9 @@ async def mgc_backtest_5min(
                 macd_hist=round(float(row["macd_hist"]), 4) if not _isnan(row.get("macd_hist")) else None,
                 st_dir=int(row["st_dir"]) if not _isnan(row.get("st_dir")) else None,
                 signal=int(row.get("signal", 0)),
+                mkt_structure=int(row["mkt_structure"]) if not _isnan(row.get("mkt_structure")) else None,
+                sma_28=round(float(row["sma_28"]), 2) if not _isnan(row.get("sma_28")) else None,
+                adx=round(float(row["adx"]), 1) if not _isnan(row.get("adx")) else None,
             ))
 
         trades = [
