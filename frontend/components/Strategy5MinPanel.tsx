@@ -2163,7 +2163,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   .sort((a, b) => a.date.localeCompare(b.date));
 
                 const hasDays = days.length > 0;
-                if (!hasDays && !hasOpen) return null;
 
                 const totalPnl = days.reduce((s, d) => s + d.pnl, 0);
                 const maxAbs = Math.max(...days.map(d => Math.abs(d.pnl)), 1);
@@ -2217,7 +2216,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                     )}
 
                     {/* ─── Currently Holding ─── */}
-                    {pos && (
+                    {pos ? (
                       <div className={`${hasDays ? "w-1/2" : "w-full"} rounded-xl border ${unrealPnl != null && unrealPnl >= 0 ? "border-emerald-500/20" : "border-rose-500/20"} bg-gradient-to-b from-slate-900/90 to-slate-950/95 overflow-hidden flex flex-col`}>
                         {/* Header strip */}
                         <div className={`px-3 py-1.5 flex items-center justify-between ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-500/5" : "bg-rose-500/5"}`}>
@@ -2338,6 +2337,46 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                           </div>
                           {syncStatus && (
                             <div className="text-[8px] font-bold text-orange-400 animate-pulse truncate">{syncStatus}</div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      /* ─── Live Trading Card (no position) ─── */
+                      <div className={`${hasDays ? "w-1/2" : "w-full"} rounded-xl border ${autoTrading ? "border-emerald-500/30" : "border-slate-800/50"} bg-gradient-to-b from-slate-900/90 to-slate-950/95 overflow-hidden flex flex-col justify-center items-center`}>
+                        <div className="px-4 py-4 flex flex-col items-center gap-3 text-center">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${autoTrading ? "bg-emerald-500/10 ring-2 ring-emerald-500/30" : "bg-slate-800/60"}`}>
+                            <span className="text-lg">{autoTrading ? "🟢" : "⚡"}</span>
+                          </div>
+                          <div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Live Trading</div>
+                            <div className="text-[8px] text-slate-600 leading-tight">
+                              {autoTrading
+                                ? "Monitoring for entry signals…"
+                                : "Auto-place orders when indicator signals appear"
+                              }
+                            </div>
+                          </div>
+                          {autoTrading && (
+                            <div className="flex items-center gap-1.5 text-[8px] text-slate-500">
+                              <span className="text-emerald-400 font-bold">SL {slMult}×</span>
+                              <span className="text-slate-700">|</span>
+                              <span className="text-cyan-400 font-bold">TP {tpMult}×</span>
+                              <span className="text-slate-700">|</span>
+                              <span className="text-amber-400 font-bold">{symbol}</span>
+                            </div>
+                          )}
+                          <button
+                            onClick={() => setAutoTrading((v) => !v)}
+                            className={`w-full py-1.5 text-[10px] font-bold rounded-lg transition-all ${
+                              autoTrading
+                                ? "bg-gradient-to-r from-emerald-500 to-cyan-500 text-white shadow-md shadow-emerald-900/40 ring-1 ring-emerald-400/30 animate-pulse"
+                                : "bg-slate-800 border border-slate-700/50 text-slate-400 hover:text-emerald-400 hover:border-emerald-700/50 active:scale-95"
+                            }`}
+                          >
+                            {autoTrading ? "● Live Trading ON" : "⚡ Enable Live Trading"}
+                          </button>
+                          {exitStatus && (
+                            <div className="text-[8px] font-bold text-emerald-400 animate-pulse truncate w-full">{exitStatus}</div>
                           )}
                         </div>
                       </div>
