@@ -1411,14 +1411,12 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         return;
       }
       const side = pos.direction === "PUT" ? "SHORT" : "LONG";
-      // LMT with $1 tolerance: BUY slightly above, SELL slightly below entry
-      const lmtPrice = pos.direction === "PUT"
-        ? pos.entry_price - 1.0   // SELL LMT $1 below → fills at entry or better
-        : pos.entry_price + 1.0;  // BUY LMT $1 above → fills at entry or better
-      setSyncStatus(`Placing ${side} LMT @ $${lmtPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}…`);
-      const execRes = await execute5Min(pos.direction, 1, 1, pos.entry_price, pos.sl, pos.tp, symbol, "", false, 0, lmtPrice);
+      // Queue order at entry price ±$1 — backend picks LMT or STP based on current price
+      const targetPrice = pos.entry_price;
+      setSyncStatus(`Placing ${side} @ $${targetPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}…`);
+      const execRes = await execute5Min(pos.direction, 1, 1, pos.entry_price, pos.sl, pos.tp, symbol, "", false, 0, targetPrice);
       if (execRes.execution?.executed) {
-        setSyncStatus(`✅ ${side} LMT @ $${lmtPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}`);
+        setSyncStatus(`✅ ${side} queued @ $${targetPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}`);
         // Save strategy tag for this position
         const tag = activePreset || "Manual";
         savePositionTag(symbol, tag).catch(() => {});
@@ -1494,16 +1492,14 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         const tigerPos = await getMgcPosition(symbol);
         const curQty = Math.abs(tigerPos.current_qty ?? 0);
         if (curQty > 0) return; // already holding
-        // LMT with $1 tolerance
-        const lmtPrice = pos.direction === "PUT"
-          ? pos.entry_price - 1.0
-          : pos.entry_price + 1.0;
-        const execRes = await execute5Min(pos.direction, 1, 1, pos.entry_price, pos.sl, pos.tp, symbol, "", false, 0, lmtPrice);
+        // Queue order at entry price — backend picks LMT or STP based on live price
+        const targetPrice = pos.entry_price;
+        const execRes = await execute5Min(pos.direction, 1, 1, pos.entry_price, pos.sl, pos.tp, symbol, "", false, 0, targetPrice);
         if (execRes.execution?.executed) {
           const tag = activePreset || "Auto";
           savePositionTag(symbol, tag).catch(() => {});
           onDirectExecute?.();
-          setExitStatus(`✅ Auto: ${pos.direction === "PUT" ? "SHORT" : "LONG"} LMT @ $${lmtPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}`);
+          setExitStatus(`✅ Auto: ${pos.direction === "PUT" ? "SHORT" : "LONG"} queued @ $${targetPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}`);
           setTimeout(() => setExitStatus(null), 5000);
         }
       } catch { /* retry next cycle */ }

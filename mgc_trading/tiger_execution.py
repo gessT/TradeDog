@@ -174,6 +174,7 @@ class TigerTrader:
         side: str = "BUY",
         order_type: str = "MKT",
         limit_price: float | None = None,
+        aux_price: float | None = None,
         retries: int = 3,
     ) -> OrderRecord | None:
         """Place an order via Tiger API (or paper-log if SDK absent).
@@ -182,8 +183,9 @@ class TigerTrader:
             symbol: e.g. "MGC2406" (specific contract) or "MGC" (front-month)
             qty: number of contracts
             side: "BUY" or "SELL"
-            order_type: "MKT" or "LMT"
+            order_type: "MKT", "LMT", or "STP"
             limit_price: required for LMT orders
+            aux_price: stop trigger price for STP orders
             retries: retry count on transient failures
 
         Returns:
@@ -205,7 +207,7 @@ class TigerTrader:
             symbol=symbol,
             side=side,
             qty=qty,
-            price=limit_price or 0.0,
+            price=limit_price or aux_price or 0.0,
             order_id="",
             status="PENDING",
         )
@@ -214,12 +216,13 @@ class TigerTrader:
         if self._client is None:
             record.order_id = f"PAPER-{int(time.time())}"
             record.status = "FILLED_PAPER"
-            logger.info("📝 PAPER %s %s ×%d  @ %s", side, symbol, qty, limit_price or "MKT")
+            logger.info("📝 PAPER %s %s ×%d  @ %s (%s)", side, symbol, qty,
+                        limit_price or aux_price or "MKT", order_type)
             self._register_fill(record)
             return record
 
         # ── Real Tiger execution ────────────────────────────────────
-        from tigeropen.common.util.order_utils import market_order, limit_order
+        from tigeropen.common.util.order_utils import market_order, limit_order, stop_order
 
         for attempt in range(1, retries + 1):
             try:
@@ -230,7 +233,15 @@ class TigerTrader:
                 contract = contracts[0]
                 contract.expiry = None  # deprecated in SDK v3.5.7
 
-                if order_type == "LMT" and limit_price is not None:
+                if order_type == "STP" and aux_price is not None:
+                    order = stop_order(
+                        account=self.account,
+                        contract=contract,
+                        action=side,
+                        quantity=qty,
+                        aux_price=aux_price,
+                    )
+                elif order_type == "LMT" and limit_price is not None:
                     order = limit_order(
                         account=self.account,
                         contract=contract,
@@ -249,7 +260,7 @@ class TigerTrader:
                 result = self._client.place_order(order)
                 record.order_id = str(result)
                 record.status = "SUBMITTED"
-                logger.info("✅ ORDER %s %s ×%d → %s", side, symbol, qty, record.order_id)
+                logger.info("✅ ORDER %s %s %s ×%d → %s", order_type, side, symbol, qty, record.order_id)
                 self._register_fill(record)
                 return record
 
@@ -277,18 +288,43 @@ class TigerTrader:
         stop_loss_price: float | None = None,
         take_profit_price: float | None = None,
         limit_price: float | None = None,
+        current_price: float | None = None,
     ) -> BracketResult:
-        """Place an entry order (MKT or LMT), then an OCA order for SL + TP.
+        """Place an entry order, then an OCA order for SL + TP.
 
         OCA (One-Cancels-All): when SL fills → TP auto-cancelled, and vice versa.
-        If *limit_price* is provided, the entry is a LMT order at that price;
-        otherwise it falls back to a MKT order.
+
+        If *limit_price* is provided the entry is queued (not instant market):
+        - If price needs to RISE to reach limit → STP order (triggers on breakout)
+        - If price needs to DROP to reach limit → LMT order (fills on pullback)
+        This ensures the order only fills around the target entry price ±$1,
+        never at the current (possibly distant) market price.
         """
         result = BracketResult()
         close_side = "SELL" if side == "BUY" else "BUY"
 
-        # 1. Entry (LMT if limit_price given, else MKT)
-        if limit_price is not None and limit_price > 0:
+        # 1. Entry — choose order type to WAIT for the target price
+        if limit_price is not None and limit_price > 0 and current_price and current_price > 0:
+            if side == "BUY":
+                if current_price < limit_price:
+                    # Price below target → need price to RISE → STP BUY
+                    entry = self.place_order(symbol=symbol, qty=qty, side=side,
+                                             order_type="STP", aux_price=limit_price)
+                else:
+                    # Price above target → need price to DROP → LMT BUY
+                    entry = self.place_order(symbol=symbol, qty=qty, side=side,
+                                             order_type="LMT", limit_price=limit_price)
+            else:  # SELL
+                if current_price > limit_price:
+                    # Price above target → need price to DROP → STP SELL
+                    entry = self.place_order(symbol=symbol, qty=qty, side=side,
+                                             order_type="STP", aux_price=limit_price)
+                else:
+                    # Price below target → need price to RISE → LMT SELL
+                    entry = self.place_order(symbol=symbol, qty=qty, side=side,
+                                             order_type="LMT", limit_price=limit_price)
+        elif limit_price is not None and limit_price > 0:
+            # No current_price available — fall back to LMT
             entry = self.place_order(symbol=symbol, qty=qty, side=side,
                                      order_type="LMT", limit_price=limit_price)
         else:

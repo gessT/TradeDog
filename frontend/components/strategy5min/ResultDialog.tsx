@@ -228,14 +228,12 @@ export default function ResultDialog({ btData, symbol, symbolName, period, slMul
         return;
       }
       const side = pos.direction === "PUT" ? "SHORT" : "LONG";
-      // LMT with $1 tolerance: BUY slightly above, SELL slightly below entry
-      const lmtPrice = pos.direction === "PUT"
-        ? pos.entry_price - 1.0
-        : pos.entry_price + 1.0;
-      setSyncStatus(`Placing ${side} LMT @ $${lmtPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}…`);
-      const execRes = await execute5Min(pos.direction, 1, 1, pos.entry_price, pos.sl, pos.tp, symbol, "", false, 0, lmtPrice);
+      // Queue order at entry price — backend picks LMT or STP based on live price
+      const targetPrice = pos.entry_price;
+      setSyncStatus(`Placing ${side} @ $${targetPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}…`);
+      const execRes = await execute5Min(pos.direction, 1, 1, pos.entry_price, pos.sl, pos.tp, symbol, "", false, 0, targetPrice);
       if (execRes.execution?.executed) {
-        setSyncStatus(`✅ ${side} LMT @ $${lmtPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}`);
+        setSyncStatus(`✅ ${side} queued @ $${targetPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}`);
         const tag = activePreset || "Manual";
         savePositionTag(symbol, tag).catch(() => {});
         onSynced?.();

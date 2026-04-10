@@ -2353,6 +2353,8 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
             return exec_result, position_info, rec.to_dict(), engine.get_state_summary()
 
         try:
+            # Get live price so bracket order knows whether to use LMT or STP
+            live_px = _tiger_live_price(req.symbol) or req.current_price or req.entry_price
             bracket = trader.place_bracket_order(
                 symbol=tiger_sym,
                 qty=req.qty,
@@ -2360,6 +2362,7 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
                 stop_loss_price=sl_price,
                 take_profit_price=tp_price,
                 limit_price=req.limit_price if req.limit_price > 0 else None,
+                current_price=live_px,
             )
         except Exception as exc:
             logger.exception("Bracket order placement failed")
