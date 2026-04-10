@@ -1603,6 +1603,12 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             >
               <span className="text-[10px]">⚙️</span>
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Conditions</span>
+              {activePreset && (
+                <span className="text-[9px] font-bold text-cyan-400 bg-cyan-950/40 border border-cyan-700/30 px-1.5 py-0.5 rounded">{activePreset}</span>
+              )}
+              {!activePreset && (
+                <span className="text-[9px] font-medium text-slate-500 bg-slate-800/50 px-1.5 py-0.5 rounded">Custom</span>
+              )}
 
               {/* Compact inline pills when collapsed */}
               {!conditionsOpen && (
@@ -1642,7 +1648,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                           return (
                             <button
                               key={def.key}
-                              onClick={() => { setConditionToggles((prev) => ({ ...prev, [def.key]: !prev[def.key] })); }}
+                              onClick={() => { setConditionToggles((prev) => ({ ...prev, [def.key]: !prev[def.key] })); setActivePreset(null); }}
                               className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
                                 on ? `border border-${groupColor}-700/40 bg-${groupColor}-950/20` : "border border-slate-800/30 bg-slate-900/30 opacity-50"
                               }`}
@@ -1783,6 +1789,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                               onClick={() => {
                                 setConditionToggles((prev) => ({ ...prev, ...p.toggles }));
                                 setActivePreset(p.name);
+                                setConditionsOpen(false);
                               }}
                               className={`flex-1 flex items-center gap-1.5 px-2 py-1 rounded text-left text-[9px] border transition ${
                                 isActive

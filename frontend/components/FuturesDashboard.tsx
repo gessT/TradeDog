@@ -94,7 +94,7 @@ export default function FuturesDashboard() {
         </div>
 
         {/* Live chart */}
-        <div className="flex-1 min-h-0">
+        <div className="h-1/2 min-h-0">
           <MGCLiveChart
             symbol={selectedSymbol}
             symbolName={selectedName}

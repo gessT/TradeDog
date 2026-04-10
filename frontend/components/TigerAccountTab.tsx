@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   fetchTigerAccount,
   fetchTradeHistory,
@@ -364,7 +364,6 @@ export default function TigerAccountTab() {
   const [data, setData] = useState<TigerAccountResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [orderTab, setOrderTab] = useState<"open" | "today" | "filled">("today");
 
   // Trade history state
   const [tradeHistory, setTradeHistory] = useState<TradeHistoryResponse | null>(null);
@@ -456,6 +455,15 @@ export default function TigerAccountTab() {
 
   const acct = data?.account;
 
+  // Derive today P&L from trade history (same source as Today's Trades section)
+  const todayPnlFromTrades = useMemo(() => {
+    const todayStr = localDateStr();
+    const todayTrades = tradeHistory?.trades?.filter((t) => {
+      return toLocalDate(t.entry_time) === todayStr || toLocalDate(t.exit_time) === todayStr;
+    }) ?? [];
+    return todayTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
+  }, [tradeHistory]);
+
   return (
     <div className="flex-1 overflow-y-auto p-3 space-y-3">
       {/* Refresh button */}
@@ -493,7 +501,7 @@ export default function TigerAccountTab() {
 
       {/* Account Summary */}
       {acct && (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           <div className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-3 text-center">
             <div className="text-[8px] text-slate-500 uppercase tracking-wider">Net Liquidation</div>
             <div className="text-lg font-bold text-white tabular-nums mt-0.5">{hidePrices ? "••••••" : `$${acct.net_liquidation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
@@ -506,6 +514,12 @@ export default function TigerAccountTab() {
             <div className="text-[8px] text-slate-500 uppercase tracking-wider">Unrealized P&L</div>
             <div className={`text-lg font-bold tabular-nums mt-0.5 ${hidePrices ? "text-slate-500" : acct.unrealized_pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
               {hidePrices ? "••••••" : `${acct.unrealized_pnl >= 0 ? "+" : ""}$${acct.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-3 text-center">
+            <div className="text-[8px] text-slate-500 uppercase tracking-wider">Today P&L</div>
+            <div className={`text-lg font-bold tabular-nums mt-0.5 ${hidePrices ? "text-slate-500" : todayPnlFromTrades >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {hidePrices ? "••••••" : `${todayPnlFromTrades >= 0 ? "+" : ""}$${todayPnlFromTrades.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
             </div>
           </div>
         </div>
@@ -549,77 +563,6 @@ export default function TigerAccountTab() {
         )}
       </div>
 
-      {/* Orders & Trades */}
-      <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 overflow-hidden">
-        <div className="px-3 py-2 border-b border-slate-800/40 flex items-center gap-2 flex-wrap">
-          {(["today", "open"] as const).map((t) => {
-            const todayStr = localDateStr();
-            const todayFilled = data?.filled_orders?.filter((o) => o.trade_time && toLocalDate(o.trade_time) === todayStr) ?? [];
-            const label = t === "today"
-              ? `Today (${todayFilled.length})`
-              : `Open (${data?.open_orders?.length ?? 0})`;
-            return (
-              <button
-                key={t}
-                onClick={() => setOrderTab(t)}
-                className={`px-2.5 py-0.5 text-[10px] font-bold rounded transition-all ${
-                  orderTab === t
-                    ? "bg-cyan-600 text-white"
-                    : "bg-slate-800 text-slate-500 hover:text-slate-300"
-                }`}
-              >{label}</button>
-            );
-          })}
-        </div>
-
-        {/* Order tabs (today/open) */}
-        {(() => {
-          const todayStr = localDateStr();
-          const orders = orderTab === "open"
-            ? data?.open_orders
-            : orderTab === "today"
-              ? data?.filled_orders?.filter((o) => o.trade_time && toLocalDate(o.trade_time) === todayStr)
-              : data?.filled_orders;
-          if (!orders || orders.length === 0) {
-            return (
-              <div className="px-3 py-6 text-center text-[11px] text-slate-600">
-                {loading ? "Loading orders…" : `No ${orderTab} orders`}
-              </div>
-            );
-          }
-          return (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="text-[8px] text-slate-600 uppercase tracking-wider">
-                    <th className="px-2 py-1.5">Order ID</th>
-                    <th className="px-2 py-1.5">Symbol</th>
-                    <th className="px-2 py-1.5">Side</th>
-                    <th className="px-2 py-1.5">Type</th>
-                    <th className="px-2 py-1.5 text-center">Fill</th>
-                    <th className="px-2 py-1.5 text-right">Price</th>
-                    <th className="px-2 py-1.5">Time</th>
-                    <th className="px-2 py-1.5">Status</th>
-                    <th className="px-2 py-1.5 text-center"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orders.map((o) => (
-                    <OrderRow
-                      key={o.order_id}
-                      o={o}
-                      canCancel={orderTab === "open"}
-                      onCancel={handleCancel}
-                      hidePrices={hidePrices}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          );
-        })()}
-      </div>
-
       {/* Today's Trades — paired buy/sell with P&L */}
       {(() => {
         const todayStr = localDateStr();
@@ -646,6 +589,11 @@ export default function TigerAccountTab() {
                       {wins}W/{losses}L
                     </span>
                   </>
+                )}
+                {(data?.positions?.length ?? 0) > 0 && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 animate-pulse">
+                    {data!.positions.length} Open
+                  </span>
                 )}
               </div>
               <button

@@ -639,6 +639,7 @@ class TigerAccountResponse(BaseModel):
     positions: list[TigerPositionItem]
     open_orders: list[TigerOrderItem]
     filled_orders: list[TigerOrderItem]
+    today_pnl: float = 0.0
     timestamp: str
 
 
@@ -746,11 +747,23 @@ async def tiger_account() -> TigerAccountResponse:
                 matching.sort(key=lambda o: o.trade_time, reverse=True)
                 pos.open_time = matching[0].trade_time
 
+        # Fix unrealized P&L: if account-level is 0 but positions have P&L, sum them
+        if account_info.unrealized_pnl == 0 and positions:
+            pos_pnl = sum(p.unrealized_pnl for p in positions)
+            if pos_pnl != 0:
+                account_info.unrealized_pnl = pos_pnl
+
+        # Today's realized P&L: sum realized_pnl from positions
+        today_pnl = account_info.realized_pnl
+        if today_pnl == 0 and positions:
+            today_pnl = sum(p.realized_pnl for p in positions)
+
         return TigerAccountResponse(
             account=account_info,
             positions=positions,
             open_orders=open_orders,
             filled_orders=filled_orders,
+            today_pnl=round(today_pnl, 2),
             timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
         )
 
@@ -1808,12 +1821,10 @@ async def mgc_backtest_5min(
     # the position is still live → convert it to "OPEN".
     open_pos = None
     if trades:
-        # Find the last EOD trade — this is the still-open position
+        # Only convert if the very last trade is EOD (position still open at end of data)
         last_eod_idx = None
-        for idx in range(len(trades) - 1, -1, -1):
-            if trades[idx].reason == "EOD":
-                last_eod_idx = idx
-                break
+        if trades[-1].reason == "EOD":
+            last_eod_idx = len(trades) - 1
 
         if last_eod_idx is not None:
             t = trades[last_eod_idx]

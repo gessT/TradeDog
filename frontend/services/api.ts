@@ -757,6 +757,7 @@ export type TigerAccountResponse = {
   positions: TigerPositionItem[];
   open_orders: TigerOrderItem[];
   filled_orders: TigerOrderItem[];
+  today_pnl: number;
   timestamp: string;
 };
 
