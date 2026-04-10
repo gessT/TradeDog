@@ -2342,41 +2342,98 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                       </div>
                     ) : (
                       /* ─── Live Trading Card (no position) ─── */
-                      <div className={`${hasDays ? "w-1/2" : "w-full"} rounded-xl border ${autoTrading ? "border-emerald-500/30" : "border-slate-800/50"} bg-gradient-to-b from-slate-900/90 to-slate-950/95 overflow-hidden flex flex-col justify-center items-center`}>
-                        <div className="px-4 py-4 flex flex-col items-center gap-3 text-center">
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${autoTrading ? "bg-emerald-500/10 ring-2 ring-emerald-500/30" : "bg-slate-800/60"}`}>
-                            <span className="text-lg">{autoTrading ? "🟢" : "⚡"}</span>
+                      <div className={`${hasDays ? "w-1/2" : "w-full"} rounded-xl overflow-hidden flex flex-col relative ${
+                        autoTrading
+                          ? "border border-emerald-500/20 bg-gradient-to-b from-emerald-950/40 via-slate-950/95 to-slate-950/95"
+                          : "border border-slate-800/50 bg-gradient-to-b from-slate-900/90 to-slate-950/95"
+                      }`}>
+                        {/* Scanning radar animation when active */}
+                        {autoTrading && (
+                          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-40 h-40 rounded-full border border-emerald-500/5 animate-ping" style={{ animationDuration: "3s" }} />
+                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-24 h-24 rounded-full border border-emerald-500/8 animate-ping" style={{ animationDuration: "2s", animationDelay: "0.5s" }} />
+                            <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-emerald-400/40 to-transparent animate-pulse" />
+                            <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-emerald-400/20 to-transparent" />
                           </div>
+                        )}
+
+                        <div className="relative px-4 py-4 flex flex-col items-center gap-3 text-center">
+                          {/* Status indicator */}
+                          <div className="relative">
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-500 ${
+                              autoTrading
+                                ? "bg-emerald-500/10 ring-2 ring-emerald-500/20 shadow-lg shadow-emerald-500/10"
+                                : "bg-slate-800/60 ring-1 ring-slate-700/50"
+                            }`}>
+                              {autoTrading ? (
+                                <div className="relative">
+                                  <svg width="20" height="20" viewBox="0 0 20 20" className="animate-spin" style={{ animationDuration: "4s" }}>
+                                    <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="12 8" className="text-emerald-400/60" />
+                                  </svg>
+                                  <div className="absolute inset-0 flex items-center justify-center">
+                                    <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-md shadow-emerald-400/50" />
+                                  </div>
+                                </div>
+                              ) : (
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-500">
+                                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                                </svg>
+                              )}
+                            </div>
+                            {autoTrading && (
+                              <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+                                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-400 shadow-sm shadow-emerald-400/50" />
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Title + status */}
                           <div>
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Live Trading</div>
-                            <div className="text-[8px] text-slate-600 leading-tight">
+                            <div className={`text-[10px] font-bold uppercase tracking-[0.15em] mb-1 transition-colors ${
+                              autoTrading ? "text-emerald-400" : "text-slate-500"
+                            }`}>
+                              {autoTrading ? "Live Trading Active" : "Live Trading"}
+                            </div>
+                            <div className={`text-[8px] leading-relaxed ${autoTrading ? "text-emerald-500/60" : "text-slate-600"}`}>
                               {autoTrading
-                                ? "Monitoring for entry signals…"
-                                : "Auto-place orders when indicator signals appear"
+                                ? "Scanning for entry signals every 5m candle…"
+                                : "Auto-place bracket orders on indicator signals"
                               }
                             </div>
                           </div>
+
+                          {/* Config pills when active */}
                           {autoTrading && (
-                            <div className="flex items-center gap-1.5 text-[8px] text-slate-500">
-                              <span className="text-emerald-400 font-bold">SL {slMult}×</span>
-                              <span className="text-slate-700">|</span>
-                              <span className="text-cyan-400 font-bold">TP {tpMult}×</span>
-                              <span className="text-slate-700">|</span>
-                              <span className="text-amber-400 font-bold">{symbol}</span>
+                            <div className="flex flex-col items-center gap-1.5">
+                              <span className="px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-[8px] font-bold text-cyan-400 tracking-wide">
+                                {activePreset || "Custom"}
+                              </span>
+                              <div className="flex items-center gap-1">
+                                <span className="px-1.5 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/20 text-[7px] font-bold text-rose-400">SL {slMult}×</span>
+                                <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[7px] font-bold text-emerald-400">TP {tpMult}×</span>
+                                <span className="px-1.5 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-[7px] font-bold text-amber-400">{symbol}</span>
+                              </div>
                             </div>
                           )}
+
+                          {/* Toggle button */}
                           <button
                             onClick={() => setAutoTrading((v) => !v)}
-                            className={`w-full py-1.5 text-[10px] font-bold rounded-lg transition-all ${
+                            className={`w-full py-2 text-[10px] font-bold rounded-lg transition-all duration-300 ${
                               autoTrading
-                                ? "bg-gradient-to-r from-emerald-500 to-cyan-500 text-white shadow-md shadow-emerald-900/40 ring-1 ring-emerald-400/30 animate-pulse"
-                                : "bg-slate-800 border border-slate-700/50 text-slate-400 hover:text-emerald-400 hover:border-emerald-700/50 active:scale-95"
+                                ? "bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-lg shadow-emerald-900/40 ring-1 ring-emerald-400/20 hover:from-rose-600 hover:to-rose-500 hover:shadow-rose-900/40 hover:ring-rose-400/20"
+                                : "bg-slate-800/80 border border-slate-700/50 text-slate-400 hover:text-emerald-400 hover:border-emerald-600/40 hover:bg-emerald-950/30 active:scale-[0.97]"
                             }`}
                           >
-                            {autoTrading ? "● Live Trading ON" : "⚡ Enable Live Trading"}
+                            {autoTrading ? "■ Stop Live Trading" : "⚡ Enable Live Trading"}
                           </button>
+
+                          {/* Status message */}
                           {exitStatus && (
-                            <div className="text-[8px] font-bold text-emerald-400 animate-pulse truncate w-full">{exitStatus}</div>
+                            <div className="text-[8px] font-bold text-emerald-400 truncate w-full px-1 py-1 rounded-md bg-emerald-500/5 border border-emerald-500/10">
+                              {exitStatus}
+                            </div>
                           )}
                         </div>
                       </div>
