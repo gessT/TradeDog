@@ -1087,11 +1087,12 @@ export async function saveStrategyConfig(config: StrategyConfig, symbol: string 
 export type AutoTradeSettings = {
   verify_lock: boolean;
   auto_qty: number;
+  enabled?: boolean;
 };
 
 export async function getAutoTradeSettings(symbol: string = "MGC"): Promise<AutoTradeSettings> {
   const res = await fetch(`${API_BASE}/mgc/auto_trade_settings?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
-  if (!res.ok) return { verify_lock: true, auto_qty: 1 };
+  if (!res.ok) return { verify_lock: true, auto_qty: 1, enabled: false };
   return (await res.json()) as AutoTradeSettings;
 }
 

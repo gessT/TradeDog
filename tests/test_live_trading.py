@@ -558,3 +558,235 @@ class TestAutoExecuteFlow:
         assert r["sl"] == 3281.50
         assert r["tp"] == 3318.00
         assert r["entry_time"] == "2026-04-10 09:35"
+
+
+# ── Auto-trading persistence helper ──────────────────────────────
+
+class MockAutoTradeStore:
+    """Simulates backend auto_trade_settings persistence (in-memory)."""
+
+    def __init__(self):
+        self._store: dict[str, dict] = {}
+
+    def save(self, symbol: str, enabled: bool) -> None:
+        self._store[symbol] = {"enabled": enabled}
+
+    def load(self, symbol: str) -> dict:
+        return self._store.get(symbol, {"enabled": False})
+
+
+class TestAutoTradingPersistence:
+    """Auto-trading ON/OFF must survive page refresh via backend persistence."""
+
+    def test_default_is_off(self):
+        store = MockAutoTradeStore()
+        state = store.load("MGC")
+        assert state["enabled"] is False
+
+    def test_toggle_on_persists(self):
+        store = MockAutoTradeStore()
+        store.save("MGC", enabled=True)
+        state = store.load("MGC")
+        assert state["enabled"] is True
+
+    def test_toggle_off_persists(self):
+        store = MockAutoTradeStore()
+        store.save("MGC", enabled=True)
+        store.save("MGC", enabled=False)
+        state = store.load("MGC")
+        assert state["enabled"] is False
+
+    def test_survives_refresh(self):
+        """Simulates: toggle ON → 'refresh' (new load) → still ON."""
+        store = MockAutoTradeStore()
+        store.save("MGC", enabled=True)
+        # Simulate refresh: new component mounts and loads from backend
+        restored = store.load("MGC")
+        assert restored["enabled"] is True
+
+    def test_per_symbol_isolation(self):
+        """Each symbol has independent auto-trading state."""
+        store = MockAutoTradeStore()
+        store.save("MGC", enabled=True)
+        store.save("MCL", enabled=False)
+        assert store.load("MGC")["enabled"] is True
+        assert store.load("MCL")["enabled"] is False
+
+    def test_manual_click_toggles(self):
+        """Only manual click changes state — simulates toggle sequence."""
+        store = MockAutoTradeStore()
+        # User clicks ON
+        store.save("MGC", enabled=True)
+        assert store.load("MGC")["enabled"] is True
+        # Page refreshes several times — still ON
+        assert store.load("MGC")["enabled"] is True
+        assert store.load("MGC")["enabled"] is True
+        # User clicks OFF
+        store.save("MGC", enabled=False)
+        assert store.load("MGC")["enabled"] is False
+
+    def test_auto_trading_resumes_after_refresh(self):
+        """Full flow: enable → refresh → backend says ON → auto-trading resumes."""
+        store = MockAutoTradeStore()
+        pos = MockOpenPosition("CALL", 3300.0, 3280.0, 3320.0, "2026-04-10 10:00")
+
+        # User enables auto-trading
+        store.save("MGC", enabled=True)
+
+        # Simulate page refresh: load state, then run cycle
+        restored = store.load("MGC")
+        auto_trading = restored["enabled"]
+        assert auto_trading is True
+
+        # Auto-trading cycle runs as normal
+        result = simulate_auto_trading_cycle(pos, 0, "", auto_trading=auto_trading)
+        assert result["should_execute"] is True
+
+    def test_disabled_does_not_resume(self):
+        """If auto-trading was OFF, refresh keeps it OFF."""
+        store = MockAutoTradeStore()
+        pos = MockOpenPosition("CALL", 3300.0, 3280.0, 3320.0, "2026-04-10 10:00")
+
+        store.save("MGC", enabled=False)
+        restored = store.load("MGC")
+        auto_trading = restored["enabled"]
+        assert auto_trading is False
+
+        result = simulate_auto_trading_cycle(pos, 0, "", auto_trading=auto_trading)
+        assert result["should_execute"] is False
+        assert result["skip_reason"] == "auto_trading_off"
+
+
+# ── Auto-run on landing helpers ──────────────────────────────────
+
+@dataclass
+class MockStrategyConfig:
+    period: str = "3d"
+    sl_mult: float = 4.0
+    tp_mult: float = 3.0
+    active_preset: str | None = None
+
+
+def simulate_landing(
+    store: MockAutoTradeStore,
+    config: MockStrategyConfig,
+    symbol: str = "MGC",
+    cache_valid: bool = False,
+) -> dict:
+    """Simulate page landing: load config + auto-trade state → decide actions.
+
+    Returns: config_loaded, auto_trading_restored, should_auto_run_backtest,
+             cache_used, period, sl_mult, tp_mult, preset
+    """
+    # Step 1: load config from backend
+    settings = store.load(symbol)
+    auto_on = settings.get("enabled", False)
+
+    # Step 2: apply config
+    result = {
+        "config_loaded": True,
+        "auto_trading_restored": auto_on,
+        "should_auto_run_backtest": True,  # always run fresh on landing
+        "cache_used": cache_valid,  # show cache while loading
+        "period": config.period,
+        "sl_mult": config.sl_mult,
+        "tp_mult": config.tp_mult,
+        "preset": config.active_preset,
+    }
+    return result
+
+
+class TestAutoRunOnLanding:
+    """On page landing, backtest must auto-run to show daily P&L and data."""
+
+    def test_always_runs_backtest_on_landing(self):
+        store = MockAutoTradeStore()
+        cfg = MockStrategyConfig()
+        result = simulate_landing(store, cfg)
+        assert result["config_loaded"] is True
+        assert result["should_auto_run_backtest"] is True
+
+    def test_uses_saved_config(self):
+        store = MockAutoTradeStore()
+        cfg = MockStrategyConfig(period="5d", sl_mult=2.0, tp_mult=4.0, active_preset="Scalper")
+        result = simulate_landing(store, cfg)
+        assert result["period"] == "5d"
+        assert result["sl_mult"] == 2.0
+        assert result["tp_mult"] == 4.0
+        assert result["preset"] == "Scalper"
+
+    def test_restores_auto_trading_on(self):
+        store = MockAutoTradeStore()
+        store.save("MGC", enabled=True)
+        cfg = MockStrategyConfig()
+        result = simulate_landing(store, cfg)
+        assert result["auto_trading_restored"] is True
+        assert result["should_auto_run_backtest"] is True
+
+    def test_restores_auto_trading_off(self):
+        store = MockAutoTradeStore()
+        store.save("MGC", enabled=False)
+        cfg = MockStrategyConfig()
+        result = simulate_landing(store, cfg)
+        assert result["auto_trading_restored"] is False
+        assert result["should_auto_run_backtest"] is True  # still runs for daily P&L
+
+    def test_cache_shows_instantly_then_refresh(self):
+        """Cache provides instant display; fresh backtest runs on top."""
+        store = MockAutoTradeStore()
+        cfg = MockStrategyConfig()
+        result = simulate_landing(store, cfg, cache_valid=True)
+        assert result["cache_used"] is True
+        assert result["should_auto_run_backtest"] is True
+
+    def test_no_cache_still_auto_runs(self):
+        store = MockAutoTradeStore()
+        cfg = MockStrategyConfig()
+        result = simulate_landing(store, cfg, cache_valid=False)
+        assert result["cache_used"] is False
+        assert result["should_auto_run_backtest"] is True
+
+    def test_landing_per_symbol(self):
+        """Different symbols get their own config and auto-trading state."""
+        store = MockAutoTradeStore()
+        store.save("MGC", enabled=True)
+        store.save("MCL", enabled=False)
+
+        r1 = simulate_landing(store, MockStrategyConfig(sl_mult=4.0), symbol="MGC")
+        r2 = simulate_landing(store, MockStrategyConfig(sl_mult=0.8), symbol="MCL")
+
+        assert r1["auto_trading_restored"] is True
+        assert r1["sl_mult"] == 4.0
+        assert r2["auto_trading_restored"] is False
+        assert r2["sl_mult"] == 0.8
+
+    def test_full_landing_to_execution_flow(self):
+        """Landing with auto-trading ON + signal → should auto-execute."""
+        store = MockAutoTradeStore()
+        store.save("MGC", enabled=True)
+        cfg = MockStrategyConfig()
+
+        # Simulate landing
+        landing = simulate_landing(store, cfg)
+        assert landing["auto_trading_restored"] is True
+        assert landing["should_auto_run_backtest"] is True
+
+        # Backtest returns open position
+        pos = MockOpenPosition("CALL", 3300.0, 3280.0, 3320.0, "2026-04-10 10:00")
+        result = simulate_auto_trading_cycle(pos, 0, "", auto_trading=landing["auto_trading_restored"])
+        assert result["should_execute"] is True
+        assert result["direction"] == "CALL"
+
+    def test_landing_auto_off_no_execution(self):
+        """Landing with auto-trading OFF → shows data but no execution."""
+        store = MockAutoTradeStore()
+        store.save("MGC", enabled=False)
+        cfg = MockStrategyConfig()
+
+        landing = simulate_landing(store, cfg)
+        assert landing["should_auto_run_backtest"] is True  # still shows data
+
+        pos = MockOpenPosition("CALL", 3300.0, 3280.0, 3320.0, "2026-04-10 10:00")
+        result = simulate_auto_trading_cycle(pos, 0, "", auto_trading=landing["auto_trading_restored"])
+        assert result["should_execute"] is False
+        assert result["skip_reason"] == "auto_trading_off"

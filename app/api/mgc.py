@@ -2924,6 +2924,7 @@ def delete_5min_condition_preset(
 class AutoTradeSettingsPayload(BaseModel):
     verify_lock: bool = True
     auto_qty: int = 1
+    enabled: Optional[bool] = None
 
 
 @router.get("/auto_trade_settings")
@@ -2937,12 +2938,12 @@ def get_auto_trade_settings(
     sym = symbol.upper()
     with engine.connect() as conn:
         row = conn.execute(
-            text("SELECT verify_lock, auto_qty FROM auto_trade_settings WHERE symbol = :sym"),
+            text("SELECT verify_lock, auto_qty, enabled FROM auto_trade_settings WHERE symbol = :sym"),
             {"sym": sym},
         ).fetchone()
     if row:
-        return {"verify_lock": bool(row[0]), "auto_qty": int(row[1])}
-    return {"verify_lock": True, "auto_qty": 1}  # defaults
+        return {"verify_lock": bool(row[0]), "auto_qty": int(row[1]), "enabled": bool(row[2]) if row[2] is not None else False}
+    return {"verify_lock": True, "auto_qty": 1, "enabled": False}  # defaults
 
 
 @router.post("/auto_trade_settings")
@@ -2958,14 +2959,15 @@ def save_auto_trade_settings(
     with engine.begin() as conn:
         conn.execute(
             text("""
-                INSERT INTO auto_trade_settings (symbol, verify_lock, auto_qty, updated_at)
-                VALUES (:sym, :vl, :aq, CURRENT_TIMESTAMP)
+                INSERT INTO auto_trade_settings (symbol, verify_lock, auto_qty, enabled, updated_at)
+                VALUES (:sym, :vl, :aq, :en, CURRENT_TIMESTAMP)
                 ON CONFLICT (symbol) DO UPDATE SET
                     verify_lock = EXCLUDED.verify_lock,
                     auto_qty = EXCLUDED.auto_qty,
+                    enabled = EXCLUDED.enabled,
                     updated_at = CURRENT_TIMESTAMP
             """),
-            {"sym": sym, "vl": payload.verify_lock, "aq": payload.auto_qty},
+            {"sym": sym, "vl": payload.verify_lock, "aq": payload.auto_qty, "en": payload.enabled or False},
         )
     return {"status": "ok"}
 

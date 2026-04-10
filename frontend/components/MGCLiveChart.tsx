@@ -233,7 +233,7 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
     if (!initialRangeSet.current) {
       const totalBars = data.candles.length;
       chartRef.current.timeScale().setVisibleLogicalRange({
-        from: totalBars - 100,
+        from: totalBars - 50,
         to: totalBars + 5,
       });
       initialRangeSet.current = true;

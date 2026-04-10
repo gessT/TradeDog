@@ -26,6 +26,8 @@ import {
   load5MinConditionPresets,
   delete5MinConditionPreset,
   savePositionTag,
+  getAutoTradeSettings,
+  saveAutoTradeSettings,
   type ConditionOptimizationResult,
   type ConditionPreset,
   type MGC5MinBacktestResponse,
@@ -1197,11 +1199,12 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ── Auto-Trading state ─────────────────────────────────────────────
+  // ── Auto-Trading state (persisted in backend) ─────────────────────
   const [autoTrading, setAutoTrading] = useState(false);
   const autoTradingRef = useRef(false);
   autoTradingRef.current = autoTrading;
   const lastAutoEntryRef = useRef<string>(""); // prevent double-exec on same entry_time
+  const autoTradingLoaded = useRef(false);
 
   // ── Per-symbol SL/TP defaults (backtest-optimized) ─────────────────
   const SYMBOL_RISK: Record<string, { sl: number; tp: number }> = {
@@ -1259,7 +1262,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     Promise.all([
       loadStrategyConfig(symbol),
       load5MinConditionPresets(symbol),
-    ]).then(([cfg, loadedPresets]) => {
+      getAutoTradeSettings(symbol),
+    ]).then(([cfg, loadedPresets, autoSettings]) => {
       if (cancelled) return;
       if (cfg.period) setPeriod(cfg.period);
       if (cfg.sl_mult != null) setSlMult(cfg.sl_mult);
@@ -1274,8 +1278,13 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         }
       }
       setPresets(loadedPresets);
+      // Restore auto-trading state from backend
+      if (autoSettings?.enabled) {
+        setAutoTrading(true);
+      }
+      autoTradingLoaded.current = true;
       setConfigLoaded(true);
-    }).catch(() => { if (!cancelled) setConfigLoaded(true); });
+    }).catch(() => { if (!cancelled) { autoTradingLoaded.current = true; setConfigLoaded(true); } });
     return () => { cancelled = true; };
   }, [symbol]);
 
@@ -1287,6 +1296,12 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     }, 500);  // debounce 500ms
     return () => clearTimeout(timer);
   }, [period, slMult, tpMult, riskFilters, activePreset, symbol, configLoaded]);
+
+  // ── Persist auto-trading toggle to backend ──
+  useEffect(() => {
+    if (!autoTradingLoaded.current) return;  // Don't save during initial load
+    saveAutoTradeSettings({ verify_lock: true, auto_qty: 1, enabled: autoTrading }, symbol).catch(() => {});
+  }, [autoTrading, symbol]);
 
   // ── Condition optimization ──────────────
   const [optimizationResults, setOptimizationResults] = useState<ConditionOptimizationResult[]>([]);
@@ -1352,8 +1367,12 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     }
   }, [pendingOptRun, runBacktest]);
 
-  // ── Restore cached backtest on mount (never auto-run) ──
+  // ── Restore cached backtest on mount, or auto-run fresh ──
+  const initialRunDone = useRef(false);
   useEffect(() => {
+    if (!configLoaded) return;
+    if (initialRunDone.current) return;
+    // Try cache first for instant display
     try {
       const raw = sessionStorage.getItem("bt5min_cache");
       if (raw) {
@@ -1364,7 +1383,10 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         }
       }
     } catch { /* corrupt cache — ignore */ }
-  }, [configKey]);
+    // Always run a fresh backtest on landing for up-to-date data
+    initialRunDone.current = true;
+    runBacktest();
+  }, [configLoaded]);
 
   // ── Auto re-run backtest after trade executed (from scanner) ──
   const tradeTickRef = useRef(tradeExecutedTick);
