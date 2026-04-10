@@ -1406,6 +1406,21 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
+  // ── Tiger position detail (actual fill price + P&L) ──
+  const [tigerPos, setTigerPos] = useState<{ current_qty: number; average_cost: number; unrealized_pnl: number; latest_price: number } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const p = await getMgcPosition(symbol);
+        if (!cancelled) setTigerPos({ current_qty: p.current_qty, average_cost: p.average_cost ?? 0, unrealized_pnl: p.unrealized_pnl ?? 0, latest_price: p.latest_price ?? 0 });
+      } catch { /* ignore */ }
+    };
+    poll();
+    const iv = setInterval(poll, 10_000); // refresh every 10s
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [symbol]);
+
   // ── Manual sync: enter at market price with backtest SL/TP ──
   const handleSync = useCallback(async () => {
     const openTrade = btData?.trades.find((t) => t.reason === "OPEN");
@@ -2197,9 +2212,15 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   entry_time: openTrade!.entry_time,
                   signal_type: openTrade!.signal_type,
                 }) : null;
+                // Use Tiger's actual fill price when holding, backtest as fallback
+                const tigerHolding = tigerPos && Math.abs(tigerPos.current_qty) > 0;
+                const displayEntry = tigerHolding && tigerPos!.average_cost > 0 ? tigerPos!.average_cost : pos?.entry_price ?? 0;
                 const isLong = pos ? pos.direction !== "PUT" : false;
-                const unrealPnl = pos && livePrice != null ? (isLong ? livePrice - pos.entry_price : pos.entry_price - livePrice) : null;
-                const pnlPct = unrealPnl != null && pos && pos.entry_price > 0 ? (unrealPnl / pos.entry_price) * 100 : null;
+                const qty = tigerHolding ? Math.abs(tigerPos!.current_qty) : 1;
+                const contractSize = 10; // MGC = $10/point
+                // P&L in dollars — same formula as trade log: (price diff) × qty × contract_size
+                const unrealPnl = pos && livePrice != null ? (isLong ? livePrice - displayEntry : displayEntry - livePrice) * qty * contractSize : null;
+                const pnlPct = unrealPnl != null && displayEntry > 0 ? ((isLong ? livePrice! - displayEntry : displayEntry - livePrice!) / displayEntry) * 100 : null;
 
                 return (
                   <div className={`flex gap-2 ${hasOpen ? "" : ""}`}>
@@ -2255,7 +2276,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                           {unrealPnl != null && (
                             <div className="flex items-baseline gap-1">
                               <span className={`text-base font-black tabular-nums tracking-tight ${unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                                {unrealPnl >= 0 ? "+" : ""}{unrealPnl.toFixed(2)}
+                                {unrealPnl >= 0 ? "+" : ""}${unrealPnl.toFixed(0)}
                               </span>
                               <span className={`text-[9px] font-bold tabular-nums ${unrealPnl >= 0 ? "text-emerald-500/60" : "text-rose-500/60"}`}>
                                 {pnlPct != null && pnlPct >= 0 ? "+" : ""}{pnlPct?.toFixed(2)}%
@@ -2282,7 +2303,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                           <div className="grid grid-cols-4 gap-1">
                             <div className="rounded-md bg-blue-950/40 px-1.5 py-1 text-center">
                               <div className="text-[7px] text-blue-400/50 font-bold uppercase">Entry</div>
-                              <div className="text-[10px] font-bold text-blue-300 tabular-nums">{pos.entry_price}</div>
+                              <div className="text-[10px] font-bold text-blue-300 tabular-nums">{displayEntry}</div>
                             </div>
                             <div className="rounded-md bg-yellow-950/30 px-1.5 py-1 text-center">
                               <div className="text-[7px] text-yellow-400/50 font-bold uppercase">Now</div>

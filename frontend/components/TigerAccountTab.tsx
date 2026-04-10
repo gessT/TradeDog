@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchTigerAccount,
   fetchTradeHistory,
@@ -373,7 +373,7 @@ function OrderRow({
 // Main Tab
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function TigerAccountTab() {
+export default function TigerAccountTab({ tradeExecutedTick = 0 }: Readonly<{ tradeExecutedTick?: number }>) {
   const [data, setData] = useState<TigerAccountResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -440,6 +440,16 @@ export default function TigerAccountTab() {
     const id = setInterval(refresh, 15_000);
     return () => clearInterval(id);
   }, [refresh, refreshTrades]);
+
+  // Immediate refresh when a trade is executed
+  const tradeTickRef = useRef(tradeExecutedTick);
+  useEffect(() => {
+    if (tradeExecutedTick > 0 && tradeExecutedTick !== tradeTickRef.current) {
+      tradeTickRef.current = tradeExecutedTick;
+      // Delay to let broker fill, then refresh
+      setTimeout(() => { refresh(); refreshTrades(); }, 2000);
+    }
+  }, [tradeExecutedTick, refresh, refreshTrades]);
 
   const handleClose = useCallback(async (sym: string) => {
     if (!confirm(`Close ALL ${sym} positions at market?`)) return;

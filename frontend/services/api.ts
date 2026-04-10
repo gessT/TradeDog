@@ -917,7 +917,7 @@ export type ScanTradeResponse = {
   timestamp: string;
 };
 
-export async function getMgcPosition(symbol: string = "MGC"): Promise<{ current_qty: number; symbol: string }> {
+export async function getMgcPosition(symbol: string = "MGC"): Promise<{ current_qty: number; symbol: string; average_cost?: number; unrealized_pnl?: number; latest_price?: number }> {
   const res = await fetch(`${API_BASE}/mgc/position?symbol=${encodeURIComponent(symbol)}`);
   if (!res.ok) return { current_qty: 0, symbol };
   return res.json();

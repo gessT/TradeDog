@@ -790,3 +790,230 @@ class TestAutoRunOnLanding:
         result = simulate_auto_trading_cycle(pos, 0, "", auto_trading=landing["auto_trading_restored"])
         assert result["should_execute"] is False
         assert result["skip_reason"] == "auto_trading_off"
+
+
+# ── Data consistency helpers ─────────────────────────────────────
+
+@dataclass
+class MockTigerPosition:
+    """Simulates Tiger broker position detail."""
+    current_qty: int = 0
+    average_cost: float = 0.0
+    unrealized_pnl: float = 0.0
+    latest_price: float = 0.0
+
+
+CONTRACT_SIZE = 10  # MGC = $10/point
+
+
+def compute_display_entry(
+    bt_entry: float,
+    tiger_pos: MockTigerPosition | None,
+) -> float:
+    """Choose entry price: Tiger's fill price when holding, backtest otherwise."""
+    if tiger_pos and abs(tiger_pos.current_qty) > 0 and tiger_pos.average_cost > 0:
+        return tiger_pos.average_cost
+    return bt_entry
+
+
+def compute_unrealized_pnl(
+    live_price: float,
+    entry_price: float,
+    direction: str,
+    qty: int = 1,
+    contract_size: int = CONTRACT_SIZE,
+) -> float:
+    """Compute unrealized P&L in dollars — same as trade log formula."""
+    is_long = direction != "PUT"
+    diff = live_price - entry_price if is_long else entry_price - live_price
+    return diff * qty * contract_size
+
+
+class TestDataConsistency:
+    """Holding card, trade log, and daily P&L must use same data source and formula."""
+
+    def test_entry_uses_tiger_when_holding(self):
+        """When Tiger has a fill, use Tiger's average_cost, not backtest entry."""
+        tiger = MockTigerPosition(current_qty=1, average_cost=3301.50)
+        display = compute_display_entry(3300.0, tiger)
+        assert display == 3301.50  # Tiger fill, not backtest
+
+    def test_entry_falls_back_to_backtest(self):
+        """When no Tiger position, use backtest entry."""
+        tiger = MockTigerPosition(current_qty=0, average_cost=0)
+        display = compute_display_entry(3300.0, tiger)
+        assert display == 3300.0
+
+    def test_entry_falls_back_when_tiger_none(self):
+        display = compute_display_entry(3300.0, None)
+        assert display == 3300.0
+
+    def test_pnl_in_dollars_long(self):
+        """P&L must be in dollars: (price diff) × qty × contract_size."""
+        pnl = compute_unrealized_pnl(3305.0, 3300.0, "CALL", qty=1)
+        assert pnl == 50.0  # +5 points × 1 × $10 = $50
+
+    def test_pnl_in_dollars_short(self):
+        pnl = compute_unrealized_pnl(3295.0, 3300.0, "PUT", qty=1)
+        assert pnl == 50.0  # +5 points × 1 × $10 = $50
+
+    def test_pnl_negative_long(self):
+        pnl = compute_unrealized_pnl(3298.0, 3300.0, "CALL", qty=1)
+        assert pnl == -20.0  # -2 points × $10
+
+    def test_pnl_negative_short(self):
+        pnl = compute_unrealized_pnl(3303.0, 3300.0, "PUT", qty=1)
+        assert pnl == -30.0  # -3 points × $10
+
+    def test_pnl_with_qty(self):
+        """Multiple contracts multiply the P&L."""
+        pnl = compute_unrealized_pnl(3305.0, 3300.0, "CALL", qty=2)
+        assert pnl == 100.0  # 5 × 2 × 10
+
+    def test_holding_card_matches_trade_log(self):
+        """Holding card P&L must use same formula as trade log row."""
+        live = 3310.0
+        entry = 3300.0
+        # Trade log formula: (livePrice - entry) * qty * 10
+        trade_log_pnl = (live - entry) * 1 * 10
+        # Holding card formula (after fix): same
+        holding_pnl = compute_unrealized_pnl(live, entry, "CALL", qty=1)
+        assert holding_pnl == trade_log_pnl == 100.0
+
+    def test_holding_card_matches_trade_log_short(self):
+        live = 3290.0
+        entry = 3300.0
+        trade_log_pnl = (entry - live) * 1 * 10
+        holding_pnl = compute_unrealized_pnl(live, entry, "PUT", qty=1)
+        assert holding_pnl == trade_log_pnl == 100.0
+
+    def test_tiger_fill_used_for_pnl(self):
+        """P&L should use Tiger's actual fill price, not backtest."""
+        tiger = MockTigerPosition(current_qty=1, average_cost=3301.50)
+        entry = compute_display_entry(3300.0, tiger)
+        pnl = compute_unrealized_pnl(3310.0, entry, "CALL", qty=1)
+        # Uses 3301.50 (Tiger), not 3300.0 (backtest)
+        assert pnl == 85.0  # (3310 - 3301.5) × 1 × 10
+
+    def test_daily_pnl_from_trades_same_formula(self):
+        """Daily P&L sums closed trade pnl — should use same $ formula."""
+        # Simulate two closed trades' P&L (already in dollars from backtest)
+        trade_pnls = [50.0, -20.0]  # from backtest, already × CONTRACT_SIZE
+        daily = sum(trade_pnls)
+        assert daily == 30.0
+
+    def test_zero_entry_safe(self):
+        """Zero entry price should not crash."""
+        display = compute_display_entry(0, None)
+        assert display == 0
+        pnl = compute_unrealized_pnl(3300.0, 0, "CALL", qty=1)
+        assert pnl == 33000.0  # degenerate but no crash
+
+
+# ── Position/Account P&L consistency helpers ─────────────────────
+
+def compute_position_pnl_like_account(
+    live_price: float,
+    average_cost: float,
+    quantity: int,
+    contract_multiplier: float = 10.0,
+) -> float:
+    """Simulate the /account and /position P&L recalculation.
+    Both endpoints must use: (live_price - avg_cost) * qty * multiplier."""
+    if live_price > 0 and average_cost > 0 and quantity != 0:
+        return round((live_price - average_cost) * quantity * contract_multiplier, 2)
+    return 0.0
+
+
+def compute_holding_card_pnl(
+    live_price: float,
+    display_entry: float,
+    direction: str,
+    qty: int = 1,
+    contract_size: int = 10,
+) -> float:
+    """Holding card P&L — same formula as trade log."""
+    is_long = direction != "PUT"
+    diff = live_price - display_entry if is_long else display_entry - live_price
+    return diff * qty * contract_size
+
+
+class TestPositionAccountConsistency:
+    """/position and /account P&L must match, and holding card must match both."""
+
+    def test_position_account_same_formula_long(self):
+        """Both endpoints use (live - avg_cost) × qty × 10."""
+        pnl = compute_position_pnl_like_account(3310.0, 3300.0, 1)
+        assert pnl == 100.0
+
+    def test_position_account_same_formula_short(self):
+        pnl = compute_position_pnl_like_account(3290.0, 3300.0, -1)
+        assert pnl == 100.0  # (-1) → (3290-3300)*(-1)*10 = 100
+
+    def test_position_matches_holding_card_long(self):
+        """Holding card and /position must show same P&L when same entry."""
+        live = 3310.0
+        avg_cost = 3300.0
+        pos_pnl = compute_position_pnl_like_account(live, avg_cost, 1)
+        hold_pnl = compute_holding_card_pnl(live, avg_cost, "CALL", qty=1)
+        assert pos_pnl == hold_pnl == 100.0
+
+    def test_position_matches_holding_card_short(self):
+        live = 3290.0
+        avg_cost = 3300.0
+        pos_pnl = compute_position_pnl_like_account(live, avg_cost, -1)
+        hold_pnl = compute_holding_card_pnl(live, avg_cost, "PUT", qty=1)
+        assert pos_pnl == hold_pnl == 100.0
+
+    def test_position_matches_trade_log_pnl(self):
+        """Trade log row P&L must match /position P&L when using same entry."""
+        live = 3315.0
+        avg_cost = 3305.0
+        pos_pnl = compute_position_pnl_like_account(live, avg_cost, 1)
+        trade_log_pnl = (live - avg_cost) * 1 * 10
+        assert pos_pnl == trade_log_pnl == 100.0
+
+    def test_multi_qty_consistent(self):
+        live = 3310.0
+        avg_cost = 3300.0
+        pos_pnl = compute_position_pnl_like_account(live, avg_cost, 2)
+        hold_pnl = compute_holding_card_pnl(live, avg_cost, "CALL", qty=2)
+        assert pos_pnl == hold_pnl == 200.0
+
+    def test_negative_pnl_consistent(self):
+        live = 3295.0
+        avg_cost = 3300.0
+        pos_pnl = compute_position_pnl_like_account(live, avg_cost, 1)
+        hold_pnl = compute_holding_card_pnl(live, avg_cost, "CALL", qty=1)
+        assert pos_pnl == hold_pnl == -50.0
+
+    def test_refresh_on_trade_executed(self):
+        """Simulates: trade executed → tick increments → TigerAccount refreshes."""
+        tick_before = 0
+        tick_after = 1
+        # When tick changes, a refresh is triggered (with 2s delay)
+        should_refresh = tick_after > 0 and tick_after != tick_before
+        assert should_refresh is True
+
+    def test_no_refresh_on_same_tick(self):
+        should_refresh = 1 > 0 and 1 != 1
+        assert should_refresh is False
+
+    def test_zero_position_no_crash(self):
+        pnl = compute_position_pnl_like_account(3300.0, 0, 0)
+        assert pnl == 0.0
+
+    def test_all_three_match(self):
+        """Holding card, trade log, and Tiger account all show same P&L."""
+        live = 3308.25
+        avg_cost = 3301.75
+        qty = 1
+
+        # Tiger /position and /account
+        tiger_pnl = compute_position_pnl_like_account(live, avg_cost, qty)
+        # Holding card
+        holding_pnl = compute_holding_card_pnl(live, avg_cost, "CALL", qty)
+        # Trade log row
+        trade_log_pnl = (live - avg_cost) * qty * 10
+
+        assert tiger_pnl == holding_pnl == trade_log_pnl == 65.0

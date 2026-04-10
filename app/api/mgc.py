@@ -660,11 +660,51 @@ def _get_tiger_position(symbol: str = "MGC") -> int:
         return 0
 
 
+def _get_tiger_position_detail(symbol: str = "MGC") -> dict:
+    """Get current position detail (qty, average_cost, unrealized_pnl) from Tiger.
+    Recalculates unrealized_pnl with live price for consistency with /account."""
+    result = {"current_qty": 0, "average_cost": 0.0, "unrealized_pnl": 0.0, "latest_price": 0.0, "symbol": symbol}
+    try:
+        _, trade_client = _get_tiger_clients()
+        if trade_client is None:
+            return result
+        positions = trade_client.get_positions(
+            account=TIGER_ACCOUNT, sec_type="FUT"
+        )
+        if not positions:
+            return result
+        for p in positions:
+            if p.contract and p.contract.symbol and p.contract.symbol.startswith(symbol):
+                qty = int(p.quantity)
+                avg_cost = float(getattr(p, "average_cost", 0) or 0)
+                tiger_latest = float(getattr(p, "latest_price", 0) or 0)
+                orig_pnl = float(getattr(p, "unrealized_pnl", 0) or 0)
+
+                # Use shared live price for consistency (same as /account)
+                sym = p.contract.symbol
+                live = _tiger_live_price(sym) if sym else 0.0
+                best_price = live if live > 0 else tiger_latest
+
+                # Recalculate P&L with live price × contract multiplier
+                if best_price > 0 and avg_cost > 0 and qty != 0:
+                    calc_pnl = (best_price - avg_cost) * qty * 10.0
+                else:
+                    calc_pnl = orig_pnl
+
+                result["current_qty"] += qty
+                result["average_cost"] = avg_cost
+                result["unrealized_pnl"] = round(calc_pnl, 2)
+                result["latest_price"] = round(best_price, 2)
+        return result
+    except Exception:
+        return result
+
+
 @router.get("/position")
 async def get_position(symbol: str = "MGC"):
-    """Return current Tiger position for a symbol."""
-    qty = _get_tiger_position(symbol)
-    return {"current_qty": qty, "symbol": symbol}
+    """Return current Tiger position for a symbol (qty, fill price, P&L)."""
+    detail = _get_tiger_position_detail(symbol)
+    return detail
 
 
 # ── Tiger Account: Positions, Orders, Assets, Buy/Sell, Cancel ──────
