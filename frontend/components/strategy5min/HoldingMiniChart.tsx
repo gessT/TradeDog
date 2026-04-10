@@ -110,19 +110,26 @@ export default function HoldingMiniChart({
 
     // Entry price line (blue dashed)
     candleSeries.createPriceLine({
-      price: entryPrice, color: "#3b82f6", lineWidth: 1, lineStyle: 2,
+      price: entryPrice, color: "#93c5fd", lineWidth: 1, lineStyle: 2,
       axisLabelVisible: false, title: "",
     });
     // SL line (red dotted)
     candleSeries.createPriceLine({
-      price: sl, color: "#ef4444", lineWidth: 1, lineStyle: 1,
+      price: sl, color: "#f87171", lineWidth: 1, lineStyle: 1,
       axisLabelVisible: false, title: "",
     });
     // TP line (green dotted)
     candleSeries.createPriceLine({
-      price: tp, color: "#22c55e", lineWidth: 1, lineStyle: 1,
+      price: tp, color: "#4ade80", lineWidth: 1, lineStyle: 1,
       axisLabelVisible: false, title: "",
     });
+    // Live price line (yellow solid)
+    if (livePrice != null && livePrice > 0) {
+      candleSeries.createPriceLine({
+        price: livePrice, color: "#fde047", lineWidth: 1, lineStyle: 0,
+        axisLabelVisible: false, title: "",
+      });
+    }
 
     // Show latest bar in the middle: 50 bars visible on left, rightOffset=50 gives empty space on right
     if (ohlc.length > 0) {
@@ -143,7 +150,7 @@ export default function HoldingMiniChart({
       ro.disconnect();
       if (chartRef.current) { try { chartRef.current.remove(); } catch { /* ignore */ } chartRef.current = null; }
     };
-  }, [candles, entryTime, entryPrice, sl, tp, isLong]);
+  }, [candles, entryTime, entryPrice, sl, tp, isLong, livePrice]);
 
   return (
     <div

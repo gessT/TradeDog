@@ -15,7 +15,6 @@ import { fmtDateTimeSGT, fmtInputDateSGT, SGT_OFFSET_SEC, toSGT } from "../utils
 import TradeDetailDialog from "./strategy5min/TradeDetailDialog";
 import HoldingMiniChart from "./strategy5min/HoldingMiniChart";
 import OptimizationDialog from "./strategy5min/OptimizationDialog";
-import ResultDialog from "./strategy5min/ResultDialog";
 import {
   fetchMGC5MinBacktest,
   execute5Min,
@@ -1315,7 +1314,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   );
 
   // ── Backtest ──────────────────────────────────────────
-  const [showResultDialog, setShowResultDialog] = useState(false);
+  const [hasRunBacktest, setHasRunBacktest] = useState(false);
 
   const runBacktest = useCallback(async () => {
     setLoading(true);
@@ -1333,10 +1332,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade);
       setBtData(res);
       onTradesUpdate?.(res.trades);
-      // Show result dialog with SYNC booking
-      if (res.metrics) {
-        setShowResultDialog(true);
-      }
+      setHasRunBacktest(true);
       // Cache result so page refresh doesn't re-run
       try {
         sessionStorage.setItem("bt5min_cache", JSON.stringify({ configKey, data: res }));
@@ -1411,12 +1407,19 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         return;
       }
       const side = pos.direction === "PUT" ? "SHORT" : "LONG";
-      // Queue order at entry price ±$1 — backend picks LMT or STP based on current price
-      const targetPrice = pos.entry_price;
-      setSyncStatus(`Placing ${side} @ $${targetPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}…`);
-      const execRes = await execute5Min(pos.direction, 1, 1, pos.entry_price, pos.sl, pos.tp, symbol, "", false, 0, targetPrice);
+      const isLong = pos.direction !== "PUT";
+      const nowPx = livePriceRef.current ?? 0;
+
+      // If price retraced (losing money on this direction) → market order
+      // If price is ahead of entry (profitable) → limit order at entry price
+      const losing = nowPx > 0 && (isLong ? nowPx < pos.entry_price : nowPx > pos.entry_price);
+      const targetPrice = losing ? 0 : pos.entry_price; // 0 = MKT
+      const orderType = losing ? "MKT" : "LMT";
+
+      setSyncStatus(`Placing ${side} ${orderType}${targetPrice > 0 ? ` @ $${targetPrice.toFixed(2)}` : ""} | SL $${pos.sl} TP $${pos.tp}…`);
+      const execRes = await execute5Min(pos.direction, 1, 1, pos.entry_price, pos.sl, pos.tp, symbol, "", false, nowPx, targetPrice);
       if (execRes.execution?.executed) {
-        setSyncStatus(`✅ ${side} queued @ $${targetPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}`);
+        setSyncStatus(`✅ ${side} ${orderType}${targetPrice > 0 ? ` @ $${targetPrice.toFixed(2)}` : " filled"} | SL $${pos.sl} TP $${pos.tp}`);
         // Save strategy tag for this position
         const tag = activePreset || "Manual";
         savePositionTag(symbol, tag).catch(() => {});
@@ -2121,11 +2124,11 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 </div>
               </div>
 
-              {/* ── Daily P&L (2/3) + Currently Holding (1/3) ── */}
+              {/* ── Daily P&L (1/2) + Currently Holding (1/2) ── */}
               {(() => {
                 const days = btData.daily_pnl ?? [];
                 const openTrade = btData.trades.find((t) => t.reason === "OPEN");
-                const hasOpen = !!openTrade;
+                const hasOpen = hasRunBacktest && !!openTrade;
                 const hasDays = days.length > 0;
                 if (!hasDays && !hasOpen) return null;
 
@@ -2190,8 +2193,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                               <span className={`block w-2 h-2 rounded-full ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-400" : "bg-rose-400"}`} />
                               <span className={`absolute inset-0 w-2 h-2 rounded-full animate-ping ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-400/40" : "bg-rose-400/40"}`} />
                             </div>
+                            <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Holding</span>
                             <span className={`text-[10px] font-extrabold tracking-wide ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
-                              {isLong ? "LONG" : "SHORT"}
+                              {isLong ? "▲ LONG" : "▼ SHORT"}
                             </span>
                           </div>
                           {unrealPnl != null && (
@@ -2359,23 +2363,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
           onClose={() => setShowOptDialog(false)}
         />
       )}
-      {/* ═════════════════════════════════════════════════════ */}
-      {/* RESULT DIALOG (with SYNC booking)                  */}
-      {/* ═════════════════════════════════════════════════════ */}
-      {showResultDialog && btData && (
-        <ResultDialog
-          btData={btData}
-          symbol={symbol}
-          symbolName={symbolName}
-          period={period}
-          slMult={slMult}
-          tpMult={tpMult}
-          onClose={() => setShowResultDialog(false)}
-          onTradeClick={onTradeClick}
-          onSynced={() => onDirectExecute?.()}
-          activePreset={activePreset}
-        />
-      )}
+
       {/* ═════════════════════════════════════════════════════ */}
       {/* EXAM DIALOG                                          */}
       {/* ═════════════════════════════════════════════════════ */}
