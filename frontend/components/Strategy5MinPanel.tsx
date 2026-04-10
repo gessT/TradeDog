@@ -466,9 +466,11 @@ const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m
 /** Risk filter toggles — separate from condition gates. These are boolean query params. */
 const RISK_FILTER_DEFS: { key: string; label: string; desc: string; default: boolean }[] = [
   { key: "skip_counter_trend", label: "No Counter-Trend", desc: "Block CALL in BEAR market structure and PUT in BULL. Eliminates low-WR counter-trend trades.", default: true },
-  { key: "skip_flat", label: "Skip Sideways", desc: "Skip entries when market structure is flat/sideways (no clear HH/HL or LH/LL pattern).", default: false },
-  { key: "use_ema_exit", label: "EMA 28 Exit", desc: "Cut loss when candle close crosses EMA 28 against your position (long: close < EMA, short: close > EMA).", default: false },
-  { key: "use_structure_exit", label: "Structure Exit", desc: "Cut loss when market structure becomes flat/sideways or flips against your position (CALL in BEAR, PUT in BULL).", default: false },
+];
+
+/** Exit cut-loss conditions — boolean params that trigger early exits. */
+const EXIT_CONDITION_DEFS: { key: string; label: string; desc: string; default: boolean }[] = [
+  { key: "use_sma28_cut", label: "SMA28 Cut Loss", desc: "Exit when bar close < SMA28 AND close < entry bar low AND SMA28 sloping down (reverse for shorts).", default: false },
 ];
 
 const DEFAULT_RISK_FILTERS: Record<string, boolean> = Object.fromEntries(
@@ -1230,6 +1232,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
 
   // Risk filters (skip_counter_trend, skip_flat) — separate from condition gates
   const [riskFilters, setRiskFilters] = useState<Record<string, boolean>>({ ...DEFAULT_RISK_FILTERS });
+  const [exitConditions, setExitConditions] = useState<Record<string, boolean>>(
+    Object.fromEntries(EXIT_CONDITION_DEFS.map((d) => [d.key, d.default]))
+  );
 
   // ── Condition presets ──────────────────
   const [presets, setPresets] = useState<ConditionPreset[]>([]);
@@ -1315,7 +1320,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       const disabled = CONDITION_DEFS
         .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
         .map((d) => d.key);
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, riskFilters.use_structure_exit ?? false);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, riskFilters.use_structure_exit ?? false, exitConditions.use_sma28_cut ?? false, 0);
       setBtData(res);
       onTradesUpdate?.(res.trades);
       // Show result dialog with SYNC booking
@@ -1440,7 +1445,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               const disabled = CONDITION_DEFS
                 .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
                 .map((d) => d.key);
-              const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, riskFilters.use_structure_exit ?? false);
+              const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, riskFilters.use_structure_exit ?? false, exitConditions.use_sma28_cut ?? false, 0);
               if (cancelled) return;
               setBtData(res);
               onTradesUpdate?.(res.trades);
@@ -1681,6 +1686,36 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                           <span className={on ? "text-rose-300" : "text-slate-600"}>{def.label}</span>
                           <span className="relative ml-auto group/tip">
                             <svg className="w-3 h-3 text-slate-500 hover:text-rose-300 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 16v0m0-8a2.5 2.5 0 011.5 4.5L12 14"/></svg>
+                            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/tip:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">{def.desc}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Exit Cut-Loss Conditions */}
+                <div className="mt-2 pt-2 border-t border-slate-800/40">
+                  <p className="text-[8px] text-orange-500/70 uppercase tracking-wider">Exit Cut-Loss</p>
+                  <div className="grid grid-cols-1 gap-1">
+                    {EXIT_CONDITION_DEFS.map((def) => {
+                      const on = exitConditions[def.key] ?? def.default;
+                      return (
+                        <button
+                          key={def.key}
+                          onClick={() => setExitConditions((prev) => ({ ...prev, [def.key]: !prev[def.key] }))}
+                          className={`flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all text-[9px] ${
+                            on ? "border border-orange-700/40 bg-orange-950/20" : "border border-slate-800/30 bg-slate-900/30 opacity-50"
+                          }`}
+                        >
+                          <span className={`w-3 h-3 rounded-sm flex items-center justify-center text-[7px] font-bold ${
+                            on ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-600"
+                          }`}>
+                            {on ? "✓" : "—"}
+                          </span>
+                          <span className={on ? "text-orange-300" : "text-slate-600"}>{def.label}</span>
+                          <span className="relative ml-auto group/tip">
+                            <svg className="w-3 h-3 text-slate-500 hover:text-orange-300 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 16v0m0-8a2.5 2.5 0 011.5 4.5L12 14"/></svg>
                             <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/tip:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">{def.desc}</span>
                           </span>
                         </button>

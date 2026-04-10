@@ -1000,6 +1000,8 @@ export type MGC5MinMetrics = {
   oos_win_rate: number;
   oos_total_trades: number;
   oos_return_pct: number;
+  worst_daily_loss: number;
+  days_stopped: number;
 };
 
 export type DailyPnl = {
@@ -1155,6 +1157,8 @@ export async function fetchMGC5MinBacktest(
   skipCounterTrend: boolean = true,
   useEmaExit: boolean = false,
   useStructureExit: boolean = false,
+  useSma28Cut: boolean = false,
+  dailyLossLimit: number = 0,
 ): Promise<MGC5MinBacktestResponse> {
   let url = `${API_BASE}/mgc/backtest_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
   if (date_from) url += `&date_from=${date_from}`;
@@ -1164,6 +1168,8 @@ export async function fetchMGC5MinBacktest(
   url += `&skip_counter_trend=${skipCounterTrend}`;
   if (useEmaExit) url += `&use_ema_exit=true`;
   if (useStructureExit) url += `&use_structure_exit=true`;
+  if (useSma28Cut) url += `&use_sma28_cut=true`;
+  if (dailyLossLimit > 0) url += `&daily_loss_limit=${dailyLossLimit}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();

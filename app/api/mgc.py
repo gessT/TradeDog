@@ -1561,6 +1561,9 @@ class MGC5MinMetrics(BaseModel):
     oos_win_rate: float = 0.0
     oos_total_trades: int = 0
     oos_return_pct: float = 0.0
+    # Daily loss limit
+    worst_daily_loss: float = 0.0
+    days_stopped: int = 0
 
 
 class MGC5MinBacktestResponse(BaseModel):
@@ -1592,6 +1595,8 @@ async def mgc_backtest_5min(
     skip_counter_trend: Annotated[bool, Query()] = True,
     use_ema_exit: Annotated[bool, Query()] = False,
     use_structure_exit: Annotated[bool, Query()] = False,
+    use_sma28_cut: Annotated[bool, Query()] = False,
+    daily_loss_limit: Annotated[float, Query(ge=0, le=5000)] = 0.0,
 ) -> MGC5MinBacktestResponse:
     """Run 5-minute strategy backtest with out-of-sample validation.
 
@@ -1624,9 +1629,9 @@ async def mgc_backtest_5min(
             df = df[df.index < trade_end]
 
         # ── Run full 60d simulation for consistent results ──────
-        custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult, "use_ema_exit": use_ema_exit, "use_structure_exit": use_structure_exit}
+        custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult, "use_ema_exit": use_ema_exit, "use_structure_exit": use_structure_exit, "use_sma28_cut": use_sma28_cut}
         bt = Backtester5Min(capital=capital)
-        result = bt.run(df, params=custom_params, oos_split=oos_split, disabled_conditions=_disabled or None, skip_flat=skip_flat, skip_counter_trend=skip_counter_trend)
+        result = bt.run(df, params=custom_params, oos_split=oos_split, disabled_conditions=_disabled or None, skip_flat=skip_flat, skip_counter_trend=skip_counter_trend, daily_loss_limit=daily_loss_limit)
 
         # ── Determine display window ────────────────────────────
         display_start: str | None = None
@@ -1678,6 +1683,8 @@ async def mgc_backtest_5min(
             oos_win_rate=result.oos_win_rate,
             oos_total_trades=result.oos_total_trades,
             oos_return_pct=result.oos_return_pct,
+            worst_daily_loss=result.worst_daily_loss,
+            days_stopped=result.days_stopped,
         )
 
         # ── Build candle list (display window only) ─────────────

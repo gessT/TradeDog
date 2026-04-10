@@ -174,6 +174,10 @@ class MGCStrategy5Min:
         # EMA for exit signal (cut loss on cross)
         df["ema_exit"] = ind.ema(c, p.get("ema_exit_period", 28))
 
+        # SMA 28 for custom cut-loss exit
+        df["sma_28"] = ind.sma(c, 28)
+        df["sma_28_slope"] = df["sma_28"].diff(3)  # 3-bar slope
+
         # ── Smart Money Concepts (SMC) ──────────────────────────
         df["smc_ob"] = ind5.smc_order_blocks(
             df["open"], df["high"], df["low"], c, lookback=10,

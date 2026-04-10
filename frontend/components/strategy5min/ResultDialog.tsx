@@ -299,6 +299,12 @@ export default function ResultDialog({ btData, symbol, symbolName, period, slMul
               <MetricBox label="Trades" value={String(m.total_trades)} cls="text-slate-200" />
               <MetricBox label="W/L" value={`${m.winners}/${m.losers}`} cls="text-slate-200" />
               <MetricBox label="R:R" value={`1:${n(m.risk_reward_ratio).toFixed(1)}`} cls="text-cyan-400" />
+              {m.worst_daily_loss < 0 && (
+                <MetricBox label="Worst Day" value={`$${n(m.worst_daily_loss).toFixed(0)}`} cls="text-rose-400" />
+              )}
+              {m.days_stopped > 0 && (
+                <MetricBox label="Days Cap" value={String(m.days_stopped)} cls="text-amber-400" />
+              )}
             </div>
 
             {/* Open Position + SYNC button */}

@@ -66,6 +66,9 @@ class BacktestResult5Min:
     oos_return_pct: float = 0.0
     # Daily P&L breakdown
     daily_pnl: list[dict] = field(default_factory=list)
+    # Daily loss limit metrics
+    worst_daily_loss: float = 0.0      # most negative single-day P&L
+    days_stopped: int = 0              # days where daily loss limit was hit
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -95,6 +98,7 @@ class Backtester5Min:
         disabled_conditions: set[str] | None = None,
         skip_flat: bool = False,
         skip_counter_trend: bool = False,
+        daily_loss_limit: float = 0.0,
     ) -> BacktestResult5Min:
         """Execute 5min backtest.
 
@@ -103,6 +107,8 @@ class Backtester5Min:
         If *oos_split* > 0 (e.g. 0.3), split data 70/30 and report
         out-of-sample metrics separately.
         *disabled_conditions*: condition keys to skip (treat as always True).
+        *daily_loss_limit*: if > 0, stop new entries for the day once
+        cumulative realized P&L drops to this amount (e.g. 350 = stop after -$350).
         """
         full_params = {**DEFAULT_5MIN_PARAMS, **(params or {})}
         strategy = MGCStrategy5Min(full_params)
@@ -123,6 +129,7 @@ class Backtester5Min:
             is_trades, is_curve, is_equity = self._simulate(
                 df_ind.iloc[:split_idx], signals.iloc[:split_idx], full_params,
                 skip_flat=_skip_flat, skip_counter_trend=_skip_counter,
+                daily_loss_limit=daily_loss_limit,
             )
             # Out-of-sample run — chain from IS ending equity
             saved_capital = self.initial_capital
@@ -130,17 +137,18 @@ class Backtester5Min:
             oos_trades, oos_curve, oos_equity = self._simulate(
                 df_ind.iloc[split_idx:], signals.iloc[split_idx:], full_params,
                 skip_flat=_skip_flat, skip_counter_trend=_skip_counter,
+                daily_loss_limit=daily_loss_limit,
             )
             self.initial_capital = saved_capital
             # Merge curves
             all_trades = is_trades + oos_trades
             all_curve = is_curve + oos_curve
         else:
-            all_trades, all_curve, _ = self._simulate(df_ind, signals, full_params, skip_flat=_skip_flat, skip_counter_trend=_skip_counter)
+            all_trades, all_curve, _ = self._simulate(df_ind, signals, full_params, skip_flat=_skip_flat, skip_counter_trend=_skip_counter, daily_loss_limit=daily_loss_limit)
             is_trades = all_trades
             oos_trades = []
 
-        result = self._compute_metrics(all_trades, all_curve, self.initial_capital, full_params)
+        result = self._compute_metrics(all_trades, all_curve, self.initial_capital, full_params, daily_loss_limit=daily_loss_limit)
 
         # OOS metrics
         if oos_trades:
@@ -160,6 +168,7 @@ class Backtester5Min:
         oos_split: float = 0.0,
         skip_flat: bool = False,
         skip_counter_trend: bool = False,
+        daily_loss_limit: float = 0.0,
     ) -> BacktestResult5Min:
         """Run backtest with pre-computed indicators and signals (fast path for optimizer)."""
         if oos_split > 0:
@@ -167,12 +176,14 @@ class Backtester5Min:
             is_trades, is_curve, is_equity = self._simulate(
                 df_ind.iloc[:split_idx], signals.iloc[:split_idx], full_params,
                 skip_flat=skip_flat, skip_counter_trend=skip_counter_trend,
+                daily_loss_limit=daily_loss_limit,
             )
             saved_capital = self.initial_capital
             self.initial_capital = is_equity
             oos_trades, oos_curve, _ = self._simulate(
                 df_ind.iloc[split_idx:], signals.iloc[split_idx:], full_params,
                 skip_flat=skip_flat, skip_counter_trend=skip_counter_trend,
+                daily_loss_limit=daily_loss_limit,
             )
             self.initial_capital = saved_capital
             all_trades = is_trades + oos_trades
@@ -181,10 +192,11 @@ class Backtester5Min:
             all_trades, all_curve, _ = self._simulate(
                 df_ind, signals, full_params,
                 skip_flat=skip_flat, skip_counter_trend=skip_counter_trend,
+                daily_loss_limit=daily_loss_limit,
             )
             oos_trades = []
 
-        result = self._compute_metrics(all_trades, all_curve, self.initial_capital, full_params)
+        result = self._compute_metrics(all_trades, all_curve, self.initial_capital, full_params, daily_loss_limit=daily_loss_limit)
         if oos_trades:
             oos_wins = [t for t in oos_trades if t.pnl > 0]
             result.oos_total_trades = len(oos_trades)
@@ -199,14 +211,20 @@ class Backtester5Min:
         params: dict,
         skip_flat: bool = False,
         skip_counter_trend: bool = False,
+        daily_loss_limit: float = 0.0,
     ) -> tuple[list[Trade5Min], list[float], float]:
-        """Bar-by-bar simulation loop. Supports CALL (+1) and PUT (-1) signals."""
+        """Bar-by-bar simulation loop. Supports CALL (+1) and PUT (-1) signals.
+
+        daily_loss_limit: if > 0, stop opening new trades for the day once
+        cumulative realized P&L for that day drops to -daily_loss_limit.
+        """
         equity = self.initial_capital
         position: dict | None = None
         trades: list[Trade5Min] = []
         equity_curve: list[float] = []
         consec_losses = 0
         daily_counts: dict[str, int] = {}
+        daily_pnl_running: dict[str, float] = {}  # cumulative realized P&L per day
         extreme_since_entry = 0.0  # highest for CALL, lowest for PUT
         worst_unrealized = 0.0  # worst unrealized P&L (most negative) during trade
         prev_bar_date = ""
@@ -232,6 +250,7 @@ class Backtester5Min:
                     pnl = d * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
                     pnl_pct = pnl / (self.initial_capital or 1) * 100
                     equity += pnl
+                    daily_pnl_running[prev_date] = daily_pnl_running.get(prev_date, 0.0) + pnl
                     trades.append(Trade5Min(
                         entry_time=position["entry_time"],
                         exit_time=prev.name,
@@ -331,6 +350,7 @@ class Backtester5Min:
                     pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
                     pnl_pct = pnl / (self.initial_capital or 1) * 100
                     equity += pnl
+                    daily_pnl_running[bar_date] = daily_pnl_running.get(bar_date, 0.0) + pnl
                     trades.append(Trade5Min(
                         entry_time=position["entry_time"],
                         exit_time=bar.name,
@@ -367,6 +387,7 @@ class Backtester5Min:
                     pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
                     pnl_pct = pnl / (self.initial_capital or 1) * 100
                     equity += pnl
+                    daily_pnl_running[bar_date] = daily_pnl_running.get(bar_date, 0.0) + pnl
                     trades.append(Trade5Min(
                         entry_time=position["entry_time"],
                         exit_time=bar.name,
@@ -387,11 +408,54 @@ class Backtester5Min:
                     position = None
                     worst_unrealized = 0.0
 
+                # ── SMA28 cut-loss exit ─────────────────────────────
+                # Long: close < SMA28 AND close < entry bar low AND SMA28 sloping down
+                # Short: close > SMA28 AND close > entry bar high AND SMA28 sloping up
+                hit_sma28_cut = False
+                if position is not None and params.get("use_sma28_cut") and "sma_28" in bar.index:
+                    sma_val = float(bar["sma_28"])
+                    sma_slope = float(bar["sma_28_slope"]) if "sma_28_slope" in bar.index else 0.0
+                    bar_close = float(bar["close"])
+                    if not math.isnan(sma_val) and not math.isnan(sma_slope):
+                        if direction == 1:
+                            if bar_close < sma_val and bar_close < position.get("entry_bar_low", 0) and sma_slope < 0:
+                                hit_sma28_cut = True
+                        elif direction == -1:
+                            if bar_close > sma_val and bar_close > position.get("entry_bar_high", 1e9) and sma_slope > 0:
+                                hit_sma28_cut = True
+
+                if hit_sma28_cut and not hit_sl and not hit_tp and not hit_structure_exit and not hit_ema_exit:
+                    exit_price = float(bar["close"])
+                    pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                    pnl_pct = pnl / (self.initial_capital or 1) * 100
+                    equity += pnl
+                    daily_pnl_running[bar_date] = daily_pnl_running.get(bar_date, 0.0) + pnl
+                    trades.append(Trade5Min(
+                        entry_time=position["entry_time"],
+                        exit_time=bar.name,
+                        entry_price=position["entry_price"],
+                        exit_price=round(exit_price, 2),
+                        qty=position["qty"],
+                        pnl=round(pnl, 2),
+                        pnl_pct=round(pnl_pct, 2),
+                        reason="SMA28_CUT",
+                        signal_type=position.get("signal_type", ""),
+                        direction="CALL" if direction == 1 else "PUT",
+                        mae=round(worst_unrealized, 2),
+                        mkt_structure=position.get("mkt_structure", 0),
+                        sl=round(sl, 2),
+                        tp=round(position["tp"], 2),
+                    ))
+                    consec_losses = consec_losses + 1 if pnl < 0 else 0
+                    position = None
+                    worst_unrealized = 0.0
+
                 if position is not None and hit_sl:
                     exit_price = sl
                     pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
                     pnl_pct = pnl / (self.initial_capital or 1) * 100
                     equity += pnl
+                    daily_pnl_running[bar_date] = daily_pnl_running.get(bar_date, 0.0) + pnl
                     reason = "SL"
                     if params.get("use_breakeven") and position.get("be_triggered"):
                         if (direction == 1 and sl >= position["entry_price"]) or \
@@ -424,6 +488,7 @@ class Backtester5Min:
                     pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
                     pnl_pct = pnl / (self.initial_capital or 1) * 100
                     equity += pnl
+                    daily_pnl_running[bar_date] = daily_pnl_running.get(bar_date, 0.0) + pnl
                     trades.append(Trade5Min(
                         entry_time=position["entry_time"],
                         exit_time=bar.name,
@@ -453,6 +518,13 @@ class Backtester5Min:
                 if daily_counts.get(bar_date, 0) >= self.MAX_DAILY_TRADES:
                     equity_curve.append(equity)
                     continue
+
+                # Daily loss limit gate
+                if daily_loss_limit > 0:
+                    day_pnl = daily_pnl_running.get(bar_date, 0.0)
+                    if day_pnl <= -daily_loss_limit:
+                        equity_curve.append(equity)
+                        continue
 
                 entry_price = float(bar["open"])
                 atr_val = float(prev["atr"]) if not math.isnan(float(prev["atr"])) else 0.0
@@ -509,6 +581,8 @@ class Backtester5Min:
                     "be_triggered": False,
                     "direction": direction,
                     "mkt_structure": _mkt_s,
+                    "entry_bar_low": float(bar["low"]),
+                    "entry_bar_high": float(bar["high"]),
                 }
                 extreme_since_entry = entry_price
                 worst_unrealized = 0.0
@@ -529,6 +603,8 @@ class Backtester5Min:
             pnl = d * (float(last["close"]) - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
             pnl_pct = pnl / (self.initial_capital or 1) * 100
             equity += pnl
+            last_date = str(last.name.date()) if hasattr(last.name, "date") else str(last.name)[:10]
+            daily_pnl_running[last_date] = daily_pnl_running.get(last_date, 0.0) + pnl
             trades.append(Trade5Min(
                 entry_time=position["entry_time"],
                 exit_time=last.name,
@@ -717,6 +793,7 @@ class Backtester5Min:
         equity_curve: list[float],
         initial_capital: float,
         params: dict,
+        daily_loss_limit: float = 0.0,
     ) -> BacktestResult5Min:
         result = BacktestResult5Min(
             trades=trades,
@@ -785,5 +862,13 @@ class Backtester5Min:
             d["pnl"] = round(d["pnl"], 2)
             d["win_rate"] = round(d["wins"] / d["trades"] * 100, 1) if d["trades"] else 0
         result.daily_pnl = sorted(day_map.values(), key=lambda x: x["date"], reverse=True)
+
+        # Worst daily loss & days stopped
+        if day_map:
+            result.worst_daily_loss = round(min(d["pnl"] for d in day_map.values()), 2)
+            if daily_loss_limit > 0:
+                result.days_stopped = sum(
+                    1 for d in day_map.values() if d["pnl"] <= -daily_loss_limit
+                )
 
         return result
