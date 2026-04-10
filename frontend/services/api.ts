@@ -1102,6 +1102,26 @@ export async function saveAutoTradeSettings(settings: AutoTradeSettings, symbol:
   });
 }
 
+// ── UI Preferences (zen mode etc.) ──────────────────────
+
+export type UIPreferences = {
+  hide_prices: boolean;
+};
+
+export async function getUIPreferences(): Promise<UIPreferences> {
+  const res = await fetch(`${API_BASE}/mgc/ui_preferences`, { cache: "no-store" });
+  if (!res.ok) return { hide_prices: false };
+  return (await res.json()) as UIPreferences;
+}
+
+export async function saveUIPreferences(prefs: UIPreferences): Promise<void> {
+  await fetch(`${API_BASE}/mgc/ui_preferences`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(prefs),
+  });
+}
+
 // ── Market Structure (fast cached endpoint) ─────────────
 
 export interface MarketStructure {
@@ -1159,7 +1179,7 @@ export async function fetchMGC5MinBacktest(
   skipFlat?: boolean,
   skipCounterTrend: boolean = true,
   useEmaExit: boolean = false,
-  useStructureExit: boolean = false,
+  useStructFade: boolean = false,
   useSma28Cut: boolean = false,
   dailyLossLimit: number = 0,
 ): Promise<MGC5MinBacktestResponse> {
@@ -1170,7 +1190,7 @@ export async function fetchMGC5MinBacktest(
   if (skipFlat) url += `&skip_flat=true`;
   url += `&skip_counter_trend=${skipCounterTrend}`;
   if (useEmaExit) url += `&use_ema_exit=true`;
-  if (useStructureExit) url += `&use_structure_exit=true`;
+  if (useStructFade) url += `&use_struct_fade=true`;
   if (useSma28Cut) url += `&use_sma28_cut=true`;
   if (dailyLossLimit > 0) url += `&daily_loss_limit=${dailyLossLimit}`;
   const response = await fetch(url, { cache: "no-store" });
@@ -1209,13 +1229,13 @@ export async function optimize5MinConditions(
   skipFlat: boolean = false,
   skipCounterTrend: boolean = true,
   useEmaExit: boolean = false,
-  useStructureExit: boolean = false,
+  useStructFade: boolean = false,
 ): Promise<ConditionOptimizationResult[]> {
   let url = `${API_BASE}/mgc/optimize_conditions_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&top_n=${top_n}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
   if (skipFlat) url += `&skip_flat=true`;
   url += `&skip_counter_trend=${skipCounterTrend}`;
   if (useEmaExit) url += `&use_ema_exit=true`;
-  if (useStructureExit) url += `&use_structure_exit=true`;
+  if (useStructFade) url += `&use_struct_fade=true`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();

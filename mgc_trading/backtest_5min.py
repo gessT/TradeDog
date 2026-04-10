@@ -228,6 +228,7 @@ class Backtester5Min:
         extreme_since_entry = 0.0  # highest for CALL, lowest for PUT
         worst_unrealized = 0.0  # worst unrealized P&L (most negative) during trade
         prev_bar_date = ""
+        prev_mkt_structure: int = 0  # track bar-by-bar structure for transition detection
 
         for i in range(1, len(df)):
             bar = df.iloc[i]
@@ -330,20 +331,20 @@ class Backtester5Min:
                     hit_sl = bar["high"] >= sl
                     hit_tp = bar["low"] <= tp
 
-                # ── Structure change exit: flat or flipped = cut loss ───
+                # ── Structure fade exit: detect transition on new bar ───
+                # CALL: exit when structure transitions BULL→FLAT or BULL→BEAR
+                # PUT:  exit when structure transitions BEAR→FLAT or BEAR→BULL
                 hit_structure_exit = False
-                if params.get("use_structure_exit") and "mkt_structure" in bar.index:
-                    cur_struct = int(bar["mkt_structure"])
-                    entry_struct = position.get("mkt_structure", 0)
-                    if cur_struct == 0:
-                        # Structure went flat/sideways
-                        hit_structure_exit = True
-                    elif direction == 1 and cur_struct == -1:
-                        # CALL but structure flipped to BEAR
-                        hit_structure_exit = True
-                    elif direction == -1 and cur_struct == 1:
-                        # PUT but structure flipped to BULL
-                        hit_structure_exit = True
+                cur_struct = int(bar["mkt_structure"]) if "mkt_structure" in bar.index and not math.isnan(float(bar["mkt_structure"])) else 0
+                if params.get("use_struct_fade") and cur_struct != prev_mkt_structure:
+                    if direction == 1:
+                        # Long: exit when structure fades from BULL(1) → FLAT(0) or BEAR(-1)
+                        if prev_mkt_structure == 1 and cur_struct <= 0:
+                            hit_structure_exit = True
+                    elif direction == -1:
+                        # Short: exit when structure fades from BEAR(-1) → FLAT(0) or BULL(1)
+                        if prev_mkt_structure == -1 and cur_struct >= 0:
+                            hit_structure_exit = True
 
                 if hit_structure_exit and not hit_sl and not hit_tp:
                     exit_price = float(bar["close"])
@@ -595,6 +596,10 @@ class Backtester5Min:
                 equity_curve.append(equity + unrealized)
             else:
                 equity_curve.append(equity)
+
+            # Update structure tracker every bar (needs to run outside position block)
+            if "mkt_structure" in bar.index and not math.isnan(float(bar["mkt_structure"])):
+                prev_mkt_structure = int(bar["mkt_structure"])
 
         # Close remaining position at last close
         if position is not None:

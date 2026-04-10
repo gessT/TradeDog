@@ -1092,7 +1092,17 @@ async def cancel_order(order_id: str):
 
 @router.post("/close_position")
 async def close_position(symbol: str = "MGC"):
-    """Close all positions for a symbol by placing a market order in the opposite direction."""
+    """Close all positions for a symbol by placing a market order in the opposite direction.
+
+    Also cancels all related open orders (SL/TP) and resets the execution engine.
+    """
+
+    _NOT_CANCELLABLE = {
+        "FILLED", "CANCELLED", "CANCELED", "EXPIRED", "INACTIVE",
+        "DEACTIVATED", "REJECTED",
+        "filled", "cancelled", "canceled", "expired", "inactive",
+        "deactivated", "rejected",
+    }
 
     def _run():
         import re
@@ -1128,10 +1138,50 @@ async def close_position(symbol: str = "MGC"):
             action=close_side, quantity=close_qty,
         )
         result = trade_client.place_order(order)
+        msg_parts = [f"Closed {close_qty}x {symbol} ({close_side}) → {result}"]
+
+        # ── Cancel all related open orders (SL/TP) ─────────────────
+        cancelled_orders = []
+        try:
+            open_orders = trade_client.get_open_orders(account=TIGER_ACCOUNT, sec_type="FUT")
+            for o in (open_orders or []):
+                global_id = getattr(o, "id", None) or getattr(o, "order_id", None)
+                if not global_id:
+                    continue
+                status_raw = str(getattr(o, "status", "") or "")
+                if "." in status_raw:
+                    status_raw = status_raw.rsplit(".", 1)[-1]
+                if status_raw in _NOT_CANCELLABLE:
+                    continue
+                try:
+                    trade_client.cancel_order(id=int(global_id))
+                    cancelled_orders.append(str(global_id))
+                    logger.info("🧹 Auto-cancelled order %s after close_position", global_id)
+                except Exception as cancel_exc:
+                    err_msg = str(cancel_exc).lower()
+                    if not any(kw in err_msg for kw in
+                               ["filled", "cancelled", "canceled", "not found",
+                                "invalid status", "does not exist"]):
+                        logger.warning("⚠️ Failed to cancel order %s: %s", global_id, cancel_exc)
+            if cancelled_orders:
+                msg_parts.append(f"Cancelled {len(cancelled_orders)} open order(s)")
+        except Exception as exc:
+            logger.warning("Could not cleanup open orders after close: %s", exc)
+
+        # ── Reset execution engine ──────────────────────────────────
+        try:
+            from mgc_trading.execution_engine import get_engine
+            engine = get_engine(base_symbol)
+            engine.record_exit(reason="MANUAL_CLOSE", exit_price=0.0)
+            msg_parts.append("Engine reset")
+        except Exception as exc:
+            logger.warning("Could not reset engine after close: %s", exc)
+
         return {
             "success": True,
             "order_id": str(result),
-            "message": f"Closed {close_qty}x {symbol} ({close_side}) → {result}",
+            "cancelled_orders": cancelled_orders,
+            "message": " | ".join(msg_parts),
         }
 
     try:
@@ -1597,7 +1647,7 @@ async def mgc_backtest_5min(
     skip_flat: Annotated[bool, Query()] = False,
     skip_counter_trend: Annotated[bool, Query()] = True,
     use_ema_exit: Annotated[bool, Query()] = False,
-    use_structure_exit: Annotated[bool, Query()] = False,
+    use_struct_fade: Annotated[bool, Query()] = False,
     use_sma28_cut: Annotated[bool, Query()] = False,
     daily_loss_limit: Annotated[float, Query(ge=0, le=5000)] = 0.0,
 ) -> MGC5MinBacktestResponse:
@@ -1632,7 +1682,7 @@ async def mgc_backtest_5min(
             df = df[df.index < trade_end]
 
         # ── Run full 60d simulation for consistent results ──────
-        custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult, "use_ema_exit": use_ema_exit, "use_structure_exit": use_structure_exit, "use_sma28_cut": use_sma28_cut}
+        custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult, "use_ema_exit": use_ema_exit, "use_struct_fade": use_struct_fade, "use_sma28_cut": use_sma28_cut}
         bt = Backtester5Min(capital=capital)
         result = bt.run(df, params=custom_params, oos_split=oos_split, disabled_conditions=_disabled or None, skip_flat=skip_flat, skip_counter_trend=skip_counter_trend, daily_loss_limit=daily_loss_limit)
 
@@ -1752,40 +1802,45 @@ async def mgc_backtest_5min(
         logger.exception("5min backtest failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
-    # Check if backtest currently has an open position
+    # ── Detect open position from the last EOD trade ─────────────────
+    # The backtester force-closes any open position at data end as "EOD".
+    # If the very last trade (unfiltered or filtered) is EOD, it means
+    # the position is still live → convert it to "OPEN".
     open_pos = None
-    try:
-        def _get_open_pos():
-            from mgc_trading.backtest_5min import Backtester5Min
-            df = load_yfinance(symbol=symbol, interval="5m", period="60d")
-            bt = Backtester5Min()
-            _disabled_set = set()
-            if disabled_conditions:
-                _disabled_set = {c.strip() for c in disabled_conditions.split(",") if c.strip()}
-            return bt.get_live_position(df, params={"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}, disabled_conditions=_disabled_set or None)
-        open_pos = await run_in_threadpool(_get_open_pos)
-    except Exception:
-        pass
+    if trades:
+        # Find the last EOD trade — this is the still-open position
+        last_eod_idx = None
+        for idx in range(len(trades) - 1, -1, -1):
+            if trades[idx].reason == "EOD":
+                last_eod_idx = idx
+                break
 
-    # If last trade is EOD at data end and backtest still has open position → mark as OPEN
-    if open_pos and trades:
-        last_t = trades[-1]
-        if last_t.reason == "EOD" and round(last_t.entry_price, 2) == open_pos["entry_price"]:
-            trades[-1] = MGC5MinTrade(
-                entry_time=last_t.entry_time,
-                exit_time=last_t.exit_time,
-                entry_price=last_t.entry_price,
-                exit_price=last_t.exit_price,
-                qty=last_t.qty,
-                pnl=last_t.pnl,
-                pnl_pct=last_t.pnl_pct,
+        if last_eod_idx is not None:
+            t = trades[last_eod_idx]
+            open_pos = {
+                "direction": t.direction or "CALL",
+                "entry_price": t.entry_price,
+                "sl": t.sl,
+                "tp": t.tp,
+                "entry_time": t.entry_time,
+                "signal_type": t.signal_type,
+                "bar_time": t.entry_time,
+            }
+            trades[last_eod_idx] = MGC5MinTrade(
+                entry_time=t.entry_time,
+                exit_time=t.exit_time,
+                entry_price=t.entry_price,
+                exit_price=t.exit_price,
+                qty=t.qty,
+                pnl=t.pnl,
+                pnl_pct=t.pnl_pct,
                 reason="OPEN",
-                signal_type=last_t.signal_type,
-                direction=last_t.direction,
-                mae=last_t.mae,
-                mkt_structure=last_t.mkt_structure,
-                sl=round(open_pos["sl"], 2),
-                tp=round(open_pos["tp"], 2),
+                signal_type=t.signal_type,
+                direction=t.direction,
+                mae=t.mae,
+                mkt_structure=t.mkt_structure,
+                sl=t.sl,
+                tp=t.tp,
             )
 
     return MGC5MinBacktestResponse(
@@ -2941,7 +2996,7 @@ async def optimize_5min_conditions(
     skip_flat: Annotated[bool, Query()] = False,
     skip_counter_trend: Annotated[bool, Query()] = True,
     use_ema_exit: Annotated[bool, Query()] = False,
-    use_structure_exit: Annotated[bool, Query()] = False,
+    use_struct_fade: Annotated[bool, Query()] = False,
 ) -> list[dict]:
     """Optimize 5-minute condition combinations using current risk filters and SL/TP."""
     
@@ -2971,7 +3026,7 @@ async def optimize_5min_conditions(
             "atr_sl_mult": atr_sl_mult,
             "atr_tp_mult": atr_tp_mult,
             "use_ema_exit": use_ema_exit,
-            "use_structure_exit": use_structure_exit,
+            "use_struct_fade": use_struct_fade,
         }
 
         condition_keys = [
@@ -3467,3 +3522,61 @@ async def get_market_structure(
     except Exception as exc:
         logger.exception("Market structure failed")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# UI Preferences (persisted in PostgreSQL)
+# ═══════════════════════════════════════════════════════════════════════
+
+class UIPreferencesPayload(BaseModel):
+    hide_prices: bool = False
+
+
+@router.get("/ui_preferences")
+def get_ui_preferences() -> dict:
+    """Return saved UI preferences."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS ui_preferences (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                hide_prices BOOLEAN NOT NULL DEFAULT FALSE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.commit()
+        row = conn.execute(
+            text("SELECT hide_prices FROM ui_preferences WHERE id = 1"),
+        ).fetchone()
+    if row:
+        return {"hide_prices": bool(row[0])}
+    return {"hide_prices": False}
+
+
+@router.post("/ui_preferences")
+def save_ui_preferences(payload: UIPreferencesPayload) -> dict[str, str]:
+    """Save UI preferences."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS ui_preferences (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                hide_prices BOOLEAN NOT NULL DEFAULT FALSE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(
+            text("""
+                INSERT INTO ui_preferences (id, hide_prices, updated_at)
+                VALUES (1, :hp, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO UPDATE SET
+                    hide_prices = EXCLUDED.hide_prices,
+                    updated_at = CURRENT_TIMESTAMP
+            """),
+            {"hp": payload.hide_prices},
+        )
+    return {"status": "ok"}

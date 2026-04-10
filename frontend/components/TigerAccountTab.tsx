@@ -8,6 +8,8 @@ import {
   cancelOrder,
   closePosition,
   cleanupOrders,
+  getUIPreferences,
+  saveUIPreferences,
   type TigerAccountResponse,
   type TigerPositionItem,
   type TigerOrderItem,
@@ -170,7 +172,8 @@ function PositionRow({
   p,
   onClose,
   onTrade,
-}: Readonly<{ p: TigerPositionItem; onClose: (sym: string) => void; onTrade: () => void }>) {
+  hidePrices = false,
+}: Readonly<{ p: TigerPositionItem; onClose: (sym: string) => void; onTrade: () => void; hidePrices?: boolean }>) {
   const [expanded, setExpanded] = useState(false);
   const [qty, setQty] = useState(1);
   const [orderType, setOrderType] = useState<"MKT" | "LMT">("MKT");
@@ -221,10 +224,10 @@ function PositionRow({
         <td className={`px-2 py-2 text-[11px] text-center font-bold ${p.quantity > 0 ? "text-emerald-400" : "text-rose-400"}`}>
           {p.quantity > 0 ? "+" : ""}{p.quantity}
         </td>
-        <td className="px-2 py-2 text-[11px] text-right text-slate-300 tabular-nums">${p.average_cost.toFixed(2)}</td>
-        <td className="px-2 py-2 text-[11px] text-right text-yellow-400 font-bold tabular-nums">${p.latest_price > 0 ? p.latest_price.toFixed(2) : p.market_value.toFixed(2)}</td>
-        <td className={`px-2 py-2 text-[11px] text-right font-bold tabular-nums ${pnlColor}`}>
-          {p.unrealized_pnl >= 0 ? "+" : ""}${p.unrealized_pnl.toFixed(2)}
+        <td className="px-2 py-2 text-[11px] text-right text-slate-300 tabular-nums">{hidePrices ? "••••" : `$${p.average_cost.toFixed(2)}`}</td>
+        <td className="px-2 py-2 text-[11px] text-right text-yellow-400 font-bold tabular-nums">{hidePrices ? "••••" : `$${p.latest_price > 0 ? p.latest_price.toFixed(2) : p.market_value.toFixed(2)}`}</td>
+        <td className={`px-2 py-2 text-[11px] text-right font-bold tabular-nums ${hidePrices ? "text-slate-500" : pnlColor}`}>
+          {hidePrices ? "••••" : `${p.unrealized_pnl >= 0 ? "+" : ""}$${p.unrealized_pnl.toFixed(2)}`}
         </td>
         <td className="px-2 py-2 text-center">
           <button
@@ -313,7 +316,8 @@ function OrderRow({
   o,
   canCancel,
   onCancel,
-}: Readonly<{ o: TigerOrderItem; canCancel: boolean; onCancel: (id: string) => void }>) {
+  hidePrices = false,
+}: Readonly<{ o: TigerOrderItem; canCancel: boolean; onCancel: (id: string) => void; hidePrices?: boolean }>) {
   const name = COMMODITY_NAMES[baseSymbol(o.symbol)] ?? "";
   return (
     <tr className="border-b border-slate-800/40 hover:bg-slate-800/30 transition-colors">
@@ -328,7 +332,7 @@ function OrderRow({
       <td className="px-2 py-1.5 text-[10px] text-slate-400">{o.order_type}</td>
       <td className="px-2 py-1.5 text-[10px] text-center text-slate-300">{o.filled_quantity}/{o.quantity}</td>
       <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">
-        {o.avg_fill_price > 0 ? `$${o.avg_fill_price.toFixed(2)}` : o.limit_price > 0 ? `$${o.limit_price.toFixed(2)}` : "MKT"}
+        {hidePrices ? "••••" : o.avg_fill_price > 0 ? `$${o.avg_fill_price.toFixed(2)}` : o.limit_price > 0 ? `$${o.limit_price.toFixed(2)}` : "MKT"}
       </td>
       <td className="px-2 py-1.5 text-[10px] text-slate-500">{o.trade_time ? fmtTime(o.trade_time) : ""}</td>
       <td className="px-2 py-1.5 text-[10px]">
@@ -368,6 +372,20 @@ export default function TigerAccountTab() {
   const [tradeLoading, setTradeLoading] = useState(false);
 
   const [failCount, setFailCount] = useState(0);
+  const [hidePrices, setHidePrices] = useState(false);
+
+  // Load saved preference on mount
+  useEffect(() => {
+    getUIPreferences().then((p) => setHidePrices(p.hide_prices)).catch(() => {});
+  }, []);
+
+  const toggleHidePrices = useCallback(() => {
+    setHidePrices((prev) => {
+      const next = !prev;
+      saveUIPreferences({ hide_prices: next }).catch(() => {});
+      return next;
+    });
+  }, []);
 
   const refreshTrades = useCallback(async (days?: number) => {
     setTradeLoading(true);
@@ -455,6 +473,13 @@ export default function TigerAccountTab() {
             }`}
           >{loading ? "Loading…" : "↻ Refresh"}</button>
           <button
+            onClick={toggleHidePrices}
+            className={`px-3 py-1 text-[10px] font-bold rounded transition-all ${
+              hidePrices ? "bg-violet-600/30 text-violet-400 border border-violet-500/40" : "bg-slate-800 text-slate-400 hover:text-violet-400 hover:bg-slate-700"
+            }`}
+            title="Hide prices to control emotions"
+          >{hidePrices ? "👁️ Show" : "🙈 Zen"}</button>
+          <button
             onClick={handleCleanup}
             className="px-3 py-1 text-[10px] font-bold rounded bg-slate-800 text-slate-400 hover:text-amber-400 hover:bg-slate-700 transition-all"
             title="Cancel ALL open orders"
@@ -471,16 +496,16 @@ export default function TigerAccountTab() {
         <div className="grid grid-cols-3 gap-2">
           <div className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-3 text-center">
             <div className="text-[8px] text-slate-500 uppercase tracking-wider">Net Liquidation</div>
-            <div className="text-lg font-bold text-white tabular-nums mt-0.5">${acct.net_liquidation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            <div className="text-lg font-bold text-white tabular-nums mt-0.5">{hidePrices ? "••••••" : `$${acct.net_liquidation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
           </div>
           <div className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-3 text-center">
             <div className="text-[8px] text-slate-500 uppercase tracking-wider">Cash</div>
-            <div className="text-lg font-bold text-cyan-400 tabular-nums mt-0.5">${acct.cash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            <div className="text-lg font-bold text-cyan-400 tabular-nums mt-0.5">{hidePrices ? "••••••" : `$${acct.cash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
           </div>
           <div className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-3 text-center">
             <div className="text-[8px] text-slate-500 uppercase tracking-wider">Unrealized P&L</div>
-            <div className={`text-lg font-bold tabular-nums mt-0.5 ${acct.unrealized_pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-              {acct.unrealized_pnl >= 0 ? "+" : ""}${acct.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <div className={`text-lg font-bold tabular-nums mt-0.5 ${hidePrices ? "text-slate-500" : acct.unrealized_pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {hidePrices ? "••••••" : `${acct.unrealized_pnl >= 0 ? "+" : ""}$${acct.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
             </div>
           </div>
         </div>
@@ -512,7 +537,7 @@ export default function TigerAccountTab() {
               </thead>
               <tbody>
                 {data.positions.map((p) => (
-                  <PositionRow key={p.symbol} p={p} onClose={handleClose} onTrade={refresh} />
+                  <PositionRow key={p.symbol} p={p} onClose={handleClose} onTrade={refresh} hidePrices={hidePrices} />
                 ))}
               </tbody>
             </table>
@@ -585,6 +610,7 @@ export default function TigerAccountTab() {
                       o={o}
                       canCancel={orderTab === "open"}
                       onCancel={handleCancel}
+                      hidePrices={hidePrices}
                     />
                   ))}
                 </tbody>
@@ -611,7 +637,7 @@ export default function TigerAccountTab() {
                 <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
                   Today&apos;s Trades ({todayTrades.length})
                 </span>
-                {todayTrades.length > 0 && (
+                {todayTrades.length > 0 && !hidePrices && (
                   <>
                     <span className={`text-[10px] font-bold tabular-nums ${todayPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                       {todayPnl >= 0 ? "+" : ""}${todayPnl.toFixed(2)}
@@ -656,12 +682,12 @@ export default function TigerAccountTab() {
                             {t.side === "LONG" ? "BUY" : "SELL"}
                           </td>
                           <td className="px-2 py-1.5 text-[10px] text-center text-slate-300">{t.qty}</td>
-                          <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">${t.entry_price.toFixed(2)}</td>
+                          <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">{hidePrices ? "••••" : `$${t.entry_price.toFixed(2)}`}</td>
                           <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">
-                            {t.status === "CLOSED" ? `$${t.exit_price.toFixed(2)}` : "—"}
+                            {hidePrices ? "••••" : t.status === "CLOSED" ? `$${t.exit_price.toFixed(2)}` : "—"}
                           </td>
-                          <td className={`px-2 py-1.5 text-[10px] text-right font-bold tabular-nums ${pnlColor}`}>
-                            {t.status === "CLOSED" ? `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)}` : "—"}
+                          <td className={`px-2 py-1.5 text-[10px] text-right font-bold tabular-nums ${hidePrices ? "text-slate-500" : pnlColor}`}>
+                            {hidePrices ? "••••" : t.status === "CLOSED" ? `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)}` : "—"}
                           </td>
                           <td className="px-2 py-1.5 text-[9px] text-slate-500 whitespace-nowrap">
                             {t.entry_time ? fmtLocalTime(t.entry_time) : ""}

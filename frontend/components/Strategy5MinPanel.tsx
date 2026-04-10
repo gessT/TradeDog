@@ -470,6 +470,7 @@ const RISK_FILTER_DEFS: { key: string; label: string; desc: string; default: boo
 
 /** Exit cut-loss conditions — boolean params that trigger early exits. */
 const EXIT_CONDITION_DEFS: { key: string; label: string; desc: string; default: boolean }[] = [
+  { key: "use_struct_fade", label: "Structure Fade", desc: "Exit when market structure transitions against your position: BULL→FLAT/BEAR for longs, BEAR→FLAT/BULL for shorts. Detects the moment trend weakens.", default: false },
   { key: "use_sma28_cut", label: "SMA28 Cut Loss", desc: "Exit when bar close < SMA28 AND close < entry bar low AND SMA28 sloping down (reverse for shorts).", default: false },
 ];
 
@@ -1320,7 +1321,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       const disabled = CONDITION_DEFS
         .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
         .map((d) => d.key);
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, riskFilters.use_structure_exit ?? false, exitConditions.use_sma28_cut ?? false, 0);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0);
       setBtData(res);
       onTradesUpdate?.(res.trades);
       // Show result dialog with SYNC booking
@@ -1445,7 +1446,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               const disabled = CONDITION_DEFS
                 .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
                 .map((d) => d.key);
-              const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, riskFilters.use_structure_exit ?? false, exitConditions.use_sma28_cut ?? false, 0);
+              const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0);
               if (cancelled) return;
               setBtData(res);
               onTradesUpdate?.(res.trades);
@@ -1500,7 +1501,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         riskFilters.skip_flat ?? false,
         riskFilters.skip_counter_trend ?? true,
         riskFilters.use_ema_exit ?? false,
-        riskFilters.use_structure_exit ?? false,
+        exitConditions.use_struct_fade ?? false,
       );
       setOptimizationResults(results);
       if (results.length > 0) {
@@ -1895,6 +1896,17 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             </div>
           )}
 
+          {/* Loading state — first run */}
+          {!btData && loading && (
+            <div className="flex items-center justify-center min-h-[300px]">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-7 h-7 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+                <span className="text-[11px] text-cyan-400 font-bold">Running backtest…</span>
+                <span className="text-[9px] text-slate-600">Fetching 60d data & simulating trades</span>
+              </div>
+            </div>
+          )}
+
           {/* Results */}
           {btData && m && (
             <div className="p-3 space-y-3">
@@ -1979,14 +1991,24 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 );
               })()}
 
-              {/* Open position banner */}
-              {btData.open_position && (() => {
-                const pos = btData.open_position;
+              {/* Open position banner — only show if trade log has an OPEN trade */}
+              {(() => {
+                const openTrade = btData.trades.find((t) => t.reason === "OPEN");
+                if (!openTrade) return null;
+                const pos = btData.open_position ?? {
+                  direction: openTrade.direction || "CALL",
+                  entry_price: openTrade.entry_price,
+                  sl: openTrade.sl ?? 0,
+                  tp: openTrade.tp ?? 0,
+                  entry_time: openTrade.entry_time,
+                  signal_type: openTrade.signal_type,
+                };
                 const isLong = pos.direction !== "PUT";
                 const unrealPnl = livePrice != null ? (isLong ? livePrice - pos.entry_price : pos.entry_price - livePrice) : null;
                 const pnlPct = unrealPnl != null && pos.entry_price > 0 ? (unrealPnl / pos.entry_price) * 100 : null;
                 return (
                   <div className="rounded-lg border border-blue-500/40 bg-blue-950/30 px-3 py-2">
+                    <div className="text-[8px] font-bold uppercase tracking-wider text-blue-400/70 mb-1.5">Currently Holding</div>
                     <div className="flex gap-3">
                       {/* Left 50% — Position info */}
                       <div className="w-1/2 space-y-1.5">
@@ -2055,7 +2077,15 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               })()}
 
               {/* Trade log — grouped by date */}
-              <div className="rounded-lg border border-slate-800/60 bg-slate-900/50">
+              <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 relative">
+                {loading && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm rounded-lg">
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="w-5 h-5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-[10px] text-cyan-400 font-bold">Loading trades…</span>
+                    </div>
+                  </div>
+                )}
                 <div className="max-h-[420px] overflow-y-auto">
                   <TradeLogByDate trades={btData.trades} onTradeClick={(t) => { setZoomTrade(t); onTradeClick?.(t); }} livePrice={livePrice} />
                 </div>
