@@ -10,6 +10,7 @@ import {
   cleanupOrders,
   getUIPreferences,
   saveUIPreferences,
+  getPositionTags,
   type TigerAccountResponse,
   type TigerPositionItem,
   type TigerOrderItem,
@@ -173,7 +174,8 @@ function PositionRow({
   onClose,
   onTrade,
   hidePrices = false,
-}: Readonly<{ p: TigerPositionItem; onClose: (sym: string) => void; onTrade: () => void; hidePrices?: boolean }>) {
+  tag,
+}: Readonly<{ p: TigerPositionItem; onClose: (sym: string) => void; onTrade: () => void; hidePrices?: boolean; tag?: string }>) {
   const [expanded, setExpanded] = useState(false);
   const [qty, setQty] = useState(1);
   const [orderType, setOrderType] = useState<"MKT" | "LMT">("MKT");
@@ -216,6 +218,9 @@ function PositionRow({
             <span className={`text-[8px] transition-transform ${expanded ? "rotate-90" : ""}`}>▶</span>
             {p.symbol}
             <span className="text-[9px] font-normal text-slate-500">{COMMODITY_NAMES[baseSymbol(p.symbol)] ?? ""}</span>
+            {tag && (
+              <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-cyan-950/40 border border-cyan-700/30 text-cyan-400">{tag}</span>
+            )}
           </span>
         </td>
         <td className="px-2 py-2 text-[10px] text-slate-400 whitespace-nowrap">
@@ -373,10 +378,12 @@ export default function TigerAccountTab() {
 
   const [failCount, setFailCount] = useState(0);
   const [hidePrices, setHidePrices] = useState(false);
+  const [positionTags, setPositionTags] = useState<Record<string, string>>({});
 
   // Load saved preference on mount
   useEffect(() => {
     getUIPreferences().then((p) => setHidePrices(p.hide_prices)).catch(() => {});
+    getPositionTags().then(setPositionTags).catch(() => {});
   }, []);
 
   const toggleHidePrices = useCallback(() => {
@@ -404,6 +411,8 @@ export default function TigerAccountTab() {
       setData(res);
       setError(null);
       setFailCount(0);
+      // Refresh position tags
+      getPositionTags().then(setPositionTags).catch(() => {});
     } catch (e) {
       setFailCount((c) => c + 1);
       if (failCount >= 1) {
@@ -553,7 +562,7 @@ export default function TigerAccountTab() {
               </thead>
               <tbody>
                 {data.positions.map((p) => (
-                  <PositionRow key={p.symbol} p={p} onClose={handleClose} onTrade={refresh} hidePrices={hidePrices} />
+                  <PositionRow key={p.symbol} p={p} onClose={handleClose} onTrade={refresh} hidePrices={hidePrices} tag={positionTags[p.symbol] || positionTags[baseSymbol(p.symbol)]} />
                 ))}
               </tbody>
             </table>

@@ -3609,3 +3609,77 @@ def save_ui_preferences(payload: UIPreferencesPayload) -> dict[str, str]:
             {"hp": payload.hide_prices},
         )
     return {"status": "ok"}
+
+
+# ─── Position Tags (strategy label per symbol) ──────────────────────
+
+class PositionTagPayload(BaseModel):
+    symbol: str
+    tag: str
+
+
+@router.get("/position_tags")
+def get_position_tags() -> dict[str, str]:
+    """Return all saved position tags {symbol: tag}."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS position_tags (
+                symbol TEXT PRIMARY KEY,
+                tag TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.commit()
+        rows = conn.execute(text("SELECT symbol, tag FROM position_tags")).fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+@router.post("/position_tag")
+def save_position_tag(payload: PositionTagPayload) -> dict[str, str]:
+    """Save/update the strategy tag for a symbol."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS position_tags (
+                symbol TEXT PRIMARY KEY,
+                tag TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(
+            text("""
+                INSERT INTO position_tags (symbol, tag, updated_at)
+                VALUES (:sym, :tag, CURRENT_TIMESTAMP)
+                ON CONFLICT (symbol) DO UPDATE SET
+                    tag = EXCLUDED.tag,
+                    updated_at = CURRENT_TIMESTAMP
+            """),
+            {"sym": payload.symbol, "tag": payload.tag},
+        )
+    return {"status": "ok"}
+
+
+@router.delete("/position_tag/{symbol}")
+def delete_position_tag(symbol: str) -> dict[str, str]:
+    """Remove a position tag when position is closed."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS position_tags (
+                symbol TEXT PRIMARY KEY,
+                tag TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(
+            text("DELETE FROM position_tags WHERE symbol = :sym"),
+            {"sym": symbol},
+        )
+    return {"status": "ok"}

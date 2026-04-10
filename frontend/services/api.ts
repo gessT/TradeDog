@@ -1123,6 +1123,28 @@ export async function saveUIPreferences(prefs: UIPreferences): Promise<void> {
   });
 }
 
+// ── Position Tags (strategy label per symbol) ───────────
+
+export async function getPositionTags(): Promise<Record<string, string>> {
+  const res = await fetch(`${API_BASE}/mgc/position_tags`, { cache: "no-store" });
+  if (!res.ok) return {};
+  return (await res.json()) as Record<string, string>;
+}
+
+export async function savePositionTag(symbol: string, tag: string): Promise<void> {
+  await fetch(`${API_BASE}/mgc/position_tag`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol, tag }),
+  });
+}
+
+export async function deletePositionTag(symbol: string): Promise<void> {
+  await fetch(`${API_BASE}/mgc/position_tag/${encodeURIComponent(symbol)}`, {
+    method: "DELETE",
+  });
+}
+
 // ── Market Structure (fast cached endpoint) ─────────────
 
 export interface MarketStructure {

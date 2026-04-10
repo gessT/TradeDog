@@ -12,6 +12,7 @@ import {
   execute5Min,
   getMgcPosition,
   fetchLivePrice,
+  savePositionTag,
   type MGC5MinBacktestResponse,
   type MGC5MinTrade,
   type MGC5MinCandle,
@@ -56,6 +57,7 @@ interface Props {
   onClose: () => void;
   onTradeClick?: (t: MGC5MinTrade) => void;
   onSynced?: () => void;
+  activePreset?: string | null;
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -190,7 +192,7 @@ function TradeRow({ t, idx, onClick, livePrice }: Readonly<{ t: MGC5MinTrade; id
 // ═════════════════════════════════════════════════════════════════════
 // Main Result Dialog
 // ═════════════════════════════════════════════════════════════════════
-export default function ResultDialog({ btData, symbol, symbolName, period, slMult, tpMult, onClose, onTradeClick, onSynced }: Readonly<Props>) {
+export default function ResultDialog({ btData, symbol, symbolName, period, slMult, tpMult, onClose, onTradeClick, onSynced, activePreset }: Readonly<Props>) {
   const m = btData.metrics;
   const openTrade = btData.trades.find((t: any) => t.reason === "OPEN");
   const pos = btData.open_position ?? (openTrade ? {
@@ -246,7 +248,10 @@ export default function ResultDialog({ btData, symbol, symbolName, period, slMul
       const execRes = await execute5Min(pos.direction, 1, 1, currentPrice, pos.sl, pos.tp, symbol, "");
       if (execRes.execution?.executed) {
         setSyncStatus(`✅ ${side} synced @ market | SL $${pos.sl} TP $${pos.tp}`);
+        const tag = activePreset || "Manual";
+        savePositionTag(symbol, tag).catch(() => {});
         onSynced?.();
+        setTimeout(() => onClose(), 1500);
       } else {
         setSyncStatus(`❌ ${execRes.execution_record?.reason || execRes.execution?.reason || "Failed"}`);
       }
@@ -256,7 +261,7 @@ export default function ResultDialog({ btData, symbol, symbolName, period, slMul
       setSyncing(false);
       setTimeout(() => setSyncStatus(null), 5000);
     }
-  }, [pos, symbol, syncing, onSynced]);
+  }, [pos, symbol, syncing, onSynced, activePreset]);
 
   // Recent trades (last 20)
   const recentTrades = btData.trades.slice(-20).reverse();

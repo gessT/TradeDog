@@ -27,6 +27,7 @@ import {
   save5MinConditionPreset,
   load5MinConditionPresets,
   delete5MinConditionPreset,
+  savePositionTag,
   type ConditionOptimizationResult,
   type ConditionPreset,
   type MGC5MinBacktestResponse,
@@ -1410,6 +1411,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       const execRes = await execute5Min(pos.direction, 1, 1, currentPrice, pos.sl, pos.tp, symbol, "");
       if (execRes.execution?.executed) {
         setSyncStatus(`✅ ${side} synced @ market | SL $${pos.sl} TP $${pos.tp}`);
+        // Save strategy tag for this position
+        const tag = activePreset || "Manual";
+        savePositionTag(symbol, tag).catch(() => {});
         onDirectExecute?.();
       } else {
         setSyncStatus(`❌ ${execRes.execution_record?.reason || execRes.execution?.reason || "Failed"}`);
@@ -1420,7 +1424,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       setSyncing(false);
       setTimeout(() => setSyncStatus(null), 4000);
     }
-  }, [btData?.open_position, btData?.trades, symbol, syncing, onDirectExecute]);
+  }, [btData?.open_position, btData?.trades, symbol, syncing, onDirectExecute, activePreset]);
 
   // Reset SL/TP hit flag when open position changes
   useEffect(() => { slTpHitRef.current = false; setExitStatus(null); }, [btData?.open_position?.entry_time]);
@@ -2040,106 +2044,136 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 </div>
               </div>
 
-              {/* Daily P&L card — expandable, default open, 7 days visible */}
+              {/* ── Daily P&L (2/3) + Currently Holding (1/3) ── */}
               {(() => {
                 const days = btData.daily_pnl ?? [];
-                if (days.length === 0) return null;
+                const openTrade = btData.trades.find((t) => t.reason === "OPEN");
+                const hasOpen = !!openTrade;
+                const hasDays = days.length > 0;
+                if (!hasDays && !hasOpen) return null;
+
                 const totalPnl = days.reduce((s, d) => s + d.pnl, 0);
                 const maxAbs = Math.max(...days.map(d => Math.abs(d.pnl)), 1);
-                const VISIBLE_DAYS = 7;
-                return (
-                  <DailyPnlCard
-                    days={days}
-                    totalPnl={totalPnl}
-                    maxAbs={maxAbs}
-                    period={period}
-                    visibleDays={VISIBLE_DAYS}
-                    oos={m.oos_total_trades > 0 ? { win_rate: m.oos_win_rate, total_trades: m.oos_total_trades, return_pct: m.oos_return_pct } : null}
-                  />
-                );
-              })()}
 
-              {/* Open position banner — only show if trade log has an OPEN trade */}
-              {(() => {
-                const openTrade = btData.trades.find((t) => t.reason === "OPEN");
-                if (!openTrade) return null;
-                const pos = btData.open_position ?? {
-                  direction: openTrade.direction || "CALL",
-                  entry_price: openTrade.entry_price,
-                  sl: openTrade.sl ?? 0,
-                  tp: openTrade.tp ?? 0,
-                  entry_time: openTrade.entry_time,
-                  signal_type: openTrade.signal_type,
-                };
-                const isLong = pos.direction !== "PUT";
-                const unrealPnl = livePrice != null ? (isLong ? livePrice - pos.entry_price : pos.entry_price - livePrice) : null;
-                const pnlPct = unrealPnl != null && pos.entry_price > 0 ? (unrealPnl / pos.entry_price) * 100 : null;
+                const pos = hasOpen ? (btData.open_position ?? {
+                  direction: openTrade!.direction || "CALL",
+                  entry_price: openTrade!.entry_price,
+                  sl: openTrade!.sl ?? 0,
+                  tp: openTrade!.tp ?? 0,
+                  entry_time: openTrade!.entry_time,
+                  signal_type: openTrade!.signal_type,
+                }) : null;
+                const isLong = pos ? pos.direction !== "PUT" : false;
+                const unrealPnl = pos && livePrice != null ? (isLong ? livePrice - pos.entry_price : pos.entry_price - livePrice) : null;
+                const pnlPct = unrealPnl != null && pos && pos.entry_price > 0 ? (unrealPnl / pos.entry_price) * 100 : null;
+
                 return (
-                  <div className="rounded-lg border border-blue-500/40 bg-blue-950/30 px-3 py-2">
-                    <div className="text-[8px] font-bold uppercase tracking-wider text-blue-400/70 mb-1.5">Currently Holding</div>
-                    <div className="flex gap-3">
-                      {/* Left 50% — Position info */}
-                      <div className="w-1/2 space-y-1.5">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
+                  <div className={`flex gap-2 ${hasOpen ? "" : ""}`}>
+                    {/* ─── Daily P&L ─── */}
+                    {hasDays && (
+                      <div className={`${hasOpen ? "w-2/3" : "w-full"} rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/80 to-slate-950/60 overflow-hidden`}>
+                        <div className="px-3 py-2 flex items-center justify-between border-b border-slate-800/30">
+                          <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">
+                            {period} Daily P&L · {days.length} day{days.length > 1 ? "s" : ""}
+                          </span>
+                          <span className={`text-sm font-bold tabular-nums ${totalPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                            {totalPnl >= 0 ? "+" : ""}${n(totalPnl).toFixed(0)}
+                          </span>
+                        </div>
+                        <div className="px-3 py-2 space-y-1">
+                          {days.slice(-7).map((d) => (
+                            <div key={d.date} className="flex items-center gap-2">
+                              <span className="text-[9px] text-slate-500 tabular-nums w-[52px] shrink-0">{d.date.slice(5)}</span>
+                              <div className="flex-1 h-2 bg-slate-800/60 rounded-full overflow-hidden">
+                                {d.pnl >= 0 ? (
+                                  <div className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded-full transition-all" style={{ width: `${Math.min(100, (d.pnl / maxAbs) * 100)}%` }} />
+                                ) : (
+                                  <div className="h-full bg-gradient-to-l from-rose-600 to-rose-400 rounded-full ml-auto transition-all" style={{ width: `${Math.min(100, (Math.abs(d.pnl) / maxAbs) * 100)}%` }} />
+                                )}
+                              </div>
+                              <span className={`text-[10px] font-bold tabular-nums w-[50px] text-right ${d.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                                {d.pnl >= 0 ? "+" : ""}${n(d.pnl).toFixed(0)}
+                              </span>
+                              <span className={`text-[8px] font-bold tabular-nums w-[28px] text-right ${d.win_rate >= 60 ? "text-emerald-500/70" : d.win_rate >= 40 ? "text-amber-500/70" : "text-rose-500/70"}`}>
+                                {d.win_rate.toFixed(0)}%
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ─── Currently Holding ─── */}
+                    {pos && (
+                      <div className={`${hasDays ? "w-1/3" : "w-full"} rounded-xl border border-blue-500/30 bg-gradient-to-br from-blue-950/40 to-slate-950/60 overflow-hidden flex flex-col`}>
+                        <div className="px-3 py-2 border-b border-blue-500/20 flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                            <span className="text-[9px] uppercase tracking-widest text-blue-400/70 font-bold">Holding</span>
+                          </div>
                           <span className={`text-[10px] font-bold ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
                             {isLong ? "▲ LONG" : "▼ SHORT"}
                           </span>
-                          <span className="text-[10px] font-bold text-blue-400">@ ${pos.entry_price}</span>
                         </div>
-                        <div className="text-[9px] text-slate-400 pl-4">
-                          SL ${pos.sl} · TP ${pos.tp}
-                        </div>
-                        <div className="text-[9px] text-slate-500 pl-4">
-                          {fmtDateTime(pos.entry_time)} · {pos.signal_type}
-                        </div>
-                        {livePrice != null && (
-                          <div className="flex items-center gap-2 pl-4">
-                            <span className="text-[9px] text-slate-500">NOW</span>
-                            <span className="text-[11px] font-bold text-yellow-400 tabular-nums">${livePrice.toFixed(2)}</span>
-                            {unrealPnl != null && (
-                              <>
-                                <span className={`text-[11px] font-bold tabular-nums ${unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                                  {unrealPnl >= 0 ? "+" : ""}{unrealPnl.toFixed(2)}
-                                </span>
-                                <span className={`text-[9px] tabular-nums ${unrealPnl >= 0 ? "text-emerald-400/70" : "text-rose-400/70"}`}>
-                                  ({pnlPct != null && pnlPct >= 0 ? "+" : ""}{pnlPct?.toFixed(2)}%)
-                                </span>
-                              </>
+                        <div className="px-3 py-2 flex-1 space-y-2">
+                          {/* Entry + Live */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[8px] text-slate-500 uppercase">Entry</span>
+                              <span className="text-[11px] font-bold text-blue-300 tabular-nums">${pos.entry_price}</span>
+                            </div>
+                            {livePrice != null && (
+                              <div className="flex items-center justify-between">
+                                <span className="text-[8px] text-slate-500 uppercase">Now</span>
+                                <span className="text-[11px] font-bold text-yellow-400 tabular-nums">${livePrice.toFixed(2)}</span>
+                              </div>
                             )}
                           </div>
-                        )}
-                        <div className="flex items-center gap-2 pl-4">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleSync(); }}
-                            disabled={syncing}
-                            className={`px-2 py-0.5 text-[9px] font-bold rounded transition-all ${
-                              syncing
-                                ? "bg-slate-700 text-slate-500 cursor-wait"
-                                : "bg-orange-600 text-white hover:bg-orange-500 active:scale-95 shadow-sm"
-                            }`}
-                          >
-                            {syncing ? "⏳" : "🔄 Sync"}
-                          </button>
-                          <span className="text-[8px] text-slate-600 animate-pulse">● LIVE</span>
+                          {/* SL / TP */}
+                          <div className="flex gap-1.5">
+                            <div className="flex-1 rounded-md bg-rose-950/30 border border-rose-800/30 px-2 py-1 text-center">
+                              <div className="text-[7px] text-rose-500/60 uppercase">SL</div>
+                              <div className="text-[10px] font-bold text-rose-400 tabular-nums">${pos.sl}</div>
+                            </div>
+                            <div className="flex-1 rounded-md bg-emerald-950/30 border border-emerald-800/30 px-2 py-1 text-center">
+                              <div className="text-[7px] text-emerald-500/60 uppercase">TP</div>
+                              <div className="text-[10px] font-bold text-emerald-400 tabular-nums">${pos.tp}</div>
+                            </div>
+                          </div>
+                          {/* Unrealized P&L */}
+                          {unrealPnl != null && (
+                            <div className={`rounded-md px-2 py-1.5 text-center ${unrealPnl >= 0 ? "bg-emerald-950/30 border border-emerald-800/20" : "bg-rose-950/30 border border-rose-800/20"}`}>
+                              <span className={`text-sm font-bold tabular-nums ${unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                                {unrealPnl >= 0 ? "+" : ""}{unrealPnl.toFixed(2)}
+                              </span>
+                              <span className={`text-[9px] ml-1 tabular-nums ${unrealPnl >= 0 ? "text-emerald-400/60" : "text-rose-400/60"}`}>
+                                ({pnlPct != null && pnlPct >= 0 ? "+" : ""}{pnlPct?.toFixed(2)}%)
+                              </span>
+                            </div>
+                          )}
+                          {/* Signal + Time */}
+                          <div className="text-[8px] text-slate-600 truncate">{pos.signal_type} · {fmtDateTime(pos.entry_time)}</div>
+                          {/* Sync button */}
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleSync(); }}
+                              disabled={syncing}
+                              className={`flex-1 py-1 text-[9px] font-bold rounded-md transition-all ${
+                                syncing
+                                  ? "bg-slate-700 text-slate-500 cursor-wait"
+                                  : "bg-orange-600 text-white hover:bg-orange-500 active:scale-95 shadow-sm shadow-orange-900/30"
+                              }`}
+                            >
+                              {syncing ? "⏳ Syncing…" : "🔄 Sync Tiger"}
+                            </button>
+                            <span className="text-[7px] text-blue-500/50 animate-pulse">● LIVE</span>
+                          </div>
+                          {syncStatus && (
+                            <div className="text-[8px] font-bold text-orange-400 animate-pulse truncate">{syncStatus}</div>
+                          )}
                         </div>
-                        {syncStatus && (
-                          <div className="pl-4 text-[9px] font-bold text-orange-400 animate-pulse">{syncStatus}</div>
-                        )}
                       </div>
-                      {/* Right 50% — Mini chart */}
-                      <div className="w-1/2">
-                          <HoldingMiniChart
-                            symbol={symbol}
-                            entryTime={pos.entry_time}
-                            entryPrice={pos.entry_price}
-                            sl={pos.sl}
-                            tp={pos.tp}
-                            isLong={isLong}
-                            livePrice={livePrice}
-                          />
-                      </div>
-                    </div>
+                    )}
                   </div>
                 );
               })()}
@@ -2208,6 +2242,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
           onClose={() => setShowResultDialog(false)}
           onTradeClick={onTradeClick}
           onSynced={() => onDirectExecute?.()}
+          activePreset={activePreset}
         />
       )}
       {/* ═════════════════════════════════════════════════════ */}
