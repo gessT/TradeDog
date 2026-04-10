@@ -16,13 +16,49 @@ import pytest
 class MockTrade:
     exit_time: str
     pnl: float
+    entry_time: str = ""  # needed for session-based grouping
+    reason: str = "TP"    # "OPEN" trades excluded from daily P&L
+
+
+def trading_day(entry_time: str) -> str:
+    """Map a trade to its futures trading-session date.
+    Same logic as frontend TradeLogByDate: entries at 18:00+ ET belong to next day."""
+    date_part = entry_time[:10]
+    hour = int(entry_time[11:13]) if len(entry_time) >= 13 else 0
+    if hour >= 18:
+        d = datetime.strptime(date_part, "%Y-%m-%d")
+        d += timedelta(days=1)
+        return d.strftime("%Y-%m-%d")
+    return date_part
 
 
 def build_daily_pnl(trades: list[MockTrade]) -> list[dict]:
-    """Replicate the backtest daily_pnl logic from backtest_5min.py."""
+    """Replicate the backtest daily_pnl logic from backtest_5min.py (exit_time grouping)."""
     day_map: dict[str, dict] = {}
     for t in trades:
         day = str(t.exit_time)[:10]
+        if day not in day_map:
+            day_map[day] = {"date": day, "pnl": 0.0, "trades": 0, "wins": 0, "losses": 0}
+        day_map[day]["pnl"] += t.pnl
+        day_map[day]["trades"] += 1
+        if t.pnl > 0:
+            day_map[day]["wins"] += 1
+        else:
+            day_map[day]["losses"] += 1
+    for d in day_map.values():
+        d["pnl"] = round(d["pnl"], 2)
+        d["win_rate"] = round(d["wins"] / d["trades"] * 100, 1) if d["trades"] else 0
+    return sorted(day_map.values(), key=lambda x: x["date"])
+
+
+def build_daily_pnl_from_trades(trades: list[MockTrade]) -> list[dict]:
+    """Replicate the frontend daily P&L logic: group by trading-session date (entry_time),
+    exclude OPEN trades, use futures session shift (18:00+ → next day)."""
+    day_map: dict[str, dict] = {}
+    for t in trades:
+        if t.reason == "OPEN":
+            continue
+        day = trading_day(t.entry_time) if t.entry_time else str(t.exit_time)[:10]
         if day not in day_map:
             day_map[day] = {"date": day, "pnl": 0.0, "trades": 0, "wins": 0, "losses": 0}
         day_map[day]["pnl"] += t.pnl
@@ -278,3 +314,177 @@ class TestClientSidePeriodFilter:
     def test_empty_daily_returns_empty(self):
         filtered = filter_by_period([], "3d")
         assert filtered == []
+
+
+class TestDailyPnlDisplayOrder:
+    """Frontend displays daily P&L with latest date on top (reversed)."""
+
+    def test_display_order_latest_first(self):
+        """After reversing for display, the first item should be the most recent date."""
+        trades = [MockTrade(f"2026-04-{d:02d} 10:00", 10.0) for d in range(1, 11)]
+        daily = build_daily_pnl(trades)
+        display_order = list(reversed(daily))
+        assert display_order[0]["date"] == "2026-04-10"
+        assert display_order[-1]["date"] == "2026-04-01"
+
+    def test_display_order_preserves_all_days(self):
+        """Reversing for display must not lose any days."""
+        trades = [MockTrade(f"2026-04-{d:02d} 10:00", d * 5.0) for d in range(1, 8)]
+        daily = build_daily_pnl(trades)
+        display_order = list(reversed(daily))
+        assert len(display_order) == len(daily)
+        assert set(d["date"] for d in display_order) == set(d["date"] for d in daily)
+
+    def test_display_total_unchanged_after_reverse(self):
+        """Total P&L must be the same regardless of display order."""
+        trades = [MockTrade(f"2026-04-{d:02d} 10:00", d * 10.0) for d in range(1, 6)]
+        daily = build_daily_pnl(trades)
+        display_order = list(reversed(daily))
+        assert sum(d["pnl"] for d in display_order) == sum(d["pnl"] for d in daily)
+
+
+class TestDailyPnlFromTradeLog:
+    """Daily P&L must be derived from trade log so they always match."""
+
+    def test_daily_pnl_equals_trade_log_totals(self):
+        """Sum of daily P&L must equal sum of all trade P&Ls for same period."""
+        trades = [
+            MockTrade("2026-04-07 10:00", 50.0),
+            MockTrade("2026-04-07 14:00", -20.0),
+            MockTrade("2026-04-08 10:00", 30.0),
+            MockTrade("2026-04-09 10:00", -10.0),
+            MockTrade("2026-04-10 10:00", 40.0),
+            MockTrade("2026-04-10 14:00", -5.0),
+        ]
+        # Build daily from trades (same as frontend now does)
+        daily = build_daily_pnl(trades)
+        # Filter both for 3d period
+        filtered = filter_by_period(daily, "3d")
+        cutoff = filtered[0]["date"] if filtered else ""
+        filtered_trades = [t for t in trades if str(t.exit_time)[:10] >= cutoff]
+
+        daily_total = sum(d["pnl"] for d in filtered)
+        trade_total = round(sum(t.pnl for t in filtered_trades), 2)
+        assert abs(daily_total - trade_total) < 0.01
+
+    def test_daily_trade_count_matches_trade_log(self):
+        """Number of trades per day in daily P&L must match trade log count."""
+        trades = [
+            MockTrade("2026-04-10 09:00", 10.0),
+            MockTrade("2026-04-10 10:00", -5.0),
+            MockTrade("2026-04-10 11:00", 20.0),
+            MockTrade("2026-04-09 10:00", -15.0),
+        ]
+        daily = build_daily_pnl(trades)
+        apr10 = next(d for d in daily if d["date"] == "2026-04-10")
+        apr09 = next(d for d in daily if d["date"] == "2026-04-09")
+        assert apr10["trades"] == 3
+        assert apr09["trades"] == 1
+
+    def test_open_trades_excluded_from_daily_pnl(self):
+        """OPEN trades (reason='OPEN') should not appear in daily P&L.
+        Frontend filters these out before computing daily."""
+        trades = [
+            MockTrade("2026-04-10 09:00", 10.0),   # closed
+            MockTrade("2026-04-10 10:00", -5.0),    # closed
+        ]
+        # Simulate: an OPEN trade has exit_time at data end but shouldn't count
+        open_trade = MockTrade("2026-04-10 19:45", 0.0)
+        closed_only = trades  # frontend filters out OPEN before grouping
+        all_trades = trades + [open_trade]
+
+        daily_closed = build_daily_pnl(closed_only)
+        daily_all = build_daily_pnl(all_trades)
+
+        # Including the open trade changes the count — frontend must exclude it
+        assert daily_closed[0]["trades"] == 2
+        assert daily_all[0]["trades"] == 3  # wrong if open included
+        # This proves frontend MUST filter out OPEN trades first
+
+    def test_period_filter_consistent_between_trades_and_daily(self):
+        """Ensure 7d filter on trades gives same dates as 7d filter on daily."""
+        trades = [MockTrade(f"2026-04-{d:02d} 10:00", d * 5.0) for d in range(1, 11)]
+        daily = build_daily_pnl(trades)
+        filtered_daily = filter_by_period(daily, "7d")
+        cutoff = filtered_daily[0]["date"]
+        filtered_trades = [t for t in trades if str(t.exit_time)[:10] >= cutoff]
+        # Same dates
+        daily_dates = {d["date"] for d in filtered_daily}
+        trade_dates = {str(t.exit_time)[:10] for t in filtered_trades}
+        assert daily_dates == trade_dates
+
+
+class TestFuturesSessionGrouping:
+    """Daily P&L must use same futures session grouping as trade log.
+    Entries at 18:00+ ET belong to next calendar day's session."""
+
+    def test_evening_entry_groups_to_next_day(self):
+        """A trade entered at 18:30 on Apr 9 should appear under Apr 10."""
+        trades = [
+            MockTrade("2026-04-10 02:00", 50.0, entry_time="2026-04-09 18:30"),
+        ]
+        daily = build_daily_pnl_from_trades(trades)
+        assert len(daily) == 1
+        assert daily[0]["date"] == "2026-04-10"
+
+    def test_daytime_entry_stays_same_day(self):
+        """A trade entered at 10:00 on Apr 10 stays under Apr 10."""
+        trades = [
+            MockTrade("2026-04-10 14:00", 30.0, entry_time="2026-04-10 10:00"),
+        ]
+        daily = build_daily_pnl_from_trades(trades)
+        assert len(daily) == 1
+        assert daily[0]["date"] == "2026-04-10"
+
+    def test_mixed_session_grouping(self):
+        """Evening + daytime entries on same session day should group together."""
+        trades = [
+            MockTrade("2026-04-10 02:00", 50.0, entry_time="2026-04-09 19:00"),  # evening → Apr 10
+            MockTrade("2026-04-10 10:30", -20.0, entry_time="2026-04-10 09:30"),  # daytime Apr 10
+        ]
+        daily = build_daily_pnl_from_trades(trades)
+        assert len(daily) == 1
+        assert daily[0]["date"] == "2026-04-10"
+        assert daily[0]["pnl"] == 30.0
+        assert daily[0]["trades"] == 2
+
+    def test_open_trade_excluded(self):
+        """OPEN trades must not appear in daily P&L."""
+        trades = [
+            MockTrade("2026-04-10 14:00", 30.0, entry_time="2026-04-10 10:00"),
+            MockTrade("2026-04-10 19:45", 0.0, entry_time="2026-04-10 15:00", reason="OPEN"),
+        ]
+        daily = build_daily_pnl_from_trades(trades)
+        assert len(daily) == 1
+        assert daily[0]["trades"] == 1
+        assert daily[0]["pnl"] == 30.0
+
+    def test_session_grouping_matches_trade_log(self):
+        """Daily P&L dates must match trade log grouping exactly."""
+        trades = [
+            MockTrade("2026-04-09 02:00", 10.0, entry_time="2026-04-08 18:30"),  # → Apr 9
+            MockTrade("2026-04-09 10:00", 20.0, entry_time="2026-04-09 09:00"),  # → Apr 9
+            MockTrade("2026-04-10 02:00", -15.0, entry_time="2026-04-09 20:00"), # → Apr 10
+            MockTrade("2026-04-10 14:00", 40.0, entry_time="2026-04-10 10:00"),  # → Apr 10
+        ]
+        daily = build_daily_pnl_from_trades(trades)
+        assert len(daily) == 2
+        apr9 = next(d for d in daily if d["date"] == "2026-04-09")
+        apr10 = next(d for d in daily if d["date"] == "2026-04-10")
+        assert apr9["pnl"] == 30.0
+        assert apr9["trades"] == 2
+        assert apr10["pnl"] == 25.0
+        assert apr10["trades"] == 2
+
+    def test_total_pnl_consistent(self):
+        """Total P&L from session-grouped daily must equal sum of all closed trades."""
+        trades = [
+            MockTrade("2026-04-09 02:00", 10.0, entry_time="2026-04-08 19:00"),
+            MockTrade("2026-04-09 10:00", -5.0, entry_time="2026-04-09 09:30"),
+            MockTrade("2026-04-10 03:00", 20.0, entry_time="2026-04-09 21:00"),
+            MockTrade("2026-04-10 14:00", -8.0, entry_time="2026-04-10 11:00"),
+        ]
+        daily = build_daily_pnl_from_trades(trades)
+        daily_total = sum(d["pnl"] for d in daily)
+        trade_total = sum(t.pnl for t in trades)
+        assert abs(daily_total - trade_total) < 0.01

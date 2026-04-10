@@ -359,44 +359,75 @@ class TigerTrader:
         # Real Tiger: OCA order (one cancels the other)
         from tigeropen.common.util.order_utils import oca_order, order_leg
 
-        try:
-            contracts = self._client.get_contracts(symbol, sec_type="FUT")
-            if not contracts:
-                logger.error("No contract found for %s (OCA)", symbol)
-                return result
-            contract = contracts[0]
-            contract.expiry = None
+        oca_placed = False
+        for oca_attempt in range(1, 4):  # retry OCA up to 3 times
+            try:
+                contracts = self._client.get_contracts(symbol, sec_type="FUT")
+                if not contracts:
+                    logger.error("No contract found for %s (OCA)", symbol)
+                    break
+                contract = contracts[0]
+                contract.expiry = None
 
-            sl_leg = order_leg("STP", price=stop_loss_price, time_in_force="GTC")
-            tp_leg = order_leg("LMT", limit_price=take_profit_price, time_in_force="GTC")
+                sl_leg = order_leg("STP", price=stop_loss_price, time_in_force="GTC")
+                tp_leg = order_leg("LMT", limit_price=take_profit_price, time_in_force="GTC")
 
-            oca = oca_order(
-                account=self.account,
-                contract=contract,
-                action=close_side,
-                order_legs=[sl_leg, tp_leg],
-                quantity=qty,
-            )
-            oca_id = self._client.place_order(oca)
-            oca_id_str = str(oca_id)
+                oca = oca_order(
+                    account=self.account,
+                    contract=contract,
+                    action=close_side,
+                    order_legs=[sl_leg, tp_leg],
+                    quantity=qty,
+                )
+                oca_id = self._client.place_order(oca)
+                oca_id_str = str(oca_id)
 
-            sl_rec = OrderRecord(
-                timestamp=time.time(), symbol=symbol, side=close_side,
-                qty=qty, price=stop_loss_price,
-                order_id=oca_id_str, status="OCA_SUBMITTED",
-            )
-            tp_rec = OrderRecord(
-                timestamp=time.time(), symbol=symbol, side=close_side,
-                qty=qty, price=take_profit_price,
-                order_id=oca_id_str, status="OCA_SUBMITTED",
-            )
-            result.stop_loss = sl_rec
-            result.take_profit = tp_rec
-            logger.info("🔄 OCA ORDER %s ×%d  SL @ %.2f | TP @ %.2f → %s",
-                        close_side, qty, stop_loss_price, take_profit_price, oca_id_str)
+                sl_rec = OrderRecord(
+                    timestamp=time.time(), symbol=symbol, side=close_side,
+                    qty=qty, price=stop_loss_price,
+                    order_id=oca_id_str, status="OCA_SUBMITTED",
+                )
+                tp_rec = OrderRecord(
+                    timestamp=time.time(), symbol=symbol, side=close_side,
+                    qty=qty, price=take_profit_price,
+                    order_id=oca_id_str, status="OCA_SUBMITTED",
+                )
+                result.stop_loss = sl_rec
+                result.take_profit = tp_rec
+                logger.info("🔄 OCA ORDER %s ×%d  SL @ %.2f | TP @ %.2f → %s",
+                            close_side, qty, stop_loss_price, take_profit_price, oca_id_str)
+                oca_placed = True
+                break
 
-        except Exception:
-            logger.exception("Failed to place OCA order")
+            except Exception:
+                logger.exception("OCA attempt %d/3 failed", oca_attempt)
+                if oca_attempt < 3:
+                    time.sleep(2 ** oca_attempt)
+
+        # Fallback: place individual SL + TP orders if OCA failed
+        if not oca_placed:
+            logger.warning("⚠️ OCA failed after 3 attempts — placing individual SL + TP orders")
+            try:
+                sl_order = self.place_order(
+                    symbol=symbol, qty=qty, side=close_side,
+                    order_type="STP", aux_price=stop_loss_price,
+                )
+                if sl_order and sl_order.status != "FAILED":
+                    result.stop_loss = sl_order
+                    logger.info("✅ Fallback SL placed: %s @ %.2f", sl_order.order_id, stop_loss_price)
+            except Exception:
+                logger.exception("Fallback SL order failed")
+
+            try:
+                tp_order = self.place_order(
+                    symbol=symbol, qty=qty, side=close_side,
+                    order_type="LMT", limit_price=take_profit_price,
+                )
+                if tp_order and tp_order.status != "FAILED":
+                    result.take_profit = tp_order
+                    logger.info("✅ Fallback TP placed: %s @ %.2f", tp_order.order_id, take_profit_price)
+            except Exception:
+                logger.exception("Fallback TP order failed")
 
         return result
 
@@ -407,6 +438,21 @@ class TigerTrader:
     def record_win(self) -> None:
         """Call after a trade closes at a profit."""
         self._consec_losses = 0
+
+    def cancel_order(self, order_id: str) -> bool:
+        """Cancel a pending order by ID. Returns True if cancel succeeded."""
+        if not order_id:
+            return False
+        if self._client is None:
+            logger.info("📝 PAPER CANCEL order %s", order_id)
+            return True
+        try:
+            self._client.cancel_order(id=int(order_id))
+            logger.info("❌ CANCELLED order %s", order_id)
+            return True
+        except Exception:
+            logger.exception("Failed to cancel order %s", order_id)
+            return False
 
     def reset_daily(self) -> None:
         """Clear daily trade counter (call at start of new session)."""

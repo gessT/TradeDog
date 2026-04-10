@@ -1804,12 +1804,8 @@ async def mgc_backtest_5min(
                 display_start = cutoff.strftime("%Y-%m-%d")
 
         # ── Filter trades to display window ─────────────────────
+        # Return ALL trades — frontend filters by period client-side
         filtered_trades = result.trades
-        if display_start:
-            filtered_trades = [
-                t for t in result.trades
-                if str(t.exit_time)[:10] >= display_start
-            ]
 
         # ── Return ALL daily_pnl (frontend filters by period) ──
         filtered_daily = result.daily_pnl
@@ -2394,18 +2390,24 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
             )
 
             if rec.status == "REJECTED":
-                # OCO failed — must cancel entry order
+                # OCO failed — actually cancel the entry order on Tiger
                 logger.error(
                     "FAIL-SAFE TRIGGERED: SL=%s TP=%s — cancelling entry %s",
                     sl_ok, tp_ok, bracket.entry.order_id,
                 )
+                try:
+                    cancelled = trader.cancel_order(bracket.entry.order_id)
+                    cancel_msg = "entry cancelled" if cancelled else "CANCEL FAILED — manual intervention required"
+                except Exception as cancel_exc:
+                    logger.exception("Failed to cancel entry order %s", bracket.entry.order_id)
+                    cancel_msg = f"CANCEL FAILED ({cancel_exc}) — manual intervention required"
                 exec_result = ExecutionResult(
                     executed=False,
                     order_id=bracket.entry.order_id,
                     side=side,
                     qty=req.qty,
                     status="CANCELLED_FAILSAFE",
-                    reason=f"OCO not confirmed (SL={sl_ok}, TP={tp_ok}) — entry cancelled",
+                    reason=f"OCO not confirmed (SL={sl_ok}, TP={tp_ok}) — {cancel_msg}",
                 )
             else:
                 parts = [f"Entry {bracket.entry.order_id} {side}"]

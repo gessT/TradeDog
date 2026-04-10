@@ -2119,23 +2119,54 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
 
               {/* ── Daily P&L (1/2) + Currently Holding (1/2) ── */}
               {(() => {
-                const allDays = btData.daily_pnl ?? [];
                 const openTrade = btData.trades.find((t) => t.reason === "OPEN");
                 const hasOpen = hasRunBacktest && !!openTrade;
 
-                // Filter daily P&L client-side based on selected period
+                // Compute daily P&L directly from trade log so they always match
+                // Uses same grouping logic as TradeLogByDate: entry_time, futures session shift
                 const periodDays: Record<string, number> = { "1d": 1, "3d": 3, "7d": 7, "30d": 30, "60d": 60 };
                 const daysBack = periodDays[period] ?? 60;
-                const cutoff = allDays.length > 0
-                  ? (() => { const last = new Date(allDays[allDays.length - 1].date); last.setDate(last.getDate() - daysBack); return last.toISOString().slice(0, 10); })()
+                const closedTrades = btData.trades.filter((t) => t.reason !== "OPEN");
+
+                // Helper: map a trade to its trading-session date (same as TradeLogByDate)
+                const tradingDay = (t: MGC5MinTrade) => {
+                  const datePart = t.entry_time.slice(0, 10);
+                  const hour = parseInt(t.entry_time.slice(11, 13), 10);
+                  if (hour >= 18) {
+                    const d = new Date(datePart + "T12:00:00Z");
+                    d.setUTCDate(d.getUTCDate() + 1);
+                    return d.toISOString().slice(0, 10);
+                  }
+                  return datePart;
+                };
+
+                // Find cutoff from the last trading date
+                const allTradingDates = closedTrades.map(tradingDay).sort();
+                const lastDate = allTradingDates.length > 0 ? allTradingDates[allTradingDates.length - 1] : "";
+                const cutoff = lastDate
+                  ? (() => { const d = new Date(lastDate); d.setDate(d.getDate() - daysBack); return d.toISOString().slice(0, 10); })()
                   : "";
-                const days = allDays.filter(d => d.date >= cutoff);
+
+                // Group filtered trades by trading-session date
+                const dayMap: Record<string, { date: string; pnl: number; trades: number; wins: number; losses: number; win_rate: number }> = {};
+                for (const t of closedTrades) {
+                  const day = tradingDay(t);
+                  if (day < cutoff) continue;
+                  if (!dayMap[day]) dayMap[day] = { date: day, pnl: 0, trades: 0, wins: 0, losses: 0, win_rate: 0 };
+                  dayMap[day].pnl += t.pnl;
+                  dayMap[day].trades += 1;
+                  if (t.pnl > 0) dayMap[day].wins += 1;
+                  else dayMap[day].losses += 1;
+                }
+                const days = Object.values(dayMap)
+                  .map(d => ({ ...d, pnl: Math.round(d.pnl * 100) / 100, win_rate: d.trades > 0 ? Math.round(d.wins / d.trades * 1000) / 10 : 0 }))
+                  .sort((a, b) => a.date.localeCompare(b.date));
 
                 const hasDays = days.length > 0;
                 if (!hasDays && !hasOpen) return null;
 
-                const totalPnl = days.reduce((s: number, d: { pnl: number }) => s + d.pnl, 0);
-                const maxAbs = Math.max(...days.map((d: { pnl: number }) => Math.abs(d.pnl)), 1);
+                const totalPnl = days.reduce((s, d) => s + d.pnl, 0);
+                const maxAbs = Math.max(...days.map(d => Math.abs(d.pnl)), 1);
 
                 const pos = hasOpen ? (btData.open_position ?? {
                   direction: openTrade!.direction || "CALL",
@@ -2163,7 +2194,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                           </span>
                         </div>
                         <div className="px-3 py-2 space-y-1 max-h-[200px] overflow-y-auto">
-                          {days.map((d: { date: string; pnl: number; win_rate: number }) => (
+                          {[...days].reverse().map((d: { date: string; pnl: number; win_rate: number }) => (
                             <div key={d.date} className="flex items-center gap-2">
                               <span className="text-[9px] text-slate-500 tabular-nums w-[52px] shrink-0">{d.date.slice(5)}</span>
                               <div className="flex-1 h-2 bg-slate-800/60 rounded-full overflow-hidden">
