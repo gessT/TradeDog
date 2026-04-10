@@ -1193,7 +1193,7 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
+export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles, onRequestAutoTrade }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>>; onRequestAutoTrade?: () => void }>) {
   const [showExam, setShowExam] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1556,35 +1556,45 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     <div className="flex flex-col h-full">
       {/* ── Header ───────────────────────────────────────── */}
       <div className="px-3 pt-3 pb-0">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-base">🎯</span>
-          <span className="text-sm font-bold text-cyan-400 tracking-wide">{symbolName} · 5MIN</span>
+        <div className="flex items-center gap-3 mb-3">
+          {/* Symbol identity */}
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500/20 to-yellow-600/10 border border-amber-500/30 flex items-center justify-center text-base">🥇</div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-bold text-slate-100 tracking-tight">{symbolName}</span>
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700/50 text-slate-400 uppercase tracking-wider">5min</span>
+              </div>
+              <div className="text-[9px] text-slate-500 -mt-0.5">{symbol}=F · Futures</div>
+            </div>
+          </div>
+          {/* Action buttons */}
           <div className="ml-auto flex items-center gap-1.5">
             <button
               onClick={runBacktest}
               disabled={loading}
-              className={`px-3 py-1 text-[11px] font-bold rounded-md transition-all ${
+              className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all ${
                 loading
                   ? "bg-slate-800 text-slate-500 cursor-wait"
-                  : "bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95 shadow-sm shadow-cyan-900/40"
+                  : "bg-gradient-to-r from-cyan-600 to-cyan-500 text-white hover:from-cyan-500 hover:to-cyan-400 active:scale-95 shadow-md shadow-cyan-900/30"
               }`}
             >
-              {loading ? "Running…" : "🎯 Run 5min"}
+              {loading ? "Running…" : "▶ Backtest"}
             </button>
             <button
               onClick={runConditionOptimization}
               disabled={optimizing || loading}
-              className={`px-3 py-1 text-[11px] font-bold rounded-md transition-all ${
+              className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all ${
                 optimizing || loading
                   ? "bg-slate-800 text-slate-500 cursor-wait"
-                  : "bg-purple-600 text-white hover:bg-purple-500 active:scale-95 shadow-sm shadow-purple-900/40"
+                  : "bg-gradient-to-r from-purple-600 to-violet-500 text-white hover:from-purple-500 hover:to-violet-400 active:scale-95 shadow-md shadow-purple-900/30"
               }`}
             >
-              {optimizing ? "Optimizing…" : "🔍 Best 3"}
+              {optimizing ? "Optimizing…" : "⚡ Best 3"}
             </button>
             <button
               onClick={() => setShowExam(true)}
-              className="px-3 py-1 text-[11px] font-bold rounded-md bg-violet-600 text-white hover:bg-violet-500 active:scale-95 shadow-sm shadow-violet-900/40 transition-all"
+              className="px-3 py-1.5 text-[10px] font-bold rounded-lg bg-gradient-to-r from-violet-600 to-fuchsia-500 text-white hover:from-violet-500 hover:to-fuchsia-400 active:scale-95 shadow-md shadow-violet-900/30 transition-all"
             >
               🧪 Exam
             </button>
@@ -2153,8 +2163,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                           )}
                           {/* Signal + Time */}
                           <div className="text-[8px] text-slate-600 truncate">{pos.signal_type} · {fmtDateTime(pos.entry_time)}</div>
-                          {/* Sync button */}
-                          <div className="flex items-center gap-2">
+                          {/* Sync + Auto Trade buttons */}
+                          <div className="flex items-center gap-1.5">
                             <button
                               onClick={(e) => { e.stopPropagation(); handleSync(); }}
                               disabled={syncing}
@@ -2164,9 +2174,14 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                                   : "bg-orange-600 text-white hover:bg-orange-500 active:scale-95 shadow-sm shadow-orange-900/30"
                               }`}
                             >
-                              {syncing ? "⏳ Syncing…" : "🔄 Sync Tiger"}
+                              {syncing ? "⏳" : "🔄 Sync"}
                             </button>
-                            <span className="text-[7px] text-blue-500/50 animate-pulse">● LIVE</span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onRequestAutoTrade?.(); }}
+                              className="flex-1 py-1 text-[9px] font-bold rounded-md bg-gradient-to-r from-emerald-600 to-cyan-600 text-white hover:from-emerald-500 hover:to-cyan-500 active:scale-95 shadow-sm shadow-emerald-900/30 transition-all"
+                            >
+                              ⚡ Auto Trade
+                            </button>
                           </div>
                           {syncStatus && (
                             <div className="text-[8px] font-bold text-orange-400 animate-pulse truncate">{syncStatus}</div>
