@@ -2148,7 +2148,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   <div className={`flex gap-2 ${hasOpen ? "" : ""}`}>
                     {/* ─── Daily P&L ─── */}
                     {hasDays && (
-                      <div className={`${hasOpen ? "w-2/3" : "w-full"} rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/80 to-slate-950/60 overflow-hidden`}>
+                      <div className={`${hasOpen ? "w-1/2" : "w-full"} rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/80 to-slate-950/60 overflow-hidden`}>
                         <div className="px-3 py-2 flex items-center justify-between border-b border-slate-800/30">
                           <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">
                             {period} Daily P&L · {days.length} day{days.length > 1 ? "s" : ""}
@@ -2158,7 +2158,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                           </span>
                         </div>
                         <div className="px-3 py-2 space-y-1">
-                          {days.slice(-7).map((d) => (
+                          {days.slice(-6).map((d) => (
                             <div key={d.date} className="flex items-center gap-2">
                               <span className="text-[9px] text-slate-500 tabular-nums w-[52px] shrink-0">{d.date.slice(5)}</span>
                               <div className="flex-1 h-2 bg-slate-800/60 rounded-full overflow-hidden">
@@ -2182,55 +2182,98 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
 
                     {/* ─── Currently Holding ─── */}
                     {pos && (
-                      <div className={`${hasDays ? "w-1/3" : "w-full"} rounded-xl border border-blue-500/30 bg-gradient-to-br from-blue-950/40 to-slate-950/60 overflow-hidden flex flex-col`}>
-                        <div className="px-3 py-2 border-b border-blue-500/20 flex items-center justify-between">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                            <span className="text-[9px] uppercase tracking-widest text-blue-400/70 font-bold">Holding</span>
-                          </div>
-                          <span className={`text-[10px] font-bold ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
-                            {isLong ? "▲ LONG" : "▼ SHORT"}
-                          </span>
-                        </div>
-                        <div className="px-3 py-2 flex-1 space-y-2">
-                          {/* Entry + Live */}
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[8px] text-slate-500 uppercase">Entry</span>
-                              <span className="text-[11px] font-bold text-blue-300 tabular-nums">${pos.entry_price}</span>
+                      <div className={`${hasDays ? "w-1/2" : "w-full"} rounded-xl border ${unrealPnl != null && unrealPnl >= 0 ? "border-emerald-500/20" : "border-rose-500/20"} bg-gradient-to-b from-slate-900/90 to-slate-950/95 overflow-hidden flex flex-col`}>
+                        {/* Header strip */}
+                        <div className={`px-3 py-1.5 flex items-center justify-between ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-500/5" : "bg-rose-500/5"}`}>
+                          <div className="flex items-center gap-2">
+                            <div className="relative">
+                              <span className={`block w-2 h-2 rounded-full ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-400" : "bg-rose-400"}`} />
+                              <span className={`absolute inset-0 w-2 h-2 rounded-full animate-ping ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-400/40" : "bg-rose-400/40"}`} />
                             </div>
-                            {livePrice != null && (
-                              <div className="flex items-center justify-between">
-                                <span className="text-[8px] text-slate-500 uppercase">Now</span>
-                                <span className="text-[11px] font-bold text-yellow-400 tabular-nums">${livePrice.toFixed(2)}</span>
-                              </div>
-                            )}
+                            <span className={`text-[10px] font-extrabold tracking-wide ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
+                              {isLong ? "LONG" : "SHORT"}
+                            </span>
                           </div>
-                          {/* SL / TP */}
-                          <div className="flex gap-1.5">
-                            <div className="flex-1 rounded-md bg-rose-950/30 border border-rose-800/30 px-2 py-1 text-center">
-                              <div className="text-[7px] text-rose-500/60 uppercase">SL</div>
-                              <div className="text-[10px] font-bold text-rose-400 tabular-nums">${pos.sl}</div>
-                            </div>
-                            <div className="flex-1 rounded-md bg-emerald-950/30 border border-emerald-800/30 px-2 py-1 text-center">
-                              <div className="text-[7px] text-emerald-500/60 uppercase">TP</div>
-                              <div className="text-[10px] font-bold text-emerald-400 tabular-nums">${pos.tp}</div>
-                            </div>
-                          </div>
-                          {/* Unrealized P&L */}
                           {unrealPnl != null && (
-                            <div className={`rounded-md px-2 py-1.5 text-center ${unrealPnl >= 0 ? "bg-emerald-950/30 border border-emerald-800/20" : "bg-rose-950/30 border border-rose-800/20"}`}>
-                              <span className={`text-sm font-bold tabular-nums ${unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                            <div className="flex items-baseline gap-1">
+                              <span className={`text-base font-black tabular-nums tracking-tight ${unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                                 {unrealPnl >= 0 ? "+" : ""}{unrealPnl.toFixed(2)}
                               </span>
-                              <span className={`text-[9px] ml-1 tabular-nums ${unrealPnl >= 0 ? "text-emerald-400/60" : "text-rose-400/60"}`}>
-                                ({pnlPct != null && pnlPct >= 0 ? "+" : ""}{pnlPct?.toFixed(2)}%)
+                              <span className={`text-[9px] font-bold tabular-nums ${unrealPnl >= 0 ? "text-emerald-500/60" : "text-rose-500/60"}`}>
+                                {pnlPct != null && pnlPct >= 0 ? "+" : ""}{pnlPct?.toFixed(2)}%
                               </span>
                             </div>
                           )}
-                          {/* Signal + Time */}
-                          <div className="text-[8px] text-slate-600 truncate">{pos.signal_type} · {fmtDateTime(pos.entry_time)}</div>
-                          {/* Sync + Auto Trade buttons */}
+                        </div>
+
+                        {/* Mini chart */}
+                        <div className="px-1.5 pt-1.5">
+                          <HoldingMiniChart
+                            symbol={symbol}
+                            entryTime={pos.entry_time}
+                            entryPrice={pos.entry_price}
+                            sl={pos.sl}
+                            tp={pos.tp}
+                            isLong={isLong}
+                            livePrice={livePrice}
+                          />
+                        </div>
+
+                        {/* Price row — Entry / Now / SL / TP */}
+                        <div className="px-3 pt-2 pb-1">
+                          <div className="grid grid-cols-4 gap-1">
+                            <div className="rounded-md bg-blue-950/40 px-1.5 py-1 text-center">
+                              <div className="text-[7px] text-blue-400/50 font-bold uppercase">Entry</div>
+                              <div className="text-[10px] font-bold text-blue-300 tabular-nums">{pos.entry_price}</div>
+                            </div>
+                            <div className="rounded-md bg-yellow-950/30 px-1.5 py-1 text-center">
+                              <div className="text-[7px] text-yellow-400/50 font-bold uppercase">Now</div>
+                              <div className="text-[10px] font-bold text-yellow-300 tabular-nums">{livePrice != null ? livePrice.toFixed(2) : "—"}</div>
+                            </div>
+                            <div className="rounded-md bg-rose-950/30 px-1.5 py-1 text-center">
+                              <div className="text-[7px] text-rose-400/50 font-bold uppercase">SL</div>
+                              <div className="text-[10px] font-bold text-rose-400 tabular-nums">{pos.sl}</div>
+                            </div>
+                            <div className="rounded-md bg-emerald-950/30 px-1.5 py-1 text-center">
+                              <div className="text-[7px] text-emerald-400/50 font-bold uppercase">TP</div>
+                              <div className="text-[10px] font-bold text-emerald-400 tabular-nums">{pos.tp}</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* SL/TP progress bar */}
+                        {livePrice != null && pos.sl > 0 && pos.tp > 0 && (() => {
+                          const range = Math.abs(pos.tp - pos.sl);
+                          const progress = isLong
+                            ? (livePrice - pos.sl) / range
+                            : (pos.sl - livePrice) / range;
+                          const pct = Math.max(0, Math.min(100, progress * 100));
+                          return (
+                            <div className="px-3 pb-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[7px] text-rose-400/60 font-bold">SL</span>
+                                <div className="flex-1 h-1.5 rounded-full bg-slate-800/80 overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all duration-500 ${
+                                      pct > 70 ? "bg-gradient-to-r from-amber-500 to-emerald-400" :
+                                      pct > 40 ? "bg-gradient-to-r from-amber-600 to-amber-400" :
+                                      "bg-gradient-to-r from-rose-600 to-rose-400"
+                                    }`}
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                                <span className="text-[7px] text-emerald-400/60 font-bold">TP</span>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Footer: signal + buttons */}
+                        <div className="px-3 pb-2 mt-auto space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[8px] text-slate-500 truncate">{pos.signal_type}</span>
+                            <span className="text-[8px] text-slate-600">{fmtDateTime(pos.entry_time)}</span>
+                          </div>
                           <div className="flex items-center gap-1.5">
                             <button
                               onClick={(e) => { e.stopPropagation(); handleSync(); }}
