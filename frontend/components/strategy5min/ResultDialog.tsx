@@ -11,13 +11,13 @@ import {
 import {
   execute5Min,
   getMgcPosition,
-  fetchLivePrice,
   savePositionTag,
   type MGC5MinBacktestResponse,
   type MGC5MinTrade,
   type MGC5MinCandle,
   type BacktestPosition,
 } from "../../services/api";
+import { useLivePrice } from "../../hooks/useLivePrice";
 import { fmtDateTimeSGT, SGT_OFFSET_SEC, toSGT } from "../../utils/time";
 
 // ── helpers ──────────────────────────────────────────────────────────
@@ -205,29 +205,14 @@ export default function ResultDialog({ btData, symbol, symbolName, period, slMul
   } : null);
   const g = grade(m.win_rate, m.profit_factor, m.max_drawdown_pct);
 
-  // Live price
-  const [livePrice, setLivePrice] = useState<number | null>(null);
+  // Live price from shared context
+  const { price: livePrice } = useLivePrice();
   const livePriceRef = useRef<number | null>(null);
+  useEffect(() => { livePriceRef.current = livePrice; }, [livePrice]);
 
   // Sync state
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
-
-  // Poll live price when open position exists
-  useEffect(() => {
-    if (!pos) return;
-    let cancelled = false;
-    const poll = async () => {
-      if (cancelled) return;
-      try {
-        const price = await fetchLivePrice(symbol);
-        if (!cancelled) { setLivePrice(price); livePriceRef.current = price; }
-      } catch { /* skip */ }
-    };
-    poll();
-    const timer = setInterval(poll, 2000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [pos, symbol]);
 
   // ── SYNC booking: place Tiger order matching backtest position ──
   const handleSync = useCallback(async () => {

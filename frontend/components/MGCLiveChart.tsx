@@ -11,6 +11,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { fetchMGCLive, type MGCLiveResponse } from "../services/api";
+import { useLivePrice } from "../hooks/useLivePrice";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Props
@@ -103,6 +104,7 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<MGCLiveResponse | null>(null);
+  const { price: sharedPrice, prevPrice: sharedPrevPrice } = useLivePrice();
   const [prevPrice, setPrevPrice] = useState(0);
   const [lastUpdate, setLastUpdate] = useState("");
   const [showMarkers, setShowMarkers] = useState(false);
@@ -374,7 +376,7 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
           <div>
             <span className="text-xs font-bold text-amber-400">{symbol}</span>
             <span className="text-[9px] text-slate-500 ml-1.5">{symbolName}</span>
-            {data && <PriceBadge price={data.current_price} prevPrice={prevPrice || data.current_price} />}
+            {data && <PriceBadge price={sharedPrice ?? data.current_price} prevPrice={sharedPrevPrice ?? prevPrice || data.current_price} />}
           </div>
         </div>
 

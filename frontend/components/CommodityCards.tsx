@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { fetchCommodityQuotes, type CommodityQuote } from "../services/api";
+import { useLivePrice } from "../hooks/useLivePrice";
 
 type Props = {
   selected: string;
@@ -70,6 +71,7 @@ export default function CommodityCards({ selected, onSelect }: Readonly<Props>) 
   const [quotes, setQuotes] = useState<CommodityQuote[]>([]);
   const [loading, setLoading] = useState(true);
   const timerRef = useRef<ReturnType<typeof globalThis.setInterval> | null>(null);
+  const { price: sharedPrice, symbol: sharedSymbol } = useLivePrice();
 
   const fetchQuotes = async () => {
     try {
@@ -102,14 +104,21 @@ export default function CommodityCards({ selected, onSelect }: Readonly<Props>) 
 
   return (
     <div className="flex gap-2 px-3 py-2.5 overflow-x-auto scrollbar-thin scrollbar-thumb-slate-700">
-      {quotes.map((q) => (
-        <CommodityCard
-          key={q.symbol}
-          q={q}
-          active={selected === q.symbol}
-          onClick={() => onSelect(q.symbol, q.name, q.icon)}
-        />
-      ))}
+      {quotes.map((q) => {
+        // Overlay shared live price on selected symbol for consistency
+        const useShared = q.symbol === sharedSymbol && sharedPrice != null && sharedPrice > 0;
+        const displayQuote = useShared
+          ? { ...q, price: sharedPrice, change: sharedPrice - q.prev_close, change_pct: q.prev_close ? ((sharedPrice - q.prev_close) / q.prev_close) * 100 : q.change_pct }
+          : q;
+        return (
+          <CommodityCard
+            key={q.symbol}
+            q={displayQuote}
+            active={selected === q.symbol}
+            onClick={() => onSelect(q.symbol, q.name, q.icon)}
+          />
+        );
+      })}
     </div>
   );
 }

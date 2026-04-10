@@ -18,7 +18,6 @@ import OptimizationDialog from "./strategy5min/OptimizationDialog";
 import ResultDialog from "./strategy5min/ResultDialog";
 import {
   fetchMGC5MinBacktest,
-  fetchLivePrice,
   execute5Min,
   getMgcPosition,
   optimize5MinConditions,
@@ -35,6 +34,7 @@ import {
   type MGC5MinTrade,
   type Scan5MinConditions,
 } from "../services/api";
+import { useLivePrice } from "../hooks/useLivePrice";
 // ═══════════════════════════════════════════════════════════════════════
 
 /** Offset (seconds) to shift UTC epoch → SGT for lightweight-charts */
@@ -1381,7 +1381,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   }, [tradeExecutedTick, runBacktest]);
 
   // ── Live price polling for OPEN position ──────────────
-  const [livePrice, setLivePrice] = useState<number | null>(null);
+  const { price: livePrice } = useLivePrice();
   const livePriceRef = useRef<number | null>(null);
   const slTpHitRef = useRef(false); // prevent double-trigger
   const [exitStatus, setExitStatus] = useState<string | null>(null);
@@ -1513,80 +1513,67 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   // Reset SL/TP hit flag when open position changes
   useEffect(() => { slTpHitRef.current = false; setExitStatus(null); }, [btData?.open_position?.entry_time]);
 
+  // Sync livePriceRef from shared context
+  useEffect(() => { livePriceRef.current = livePrice; }, [livePrice]);
+
+  // SL/TP hit detection — watches shared live price
   useEffect(() => {
     const pos = btData?.open_position;
-    if (!pos) { setLivePrice(null); livePriceRef.current = null; return; }
+    if (!pos || !livePrice || livePrice <= 0 || slTpHitRef.current) return;
 
-    let cancelled = false;
-    const poll = async () => {
-      if (cancelled) return;
+    const isLong = pos.direction !== "PUT";
+    const hitSL = isLong ? livePrice <= pos.sl : livePrice >= pos.sl;
+    const hitTP = isLong ? livePrice >= pos.tp : livePrice <= pos.tp;
+    if (!hitSL && !hitTP) return;
+
+    slTpHitRef.current = true;
+    const reason = hitTP ? "TP" : "SL";
+    setExitStatus(`${reason} HIT @ $${livePrice.toFixed(2)} — re-running…`);
+
+    // Immediately re-run backtest
+    (async () => {
       try {
-        const price = await fetchLivePrice(symbol);
-        if (cancelled) return;
-        setLivePrice(price);
-        livePriceRef.current = price;
+        const fmtDate = (d: Date) => fmtInputDateSGT(d);
+        const freshTo = fmtDate(new Date());
+        const freshFrom = calcFrom(period === "1d" ? "1" : period.replace("d", ""));
+        const disabled = CONDITION_DEFS
+          .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
+          .map((d) => d.key);
+        const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade);
+        setBtData(res);
+        onTradesUpdate?.(res.trades);
+        try { sessionStorage.setItem("bt5min_cache", JSON.stringify({ configKey, data: res })); } catch { /* */ }
 
-        // Check SL/TP hit — instant re-run + direct execute next position
-        if (!slTpHitRef.current && price > 0) {
-          const isLong = pos.direction !== "PUT";
-          const hitSL = isLong ? price <= pos.sl : price >= pos.sl;
-          const hitTP = isLong ? price >= pos.tp : price <= pos.tp;
-          if (hitSL || hitTP) {
-            slTpHitRef.current = true;
-            const reason = hitTP ? "TP" : "SL";
-            setExitStatus(`${reason} HIT @ $${price.toFixed(2)} — re-running…`);
-
-            // Immediately re-run backtest (no delay)
-            try {
-              const fmtDate = (d: Date) => fmtInputDateSGT(d);
-              const freshTo = fmtDate(new Date());
-              const freshFrom = calcFrom(period === "1d" ? "1" : period.replace("d", ""));
-              const disabled = CONDITION_DEFS
-                .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
-                .map((d) => d.key);
-              const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade);
-              if (cancelled) return;
-              setBtData(res);
-              onTradesUpdate?.(res.trades);
-              try { sessionStorage.setItem("bt5min_cache", JSON.stringify({ configKey, data: res })); } catch { /* */ }
-
-              // If new open position appeared → execute directly on Tiger (skip scanner)
-              if (res.open_position) {
-                const np = res.open_position;
-                setExitStatus(`${reason} HIT → New ${np.direction === "PUT" ? "SHORT" : "LONG"} @ $${np.entry_price} — executing…`);
-                try {
-                  const tigerPos = await getMgcPosition(symbol);
-                  const curQty = Math.abs(tigerPos.current_qty ?? 0);
-                  if (curQty === 0) {
-                    const execRes = await execute5Min(np.direction, 1, 1, np.entry_price, np.sl, np.tp, symbol, np.bar_time);
-                    if (execRes.execution?.executed) {
-                      setExitStatus(`✅ ${np.direction === "PUT" ? "SHORT" : "LONG"} @ $${np.entry_price} | SL $${np.sl} TP $${np.tp}`);
-                      onDirectExecute?.();
-                    } else {
-                      setExitStatus(`❌ Execute failed`);
-                    }
-                  } else {
-                    setExitStatus(`📊 Tiger already in position (${curQty} qty) — skipped`);
-                  }
-                } catch {
-                  setExitStatus(`⚠️ Direct execute failed`);
-                }
+        // If new open position appeared → execute directly on Tiger
+        if (res.open_position) {
+          const np = res.open_position;
+          setExitStatus(`${reason} HIT → New ${np.direction === "PUT" ? "SHORT" : "LONG"} @ $${np.entry_price} — executing…`);
+          try {
+            const tigerPos = await getMgcPosition(symbol);
+            const curQty = Math.abs(tigerPos.current_qty ?? 0);
+            if (curQty === 0) {
+              const execRes = await execute5Min(np.direction, 1, 1, np.entry_price, np.sl, np.tp, symbol, np.bar_time);
+              if (execRes.execution?.executed) {
+                setExitStatus(`✅ ${np.direction === "PUT" ? "SHORT" : "LONG"} @ $${np.entry_price} | SL $${np.sl} TP $${np.tp}`);
+                onDirectExecute?.();
               } else {
-                setExitStatus(`${reason} HIT — no new position`);
+                setExitStatus(`❌ Execute failed`);
               }
-            } catch {
-              setExitStatus(`⚠️ Backtest failed`);
+            } else {
+              setExitStatus(`📊 Tiger already in position (${curQty} qty) — skipped`);
             }
-            setTimeout(() => setExitStatus(null), 5000);
+          } catch {
+            setExitStatus(`⚠️ Direct execute failed`);
           }
+        } else {
+          setExitStatus(`${reason} HIT — no new position`);
         }
-      } catch { /* network error — skip this tick */ }
-    };
-
-    poll(); // immediate first fetch
-    const timer = setInterval(poll, 2000); // poll every 2 seconds (fast)
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [btData?.open_position, symbol, period, slMult, tpMult, conditionToggles, riskFilters, configKey]);
+      } catch {
+        setExitStatus(`⚠️ Backtest failed`);
+      }
+      setTimeout(() => setExitStatus(null), 5000);
+    })();
+  }, [livePrice, btData?.open_position, symbol, period, slMult, tpMult, conditionToggles, riskFilters, configKey]);
 
   // ── Condition optimization ───────────────────────────
   const runConditionOptimization = useCallback(async () => {

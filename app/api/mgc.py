@@ -204,34 +204,98 @@ def _isnan(v) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Single-symbol live price (lightweight)
+# Single-symbol live price (lightweight) — cached 2 seconds
 # ═══════════════════════════════════════════════════════════════════════
+
+import time as _time
+
+_price_cache: dict[str, tuple[float, float]] = {}  # symbol → (price, timestamp)
+_PRICE_CACHE_TTL = 2.0  # seconds
+
+
+def _get_cached_price(symbol: str) -> float | None:
+    """Return cached price if fresh, else None."""
+    entry = _price_cache.get(symbol)
+    if entry and (_time.monotonic() - entry[1]) < _PRICE_CACHE_TTL:
+        return entry[0]
+    return None
+
+
+def _set_cached_price(symbol: str, price: float) -> None:
+    _price_cache[symbol] = (price, _time.monotonic())
+
+
+def _tiger_live_price(symbol: str) -> float:
+    """Fetch live price from Tiger API. Returns 0 on failure."""
+    if not _tiger_quote_ok:
+        return 0.0
+    try:
+        quote_client, trade_client = _get_tiger_clients()
+        tiger_sym = _COMMODITY_SYMBOLS.get(symbol, {}).get("tiger", symbol)
+        contracts = trade_client.get_contracts(tiger_sym, sec_type="FUT")
+        identifier = contracts[0].identifier if contracts else tiger_sym
+        period_1m = _BAR_PERIOD_MAP.get("1m")
+        if period_1m:
+            df = quote_client.get_future_bars(identifier, period=period_1m, limit=1)
+            if df is not None and not df.empty:
+                return round(float(df["close"].iloc[-1]), 2)
+    except Exception:
+        logger.warning("Tiger live price failed for %s", symbol)
+    return 0.0
+
+
+def _tiger_bars(symbol: str, interval: str, limit: int = 500):
+    """Fetch OHLCV bars from Tiger API. Returns (identifier, DataFrame) or (symbol, None)."""
+    import pandas as pd
+
+    if not _tiger_quote_ok:
+        return symbol, None
+    try:
+        quote_client, trade_client = _get_tiger_clients()
+        tiger_sym = _COMMODITY_SYMBOLS.get(symbol, {}).get("tiger", symbol)
+        contracts = trade_client.get_contracts(tiger_sym, sec_type="FUT")
+        identifier = contracts[0].identifier if contracts else tiger_sym
+
+        period = _BAR_PERIOD_MAP.get(interval)
+        if period is None:
+            return identifier, None
+
+        df_raw = quote_client.get_future_bars(identifier, period=period, limit=limit)
+        if df_raw is not None and not df_raw.empty:
+            times = df_raw["time"].tolist()
+            df = df_raw[["open", "high", "low", "close", "volume"]].copy()
+            df.index = pd.to_datetime(df_raw["time"], unit="ms")
+            df["_time_ms"] = times
+            df = df.sort_index()
+            return identifier, df
+        return identifier, None
+    except Exception:
+        logger.warning("Tiger bars failed for %s/%s", symbol, interval)
+        return symbol, None
+
 
 @router.get("/price/{symbol}")
 async def live_price(symbol: str):
-    """Quick single-symbol price — Tiger first, yfinance fallback."""
-    def _run():
-        # Try Tiger API first for real broker price
-        if _tiger_quote_ok:
-            try:
-                quote_client, trade_client = _get_tiger_clients()
-                contracts = trade_client.get_contracts(symbol, sec_type="FUT")
-                identifier = contracts[0].identifier if contracts else symbol
-                period_1m = _BAR_PERIOD_MAP.get("1m")
-                if period_1m:
-                    df = quote_client.get_future_bars(identifier, period=period_1m, limit=1)
-                    if df is not None and not df.empty:
-                        return round(float(df["close"].iloc[-1]), 2)
-            except Exception:
-                pass  # fallback to yfinance
+    """Quick single-symbol price — Tiger API (cached 2s)."""
+    cached = _get_cached_price(symbol)
+    if cached is not None:
+        return {"symbol": symbol, "price": cached}
 
-        import yfinance as yf
-        commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": f"{symbol}=F"})
-        t = yf.Ticker(commodity["yf"])
-        price = float(t.fast_info.last_price or 0)
-        return round(price, 2)
+    def _run():
+        price = _tiger_live_price(symbol)
+        if price > 0:
+            return price
+        # Last-resort fallback: yfinance
+        try:
+            import yfinance as yf
+            commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": f"{symbol}=F"})
+            t = yf.Ticker(commodity["yf"])
+            return round(float(t.fast_info.last_price or 0), 2)
+        except Exception:
+            return 0.0
 
     price = await run_in_threadpool(_run)
+    _set_cached_price(symbol, price)
     return {"symbol": symbol, "price": price}
 
 
@@ -267,31 +331,58 @@ class CommodityQuotesResponse(BaseModel):
 
 @router.get("/quotes")
 async def commodity_quotes() -> CommodityQuotesResponse:
-    """Fetch latest quotes for multiple commodity futures via yfinance."""
+    """Fetch latest quotes for multiple commodity futures — Tiger API primary."""
 
     def _run():
-        import yfinance as yf
-
         quotes: list[CommodityQuote] = []
         symbols = list(_COMMODITY_SYMBOLS.keys())
-        yf_tickers = [_COMMODITY_SYMBOLS[s]["yf"] for s in symbols]
 
-        tickers = yf.Tickers(" ".join(yf_tickers))
-
-        for sym_key, yf_sym in zip(symbols, yf_tickers):
+        for sym_key in symbols:
             meta = _COMMODITY_SYMBOLS[sym_key]
             try:
-                info = tickers.tickers[yf_sym].fast_info
-                price = float(info.last_price or 0)
-                prev = float(info.previous_close or 0)
-                change = price - prev
-                change_pct = (change / prev * 100) if prev else 0.0
+                # ── Tiger API for live price + day bars ──────────
+                price = _tiger_live_price(sym_key)
+                prev = 0.0
+                day_high = price
+                day_low = price
+                day_vol = 0
 
-                # Get today's high/low/volume from 1d history
-                hist = tickers.tickers[yf_sym].history(period="1d", interval="1m")
-                day_high = float(hist["High"].max()) if not hist.empty else price
-                day_low = float(hist["Low"].min()) if not hist.empty else price
-                day_vol = int(hist["Volume"].sum()) if not hist.empty else 0
+                if _tiger_quote_ok:
+                    try:
+                        quote_client, trade_client = _get_tiger_clients()
+                        tiger_sym = meta.get("tiger", sym_key)
+                        contracts = trade_client.get_contracts(tiger_sym, sec_type="FUT")
+                        identifier = contracts[0].identifier if contracts else tiger_sym
+
+                        # Get today's 1m bars for high/low/vol/prev_close
+                        period_1m = _BAR_PERIOD_MAP.get("1m")
+                        if period_1m:
+                            df = quote_client.get_future_bars(identifier, period=period_1m, limit=390)
+                            if df is not None and not df.empty:
+                                if price <= 0:
+                                    price = round(float(df["close"].iloc[-1]), 2)
+                                day_high = round(float(df["high"].max()), 2)
+                                day_low = round(float(df["low"].min()), 2)
+                                day_vol = int(df["volume"].sum())
+                                # Previous close = first bar's open (approx)
+                                prev = round(float(df["open"].iloc[0]), 2)
+                    except Exception:
+                        logger.warning("Tiger quotes detail failed for %s", sym_key)
+
+                # yfinance fallback for prev_close if Tiger didn't provide
+                if prev == 0.0 or price <= 0:
+                    try:
+                        import yfinance as yf
+                        t = yf.Ticker(meta["yf"])
+                        if price <= 0:
+                            price = round(float(t.fast_info.last_price or 0), 2)
+                        if prev == 0.0:
+                            prev = round(float(t.fast_info.previous_close or 0), 2)
+                    except Exception:
+                        pass
+
+                change = round(price - prev, 2) if prev else 0.0
+                change_pct = round((change / prev * 100), 2) if prev else 0.0
 
                 quotes.append(CommodityQuote(
                     symbol=sym_key,
@@ -299,8 +390,8 @@ async def commodity_quotes() -> CommodityQuotesResponse:
                     icon=meta["icon"],
                     price=round(price, 2),
                     prev_close=round(prev, 2),
-                    change=round(change, 2),
-                    change_pct=round(change_pct, 2),
+                    change=change,
+                    change_pct=change_pct,
                     high=round(day_high, 2),
                     low=round(day_low, 2),
                     volume=day_vol,
@@ -399,30 +490,9 @@ async def mgc_live(
         commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": "MGC=F"})
         yf_symbol = commodity["yf"]
 
-        identifier = symbol
-        use_tiger = False
-
-        # ── Try Tiger API first (only for MGC) ───────────────────
-        if _tiger_quote_ok and symbol == "MGC":
-            try:
-                quote_client, trade_client = _get_tiger_clients()
-                contracts = trade_client.get_contracts("MGC", sec_type="FUT")
-                identifier = contracts[0].identifier if contracts else "MGC"
-
-                period = _BAR_PERIOD_MAP.get(interval)
-                if period is None:
-                    raise ValueError(f"Unsupported interval: {interval}")
-
-                df_raw = quote_client.get_future_bars(identifier, period=period, limit=limit)
-                if df_raw is not None and not df_raw.empty:
-                    times = df_raw["time"].tolist()
-                    df = df_raw[["open", "high", "low", "close", "volume"]].copy()
-                    df.index = pd.to_datetime(df_raw["time"], unit="ms")
-                    df["_time_ms"] = times
-                    df = df.sort_index()
-                    use_tiger = True
-            except Exception:
-                logger.warning("Tiger API unavailable, falling back to yfinance")
+        # ── Try Tiger API first (all symbols) ────────────────────
+        identifier, df = _tiger_bars(symbol, interval, limit)
+        use_tiger = df is not None
 
         # ── Fallback: yfinance ───────────────────────────────────
         if not use_tiger:
@@ -697,13 +767,28 @@ async def tiger_account() -> TigerAccountResponse:
                 sym = ""
                 if p.contract and p.contract.symbol:
                     sym = p.contract.symbol
+                # Use shared live price for consistency across the app
+                tiger_latest = float(getattr(p, "latest_price", 0) or getattr(p, "market_price", 0) or 0)
+                live = _tiger_live_price(sym) if sym else 0.0
+                best_price = live if live > 0 else tiger_latest
+                # Recalculate unrealized P&L with the live price for consistency
+                qty = int(getattr(p, "quantity", 0) or 0)
+                avg_cost = float(getattr(p, "average_cost", 0) or 0)
+                orig_pnl = float(getattr(p, "unrealized_pnl", 0) or 0)
+                if best_price > 0 and avg_cost > 0 and qty != 0:
+                    # Tiger MGC contract multiplier = 10
+                    multiplier = 10.0
+                    calc_pnl = (best_price - avg_cost) * qty * multiplier
+                    upnl = calc_pnl
+                else:
+                    upnl = orig_pnl
                 positions.append(TigerPositionItem(
                     symbol=sym,
-                    quantity=int(getattr(p, "quantity", 0) or 0),
-                    average_cost=float(getattr(p, "average_cost", 0) or 0),
-                    latest_price=float(getattr(p, "latest_price", 0) or getattr(p, "market_price", 0) or 0),
+                    quantity=qty,
+                    average_cost=avg_cost,
+                    latest_price=round(best_price, 2),
                     market_value=float(getattr(p, "market_value", 0) or 0),
-                    unrealized_pnl=float(getattr(p, "unrealized_pnl", 0) or 0),
+                    unrealized_pnl=round(upnl, 2),
                     realized_pnl=float(getattr(p, "realized_pnl", 0) or 0),
                 ))
         except Exception:
@@ -2434,14 +2519,7 @@ async def engine_sync(symbol: str = "MGC"):
     engine = get_engine(symbol)
     tiger_qty = _get_tiger_position(symbol)
     # Try to get current price for P&L estimation on sync
-    current_price = 0.0
-    try:
-        import yfinance as yf
-        commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": f"{symbol}=F"})
-        tk = yf.Ticker(commodity["yf"])
-        current_price = tk.fast_info.get("lastPrice", 0.0) or 0.0
-    except Exception:
-        pass
+    current_price = _tiger_live_price(symbol)
     engine.sync_with_broker(tiger_qty, current_price=current_price)
     return {
         "synced": True,

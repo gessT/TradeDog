@@ -19,6 +19,7 @@ import {
 } from "../services/api";
 
 import { todaySGT, toDateSGT, fmtTimeSGT, fmtDateTimeSGT } from "../utils/time";
+import { useLivePrice } from "../hooks/useLivePrice";
 
 const COMMODITY_NAMES: Record<string, string> = {
   MGC: "Micro Gold",
@@ -175,7 +176,8 @@ function PositionRow({
   onTrade,
   hidePrices = false,
   tag,
-}: Readonly<{ p: TigerPositionItem; onClose: (sym: string) => void; onTrade: () => void; hidePrices?: boolean; tag?: string }>) {
+  sharedPrice,
+}: Readonly<{ p: TigerPositionItem; onClose: (sym: string) => void; onTrade: () => void; hidePrices?: boolean; tag?: string; sharedPrice?: number | null }>) {
   const [expanded, setExpanded] = useState(false);
   const [qty, setQty] = useState(1);
   const [orderType, setOrderType] = useState<"MKT" | "LMT">("MKT");
@@ -183,7 +185,13 @@ function PositionRow({
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
 
-  const pnlColor = p.unrealized_pnl >= 0 ? "text-emerald-400" : "text-rose-400";
+  // Use shared live price when available and symbol matches
+  const displayPrice = (sharedPrice && sharedPrice > 0) ? sharedPrice : (p.latest_price > 0 ? p.latest_price : 0);
+  // Recalculate unrealized P&L with shared price for consistency
+  const displayPnl = displayPrice > 0 && p.average_cost > 0 && p.quantity !== 0
+    ? (displayPrice - p.average_cost) * p.quantity * 10  // MGC multiplier = 10
+    : p.unrealized_pnl;
+  const pnlColor = displayPnl >= 0 ? "text-emerald-400" : "text-rose-400";
 
   const handleOrder = useCallback(async (side: "BUY" | "SELL") => {
     if (busy) return;
@@ -230,9 +238,9 @@ function PositionRow({
           {p.quantity > 0 ? "+" : ""}{p.quantity}
         </td>
         <td className="px-2 py-2 text-[11px] text-right text-slate-300 tabular-nums">{hidePrices ? "••••" : `$${p.average_cost.toFixed(2)}`}</td>
-        <td className="px-2 py-2 text-[11px] text-right text-yellow-400 font-bold tabular-nums">{hidePrices ? "••••" : `$${p.latest_price > 0 ? p.latest_price.toFixed(2) : p.market_value.toFixed(2)}`}</td>
+        <td className="px-2 py-2 text-[11px] text-right text-yellow-400 font-bold tabular-nums">{hidePrices ? "••••" : `$${displayPrice > 0 ? displayPrice.toFixed(2) : p.market_value.toFixed(2)}`}</td>
         <td className={`px-2 py-2 text-[11px] text-right font-bold tabular-nums ${hidePrices ? "text-slate-500" : pnlColor}`}>
-          {hidePrices ? "••••" : `${p.unrealized_pnl >= 0 ? "+" : ""}$${p.unrealized_pnl.toFixed(2)}`}
+          {hidePrices ? "••••" : `${displayPnl >= 0 ? "+" : ""}$${displayPnl.toFixed(2)}`}
         </td>
         <td className="px-2 py-2 text-center">
           <button
@@ -369,6 +377,7 @@ export default function TigerAccountTab() {
   const [data, setData] = useState<TigerAccountResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { price: sharedPrice, symbol: sharedSymbol } = useLivePrice();
 
   // Trade history state
   const [tradeHistory, setTradeHistory] = useState<TradeHistoryResponse | null>(null);
@@ -562,7 +571,7 @@ export default function TigerAccountTab() {
               </thead>
               <tbody>
                 {data.positions.map((p) => (
-                  <PositionRow key={p.symbol} p={p} onClose={handleClose} onTrade={refresh} hidePrices={hidePrices} tag={positionTags[p.symbol] || positionTags[baseSymbol(p.symbol)]} />
+                  <PositionRow key={p.symbol} p={p} onClose={handleClose} onTrade={refresh} hidePrices={hidePrices} tag={positionTags[p.symbol] || positionTags[baseSymbol(p.symbol)]} sharedPrice={baseSymbol(p.symbol) === sharedSymbol ? sharedPrice : null} />
                 ))}
               </tbody>
             </table>
@@ -765,7 +774,9 @@ export default function TigerAccountTab() {
                       {openTrades.map((t, i) => {
                         const pos = posMap[t.symbol];
                         const orders = ordersBySymbol[baseSymbol(t.symbol)] ?? ordersBySymbol[t.symbol] ?? {};
-                        const livePrice = pos?.latest_price ?? 0;
+                        const posLive = pos?.latest_price ?? 0;
+                        // Use shared live price for the active symbol
+                        const livePrice = (baseSymbol(t.symbol) === sharedSymbol && sharedPrice && sharedPrice > 0) ? sharedPrice : posLive;
                         const isLong = t.side === "LONG";
                         const unrealPnl = livePrice > 0 ? (isLong ? livePrice - t.entry_price : t.entry_price - livePrice) * t.qty * (t.multiplier || 1) : (pos?.unrealized_pnl ?? 0);
                         const pnlColor = unrealPnl > 0 ? "text-emerald-400" : unrealPnl < 0 ? "text-rose-400" : "text-slate-400";

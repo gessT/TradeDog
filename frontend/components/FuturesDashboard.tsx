@@ -13,6 +13,7 @@ import CommodityCards from "./CommodityCards";
 import MGCLiveChart from "./MGCLiveChart";
 import ScanTradePanel from "./ScanTradePanel";
 import Strategy5MinPanel from "./Strategy5MinPanel";
+import { LivePriceProvider } from "../hooks/useLivePrice";
 
 const CONDITION_KEYS: (keyof Scan5MinConditions)[] = [
   "ema_trend", "ema_slope", "pullback", "breakout", "supertrend",
@@ -82,6 +83,7 @@ export default function FuturesDashboard() {
   }, []);
 
   return (
+    <LivePriceProvider symbol={selectedSymbol}>
     <div className="flex flex-1 overflow-hidden">
 
       {/* ═══════════════════════════════════════════════════════════════ */}
@@ -121,5 +123,6 @@ export default function FuturesDashboard() {
       </section>
 
     </div>
+    </LivePriceProvider>
   );
 }
