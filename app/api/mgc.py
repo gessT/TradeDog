@@ -1811,10 +1811,8 @@ async def mgc_backtest_5min(
                 if str(t.exit_time)[:10] >= display_start
             ]
 
-        # ── Filter daily_pnl to display window ─────────────────
+        # ── Return ALL daily_pnl (frontend filters by period) ──
         filtered_daily = result.daily_pnl
-        if display_start:
-            filtered_daily = [d for d in result.daily_pnl if d["date"] >= display_start]
 
         # ── Recompute metrics for the display window ────────────
         display_wins = [t for t in filtered_trades if t.pnl > 0]

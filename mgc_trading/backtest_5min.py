@@ -895,7 +895,7 @@ class Backtester5Min:
         for d in day_map.values():
             d["pnl"] = round(d["pnl"], 2)
             d["win_rate"] = round(d["wins"] / d["trades"] * 100, 1) if d["trades"] else 0
-        result.daily_pnl = sorted(day_map.values(), key=lambda x: x["date"], reverse=True)
+        result.daily_pnl = sorted(day_map.values(), key=lambda x: x["date"])
 
         # Worst daily loss & days stopped
         if day_map:

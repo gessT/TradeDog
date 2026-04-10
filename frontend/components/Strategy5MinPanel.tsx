@@ -1225,7 +1225,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     d.setDate(d.getDate() - parseInt(p));
     return fmtDate(d);
   };
-  const [dateFrom, setDateFrom] = useState(() => calcFrom("1"));
+  const [dateFrom, setDateFrom] = useState(() => calcFrom("3"));
   const [dateTo, setDateTo] = useState(() => fmtDate(new Date()));
 
   // Auto-switch SL/TP when symbol changes
@@ -1979,14 +1979,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               {["1d", "3d", "7d", "30d", "60d"].map((p) => (
                 <button
                   key={p}
-                  onClick={() => {
-                    setPeriod(p);
-                    const now = new Date();
-                    setDateTo(fmtDate(now));
-                    const from = new Date(now);
-                    from.setDate(now.getDate() - parseInt(p));
-                    setDateFrom(fmtDate(from));
-                  }}
+                  onClick={() => setPeriod(p)}
                   className={`px-2 py-0.5 text-[10px] font-bold rounded transition ${
                     period === p ? "bg-cyan-700 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"
                   }`}
@@ -2126,14 +2119,23 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
 
               {/* ── Daily P&L (1/2) + Currently Holding (1/2) ── */}
               {(() => {
-                const days = btData.daily_pnl ?? [];
+                const allDays = btData.daily_pnl ?? [];
                 const openTrade = btData.trades.find((t) => t.reason === "OPEN");
                 const hasOpen = hasRunBacktest && !!openTrade;
+
+                // Filter daily P&L client-side based on selected period
+                const periodDays: Record<string, number> = { "1d": 1, "3d": 3, "7d": 7, "30d": 30, "60d": 60 };
+                const daysBack = periodDays[period] ?? 60;
+                const cutoff = allDays.length > 0
+                  ? (() => { const last = new Date(allDays[allDays.length - 1].date); last.setDate(last.getDate() - daysBack); return last.toISOString().slice(0, 10); })()
+                  : "";
+                const days = allDays.filter(d => d.date >= cutoff);
+
                 const hasDays = days.length > 0;
                 if (!hasDays && !hasOpen) return null;
 
-                const totalPnl = days.reduce((s, d) => s + d.pnl, 0);
-                const maxAbs = Math.max(...days.map(d => Math.abs(d.pnl)), 1);
+                const totalPnl = days.reduce((s: number, d: { pnl: number }) => s + d.pnl, 0);
+                const maxAbs = Math.max(...days.map((d: { pnl: number }) => Math.abs(d.pnl)), 1);
 
                 const pos = hasOpen ? (btData.open_position ?? {
                   direction: openTrade!.direction || "CALL",
@@ -2154,14 +2156,14 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                       <div className={`${hasOpen ? "w-1/2" : "w-full"} rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/80 to-slate-950/60 overflow-hidden`}>
                         <div className="px-3 py-2 flex items-center justify-between border-b border-slate-800/30">
                           <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">
-                            {period} Daily P&L · {days.length} day{days.length > 1 ? "s" : ""}
+                            Daily P&L · {days.length} day{days.length > 1 ? "s" : ""}
                           </span>
                           <span className={`text-sm font-bold tabular-nums ${totalPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                             {totalPnl >= 0 ? "+" : ""}${n(totalPnl).toFixed(0)}
                           </span>
                         </div>
-                        <div className="px-3 py-2 space-y-1">
-                          {days.slice(-6).map((d) => (
+                        <div className="px-3 py-2 space-y-1 max-h-[200px] overflow-y-auto">
+                          {days.map((d: { date: string; pnl: number; win_rate: number }) => (
                             <div key={d.date} className="flex items-center gap-2">
                               <span className="text-[9px] text-slate-500 tabular-nums w-[52px] shrink-0">{d.date.slice(5)}</span>
                               <div className="flex-1 h-2 bg-slate-800/60 rounded-full overflow-hidden">
