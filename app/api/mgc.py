@@ -1007,7 +1007,7 @@ def _order_to_item(o) -> TigerOrderItem:
         order_type=str(getattr(o, "order_type", "") or ""),
         quantity=int(getattr(o, "quantity", 0) or 0),
         filled_quantity=int(getattr(o, "filled", 0) or getattr(o, "filled_quantity", 0) or 0),
-        limit_price=float(getattr(o, "limit_price", 0) or 0),
+        limit_price=float(getattr(o, "limit_price", 0) or 0) or float(getattr(o, "aux_price", 0) or 0),
         avg_fill_price=float(getattr(o, "avg_fill_price", 0) or 0),
         status=status_raw,
         trade_time=_fmt_tiger_time(getattr(o, "trade_time", None) or getattr(o, "order_time", None)),
@@ -1663,6 +1663,8 @@ async def mgc_backtest_5min(
     use_struct_fade: Annotated[bool, Query()] = False,
     use_sma28_cut: Annotated[bool, Query()] = False,
     daily_loss_limit: Annotated[float, Query(ge=0, le=5000)] = 0.0,
+    skip_hours: Annotated[Optional[str], Query()] = None,
+    max_loss_per_trade: Annotated[float, Query(ge=0, le=2000)] = 0.0,
 ) -> MGC5MinBacktestResponse:
     """Run 5-minute strategy backtest with out-of-sample validation.
 
@@ -1676,6 +1678,11 @@ async def mgc_backtest_5min(
                   "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok",
                   "smc_ob","smc_fvg","smc_bos"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
+
+    # Parse skip_hours from comma-separated string (e.g. "4,16")
+    _skip_hours: set[int] | None = None
+    if skip_hours:
+        _skip_hours = {int(h.strip()) for h in skip_hours.split(",") if h.strip().isdigit()}
 
     def _run():
         import pandas as _pd
@@ -1697,7 +1704,7 @@ async def mgc_backtest_5min(
         # ── Run full 60d simulation for consistent results ──────
         custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult, "use_ema_exit": use_ema_exit, "use_struct_fade": use_struct_fade, "use_sma28_cut": use_sma28_cut}
         bt = Backtester5Min(capital=capital)
-        result = bt.run(df, params=custom_params, oos_split=oos_split, disabled_conditions=_disabled or None, skip_flat=skip_flat, skip_counter_trend=skip_counter_trend, daily_loss_limit=daily_loss_limit)
+        result = bt.run(df, params=custom_params, oos_split=oos_split, disabled_conditions=_disabled or None, skip_flat=skip_flat, skip_counter_trend=skip_counter_trend, daily_loss_limit=daily_loss_limit, skip_hours=_skip_hours, max_loss_per_trade=max_loss_per_trade)
 
         # ── Determine display window ────────────────────────────
         display_start: str | None = None
@@ -3008,6 +3015,9 @@ async def optimize_5min_conditions(
     skip_counter_trend: Annotated[bool, Query()] = True,
     use_ema_exit: Annotated[bool, Query()] = False,
     use_struct_fade: Annotated[bool, Query()] = False,
+    use_sma28_cut: Annotated[bool, Query()] = False,
+    skip_hours: Annotated[Optional[str], Query()] = None,
+    max_loss_per_trade: Annotated[float, Query(ge=0, le=2000)] = 0.0,
 ) -> list[dict]:
     """Optimize 5-minute condition combinations using current risk filters and SL/TP."""
     
@@ -3033,11 +3043,17 @@ async def optimize_5min_conditions(
                 display_start = cutoff.strftime("%Y-%m-%d")
 
         # Build params matching the user's current settings
+        # Parse skip_hours
+        _skip_hours: set[int] | None = None
+        if skip_hours:
+            _skip_hours = {int(h.strip()) for h in skip_hours.split(",") if h.strip().isdigit()}
+
         custom_params = {
             "atr_sl_mult": atr_sl_mult,
             "atr_tp_mult": atr_tp_mult,
             "use_ema_exit": use_ema_exit,
             "use_struct_fade": use_struct_fade,
+            "use_sma28_cut": use_sma28_cut,
         }
 
         condition_keys = [
@@ -3084,6 +3100,8 @@ async def optimize_5min_conditions(
                         oos_split=0.3,
                         skip_flat=_skip_flat,
                         skip_counter_trend=_skip_counter,
+                        skip_hours=_skip_hours,
+                        max_loss_per_trade=max_loss_per_trade,
                     )
 
                     if result.total_trades < 10:

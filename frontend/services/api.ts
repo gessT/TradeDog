@@ -1183,6 +1183,8 @@ export async function fetchMGC5MinBacktest(
   useStructFade: boolean = false,
   useSma28Cut: boolean = false,
   dailyLossLimit: number = 0,
+  skipHours?: number[],
+  maxLossPerTrade: number = 0,
 ): Promise<MGC5MinBacktestResponse> {
   let url = `${API_BASE}/mgc/backtest_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
   if (date_from) url += `&date_from=${date_from}`;
@@ -1194,6 +1196,8 @@ export async function fetchMGC5MinBacktest(
   if (useStructFade) url += `&use_struct_fade=true`;
   if (useSma28Cut) url += `&use_sma28_cut=true`;
   if (dailyLossLimit > 0) url += `&daily_loss_limit=${dailyLossLimit}`;
+  if (skipHours && skipHours.length > 0) url += `&skip_hours=${encodeURIComponent(skipHours.join(","))}`;
+  if (maxLossPerTrade > 0) url += `&max_loss_per_trade=${maxLossPerTrade}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
@@ -1231,12 +1235,18 @@ export async function optimize5MinConditions(
   skipCounterTrend: boolean = true,
   useEmaExit: boolean = false,
   useStructFade: boolean = false,
+  useSma28Cut: boolean = false,
+  skipHours?: number[],
+  maxLossPerTrade: number = 0,
 ): Promise<ConditionOptimizationResult[]> {
   let url = `${API_BASE}/mgc/optimize_conditions_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&top_n=${top_n}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
   if (skipFlat) url += `&skip_flat=true`;
   url += `&skip_counter_trend=${skipCounterTrend}`;
   if (useEmaExit) url += `&use_ema_exit=true`;
   if (useStructFade) url += `&use_struct_fade=true`;
+  if (useSma28Cut) url += `&use_sma28_cut=true`;
+  if (skipHours && skipHours.length > 0) url += `&skip_hours=${encodeURIComponent(skipHours.join(","))}`;
+  if (maxLossPerTrade > 0) url += `&max_loss_per_trade=${maxLossPerTrade}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();

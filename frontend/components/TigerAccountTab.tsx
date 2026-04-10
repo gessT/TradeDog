@@ -369,6 +369,7 @@ export default function TigerAccountTab() {
   const [tradeHistory, setTradeHistory] = useState<TradeHistoryResponse | null>(null);
   const [tradeDays, setTradeDays] = useState(7);
   const [tradeLoading, setTradeLoading] = useState(false);
+  const [tradeTab, setTradeTab] = useState<"today" | "open" | "orders">("today");
 
   const [failCount, setFailCount] = useState(0);
   const [hidePrices, setHidePrices] = useState(false);
@@ -455,13 +456,14 @@ export default function TigerAccountTab() {
 
   const acct = data?.account;
 
-  // Derive today P&L from trade history (same source as Today's Trades section)
+  // Derive today P&L from trade history (closed trades only)
   const todayPnlFromTrades = useMemo(() => {
     const todayStr = localDateStr();
-    const todayTrades = tradeHistory?.trades?.filter((t) => {
+    const closedToday = tradeHistory?.trades?.filter((t) => {
+      if (t.status === "OPEN") return false;
       return toLocalDate(t.entry_time) === todayStr || toLocalDate(t.exit_time) === todayStr;
     }) ?? [];
-    return todayTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
+    return closedToday.reduce((s, t) => s + (t.pnl ?? 0), 0);
   }, [tradeHistory]);
 
   return (
@@ -563,37 +565,69 @@ export default function TigerAccountTab() {
         )}
       </div>
 
-      {/* Today's Trades — paired buy/sell with P&L */}
+      {/* Today's Trades / Open Positions — tabbed */}
       {(() => {
         const todayStr = localDateStr();
-        const todayTrades = tradeHistory?.trades?.filter((t) => {
-          // Match trades where entry or exit is today (local time)
+        const closedToday = tradeHistory?.trades?.filter((t) => {
+          if (t.status === "OPEN") return false;
           return toLocalDate(t.entry_time) === todayStr || toLocalDate(t.exit_time) === todayStr;
         }) ?? [];
-        const todayPnl = todayTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
-        const wins = todayTrades.filter((t) => t.pnl > 0).length;
-        const losses = todayTrades.filter((t) => t.pnl <= 0 && t.status === "CLOSED").length;
+        const openTrades = tradeHistory?.trades?.filter((t) => t.status === "OPEN") ?? [];
+        const todayPnl = closedToday.reduce((s, t) => s + (t.pnl ?? 0), 0);
+        const wins = closedToday.filter((t) => t.pnl > 0).length;
+        const losses = closedToday.filter((t) => t.pnl <= 0).length;
+
+        // Build SL/TP lookup from open orders
+        const ordersBySymbol: Record<string, { sl?: number; tp?: number }> = {};
+        for (const o of data?.open_orders ?? []) {
+          const sym = o.symbol;
+          if (!ordersBySymbol[sym]) ordersBySymbol[sym] = {};
+          if (o.order_type === "STP" && o.limit_price > 0) ordersBySymbol[sym].sl = o.limit_price;
+          if (o.order_type === "LMT" && o.limit_price > 0) ordersBySymbol[sym].tp = o.limit_price;
+        }
+        // Also build live price lookup from positions
+        const posMap: Record<string, TigerPositionItem> = {};
+        for (const p of data?.positions ?? []) posMap[p.symbol] = p;
+
         return (
           <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 overflow-hidden">
+            {/* Tab header */}
             <div className="px-3 py-2 border-b border-slate-800/40 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-                  Today&apos;s Trades ({todayTrades.length})
-                </span>
-                {todayTrades.length > 0 && !hidePrices && (
-                  <>
-                    <span className={`text-[10px] font-bold tabular-nums ${todayPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                      {todayPnl >= 0 ? "+" : ""}${todayPnl.toFixed(2)}
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setTradeTab("today")}
+                  className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-all ${
+                    tradeTab === "today" ? "bg-slate-700/60 text-white" : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  Today ({closedToday.length})
+                  {closedToday.length > 0 && !hidePrices && (
+                    <span className={`ml-1 tabular-nums ${todayPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {todayPnl >= 0 ? "+" : ""}${todayPnl.toFixed(0)}
                     </span>
-                    <span className="text-[9px] text-slate-600">
-                      {wins}W/{losses}L
-                    </span>
-                  </>
-                )}
-                {(data?.positions?.length ?? 0) > 0 && (
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 animate-pulse">
-                    {data!.positions.length} Open
-                  </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setTradeTab("open")}
+                  className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-all ${
+                    tradeTab === "open" ? "bg-slate-700/60 text-white" : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  Open ({openTrades.length})
+                  {openTrades.length > 0 && (
+                    <span className="ml-1 w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse inline-block" />
+                  )}
+                </button>
+                <button
+                  onClick={() => setTradeTab("orders")}
+                  className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-all ${
+                    tradeTab === "orders" ? "bg-slate-700/60 text-white" : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  Orders ({(data?.open_orders?.length ?? 0) + (data?.filled_orders?.length ?? 0)})
+                </button>
+                {closedToday.length > 0 && !hidePrices && tradeTab === "today" && (
+                  <span className="text-[9px] text-slate-600 ml-1">{wins}W/{losses}L</span>
                 )}
               </div>
               <button
@@ -602,63 +636,158 @@ export default function TigerAccountTab() {
                 className="text-[9px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-500 hover:text-slate-300 transition-all"
               >{tradeLoading ? "…" : "↻"}</button>
             </div>
-            {todayTrades.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="text-[8px] text-slate-600 uppercase tracking-wider">
-                      <th className="px-2 py-1">Symbol</th>
-                      <th className="px-2 py-1">Side</th>
-                      <th className="px-2 py-1 text-center">Qty</th>
-                      <th className="px-2 py-1 text-right">Entry</th>
-                      <th className="px-2 py-1 text-right">Exit</th>
-                      <th className="px-2 py-1 text-right">P&L</th>
-                      <th className="px-2 py-1">Time</th>
-                      <th className="px-2 py-1">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {todayTrades.map((t, i) => {
-                      const pnlColor = t.pnl > 0 ? "text-emerald-400" : t.pnl < 0 ? "text-rose-400" : "text-slate-400";
-                      return (
-                        <tr key={`${t.entry_order_id}-${i}`} className={`border-b border-slate-800/30 ${i % 2 === 0 ? "bg-slate-900/30" : ""}`}>
-                          <td className="px-2 py-1.5 text-[10px] font-bold text-slate-200">
-                            {t.symbol}
-                            <span className="text-[8px] font-normal text-slate-600 ml-1">{COMMODITY_NAMES[baseSymbol(t.symbol)] ?? ""}</span>
-                          </td>
-                          <td className={`px-2 py-1.5 text-[10px] font-bold ${t.side === "LONG" ? "text-emerald-400" : "text-rose-400"}`}>
-                            {t.side === "LONG" ? "BUY" : "SELL"}
-                          </td>
-                          <td className="px-2 py-1.5 text-[10px] text-center text-slate-300">{t.qty}</td>
-                          <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">{hidePrices ? "••••" : `$${t.entry_price.toFixed(2)}`}</td>
-                          <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">
-                            {hidePrices ? "••••" : t.status === "CLOSED" ? `$${t.exit_price.toFixed(2)}` : "—"}
-                          </td>
-                          <td className={`px-2 py-1.5 text-[10px] text-right font-bold tabular-nums ${hidePrices ? "text-slate-500" : pnlColor}`}>
-                            {hidePrices ? "••••" : t.status === "CLOSED" ? `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)}` : "—"}
-                          </td>
-                          <td className="px-2 py-1.5 text-[9px] text-slate-500 whitespace-nowrap">
-                            {t.entry_time ? fmtLocalTime(t.entry_time) : ""}
-                            {t.exit_time && t.status === "CLOSED" ? (
-                              <span className="text-slate-600"> → {fmtLocalTime(t.exit_time)}</span>
-                            ) : null}
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                              t.status === "CLOSED" ? t.pnl >= 0 ? "bg-emerald-900/40 text-emerald-400" : "bg-rose-900/40 text-rose-400"
-                              : "bg-blue-900/40 text-blue-400 animate-pulse"
-                            }`}>{t.status === "OPEN" ? "OPEN" : t.pnl >= 0 ? "WIN" : "LOSS"}</span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="px-3 py-4 text-center text-[11px] text-slate-600">
-                {tradeLoading ? "Loading trades…" : "No trades today"}
-              </div>
+
+            {/* Today tab */}
+            {tradeTab === "today" && (
+              closedToday.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="text-[8px] text-slate-600 uppercase tracking-wider">
+                        <th className="px-2 py-1">Symbol</th>
+                        <th className="px-2 py-1">Side</th>
+                        <th className="px-2 py-1 text-center">Qty</th>
+                        <th className="px-2 py-1 text-right">Entry</th>
+                        <th className="px-2 py-1 text-right">Exit</th>
+                        <th className="px-2 py-1 text-right">P&L</th>
+                        <th className="px-2 py-1">Time</th>
+                        <th className="px-2 py-1">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {closedToday.map((t, i) => {
+                        const pnlColor = t.pnl > 0 ? "text-emerald-400" : t.pnl < 0 ? "text-rose-400" : "text-slate-400";
+                        return (
+                          <tr key={`${t.entry_order_id}-${i}`} className={`border-b border-slate-800/30 ${i % 2 === 0 ? "bg-slate-900/30" : ""}`}>
+                            <td className="px-2 py-1.5 text-[10px] font-bold text-slate-200">
+                              {t.symbol}
+                              <span className="text-[8px] font-normal text-slate-600 ml-1">{COMMODITY_NAMES[baseSymbol(t.symbol)] ?? ""}</span>
+                            </td>
+                            <td className={`px-2 py-1.5 text-[10px] font-bold ${t.side === "LONG" ? "text-emerald-400" : "text-rose-400"}`}>
+                              {t.side === "LONG" ? "BUY" : "SELL"}
+                            </td>
+                            <td className="px-2 py-1.5 text-[10px] text-center text-slate-300">{t.qty}</td>
+                            <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">{hidePrices ? "••••" : `$${t.entry_price.toFixed(2)}`}</td>
+                            <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">
+                              {hidePrices ? "••••" : `$${t.exit_price.toFixed(2)}`}
+                            </td>
+                            <td className={`px-2 py-1.5 text-[10px] text-right font-bold tabular-nums ${hidePrices ? "text-slate-500" : pnlColor}`}>
+                              {hidePrices ? "••••" : `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)}`}
+                            </td>
+                            <td className="px-2 py-1.5 text-[9px] text-slate-500 whitespace-nowrap">
+                              {t.entry_time ? fmtLocalTime(t.entry_time) : ""}
+                              {t.exit_time ? <span className="text-slate-600"> → {fmtLocalTime(t.exit_time)}</span> : null}
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                                t.pnl >= 0 ? "bg-emerald-900/40 text-emerald-400" : "bg-rose-900/40 text-rose-400"
+                              }`}>{t.pnl >= 0 ? "WIN" : "LOSS"}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="px-3 py-4 text-center text-[11px] text-slate-600">
+                  {tradeLoading ? "Loading trades…" : "No trades today"}
+                </div>
+              )
+            )}
+
+            {/* Orders tab */}
+            {tradeTab === "orders" && (() => {
+              const allOrders = [...(data?.open_orders ?? []), ...(data?.filled_orders ?? [])];
+              return allOrders.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="text-[8px] text-slate-600 uppercase tracking-wider">
+                        <th className="px-2 py-1">ID</th>
+                        <th className="px-2 py-1">Symbol</th>
+                        <th className="px-2 py-1">Side</th>
+                        <th className="px-2 py-1">Type</th>
+                        <th className="px-2 py-1 text-center">Filled/Qty</th>
+                        <th className="px-2 py-1 text-right">Price</th>
+                        <th className="px-2 py-1">Time</th>
+                        <th className="px-2 py-1">Status</th>
+                        <th className="px-2 py-1"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allOrders.map((o) => (
+                        <OrderRow
+                          key={o.order_id}
+                          o={o}
+                          canCancel={!o.status.includes("FILL") && !o.status.includes("CANCEL")}
+                          onCancel={handleCancel}
+                          hidePrices={hidePrices}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="px-3 py-4 text-center text-[11px] text-slate-600">
+                  {loading ? "Loading orders…" : "No orders today"}
+                </div>
+              );
+            })()}
+
+            {/* Open positions tab */}
+            {tradeTab === "open" && (
+              openTrades.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="text-[8px] text-slate-600 uppercase tracking-wider">
+                        <th className="px-2 py-1">Symbol</th>
+                        <th className="px-2 py-1">Side</th>
+                        <th className="px-2 py-1 text-center">Qty</th>
+                        <th className="px-2 py-1 text-right">Entry</th>
+                        <th className="px-2 py-1 text-right">Live</th>
+                        <th className="px-2 py-1 text-right">SL</th>
+                        <th className="px-2 py-1 text-right">TP</th>
+                        <th className="px-2 py-1 text-right">P&L</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {openTrades.map((t, i) => {
+                        const pos = posMap[t.symbol];
+                        const orders = ordersBySymbol[baseSymbol(t.symbol)] ?? ordersBySymbol[t.symbol] ?? {};
+                        const livePrice = pos?.latest_price ?? 0;
+                        const isLong = t.side === "LONG";
+                        const unrealPnl = livePrice > 0 ? (isLong ? livePrice - t.entry_price : t.entry_price - livePrice) * t.qty * (t.multiplier || 1) : (pos?.unrealized_pnl ?? 0);
+                        const pnlColor = unrealPnl > 0 ? "text-emerald-400" : unrealPnl < 0 ? "text-rose-400" : "text-slate-400";
+                        return (
+                          <tr key={`${t.entry_order_id}-${i}`} className={`border-b border-slate-800/30 ${i % 2 === 0 ? "bg-slate-900/30" : ""}`}>
+                            <td className="px-2 py-1.5 text-[10px] font-bold text-slate-200">
+                              {t.symbol}
+                              <span className="text-[8px] font-normal text-slate-600 ml-1">{COMMODITY_NAMES[baseSymbol(t.symbol)] ?? ""}</span>
+                            </td>
+                            <td className={`px-2 py-1.5 text-[10px] font-bold ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
+                              {isLong ? "▲ LONG" : "▼ SHORT"}
+                            </td>
+                            <td className="px-2 py-1.5 text-[10px] text-center text-slate-300">{t.qty}</td>
+                            <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">{hidePrices ? "••••" : `$${t.entry_price.toFixed(2)}`}</td>
+                            <td className="px-2 py-1.5 text-[10px] text-right text-blue-300 tabular-nums font-bold">{hidePrices ? "••••" : livePrice > 0 ? `$${livePrice.toFixed(2)}` : "—"}</td>
+                            <td className="px-2 py-1.5 text-[10px] text-right text-rose-400/80 tabular-nums">{hidePrices ? "••••" : orders.sl ? `$${orders.sl.toFixed(2)}` : "—"}</td>
+                            <td className="px-2 py-1.5 text-[10px] text-right text-emerald-400/80 tabular-nums">{hidePrices ? "••••" : orders.tp ? `$${orders.tp.toFixed(2)}` : "—"}</td>
+                            <td className={`px-2 py-1.5 text-[10px] text-right font-bold tabular-nums ${hidePrices ? "text-slate-500" : pnlColor}`}>
+                              {hidePrices ? "••••" : `${unrealPnl >= 0 ? "+" : ""}$${unrealPnl.toFixed(2)}`}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="px-3 py-4 text-center text-[11px] text-slate-600">
+                  No open positions
+                </div>
+              )
             )}
           </div>
         );

@@ -192,7 +192,15 @@ function TradeRow({ t, idx, onClick, livePrice }: Readonly<{ t: MGC5MinTrade; id
 // ═════════════════════════════════════════════════════════════════════
 export default function ResultDialog({ btData, symbol, symbolName, period, slMult, tpMult, onClose, onTradeClick, onSynced }: Readonly<Props>) {
   const m = btData.metrics;
-  const pos = btData.open_position;
+  const openTrade = btData.trades.find((t: any) => t.reason === "OPEN");
+  const pos = btData.open_position ?? (openTrade ? {
+    direction: openTrade.direction || "CALL",
+    entry_price: openTrade.entry_price,
+    sl: openTrade.sl ?? 0,
+    tp: openTrade.tp ?? 0,
+    entry_time: openTrade.entry_time,
+    signal_type: openTrade.signal_type,
+  } : null);
   const g = grade(m.win_rate, m.profit_factor, m.max_drawdown_pct);
 
   // Live price

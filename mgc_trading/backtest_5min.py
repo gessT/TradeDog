@@ -99,6 +99,8 @@ class Backtester5Min:
         skip_flat: bool = False,
         skip_counter_trend: bool = False,
         daily_loss_limit: float = 0.0,
+        skip_hours: set[int] | None = None,
+        max_loss_per_trade: float = 0.0,
     ) -> BacktestResult5Min:
         """Execute 5min backtest.
 
@@ -130,6 +132,7 @@ class Backtester5Min:
                 df_ind.iloc[:split_idx], signals.iloc[:split_idx], full_params,
                 skip_flat=_skip_flat, skip_counter_trend=_skip_counter,
                 daily_loss_limit=daily_loss_limit,
+                skip_hours=skip_hours, max_loss_per_trade=max_loss_per_trade,
             )
             # Out-of-sample run — chain from IS ending equity
             saved_capital = self.initial_capital
@@ -138,13 +141,14 @@ class Backtester5Min:
                 df_ind.iloc[split_idx:], signals.iloc[split_idx:], full_params,
                 skip_flat=_skip_flat, skip_counter_trend=_skip_counter,
                 daily_loss_limit=daily_loss_limit,
+                skip_hours=skip_hours, max_loss_per_trade=max_loss_per_trade,
             )
             self.initial_capital = saved_capital
             # Merge curves
             all_trades = is_trades + oos_trades
             all_curve = is_curve + oos_curve
         else:
-            all_trades, all_curve, _ = self._simulate(df_ind, signals, full_params, skip_flat=_skip_flat, skip_counter_trend=_skip_counter, daily_loss_limit=daily_loss_limit)
+            all_trades, all_curve, _ = self._simulate(df_ind, signals, full_params, skip_flat=_skip_flat, skip_counter_trend=_skip_counter, daily_loss_limit=daily_loss_limit, skip_hours=skip_hours, max_loss_per_trade=max_loss_per_trade)
             is_trades = all_trades
             oos_trades = []
 
@@ -169,6 +173,8 @@ class Backtester5Min:
         skip_flat: bool = False,
         skip_counter_trend: bool = False,
         daily_loss_limit: float = 0.0,
+        skip_hours: set[int] | None = None,
+        max_loss_per_trade: float = 0.0,
     ) -> BacktestResult5Min:
         """Run backtest with pre-computed indicators and signals (fast path for optimizer)."""
         if oos_split > 0:
@@ -177,6 +183,7 @@ class Backtester5Min:
                 df_ind.iloc[:split_idx], signals.iloc[:split_idx], full_params,
                 skip_flat=skip_flat, skip_counter_trend=skip_counter_trend,
                 daily_loss_limit=daily_loss_limit,
+                skip_hours=skip_hours, max_loss_per_trade=max_loss_per_trade,
             )
             saved_capital = self.initial_capital
             self.initial_capital = is_equity
@@ -184,6 +191,7 @@ class Backtester5Min:
                 df_ind.iloc[split_idx:], signals.iloc[split_idx:], full_params,
                 skip_flat=skip_flat, skip_counter_trend=skip_counter_trend,
                 daily_loss_limit=daily_loss_limit,
+                skip_hours=skip_hours, max_loss_per_trade=max_loss_per_trade,
             )
             self.initial_capital = saved_capital
             all_trades = is_trades + oos_trades
@@ -193,6 +201,7 @@ class Backtester5Min:
                 df_ind, signals, full_params,
                 skip_flat=skip_flat, skip_counter_trend=skip_counter_trend,
                 daily_loss_limit=daily_loss_limit,
+                skip_hours=skip_hours, max_loss_per_trade=max_loss_per_trade,
             )
             oos_trades = []
 
@@ -212,11 +221,16 @@ class Backtester5Min:
         skip_flat: bool = False,
         skip_counter_trend: bool = False,
         daily_loss_limit: float = 0.0,
+        skip_hours: set[int] | None = None,
+        max_loss_per_trade: float = 0.0,
     ) -> tuple[list[Trade5Min], list[float], float]:
         """Bar-by-bar simulation loop. Supports CALL (+1) and PUT (-1) signals.
 
         daily_loss_limit: if > 0, stop opening new trades for the day once
         cumulative realized P&L for that day drops to -daily_loss_limit.
+        skip_hours: set of UTC hours to skip entries (e.g. {4, 16}).
+        max_loss_per_trade: if > 0, force-close trade when unrealized loss
+        exceeds this dollar amount (caps outlier losses).
         """
         equity = self.initial_capital
         position: dict | None = None
@@ -288,7 +302,7 @@ class Backtester5Min:
                 if adverse < worst_unrealized:
                     worst_unrealized = adverse
 
-                if direction == 1:
+                if position is not None and direction == 1:
                     # ── CALL exit logic (long) ──
                     # Breakeven stop
                     if params.get("use_breakeven") and not position.get("be_triggered"):
@@ -520,6 +534,11 @@ class Backtester5Min:
                     equity_curve.append(equity)
                     continue
 
+                # Skip bad hours gate
+                if skip_hours and hasattr(bar.name, "hour") and bar.name.hour in skip_hours:
+                    equity_curve.append(equity)
+                    continue
+
                 # Daily loss limit gate
                 if daily_loss_limit > 0:
                     day_pnl = daily_pnl_running.get(bar_date, 0.0)
@@ -540,6 +559,16 @@ class Backtester5Min:
                 else:
                     sl_price = entry_price + params["atr_sl_mult"] * atr_val
                     tp_price = entry_price - params["atr_tp_mult"] * atr_val
+
+                # Cap SL distance so max dollar risk per trade is bounded
+                if max_loss_per_trade > 0:
+                    max_sl_dist = max_loss_per_trade / CONTRACT_SIZE  # $ → price distance
+                    sl_dist = abs(entry_price - sl_price)
+                    if sl_dist > max_sl_dist:
+                        if direction == 1:
+                            sl_price = entry_price - max_sl_dist
+                        else:
+                            sl_price = entry_price + max_sl_dist
 
                 risk_per_contract = abs(entry_price - sl_price) * CONTRACT_SIZE
                 if risk_per_contract <= 0:

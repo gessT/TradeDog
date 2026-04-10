@@ -1236,7 +1236,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const [exitConditions, setExitConditions] = useState<Record<string, boolean>>(
     Object.fromEntries(EXIT_CONDITION_DEFS.map((d) => [d.key, d.default]))
   );
-
+  // Loss reduction filters
+  const [skipHours, setSkipHours] = useState<number[]>([]);
+  const [maxLossPerTrade, setMaxLossPerTrade] = useState(0);
   // ── Condition presets ──────────────────
   const [presets, setPresets] = useState<ConditionPreset[]>([]);
   const [presetName, setPresetName] = useState("");
@@ -1321,7 +1323,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       const disabled = CONDITION_DEFS
         .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
         .map((d) => d.key);
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade);
       setBtData(res);
       onTradesUpdate?.(res.trades);
       // Show result dialog with SYNC booking
@@ -1381,7 +1383,15 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
 
   // ── Manual sync: enter at market price with backtest SL/TP ──
   const handleSync = useCallback(async () => {
-    const pos = btData?.open_position;
+    const openTrade = btData?.trades.find((t) => t.reason === "OPEN");
+    const pos = btData?.open_position ?? (openTrade ? {
+      direction: openTrade.direction || "CALL",
+      entry_price: openTrade.entry_price,
+      sl: openTrade.sl ?? 0,
+      tp: openTrade.tp ?? 0,
+      entry_time: openTrade.entry_time,
+      signal_type: openTrade.signal_type,
+    } : null);
     if (!pos || syncing) return;
     setSyncing(true);
     setSyncStatus("Checking Tiger position…");
@@ -1410,7 +1420,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       setSyncing(false);
       setTimeout(() => setSyncStatus(null), 4000);
     }
-  }, [btData?.open_position, symbol, syncing, onDirectExecute]);
+  }, [btData?.open_position, btData?.trades, symbol, syncing, onDirectExecute]);
 
   // Reset SL/TP hit flag when open position changes
   useEffect(() => { slTpHitRef.current = false; setExitStatus(null); }, [btData?.open_position?.entry_time]);
@@ -1446,7 +1456,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               const disabled = CONDITION_DEFS
                 .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
                 .map((d) => d.key);
-              const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0);
+              const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade);
               if (cancelled) return;
               setBtData(res);
               onTradesUpdate?.(res.trades);
@@ -1502,6 +1512,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         riskFilters.skip_counter_trend ?? true,
         riskFilters.use_ema_exit ?? false,
         exitConditions.use_struct_fade ?? false,
+        exitConditions.use_sma28_cut ?? false,
+        skipHours.length > 0 ? skipHours : undefined,
+        maxLossPerTrade,
       );
       setOptimizationResults(results);
       if (results.length > 0) {
@@ -1698,6 +1711,54 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                         </button>
                       );
                     })}
+                  </div>
+                </div>
+
+                {/* Loss Reduction */}
+                <div className="mt-2 pt-2 border-t border-slate-800/40">
+                  <p className="text-[8px] text-amber-500/70 uppercase tracking-wider">Loss Reduction</p>
+                  <div className="space-y-1.5 mt-1">
+                    {/* Skip Hours */}
+                    <div className="flex items-center gap-1.5 px-2">
+                      <span className="text-[9px] text-slate-400 w-20 shrink-0">Skip Hours</span>
+                      <div className="flex flex-wrap gap-0.5">
+                        {[4, 16].map((h) => {
+                          const active = skipHours.includes(h);
+                          return (
+                            <button
+                              key={h}
+                              onClick={() => setSkipHours((prev) => active ? prev.filter((x) => x !== h) : [...prev, h])}
+                              className={`px-1.5 py-0.5 rounded text-[8px] font-bold transition-all ${
+                                active ? "bg-amber-600/30 text-amber-300 border border-amber-600/40" : "bg-slate-800 text-slate-600 border border-slate-800"
+                              }`}
+                            >{h}:00</button>
+                          );
+                        })}
+                      </div>
+                      <span className="relative ml-auto group/tip">
+                        <svg className="w-3 h-3 text-slate-500 hover:text-amber-300 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 16v0m0-8a2.5 2.5 0 011.5 4.5L12 14"/></svg>
+                        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/tip:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">Skip entries during losing hours (UTC). Analysis shows 04:00 &amp; 16:00 have &lt;40% WR.</span>
+                      </span>
+                    </div>
+                    {/* Max Loss Per Trade */}
+                    <div className="flex items-center gap-1.5 px-2">
+                      <span className="text-[9px] text-slate-400 w-20 shrink-0">Max Loss $</span>
+                      <div className="flex gap-0.5">
+                        {[0, 300, 400, 500].map((v) => (
+                          <button
+                            key={v}
+                            onClick={() => setMaxLossPerTrade(v)}
+                            className={`px-1.5 py-0.5 rounded text-[8px] font-bold transition-all ${
+                              maxLossPerTrade === v ? "bg-amber-600/30 text-amber-300 border border-amber-600/40" : "bg-slate-800 text-slate-600 border border-slate-800"
+                            }`}
+                          >{v === 0 ? "OFF" : `$${v}`}</button>
+                        ))}
+                      </div>
+                      <span className="relative ml-auto group/tip">
+                        <svg className="w-3 h-3 text-slate-500 hover:text-amber-300 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 16v0m0-8a2.5 2.5 0 011.5 4.5L12 14"/></svg>
+                        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/tip:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">Cap maximum loss per trade. Closes position early if unrealized loss exceeds this amount. Prevents $500-700 outlier losses.</span>
+                      </span>
+                    </div>
                   </div>
                 </div>
 
