@@ -2179,6 +2179,7 @@ class Execute5MinRequest(BaseModel):
     bar_time: str = ""            # signal bar timestamp for dedup + parity
     allow_scale_in: bool = False  # permit adding to existing position during retracement
     current_price: float = 0.0    # live price for retracement check
+    limit_price: float = 0.0      # if > 0, place LMT entry at this price instead of MKT
 
 
 class Execute5MinResponse(BaseModel):
@@ -2273,6 +2274,7 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
                 side=side,
                 stop_loss_price=sl_price,
                 take_profit_price=tp_price,
+                limit_price=req.limit_price if req.limit_price > 0 else None,
             )
         except Exception as exc:
             logger.exception("Bracket order placement failed")

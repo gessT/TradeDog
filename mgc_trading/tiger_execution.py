@@ -276,16 +276,23 @@ class TigerTrader:
         side: str = "BUY",
         stop_loss_price: float | None = None,
         take_profit_price: float | None = None,
+        limit_price: float | None = None,
     ) -> BracketResult:
-        """Place a market entry order, then an OCA order for SL + TP.
+        """Place an entry order (MKT or LMT), then an OCA order for SL + TP.
 
         OCA (One-Cancels-All): when SL fills → TP auto-cancelled, and vice versa.
+        If *limit_price* is provided, the entry is a LMT order at that price;
+        otherwise it falls back to a MKT order.
         """
         result = BracketResult()
         close_side = "SELL" if side == "BUY" else "BUY"
 
-        # 1. Entry
-        entry = self.place_order(symbol=symbol, qty=qty, side=side, order_type="MKT")
+        # 1. Entry (LMT if limit_price given, else MKT)
+        if limit_price is not None and limit_price > 0:
+            entry = self.place_order(symbol=symbol, qty=qty, side=side,
+                                     order_type="LMT", limit_price=limit_price)
+        else:
+            entry = self.place_order(symbol=symbol, qty=qty, side=side, order_type="MKT")
         result.entry = entry
         if not entry or entry.status == "FAILED":
             return result

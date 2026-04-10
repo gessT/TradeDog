@@ -1193,10 +1193,16 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles, onRequestAutoTrade }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>>; onRequestAutoTrade?: () => void }>) {
+export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
   const [showExam, setShowExam] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // ── Auto-Trading state ─────────────────────────────────────────────
+  const [autoTrading, setAutoTrading] = useState(false);
+  const autoTradingRef = useRef(false);
+  autoTradingRef.current = autoTrading;
+  const lastAutoEntryRef = useRef<string>(""); // prevent double-exec on same entry_time
 
   // ── Per-symbol SL/TP defaults (backtest-optimized) ─────────────────
   const SYMBOL_RISK: Record<string, { sl: number; tp: number }> = {
@@ -1405,12 +1411,14 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         return;
       }
       const side = pos.direction === "PUT" ? "SHORT" : "LONG";
-      // Use live price as entry (engine validates SL < entry < TP)
-      const currentPrice = livePriceRef.current ?? pos.entry_price;
-      setSyncStatus(`Executing ${side} @ $${currentPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}…`);
-      const execRes = await execute5Min(pos.direction, 1, 1, currentPrice, pos.sl, pos.tp, symbol, "");
+      // LMT with $1 tolerance: BUY slightly above, SELL slightly below entry
+      const lmtPrice = pos.direction === "PUT"
+        ? pos.entry_price - 1.0   // SELL LMT $1 below → fills at entry or better
+        : pos.entry_price + 1.0;  // BUY LMT $1 above → fills at entry or better
+      setSyncStatus(`Placing ${side} LMT @ $${lmtPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}…`);
+      const execRes = await execute5Min(pos.direction, 1, 1, pos.entry_price, pos.sl, pos.tp, symbol, "", false, 0, lmtPrice);
       if (execRes.execution?.executed) {
-        setSyncStatus(`✅ ${side} synced @ market | SL $${pos.sl} TP $${pos.tp}`);
+        setSyncStatus(`✅ ${side} LMT @ $${lmtPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}`);
         // Save strategy tag for this position
         const tag = activePreset || "Manual";
         savePositionTag(symbol, tag).catch(() => {});
@@ -1425,6 +1433,82 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       setTimeout(() => setSyncStatus(null), 4000);
     }
   }, [btData?.open_position, btData?.trades, symbol, syncing, onDirectExecute, activePreset]);
+
+  // ── Auto-Trading: periodic backtest re-run (every 5min candle close) ──
+  const autoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (!autoTrading) {
+      if (autoIntervalRef.current) { clearInterval(autoIntervalRef.current); autoIntervalRef.current = null; }
+      return;
+    }
+    const freshFrom = calcFrom(period === "1d" ? "1" : period.replace("d", ""));
+    const disabled = CONDITION_DEFS
+      .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
+      .map((d) => d.key);
+    const doRun = async () => {
+      if (!autoTradingRef.current) return;
+      try {
+        const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, fmtDate(new Date()) || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade);
+        if (!autoTradingRef.current) return;
+        setBtData(res);
+        onTradesUpdate?.(res.trades);
+        try { sessionStorage.setItem("bt5min_cache", JSON.stringify({ configKey, data: res })); } catch { /* */ }
+      } catch { /* network error — retry next cycle */ }
+    };
+    doRun(); // immediate run on activation
+    // Align to next 5-min candle close, then repeat every 5 min
+    const fiveMin = 5 * 60 * 1000;
+    const msToNext = fiveMin - (Date.now() % fiveMin) + 3000;
+    const firstTimer = setTimeout(() => {
+      if (!autoTradingRef.current) return;
+      doRun();
+      autoIntervalRef.current = setInterval(() => { if (autoTradingRef.current) doRun(); }, fiveMin);
+    }, msToNext);
+    return () => {
+      clearTimeout(firstTimer);
+      if (autoIntervalRef.current) { clearInterval(autoIntervalRef.current); autoIntervalRef.current = null; }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoTrading, symbol]);
+
+  // ── Auto-Trading: auto-sync when new open position appears ──
+  useEffect(() => {
+    if (!autoTrading) return;
+    const openTrade = btData?.trades.find((t) => t.reason === "OPEN");
+    const pos = btData?.open_position ?? (openTrade ? {
+      direction: openTrade.direction || "CALL",
+      entry_price: openTrade.entry_price,
+      sl: openTrade.sl ?? 0,
+      tp: openTrade.tp ?? 0,
+      entry_time: openTrade.entry_time,
+      signal_type: openTrade.signal_type,
+    } : null);
+    if (!pos || !pos.entry_time) return;
+    // Skip if we already executed for this entry
+    if (lastAutoEntryRef.current === pos.entry_time) return;
+    lastAutoEntryRef.current = pos.entry_time;
+
+    // Auto-sync to Tiger
+    (async () => {
+      try {
+        const tigerPos = await getMgcPosition(symbol);
+        const curQty = Math.abs(tigerPos.current_qty ?? 0);
+        if (curQty > 0) return; // already holding
+        // LMT with $1 tolerance
+        const lmtPrice = pos.direction === "PUT"
+          ? pos.entry_price - 1.0
+          : pos.entry_price + 1.0;
+        const execRes = await execute5Min(pos.direction, 1, 1, pos.entry_price, pos.sl, pos.tp, symbol, "", false, 0, lmtPrice);
+        if (execRes.execution?.executed) {
+          const tag = activePreset || "Auto";
+          savePositionTag(symbol, tag).catch(() => {});
+          onDirectExecute?.();
+          setExitStatus(`✅ Auto: ${pos.direction === "PUT" ? "SHORT" : "LONG"} LMT @ $${lmtPrice.toFixed(2)} | SL $${pos.sl} TP $${pos.tp}`);
+          setTimeout(() => setExitStatus(null), 5000);
+        }
+      } catch { /* retry next cycle */ }
+    })();
+  }, [autoTrading, btData?.open_position?.entry_time, btData?.trades, symbol, activePreset, onDirectExecute]);
 
   // Reset SL/TP hit flag when open position changes
   useEffect(() => { slTpHitRef.current = false; setExitStatus(null); }, [btData?.open_position?.entry_time]);
@@ -2167,20 +2251,26 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                           <div className="flex items-center gap-1.5">
                             <button
                               onClick={(e) => { e.stopPropagation(); handleSync(); }}
-                              disabled={syncing}
+                              disabled={syncing || autoTrading}
                               className={`flex-1 py-1 text-[9px] font-bold rounded-md transition-all ${
                                 syncing
                                   ? "bg-slate-700 text-slate-500 cursor-wait"
-                                  : "bg-orange-600 text-white hover:bg-orange-500 active:scale-95 shadow-sm shadow-orange-900/30"
+                                  : autoTrading
+                                    ? "bg-slate-800 text-slate-600 cursor-not-allowed"
+                                    : "bg-orange-600 text-white hover:bg-orange-500 active:scale-95 shadow-sm shadow-orange-900/30"
                               }`}
                             >
                               {syncing ? "⏳" : "🔄 Sync"}
                             </button>
                             <button
-                              onClick={(e) => { e.stopPropagation(); onRequestAutoTrade?.(); }}
-                              className="flex-1 py-1 text-[9px] font-bold rounded-md bg-gradient-to-r from-emerald-600 to-cyan-600 text-white hover:from-emerald-500 hover:to-cyan-500 active:scale-95 shadow-sm shadow-emerald-900/30 transition-all"
+                              onClick={(e) => { e.stopPropagation(); setAutoTrading((v) => !v); }}
+                              className={`flex-1 py-1 text-[9px] font-bold rounded-md transition-all ${
+                                autoTrading
+                                  ? "bg-gradient-to-r from-emerald-500 to-cyan-500 text-white shadow-md shadow-emerald-900/40 ring-1 ring-emerald-400/30 animate-pulse"
+                                  : "bg-slate-800 border border-slate-700/50 text-slate-400 hover:text-emerald-400 hover:border-emerald-700/50 active:scale-95"
+                              }`}
                             >
-                              ⚡ Auto Trade
+                              {autoTrading ? "● Auto ON" : "⚡ Auto"}
                             </button>
                           </div>
                           {syncStatus && (
