@@ -383,7 +383,8 @@ export default function TigerAccountTab() {
   const [tradeHistory, setTradeHistory] = useState<TradeHistoryResponse | null>(null);
   const [tradeDays, setTradeDays] = useState(7);
   const [tradeLoading, setTradeLoading] = useState(false);
-  const [tradeTab, setTradeTab] = useState<"today" | "open" | "orders">("today");
+  const [tradeTab, setTradeTab] = useState<"today" | "open" | "orders">("open");
+  const [orderStatusFilter, setOrderStatusFilter] = useState<string>("HELD");
 
   const [failCount, setFailCount] = useState(0);
   const [hidePrices, setHidePrices] = useState(false);
@@ -591,6 +592,8 @@ export default function TigerAccountTab() {
           return toLocalDate(t.entry_time) === todayStr || toLocalDate(t.exit_time) === todayStr;
         }) ?? [];
         const openTrades = tradeHistory?.trades?.filter((t) => t.status === "OPEN") ?? [];
+        // Use positions from fetchTigerAccount (same as Positions section) for the Open tab
+        const openPositions = data?.positions ?? [];
         const todayPnl = closedToday.reduce((s, t) => s + (t.pnl ?? 0), 0);
         const wins = closedToday.filter((t) => t.pnl > 0).length;
         const losses = closedToday.filter((t) => t.pnl <= 0).length;
@@ -631,8 +634,8 @@ export default function TigerAccountTab() {
                     tradeTab === "open" ? "bg-slate-700/60 text-white" : "text-slate-500 hover:text-slate-300"
                   }`}
                 >
-                  Open ({openTrades.length})
-                  {openTrades.length > 0 && (
+                  Open ({openPositions.length})
+                  {openPositions.length > 0 && (
                     <span className="ml-1 w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse inline-block" />
                   )}
                 </button>
@@ -717,7 +720,33 @@ export default function TigerAccountTab() {
             {/* Orders tab */}
             {tradeTab === "orders" && (() => {
               const allOrders = [...(data?.open_orders ?? []), ...(data?.filled_orders ?? [])];
-              return allOrders.length > 0 ? (
+              const statuses = Array.from(new Set(["ALL", "HELD", ...allOrders.map(o => o.status)]));
+              const filtered = orderStatusFilter === "ALL" ? allOrders : allOrders.filter(o => o.status === orderStatusFilter);
+              return (
+                <div>
+                  {/* Status filter pills */}
+                  <div className="flex items-center gap-1 px-2 py-1.5 border-b border-slate-800/30 flex-wrap">
+                    {statuses.map((s) => {
+                      const count = s === "ALL" ? allOrders.length : allOrders.filter(o => o.status === s).length;
+                      return (
+                        <button
+                          key={s}
+                          onClick={() => setOrderStatusFilter(s)}
+                          className={`px-2 py-0.5 text-[9px] font-bold rounded transition-all ${
+                            orderStatusFilter === s
+                              ? s === "HELD" ? "bg-blue-900/50 text-blue-400 border border-blue-700/40"
+                                : s.includes("FILL") ? "bg-emerald-900/50 text-emerald-400 border border-emerald-700/40"
+                                : s.includes("CANCEL") ? "bg-slate-700/50 text-slate-400 border border-slate-600/40"
+                                : "bg-slate-700/50 text-slate-300 border border-slate-600/40"
+                              : "text-slate-500 hover:text-slate-300"
+                          }`}
+                        >
+                          {s} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {filtered.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
@@ -734,7 +763,7 @@ export default function TigerAccountTab() {
                       </tr>
                     </thead>
                     <tbody>
-                      {allOrders.map((o) => (
+                      {filtered.map((o) => (
                         <OrderRow
                           key={o.order_id}
                           o={o}
@@ -748,14 +777,16 @@ export default function TigerAccountTab() {
                 </div>
               ) : (
                 <div className="px-3 py-4 text-center text-[11px] text-slate-600">
-                  {loading ? "Loading orders…" : "No orders today"}
+                  {loading ? "Loading orders…" : `No ${orderStatusFilter === "ALL" ? "" : orderStatusFilter + " "}orders`}
+                </div>
+              )}
                 </div>
               );
             })()}
 
-            {/* Open positions tab */}
+            {/* Open positions tab — uses same data as Positions section */}
             {tradeTab === "open" && (
-              openTrades.length > 0 ? (
+              openPositions.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
@@ -771,26 +802,23 @@ export default function TigerAccountTab() {
                       </tr>
                     </thead>
                     <tbody>
-                      {openTrades.map((t, i) => {
-                        const pos = posMap[t.symbol];
-                        const orders = ordersBySymbol[baseSymbol(t.symbol)] ?? ordersBySymbol[t.symbol] ?? {};
-                        const posLive = pos?.latest_price ?? 0;
-                        // Use shared live price for the active symbol
-                        const livePrice = (baseSymbol(t.symbol) === sharedSymbol && sharedPrice && sharedPrice > 0) ? sharedPrice : posLive;
-                        const isLong = t.side === "LONG";
-                        const unrealPnl = livePrice > 0 ? (isLong ? livePrice - t.entry_price : t.entry_price - livePrice) * t.qty * (t.multiplier || 1) : (pos?.unrealized_pnl ?? 0);
+                      {openPositions.map((p, i) => {
+                        const orders = ordersBySymbol[baseSymbol(p.symbol)] ?? ordersBySymbol[p.symbol] ?? {};
+                        const isLong = p.quantity > 0;
+                        const livePrice = (baseSymbol(p.symbol) === sharedSymbol && sharedPrice && sharedPrice > 0) ? sharedPrice : (p.latest_price ?? 0);
+                        const unrealPnl = p.unrealized_pnl ?? 0;
                         const pnlColor = unrealPnl > 0 ? "text-emerald-400" : unrealPnl < 0 ? "text-rose-400" : "text-slate-400";
                         return (
-                          <tr key={`${t.entry_order_id}-${i}`} className={`border-b border-slate-800/30 ${i % 2 === 0 ? "bg-slate-900/30" : ""}`}>
+                          <tr key={`${p.symbol}-${i}`} className={`border-b border-slate-800/30 ${i % 2 === 0 ? "bg-slate-900/30" : ""}`}>
                             <td className="px-2 py-1.5 text-[10px] font-bold text-slate-200">
-                              {t.symbol}
-                              <span className="text-[8px] font-normal text-slate-600 ml-1">{COMMODITY_NAMES[baseSymbol(t.symbol)] ?? ""}</span>
+                              {p.symbol}
+                              <span className="text-[8px] font-normal text-slate-600 ml-1">{COMMODITY_NAMES[baseSymbol(p.symbol)] ?? ""}</span>
                             </td>
                             <td className={`px-2 py-1.5 text-[10px] font-bold ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
                               {isLong ? "▲ LONG" : "▼ SHORT"}
                             </td>
-                            <td className="px-2 py-1.5 text-[10px] text-center text-slate-300">{t.qty}</td>
-                            <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">{hidePrices ? "••••" : `$${t.entry_price.toFixed(2)}`}</td>
+                            <td className="px-2 py-1.5 text-[10px] text-center text-slate-300">{Math.abs(p.quantity)}</td>
+                            <td className="px-2 py-1.5 text-[10px] text-right text-slate-300 tabular-nums">{hidePrices ? "••••" : `$${p.average_cost.toFixed(2)}`}</td>
                             <td className="px-2 py-1.5 text-[10px] text-right text-blue-300 tabular-nums font-bold">{hidePrices ? "••••" : livePrice > 0 ? `$${livePrice.toFixed(2)}` : "—"}</td>
                             <td className="px-2 py-1.5 text-[10px] text-right text-rose-400/80 tabular-nums">{hidePrices ? "••••" : orders.sl ? `$${orders.sl.toFixed(2)}` : "—"}</td>
                             <td className="px-2 py-1.5 text-[10px] text-right text-emerald-400/80 tabular-nums">{hidePrices ? "••••" : orders.tp ? `$${orders.tp.toFixed(2)}` : "—"}</td>
