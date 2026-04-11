@@ -112,14 +112,14 @@ function MetricsGrid({ m }: { m: US1HMetrics }) {
   ];
 
   return (
-    <div className="grid grid-cols-6 gap-1.5">
-      {items.map(({ label, value, color, large }) => (
+    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-1.5">
+      {items.map(({ label, value, color }) => (
         <div
           key={label}
-          className={`bg-slate-800/30 rounded px-2 py-1.5 border border-slate-800/40 ${large ? "col-span-1" : ""}`}
+          className="bg-slate-800/30 rounded px-2 py-1.5 border border-slate-800/40"
         >
-          <div className="text-[7px] text-slate-600 uppercase tracking-wider">{label}</div>
-          <div className={`text-[11px] font-bold tabular-nums ${color}`}>{value}</div>
+          <div className="text-[9px] sm:text-[8px] text-slate-600 uppercase tracking-wider">{label}</div>
+          <div className={`text-xs sm:text-[11px] font-bold tabular-nums ${color}`}>{value}</div>
         </div>
       ))}
     </div>
@@ -152,20 +152,20 @@ function TradeTable({
   }
 
   return (
-    <div className="overflow-y-auto max-h-[250px]">
-      <table className="w-full text-left text-[9px]">
+    <div className="overflow-auto max-h-[250px]">
+      <table className="w-full text-left text-[10px] sm:text-[9px] min-w-[600px]">
         <thead className="sticky top-0 bg-slate-900/95">
-          <tr className="text-[8px] text-slate-600 uppercase border-b border-slate-800/40">
-            <th className="px-2 py-1">#</th>
-            <th className="px-2 py-1">Entry</th>
-            <th className="px-2 py-1">Exit</th>
-            <th className="px-2 py-1 text-right">Entry$</th>
-            <th className="px-2 py-1 text-right">Exit$</th>
-            <th className="px-2 py-1 text-right">P&L</th>
-            <th className="px-2 py-1 text-right">P&L%</th>
-            <th className="px-2 py-1 text-center">Dir</th>
-            <th className="px-2 py-1 text-center">Exit</th>
-            <th className="px-2 py-1 text-right">MAE</th>
+          <tr className="text-[9px] sm:text-[8px] text-slate-600 uppercase border-b border-slate-800/40">
+            <th className="px-2 py-1.5">#</th>
+            <th className="px-2 py-1.5">Entry</th>
+            <th className="px-2 py-1.5">Exit</th>
+            <th className="px-2 py-1.5 text-right">Entry$</th>
+            <th className="px-2 py-1.5 text-right">Exit$</th>
+            <th className="px-2 py-1.5 text-right">P&L</th>
+            <th className="px-2 py-1.5 text-right">P&L%</th>
+            <th className="px-2 py-1.5 text-center">Dir</th>
+            <th className="px-2 py-1.5 text-center">Exit</th>
+            <th className="px-2 py-1.5 text-right">MAE</th>
           </tr>
         </thead>
         <tbody>
@@ -259,7 +259,7 @@ function AnalyticsTab({ trades, metrics }: { trades: US1HTrade[]; metrics: US1HM
       {/* Exit reason breakdown */}
       <div>
         <div className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">By Exit Reason</div>
-        <div className="grid grid-cols-5 gap-1.5">
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
           {Object.entries(byReason)
             .sort((a, b) => b[1].count - a[1].count)
             .map(([reason, data]) => (
@@ -309,12 +309,12 @@ export default function USBottomPanel({
   return (
     <div className="flex flex-col h-full overflow-hidden border-t border-slate-800/60 bg-slate-950/80">
       {/* ── Tab bar ──────────────────────────────────── */}
-      <div className="shrink-0 flex items-center border-b border-slate-800/40 bg-slate-900/60">
+      <div className="shrink-0 flex items-center border-b border-slate-800/40 bg-slate-900/60 overflow-x-auto">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-3 py-1.5 text-[9px] font-bold tracking-wide transition border-b-2 ${
+            className={`px-2 sm:px-3 py-1.5 text-[10px] sm:text-[10px] font-bold tracking-wide transition border-b-2 whitespace-nowrap ${
               tab === t
                 ? "text-blue-400 border-blue-400 bg-blue-500/5"
                 : "text-slate-600 border-transparent hover:text-slate-400 hover:bg-slate-800/30"
@@ -378,10 +378,10 @@ export default function USBottomPanel({
                 {/* Metrics */}
                 <MetricsGrid m={btData.metrics} />
 
-                {/* Equity Curve + Trade List side by side */}
-                <div className="flex gap-3">
+                {/* Equity Curve + Trade List — stack on mobile, side-by-side on desktop */}
+                <div className="flex flex-col sm:flex-row gap-3">
                   {/* Equity Curve */}
-                  <div className="w-2/5 rounded-lg border border-slate-800/40 overflow-hidden">
+                  <div className="w-full sm:w-2/5 rounded-lg border border-slate-800/40 overflow-hidden">
                     <div className="px-2 py-1 border-b border-slate-800/40 bg-slate-900/60">
                       <span className="text-[8px] text-slate-600 uppercase tracking-wider">Equity Curve</span>
                     </div>

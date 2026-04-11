@@ -25,6 +25,7 @@ import USBottomPanel from "./USBottomPanel";
 // ═══════════════════════════════════════════════════════════════════════
 
 type Mode = "Live" | "Backtest" | "Replay";
+type MobilePanel = "chart" | "watchlist" | "orders";
 
 export default function USDashboard() {
   // ── Core state ──────────────────────────────────────────
@@ -34,6 +35,9 @@ export default function USDashboard() {
   const [timeframe, setTimeframe] = useState("1h");
   const [mode, setMode] = useState<Mode>("Backtest");
   const [tradingActive, setTradingActive] = useState(false);
+
+  // ── Mobile panel toggle ─────────────────────────────────
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chart");
 
   // ── Price data (from latest backtest candle or live) ──
   const [price, setPrice] = useState(0);
@@ -52,9 +56,6 @@ export default function USDashboard() {
 
   // ── Focus time (click trade → scroll chart) ────────────
   const [focusTime, setFocusTime] = useState<number | null>(null);
-
-  // ── Bottom panel height ────────────────────────────────
-  const bottomH = 280;
 
   // ── Run backtest ───────────────────────────────────────
   const runBacktest = useCallback(async () => {
@@ -117,18 +118,47 @@ export default function USDashboard() {
         volume={btData?.candles?.length ? btData.candles[btData.candles.length - 1].volume : 0}
       />
 
-      {/* ═══ MAIN BODY (3-column) ═══ */}
+      {/* ═══ MOBILE PANEL TABS (visible < lg) ═══ */}
+      <div className="lg:hidden shrink-0 flex border-b border-slate-800/40 bg-slate-900/70">
+        {([
+          { key: "chart" as const, label: "Chart", icon: "📊" },
+          { key: "watchlist" as const, label: "Watchlist", icon: "📋" },
+          { key: "orders" as const, label: "Orders", icon: "💹" },
+        ]).map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setMobilePanel(tab.key)}
+            className={`flex-1 py-2 text-xs font-bold tracking-wide transition border-b-2 ${
+              mobilePanel === tab.key
+                ? "text-blue-400 border-blue-400 bg-blue-500/5"
+                : "text-slate-600 border-transparent hover:text-slate-400"
+            }`}
+          >
+            <span className="mr-1">{tab.icon}</span>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ═══ MAIN BODY ═══ */}
       <div className="flex flex-1 overflow-hidden">
-        {/* ── LEFT SIDEBAR (Watchlist) ─────────────── */}
-        <aside className="hidden lg:flex w-56 shrink-0 flex-col overflow-hidden border-r border-slate-800/60">
+        {/* ── LEFT SIDEBAR (Watchlist) — desktop or mobile-selected ── */}
+        <aside className={`${
+          mobilePanel === "watchlist" ? "flex w-full" : "hidden"
+        } lg:flex lg:w-56 shrink-0 flex-col overflow-hidden border-r border-slate-800/60`}>
           <USWatchlist
             activeSymbol={selectedSymbol}
-            onSelectSymbol={handleSymbolChange}
+            onSelectSymbol={(sym, name) => {
+              handleSymbolChange(sym, name);
+              setMobilePanel("chart");
+            }}
           />
         </aside>
 
-        {/* ── CENTER (Chart + Bottom Panel) ────────── */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        {/* ── CENTER (Chart + Bottom Panel) — desktop or mobile-selected ── */}
+        <div className={`${
+          mobilePanel === "chart" ? "flex" : "hidden"
+        } lg:flex flex-1 flex-col overflow-hidden`}>
           {/* Chart */}
           <div className="flex-1 min-h-0">
             <USMainChart
@@ -142,7 +172,7 @@ export default function USDashboard() {
           </div>
 
           {/* Bottom Panel */}
-          <div style={{ height: bottomH }} className="shrink-0">
+          <div className="shrink-0 h-[240px] sm:h-[280px]">
             <USBottomPanel
               btData={btData}
               onTradeClick={handleTradeClick}
@@ -153,8 +183,10 @@ export default function USDashboard() {
           </div>
         </div>
 
-        {/* ── RIGHT PANEL (Execution + Strategy) ──── */}
-        <aside className="hidden lg:flex w-64 shrink-0 flex-col overflow-hidden border-l border-slate-800/60">
+        {/* ── RIGHT PANEL (Execution + Strategy) — desktop or mobile-selected ── */}
+        <aside className={`${
+          mobilePanel === "orders" ? "flex w-full" : "hidden"
+        } lg:flex lg:w-64 shrink-0 flex-col overflow-hidden border-l border-slate-800/60`}>
           <USOrderPanel
             symbol={selectedSymbol}
             price={price}

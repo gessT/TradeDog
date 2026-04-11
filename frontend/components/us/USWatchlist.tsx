@@ -59,12 +59,12 @@ function Section({
     <div className="border-b border-slate-800/40">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-800/30 transition"
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-slate-800/30 transition"
       >
-        <span className="text-[8px] text-slate-600 w-3">{open ? "▼" : "▶"}</span>
-        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{title}</span>
+        <span className="text-[10px] text-slate-600 w-3">{open ? "▼" : "▶"}</span>
+        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{title}</span>
         {badge && (
-          <span className="ml-auto text-[8px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30">
+          <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30">
             {badge}
           </span>
         )}
@@ -126,7 +126,7 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`text-[8px] px-1.5 py-0.5 rounded border font-medium transition ${
+              className={`text-[10px] px-2 py-1 rounded border font-medium transition ${
                 filter === f
                   ? f === "BUY"
                     ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-400"
@@ -144,7 +144,7 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
         </div>
 
         {/* Stock rows */}
-        <div className="max-h-[320px] overflow-y-auto">
+        <div className="max-h-[400px] lg:max-h-[320px] overflow-y-auto">
           {filtered.map((item) => {
             const up = item.change_pct >= 0;
             const active = item.symbol === activeSymbol;
@@ -152,7 +152,7 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
               <button
                 key={item.symbol}
                 onClick={() => onSelectSymbol(item.symbol, item.name)}
-                className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition group ${
+                className={`w-full flex items-center gap-2 px-3 py-2 text-left transition group ${
                   active
                     ? "bg-blue-500/10 border-l-2 border-blue-400"
                     : "hover:bg-slate-800/40 border-l-2 border-transparent"
@@ -160,27 +160,27 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
               >
                 {/* Symbol */}
                 <div className="flex flex-col min-w-0 flex-1">
-                  <span className={`text-[10px] font-bold ${active ? "text-blue-300" : "text-slate-300"}`}>
+                  <span className={`text-xs font-bold ${active ? "text-blue-300" : "text-slate-300"}`}>
                     {item.symbol}
                   </span>
-                  <span className="text-[8px] text-slate-600 truncate">{item.name}</span>
+                  <span className="text-[10px] text-slate-600 truncate">{item.name}</span>
                 </div>
 
                 {/* Price & Change */}
                 <div className="flex flex-col items-end">
-                  <span className={`text-[10px] font-bold tabular-nums ${up ? "text-emerald-400" : "text-rose-400"}`}>
+                  <span className={`text-xs font-bold tabular-nums ${up ? "text-emerald-400" : "text-rose-400"}`}>
                     {item.price > 0 ? `$${item.price.toFixed(2)}` : "—"}
                   </span>
-                  <span className={`text-[8px] tabular-nums ${up ? "text-emerald-400/70" : "text-rose-400/70"}`}>
+                  <span className={`text-[10px] tabular-nums ${up ? "text-emerald-400/70" : "text-rose-400/70"}`}>
                     {item.change_pct !== 0 ? `${up ? "+" : ""}${item.change_pct.toFixed(2)}%` : ""}
                   </span>
                 </div>
 
                 {/* Signal Badge */}
-                <div className="w-8 text-center">
+                <div className="w-10 text-center">
                   {item.signal !== "—" && (
                     <span
-                      className={`text-[7px] font-bold px-1 py-0.5 rounded ${
+                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
                         item.signal === "BUY"
                           ? "bg-emerald-500/20 text-emerald-400"
                           : item.signal === "SELL"
@@ -233,7 +233,7 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
               <span className="text-[8px] text-slate-600 tabular-nums shrink-0 mt-0.5">{n.time}</span>
               <div className="flex-1 min-w-0">
                 <span
-                  className={`text-[7px] font-bold uppercase px-1 py-0.5 rounded mr-1 ${
+                  className={`text-[9px] font-bold uppercase px-1 py-0.5 rounded mr-1 ${
                     n.tag === "EARNINGS"
                       ? "bg-purple-500/20 text-purple-400"
                       : n.tag === "FED"
@@ -245,7 +245,7 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
                 >
                   {n.tag}
                 </span>
-                <span className="text-[9px] text-slate-400">{n.title}</span>
+                <span className="text-[10px] text-slate-400">{n.title}</span>
               </div>
               {n.impact === "high" && (
                 <span className="text-[7px] text-rose-400 font-bold shrink-0">⚠</span>

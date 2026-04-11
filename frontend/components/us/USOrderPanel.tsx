@@ -45,10 +45,10 @@ function StrategyInspector({ metrics }: { metrics: US1HMetrics | null }) {
       {/* Strategy header */}
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-[10px] font-bold text-blue-300">Breakout V2</div>
-          <div className="text-[8px] text-slate-600">1H Multi-Condition</div>
+          <div className="text-xs font-bold text-blue-300">Breakout V2</div>
+          <div className="text-[10px] text-slate-600">1H Multi-Condition</div>
         </div>
-        <div className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+        <div className={`text-xs font-bold px-2 py-0.5 rounded border ${
           bias === "Bullish" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
           : bias === "Bearish" ? "border-rose-500/40 bg-rose-500/10 text-rose-400"
           : "border-amber-500/40 bg-amber-500/10 text-amber-400"
@@ -60,8 +60,8 @@ function StrategyInspector({ metrics }: { metrics: US1HMetrics | null }) {
       {/* Confidence bar */}
       <div>
         <div className="flex items-center justify-between mb-0.5">
-          <span className="text-[8px] text-slate-600 uppercase tracking-wider">Confidence</span>
-          <span className={`text-[10px] font-bold tabular-nums ${confColor}`}>{confidence}%</span>
+          <span className="text-[10px] text-slate-600 uppercase tracking-wider">Confidence</span>
+          <span className={`text-xs font-bold tabular-nums ${confColor}`}>{confidence}%</span>
         </div>
         <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
           <div
@@ -84,14 +84,14 @@ function StrategyInspector({ metrics }: { metrics: US1HMetrics | null }) {
           { label: "Expectancy", value: `$${expectancy.toFixed(0)}`, color: expectancy > 0 ? "text-emerald-400" : "text-rose-400" },
         ].map(({ label, value, color }) => (
           <div key={label} className="bg-slate-800/30 rounded px-2 py-1.5 border border-slate-800/40">
-            <div className="text-[7px] text-slate-600 uppercase tracking-wider">{label}</div>
-            <div className={`text-[11px] font-bold tabular-nums ${color}`}>{value}</div>
+            <div className="text-[9px] text-slate-600 uppercase tracking-wider">{label}</div>
+            <div className={`text-xs font-bold tabular-nums ${color}`}>{value}</div>
           </div>
         ))}
       </div>
 
       {/* Win/Loss breakdown */}
-      <div className="flex items-center gap-2 text-[9px]">
+      <div className="flex items-center gap-2 text-[11px]">
         <span className="text-emerald-400 font-medium">{metrics.winners}W</span>
         <span className="text-slate-600">/</span>
         <span className="text-rose-400 font-medium">{metrics.losers}L</span>
@@ -147,9 +147,9 @@ export default function USOrderPanel({
       {/* ── Order Panel ──────────────────────────────── */}
       <div className="border-b border-slate-800/40 p-3">
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Order Entry</span>
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Order Entry</span>
           {!tradingActive && mode === "Live" && (
-            <span className="text-[8px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-600 border border-slate-700">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-600 border border-slate-700">
               Trading disabled
             </span>
           )}
@@ -159,7 +159,7 @@ export default function USOrderPanel({
         <div className="flex rounded-lg border border-slate-700/60 overflow-hidden mb-2">
           <button
             onClick={() => { setSide("BUY"); setDefaults(); }}
-            className={`flex-1 py-1.5 text-[10px] font-bold transition ${
+            className={`flex-1 py-2 text-xs font-bold transition ${
               side === "BUY"
                 ? "bg-emerald-500/20 text-emerald-400 border-r border-emerald-500/30"
                 : "text-slate-500 hover:bg-slate-800 border-r border-slate-700"
@@ -169,7 +169,7 @@ export default function USOrderPanel({
           </button>
           <button
             onClick={() => { setSide("SELL"); setDefaults(); }}
-            className={`flex-1 py-1.5 text-[10px] font-bold transition ${
+            className={`flex-1 py-2 text-xs font-bold transition ${
               side === "SELL"
                 ? "bg-rose-500/20 text-rose-400"
                 : "text-slate-500 hover:bg-slate-800"
@@ -180,19 +180,19 @@ export default function USOrderPanel({
         </div>
 
         {/* Order fields */}
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <label className="text-[8px] text-slate-600 w-12 uppercase tracking-wider">Qty</label>
+            <label className="text-[10px] text-slate-600 w-12 uppercase tracking-wider">Qty</label>
             <input
               type="number"
               value={qty}
               onChange={(e) => setQty(Math.max(1, Number(e.target.value)))}
               min={1}
-              className="flex-1 px-2 py-1 text-[10px] bg-slate-800/60 border border-slate-700 rounded text-slate-200 tabular-nums outline-none focus:border-blue-500/60"
+              className="flex-1 px-2 py-1.5 text-xs bg-slate-800/60 border border-slate-700 rounded text-slate-200 tabular-nums outline-none focus:border-blue-500/60"
             />
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-[8px] text-slate-600 w-12 uppercase tracking-wider">Risk %</label>
+            <label className="text-[10px] text-slate-600 w-12 uppercase tracking-wider">Risk %</label>
             <input
               type="number"
               value={riskPct}
@@ -200,29 +200,29 @@ export default function USOrderPanel({
               step={0.5}
               min={0.5}
               max={10}
-              className="flex-1 px-2 py-1 text-[10px] bg-slate-800/60 border border-slate-700 rounded text-slate-200 tabular-nums outline-none focus:border-blue-500/60"
+              className="flex-1 px-2 py-1.5 text-xs bg-slate-800/60 border border-slate-700 rounded text-slate-200 tabular-nums outline-none focus:border-blue-500/60"
             />
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-[8px] text-slate-600 w-12 uppercase tracking-wider">S/L</label>
+            <label className="text-[10px] text-slate-600 w-12 uppercase tracking-wider">S/L</label>
             <input
               type="number"
               value={slPrice || ""}
               onChange={(e) => setSlPrice(Number(e.target.value))}
               step={0.01}
               placeholder={`e.g. ${(price * 0.97).toFixed(2)}`}
-              className="flex-1 px-2 py-1 text-[10px] bg-slate-800/60 border border-slate-700 rounded text-rose-400/80 tabular-nums outline-none focus:border-rose-500/60"
+              className="flex-1 px-2 py-1.5 text-xs bg-slate-800/60 border border-slate-700 rounded text-rose-400/80 tabular-nums outline-none focus:border-rose-500/60"
             />
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-[8px] text-slate-600 w-12 uppercase tracking-wider">T/P</label>
+            <label className="text-[10px] text-slate-600 w-12 uppercase tracking-wider">T/P</label>
             <input
               type="number"
               value={tpPrice || ""}
               onChange={(e) => setTpPrice(Number(e.target.value))}
               step={0.01}
               placeholder={`e.g. ${(price * 1.04).toFixed(2)}`}
-              className="flex-1 px-2 py-1 text-[10px] bg-slate-800/60 border border-slate-700 rounded text-emerald-400/80 tabular-nums outline-none focus:border-emerald-500/60"
+              className="flex-1 px-2 py-1.5 text-xs bg-slate-800/60 border border-slate-700 rounded text-emerald-400/80 tabular-nums outline-none focus:border-emerald-500/60"
             />
           </div>
         </div>
@@ -230,22 +230,22 @@ export default function USOrderPanel({
         {/* Risk Preview */}
         {slPrice > 0 && tpPrice > 0 && (
           <div className="mt-2 p-2 rounded-lg border border-slate-800/40 bg-slate-900/40">
-            <div className="flex items-center justify-between text-[8px] uppercase tracking-wider text-slate-600 mb-1">
+            <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-600 mb-1">
               <span>Risk Preview</span>
               <span className={rr >= 1.5 ? "text-emerald-400" : rr >= 1 ? "text-amber-400" : "text-rose-400"}>
                 {rr.toFixed(1)}R
               </span>
             </div>
             <div className="grid grid-cols-2 gap-1.5">
-              <div className="bg-rose-500/5 rounded px-2 py-1 border border-rose-500/15">
-                <div className="text-[7px] text-rose-400/60">MAX LOSS</div>
-                <div className="text-[10px] font-bold text-rose-400 tabular-nums">
+              <div className="bg-rose-500/5 rounded px-2 py-1.5 border border-rose-500/15">
+                <div className="text-[9px] text-rose-400/60">MAX LOSS</div>
+                <div className="text-xs font-bold text-rose-400 tabular-nums">
                   -${maxLoss.toFixed(2)}
                 </div>
               </div>
-              <div className="bg-emerald-500/5 rounded px-2 py-1 border border-emerald-500/15">
-                <div className="text-[7px] text-emerald-400/60">TARGET</div>
-                <div className="text-[10px] font-bold text-emerald-400 tabular-nums">
+              <div className="bg-emerald-500/5 rounded px-2 py-1.5 border border-emerald-500/15">
+                <div className="text-[9px] text-emerald-400/60">TARGET</div>
+                <div className="text-xs font-bold text-emerald-400 tabular-nums">
                   +${potentialProfit.toFixed(2)}
                 </div>
               </div>
@@ -263,7 +263,7 @@ export default function USOrderPanel({
         {/* Place Order Button */}
         <button
           disabled={!tradingActive || mode !== "Live"}
-          className={`w-full mt-2 py-2 rounded-lg text-[11px] font-bold tracking-wide transition ${
+          className={`w-full mt-2.5 py-2.5 rounded-lg text-xs font-bold tracking-wide transition ${
             side === "BUY"
               ? "bg-emerald-500/80 hover:bg-emerald-500 text-white disabled:bg-emerald-500/20 disabled:text-emerald-500/40"
               : "bg-rose-500/80 hover:bg-rose-500 text-white disabled:bg-rose-500/20 disabled:text-rose-500/40"
@@ -275,7 +275,7 @@ export default function USOrderPanel({
 
       {/* ── Strategy Inspector ───────────────────────── */}
       <div className="p-3 border-b border-slate-800/40">
-        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
           Strategy Intelligence
         </div>
         <StrategyInspector metrics={metrics} />

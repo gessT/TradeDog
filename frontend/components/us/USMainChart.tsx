@@ -290,27 +290,27 @@ export default function USMainChart({
     <div className="flex flex-col h-full overflow-hidden">
       {/* Mode bar */}
       <div
-        className={`shrink-0 flex items-center gap-2 px-3 py-1 border-b ${modeColor}`}
+        className={`shrink-0 flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-1 border-b ${modeColor}`}
       >
-        <span className="text-[9px] font-bold uppercase tracking-wider">
+        <span className="text-[11px] sm:text-[10px] font-bold uppercase tracking-wider">
           {mode === "Live" && "● Live Trading"}
           {mode === "Backtest" && "◉ Backtest Mode"}
           {mode === "Replay" && "▷ Replay Mode"}
         </span>
 
         {mode === "Replay" && candles.length > 0 && (
-          <div className="flex items-center gap-2 ml-auto">
+          <div className="flex items-center gap-1.5 sm:gap-2 ml-auto flex-wrap">
             <button
               onClick={() =>
                 setReplayIdx((p) => Math.max(0, p - 10))
               }
-              className="text-[9px] px-1.5 py-0.5 rounded border border-purple-500/40 text-purple-400 hover:bg-purple-500/20"
+              className="text-xs sm:text-[9px] px-1.5 py-0.5 rounded border border-purple-500/40 text-purple-400 hover:bg-purple-500/20"
             >
               ⏪
             </button>
             <button
               onClick={() => setReplayPlaying(!replayPlaying)}
-              className="text-[9px] px-2 py-0.5 rounded border border-purple-500/40 text-purple-400 hover:bg-purple-500/20 font-bold"
+              className="text-xs sm:text-[9px] px-2 py-0.5 rounded border border-purple-500/40 text-purple-400 hover:bg-purple-500/20 font-bold"
             >
               {replayPlaying ? "⏸" : "▶"}
             </button>
@@ -318,11 +318,11 @@ export default function USMainChart({
               onClick={() =>
                 setReplayIdx((p) => Math.min(candles.length - 1, p + 10))
               }
-              className="text-[9px] px-1.5 py-0.5 rounded border border-purple-500/40 text-purple-400 hover:bg-purple-500/20"
+              className="text-xs sm:text-[9px] px-1.5 py-0.5 rounded border border-purple-500/40 text-purple-400 hover:bg-purple-500/20"
             >
               ⏩
             </button>
-            <span className="text-[8px] text-purple-400/60 tabular-nums">
+            <span className="text-[10px] sm:text-[8px] text-purple-400/60 tabular-nums">
               {replayIdx + 1}/{candles.length}
             </span>
             <input
@@ -331,13 +331,13 @@ export default function USMainChart({
               max={candles.length - 1}
               value={replayIdx}
               onChange={(e) => setReplayIdx(Number(e.target.value))}
-              className="w-24 h-1 accent-purple-500"
+              className="w-16 sm:w-24 h-1 accent-purple-500"
             />
           </div>
         )}
 
         {mode === "Live" && (
-          <span className="ml-auto text-[8px] text-emerald-400/60 animate-pulse">
+          <span className="ml-auto text-[10px] sm:text-[9px] text-emerald-400/60 animate-pulse">
             Streaming…
           </span>
         )}
