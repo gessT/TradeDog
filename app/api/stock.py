@@ -1856,7 +1856,10 @@ async def us_stock_backtest_vpb(
     _disabled: set[str] = set()
     if disabled_conditions:
         _valid = {"ema_trend", "ema_slope", "ema_alignment", "vol_spike", "vol_ramp",
-                  "body_strength", "close_near_high", "bullish_candle", "session"}
+                  "body_strength", "close_near_high", "bullish_candle", "session",
+                  # v3 conditions
+                  "daily_trend", "accum", "breakout", "vol_surge", "rsi",
+                  "h_ema_trend", "candle_quality"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
 
     def _run():
@@ -1894,14 +1897,42 @@ async def us_stock_backtest_vpb(
             result = bt.run(df, params=param_overrides, disabled_conditions=_disabled or None)
             full_params = {**DEFAULT_VPB2_PARAMS, **param_overrides}
             strategy = VPBv2Strategy(full_params)
+        elif version == "v3":
+            from strategies.us_stock.vpb_v3_backtest import VPB3Backtester
+            from strategies.us_stock.vpb_v3_strategy import VPBv3Strategy, DEFAULT_VPB3_PARAMS
+            from strategies.us_stock.config import VPB3_RISK_PER_TRADE
+
+            # Load daily data for multi-TF context
+            df_daily = load_yfinance(symbol=symbol, interval="1d", period="5y")
+            bt = VPB3Backtester(capital=capital, risk_per_trade=VPB3_RISK_PER_TRADE)
+            result = bt.run(
+                symbol=symbol, period=period,
+                params=param_overrides,
+                disabled_conditions=_disabled or None,
+                df_daily=df_daily, df_1h=df,
+            )
+            full_params = {**DEFAULT_VPB3_PARAMS, **param_overrides}
+            strategy = VPBv3Strategy(full_params)
         else:
-            raise ValueError("Only VPB v2 is supported. Use version=v2.")
+            raise ValueError("Supported versions: v2, v3")
 
         # Build candles with indicators
-        df_ind = strategy.compute_indicators(
-            df[["open", "high", "low", "close", "volume"]].copy()
-        )
-        signals = strategy.generate_signals(df_ind, disabled=_disabled or None)
+        if version == "v3":
+            # v3 uses different indicator columns
+            df_ctx = strategy.compute_daily_context(
+                load_yfinance(symbol=symbol, interval="1d", period="5y")[["open", "high", "low", "close", "volume"]].copy()
+            ) if "d_trend_up" not in df.columns else None
+            df_ind = strategy.compute_1h_indicators(
+                df[["open", "high", "low", "close", "volume"]].copy()
+            )
+            if df_ctx is not None:
+                df_ind = strategy.map_daily_to_1h(df_ctx, df_ind)
+            signals = strategy.generate_signals(df_ind, disabled=_disabled or None)
+        else:
+            df_ind = strategy.compute_indicators(
+                df[["open", "high", "low", "close", "volume"]].copy()
+            )
+            signals = strategy.generate_signals(df_ind, disabled=_disabled or None)
 
         # Apply date filter
         display_start: str | None = None
@@ -1922,11 +1953,17 @@ async def us_stock_backtest_vpb(
 
         candles = []
         for ts_val, row in df_ind.iterrows():
-            ema_f = round(float(row.get("ema_fast", 0)), 2) if not _isnan(row.get("ema_fast")) else None
-            if version == "v2":
-                ema_s = round(float(row.get("ema_mid", 0)), 2) if not _isnan(row.get("ema_mid")) else None
+            if version == "v3":
+                ema_f = round(float(row.get("h_ema", 0)), 2) if not _isnan(row.get("h_ema")) else None
+                ema_s = round(float(row.get("d_ema_fast", 0)), 2) if not _isnan(row.get("d_ema_fast")) else None
+                rsi_val = round(float(row.get("h_rsi", 0)), 2) if not _isnan(row.get("h_rsi")) else None
             else:
-                ema_s = None
+                ema_f = round(float(row.get("ema_fast", 0)), 2) if not _isnan(row.get("ema_fast")) else None
+                if version == "v2":
+                    ema_s = round(float(row.get("ema_mid", 0)), 2) if not _isnan(row.get("ema_mid")) else None
+                else:
+                    ema_s = None
+                rsi_val = None
             candles.append(US1HCandle(
                 time=ts_val.isoformat(),
                 open=round(float(row["open"]), 2),
@@ -1936,7 +1973,7 @@ async def us_stock_backtest_vpb(
                 volume=float(row.get("volume", 0)),
                 ema_fast=ema_f,
                 ema_slow=ema_s,
-                rsi=None,
+                rsi=rsi_val if version == "v3" else None,
                 macd_hist=None,
                 st_dir=None,
                 signal=int(row.get("signal", 0)),

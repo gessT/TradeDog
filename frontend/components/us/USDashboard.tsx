@@ -93,11 +93,11 @@ export default function USDashboard() {
 
       let data: US1HBacktestResponse;
 
-      if (stratType === "vpb_v2") {
+      if (stratType === "vpb_v2" || stratType === "vpb_v3") {
         data = await fetchVPBBacktest(
           selectedSymbol,
           activePreset?.period ?? "2y",
-          "v2",
+          stratType === "vpb_v3" ? "v3" : "v2",
           disabledConditions,
           {
             atr_sl_mult: activePreset?.atr_sl_mult,

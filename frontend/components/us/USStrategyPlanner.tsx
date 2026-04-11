@@ -6,11 +6,12 @@ import { useCallback, useEffect, useState } from "react";
 // Strategy Planner — Modern unified view
 // ═══════════════════════════════════════════════════════════════════════
 
-type StrategyType = "breakout_1h" | "vpb_v2";
+type StrategyType = "breakout_1h" | "vpb_v2" | "vpb_v3";
 
 const STRATEGY_TYPES: { key: StrategyType; label: string; desc: string }[] = [
   { key: "breakout_1h", label: "Breakout 1H", desc: "EMA/MACD/RSI breakout" },
   { key: "vpb_v2", label: "VPB v2", desc: "High WR two-step retest" },
+  { key: "vpb_v3", label: "VPB v3 量价", desc: "Multi-TF volume-price" },
 ];
 
 const CONDITIONS_BREAKOUT = [
@@ -37,8 +38,21 @@ const CONDITIONS_VPB = [
   { key: "session", label: "Session Filter", icon: "🕐", desc: "Skip open/close" },
 ] as const;
 
+const CONDITIONS_VPB3 = [
+  { key: "daily_trend", label: "Daily Trend", icon: "📈", desc: "Daily EMA20 > EMA50" },
+  { key: "accum", label: "Accumulation", icon: "🔋", desc: "量缩价稳 low vol + tight range" },
+  { key: "breakout", label: "1H Breakout", icon: "🚀", desc: "Close > N-bar high" },
+  { key: "vol_surge", label: "Vol Surge", icon: "📶", desc: "量增 volume > avg × mult" },
+  { key: "rsi", label: "RSI Filter", icon: "🎯", desc: "RSI in 40-72 zone" },
+  { key: "h_ema_trend", label: "1H EMA", icon: "📊", desc: "Close > EMA20 on 1H" },
+  { key: "candle_quality", label: "Candle Quality", icon: "🟢", desc: "Bullish + strong body" },
+  { key: "session", label: "Session Filter", icon: "🕐", desc: "Skip first/last 30min" },
+] as const;
+
 function getConditionsForType(t: StrategyType) {
-  return t === "breakout_1h" ? CONDITIONS_BREAKOUT : CONDITIONS_VPB;
+  if (t === "breakout_1h") return CONDITIONS_BREAKOUT;
+  if (t === "vpb_v3") return CONDITIONS_VPB3;
+  return CONDITIONS_VPB;
 }
 
 function getAllOn(t: StrategyType): Record<string, boolean> {
@@ -212,10 +226,12 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                     </div>
                     <div className="flex items-center gap-1 mt-0.5">
                       <span className={`text-[7px] px-1 py-0.5 rounded font-bold uppercase tracking-wider ${
+                        (p as StrategyPreset).strategy_type === "vpb_v3" ? "bg-emerald-500/20 text-emerald-300" :
                         (p as StrategyPreset).strategy_type === "vpb_v2" ? "bg-purple-500/20 text-purple-300" :
                         "bg-blue-500/20 text-blue-300"
                       }`}>
-                        {(p as StrategyPreset).strategy_type === "vpb_v2" ? "VPB v2" : "1H"}
+                        {(p as StrategyPreset).strategy_type === "vpb_v3" ? "VPB v3 量价" :
+                         (p as StrategyPreset).strategy_type === "vpb_v2" ? "VPB v2" : "1H"}
                       </span>
                     </div>
                     <div className="flex items-center gap-1 mt-1">
@@ -304,7 +320,8 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                     onClick={() => handleStrategyTypeChange(st.key)}
                     className={`flex-1 px-2 py-1.5 rounded-lg border text-center transition-all ${
                       active
-                        ? st.key === "vpb_v2" ? "border-purple-500/50 bg-purple-500/10 text-purple-300" :
+                        ? st.key === "vpb_v3" ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300" :
+                          st.key === "vpb_v2" ? "border-purple-500/50 bg-purple-500/10 text-purple-300" :
                           "border-blue-500/50 bg-blue-500/10 text-blue-300"
                         : "border-slate-800/50 bg-slate-900/30 text-slate-500 hover:border-slate-700 hover:text-slate-400"
                     }`}
