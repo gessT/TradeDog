@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { US_STOCKS, US_SECTORS } from "../../constants/usStocks";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Left Sidebar — Watchlist, Strategy Signals, News
@@ -9,25 +10,20 @@ import { useCallback, useEffect, useState } from "react";
 type WatchlistItem = {
   symbol: string;
   name: string;
+  sector: string;
   price: number;
   change_pct: number;
   signal: "BUY" | "SELL" | "HOLD" | "—";
 };
 
-const DEFAULT_WATCHLIST: WatchlistItem[] = [
-  { symbol: "AAPL", name: "Apple", price: 0, change_pct: 0, signal: "—" },
-  { symbol: "MSFT", name: "Microsoft", price: 0, change_pct: 0, signal: "—" },
-  { symbol: "NVDA", name: "Nvidia", price: 0, change_pct: 0, signal: "—" },
-  { symbol: "GOOGL", name: "Alphabet", price: 0, change_pct: 0, signal: "—" },
-  { symbol: "AMZN", name: "Amazon", price: 0, change_pct: 0, signal: "—" },
-  { symbol: "META", name: "Meta", price: 0, change_pct: 0, signal: "—" },
-  { symbol: "TSLA", name: "Tesla", price: 0, change_pct: 0, signal: "—" },
-  { symbol: "AMD", name: "AMD", price: 0, change_pct: 0, signal: "—" },
-  { symbol: "NFLX", name: "Netflix", price: 0, change_pct: 0, signal: "—" },
-  { symbol: "PLTR", name: "Palantir", price: 0, change_pct: 0, signal: "—" },
-  { symbol: "COIN", name: "Coinbase", price: 0, change_pct: 0, signal: "—" },
-  { symbol: "SOFI", name: "SoFi", price: 0, change_pct: 0, signal: "—" },
-];
+const DEFAULT_WATCHLIST: WatchlistItem[] = US_STOCKS.map((s) => ({
+  symbol: s.symbol,
+  name: s.name,
+  sector: s.sector,
+  price: 0,
+  change_pct: 0,
+  signal: "—" as const,
+}));
 
 // Mock news — in production, fetch from API
 const NEWS_ITEMS = [
@@ -59,10 +55,10 @@ function Section({
     <div className="border-b border-slate-800/40">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-slate-800/30 transition"
+        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-slate-800/30 transition"
       >
-        <span className="text-[10px] text-slate-600 w-3">{open ? "▼" : "▶"}</span>
-        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{title}</span>
+        <span className="text-[9px] text-slate-600 w-3">{open ? "▼" : "▶"}</span>
+        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{title}</span>
         {badge && (
           <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30">
             {badge}
@@ -77,6 +73,8 @@ function Section({
 export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
   const [items, setItems] = useState<WatchlistItem[]>(DEFAULT_WATCHLIST);
   const [filter, setFilter] = useState<"ALL" | "BUY" | "SELL" | "HOLD">("ALL");
+  const [sectorFilter, setSectorFilter] = useState<string>("ALL");
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Fetch live prices
   useEffect(() => {
@@ -109,7 +107,15 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
     return () => clearInterval(iv);
   }, []);
 
-  const filtered = filter === "ALL" ? items : items.filter((i) => i.signal === filter);
+  const filtered = items.filter((i) => {
+    if (filter !== "ALL" && i.signal !== filter) return false;
+    if (sectorFilter !== "ALL" && i.sector !== sectorFilter) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      return i.symbol.toLowerCase().includes(q) || i.name.toLowerCase().includes(q);
+    }
+    return true;
+  });
 
   // Count signals
   const buys = items.filter((i) => i.signal === "BUY").length;
@@ -120,13 +126,51 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/60">
       {/* ── Watchlist ──────────────────────────────── */}
       <Section title="Watchlist" badge={`${items.length}`} defaultOpen>
-        {/* Filter bar */}
-        <div className="flex items-center gap-1 px-3 pb-1.5">
+        {/* Search */}
+        <div className="px-2.5 pb-1">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search symbol or name…"
+            className="w-full px-2 py-1 text-[10px] bg-slate-800/60 border border-slate-700/60 rounded text-slate-200 placeholder-slate-600 outline-none focus:border-blue-500/60"
+          />
+        </div>
+
+        {/* Sector filter */}
+        <div className="flex items-center gap-0.5 px-2.5 pb-1 overflow-x-auto scrollbar-none">
+          <button
+            onClick={() => setSectorFilter("ALL")}
+            className={`text-[8px] px-1.5 py-0.5 rounded border font-medium transition whitespace-nowrap ${
+              sectorFilter === "ALL"
+                ? "border-blue-500/50 bg-blue-500/15 text-blue-400"
+                : "border-slate-700 text-slate-600 hover:text-slate-400"
+            }`}
+          >
+            All
+          </button>
+          {US_SECTORS.map((s) => (
+            <button
+              key={s}
+              onClick={() => setSectorFilter(s)}
+              className={`text-[8px] px-1.5 py-0.5 rounded border font-medium transition whitespace-nowrap ${
+                sectorFilter === s
+                  ? "border-blue-500/50 bg-blue-500/15 text-blue-400"
+                  : "border-slate-700 text-slate-600 hover:text-slate-400"
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+
+        {/* Signal filter */}
+        <div className="flex items-center gap-1 px-2.5 pb-1">
           {(["ALL", "BUY", "SELL", "HOLD"] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`text-[10px] px-2 py-1 rounded border font-medium transition ${
+              className={`text-[9px] px-1.5 py-0.5 rounded border font-medium transition ${
                 filter === f
                   ? f === "BUY"
                     ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-400"
@@ -152,7 +196,7 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
               <button
                 key={item.symbol}
                 onClick={() => onSelectSymbol(item.symbol, item.name)}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-left transition group ${
+                className={`w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left transition group ${
                   active
                     ? "bg-blue-500/10 border-l-2 border-blue-400"
                     : "hover:bg-slate-800/40 border-l-2 border-transparent"
@@ -160,24 +204,24 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
               >
                 {/* Symbol */}
                 <div className="flex flex-col min-w-0 flex-1">
-                  <span className={`text-xs font-bold ${active ? "text-blue-300" : "text-slate-300"}`}>
+                  <span className={`text-[11px] font-bold ${active ? "text-blue-300" : "text-slate-300"}`}>
                     {item.symbol}
                   </span>
-                  <span className="text-[10px] text-slate-600 truncate">{item.name}</span>
+                  <span className="text-[9px] text-slate-600 truncate">{item.name}</span>
                 </div>
 
                 {/* Price & Change */}
                 <div className="flex flex-col items-end">
-                  <span className={`text-xs font-bold tabular-nums ${up ? "text-emerald-400" : "text-rose-400"}`}>
+                  <span className={`text-[11px] font-bold tabular-nums ${up ? "text-emerald-400" : "text-rose-400"}`}>
                     {item.price > 0 ? `$${item.price.toFixed(2)}` : "—"}
                   </span>
-                  <span className={`text-[10px] tabular-nums ${up ? "text-emerald-400/70" : "text-rose-400/70"}`}>
+                  <span className={`text-[9px] tabular-nums ${up ? "text-emerald-400/70" : "text-rose-400/70"}`}>
                     {item.change_pct !== 0 ? `${up ? "+" : ""}${item.change_pct.toFixed(2)}%` : ""}
                   </span>
                 </div>
 
                 {/* Signal Badge */}
-                <div className="w-10 text-center">
+                <div className="w-8 text-center">
                   {item.signal !== "—" && (
                     <span
                       className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
@@ -200,25 +244,25 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
 
       {/* ── Strategy Signals Summary ───────────────── */}
       <Section title="Strategy Signals" defaultOpen>
-        <div className="grid grid-cols-3 gap-1.5 px-3 pb-2">
-          <div className="flex flex-col items-center py-2 rounded-lg bg-emerald-500/8 border border-emerald-500/20">
-            <span className="text-lg font-bold text-emerald-400">{buys}</span>
-            <span className="text-[8px] text-emerald-400/70 uppercase tracking-wider">Buy</span>
+        <div className="grid grid-cols-3 gap-1 px-2.5 pb-1.5">
+          <div className="flex flex-col items-center py-1.5 rounded-lg bg-emerald-500/8 border border-emerald-500/20">
+            <span className="text-sm font-bold text-emerald-400">{buys}</span>
+            <span className="text-[7px] text-emerald-400/70 uppercase tracking-wider">Buy</span>
           </div>
-          <div className="flex flex-col items-center py-2 rounded-lg bg-rose-500/8 border border-rose-500/20">
-            <span className="text-lg font-bold text-rose-400">{sells}</span>
-            <span className="text-[8px] text-rose-400/70 uppercase tracking-wider">Sell</span>
+          <div className="flex flex-col items-center py-1.5 rounded-lg bg-rose-500/8 border border-rose-500/20">
+            <span className="text-sm font-bold text-rose-400">{sells}</span>
+            <span className="text-[7px] text-rose-400/70 uppercase tracking-wider">Sell</span>
           </div>
-          <div className="flex flex-col items-center py-2 rounded-lg bg-amber-500/8 border border-amber-500/20">
-            <span className="text-lg font-bold text-amber-400">{holds}</span>
-            <span className="text-[8px] text-amber-400/70 uppercase tracking-wider">Hold</span>
+          <div className="flex flex-col items-center py-1.5 rounded-lg bg-amber-500/8 border border-amber-500/20">
+            <span className="text-sm font-bold text-amber-400">{holds}</span>
+            <span className="text-[7px] text-amber-400/70 uppercase tracking-wider">Hold</span>
           </div>
         </div>
       </Section>
 
       {/* ── High-Impact News ───────────────────────── */}
       <Section title="Market News" badge="Live" defaultOpen={false}>
-        <div className="px-3 pb-2 space-y-1">
+        <div className="px-2.5 pb-1.5 space-y-0.5">
           {NEWS_ITEMS.map((n, i) => (
             <div
               key={i}

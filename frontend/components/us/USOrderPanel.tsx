@@ -74,7 +74,7 @@ function StrategyInspector({ metrics }: { metrics: US1HMetrics | null }) {
       </div>
 
       {/* Key metrics grid */}
-      <div className="grid grid-cols-2 gap-1.5">
+      <div className="grid grid-cols-2 gap-1">
         {[
           { label: "Win Rate", value: `${wr.toFixed(0)}%`, color: wr >= 55 ? "text-emerald-400" : wr >= 45 ? "text-amber-400" : "text-rose-400" },
           { label: "Risk:Reward", value: rr.toFixed(2), color: rr >= 1.5 ? "text-emerald-400" : rr >= 1 ? "text-amber-400" : "text-rose-400" },
@@ -83,15 +83,15 @@ function StrategyInspector({ metrics }: { metrics: US1HMetrics | null }) {
           { label: "Max Drawdown", value: `${metrics.max_drawdown_pct.toFixed(1)}%`, color: metrics.max_drawdown_pct <= 15 ? "text-emerald-400" : "text-rose-400" },
           { label: "Expectancy", value: `$${expectancy.toFixed(0)}`, color: expectancy > 0 ? "text-emerald-400" : "text-rose-400" },
         ].map(({ label, value, color }) => (
-          <div key={label} className="bg-slate-800/30 rounded px-2 py-1.5 border border-slate-800/40">
-            <div className="text-[9px] text-slate-600 uppercase tracking-wider">{label}</div>
-            <div className={`text-xs font-bold tabular-nums ${color}`}>{value}</div>
+          <div key={label} className="bg-slate-800/30 rounded px-1.5 py-1 border border-slate-800/40">
+            <div className="text-[8px] text-slate-600 uppercase tracking-wider">{label}</div>
+            <div className={`text-[11px] font-bold tabular-nums ${color}`}>{value}</div>
           </div>
         ))}
       </div>
 
       {/* Win/Loss breakdown */}
-      <div className="flex items-center gap-2 text-[11px]">
+      <div className="flex items-center gap-1.5 text-[10px]">
         <span className="text-emerald-400 font-medium">{metrics.winners}W</span>
         <span className="text-slate-600">/</span>
         <span className="text-rose-400 font-medium">{metrics.losers}L</span>
@@ -145,9 +145,9 @@ export default function USOrderPanel({
   return (
     <div className="flex flex-col h-full overflow-y-auto bg-slate-950/60">
       {/* ── Order Panel ──────────────────────────────── */}
-      <div className="border-b border-slate-800/40 p-3">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Order Entry</span>
+      <div className="border-b border-slate-800/40 p-2.5">
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Order Entry</span>
           {!tradingActive && mode === "Live" && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-600 border border-slate-700">
               Trading disabled
@@ -156,10 +156,10 @@ export default function USOrderPanel({
         </div>
 
         {/* Buy/Sell toggle */}
-        <div className="flex rounded-lg border border-slate-700/60 overflow-hidden mb-2">
+        <div className="flex rounded-lg border border-slate-700/60 overflow-hidden mb-1.5">
           <button
             onClick={() => { setSide("BUY"); setDefaults(); }}
-            className={`flex-1 py-2 text-xs font-bold transition ${
+            className={`flex-1 py-1.5 text-[11px] font-bold transition ${
               side === "BUY"
                 ? "bg-emerald-500/20 text-emerald-400 border-r border-emerald-500/30"
                 : "text-slate-500 hover:bg-slate-800 border-r border-slate-700"
@@ -169,7 +169,7 @@ export default function USOrderPanel({
           </button>
           <button
             onClick={() => { setSide("SELL"); setDefaults(); }}
-            className={`flex-1 py-2 text-xs font-bold transition ${
+            className={`flex-1 py-1.5 text-[11px] font-bold transition ${
               side === "SELL"
                 ? "bg-rose-500/20 text-rose-400"
                 : "text-slate-500 hover:bg-slate-800"
@@ -263,7 +263,7 @@ export default function USOrderPanel({
         {/* Place Order Button */}
         <button
           disabled={!tradingActive || mode !== "Live"}
-          className={`w-full mt-2.5 py-2.5 rounded-lg text-xs font-bold tracking-wide transition ${
+          className={`w-full mt-2 py-2 rounded-lg text-[11px] font-bold tracking-wide transition ${
             side === "BUY"
               ? "bg-emerald-500/80 hover:bg-emerald-500 text-white disabled:bg-emerald-500/20 disabled:text-emerald-500/40"
               : "bg-rose-500/80 hover:bg-rose-500 text-white disabled:bg-rose-500/20 disabled:text-rose-500/40"
@@ -274,8 +274,8 @@ export default function USOrderPanel({
       </div>
 
       {/* ── Strategy Inspector ───────────────────────── */}
-      <div className="p-3 border-b border-slate-800/40">
-        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+      <div className="p-2.5 border-b border-slate-800/40">
+        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
           Strategy Intelligence
         </div>
         <StrategyInspector metrics={metrics} />
@@ -283,11 +283,11 @@ export default function USOrderPanel({
 
       {/* ── Why This Trade? ──────────────────────────── */}
       {metrics && metrics.total_trades > 0 && (
-        <div className="p-3">
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+        <div className="p-2.5">
+          <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">
             Strategy Logic
           </div>
-          <div className="space-y-1 text-[9px]">
+          <div className="space-y-0.5 text-[8px]">
             <div className="flex items-start gap-2">
               <span className="text-blue-400 shrink-0">◈</span>
               <span className="text-slate-400">Multi-condition entry: EMA trend + breakout + momentum confirmation</span>

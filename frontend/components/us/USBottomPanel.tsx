@@ -112,14 +112,14 @@ function MetricsGrid({ m }: { m: US1HMetrics }) {
   ];
 
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-1.5">
+    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-1">
       {items.map(({ label, value, color }) => (
         <div
           key={label}
-          className="bg-slate-800/30 rounded px-2 py-1.5 border border-slate-800/40"
+          className="bg-slate-800/30 rounded px-1.5 py-1 border border-slate-800/40"
         >
-          <div className="text-[9px] sm:text-[8px] text-slate-600 uppercase tracking-wider">{label}</div>
-          <div className={`text-xs sm:text-[11px] font-bold tabular-nums ${color}`}>{value}</div>
+          <div className="text-[8px] text-slate-600 uppercase tracking-wider">{label}</div>
+          <div className={`text-[11px] font-bold tabular-nums ${color}`}>{value}</div>
         </div>
       ))}
     </div>
@@ -238,34 +238,34 @@ function AnalyticsTab({ trades, metrics }: { trades: US1HTrade[]; metrics: US1HM
   }
 
   return (
-    <div className="p-3 space-y-3 overflow-y-auto max-h-[280px]">
+    <div className="p-2 space-y-2 overflow-y-auto max-h-[280px]">
       {/* Direction breakdown */}
       <div>
-        <div className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">By Direction</div>
-        <div className="grid grid-cols-2 gap-2">
-          <div className="bg-emerald-500/5 rounded-lg p-2 border border-emerald-500/15">
-            <div className="text-[8px] text-emerald-400/70 uppercase">Long (CALL)</div>
-            <div className="text-sm font-bold text-emerald-400">{calls.length}</div>
-            <div className="text-[9px] text-emerald-400/70">WR: {callWr.toFixed(0)}%</div>
+        <div className="text-[8px] font-bold text-slate-500 uppercase tracking-wider mb-1">By Direction</div>
+        <div className="grid grid-cols-2 gap-1.5">
+          <div className="bg-emerald-500/5 rounded-lg p-1.5 border border-emerald-500/15">
+            <div className="text-[7px] text-emerald-400/70 uppercase">Long (CALL)</div>
+            <div className="text-xs font-bold text-emerald-400">{calls.length}</div>
+            <div className="text-[8px] text-emerald-400/70">WR: {callWr.toFixed(0)}%</div>
           </div>
-          <div className="bg-rose-500/5 rounded-lg p-2 border border-rose-500/15">
-            <div className="text-[8px] text-rose-400/70 uppercase">Short (PUT)</div>
-            <div className="text-sm font-bold text-rose-400">{puts.length}</div>
-            <div className="text-[9px] text-rose-400/70">WR: {putWr.toFixed(0)}%</div>
+          <div className="bg-rose-500/5 rounded-lg p-1.5 border border-rose-500/15">
+            <div className="text-[7px] text-rose-400/70 uppercase">Short (PUT)</div>
+            <div className="text-xs font-bold text-rose-400">{puts.length}</div>
+            <div className="text-[8px] text-rose-400/70">WR: {putWr.toFixed(0)}%</div>
           </div>
         </div>
       </div>
 
       {/* Exit reason breakdown */}
       <div>
-        <div className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">By Exit Reason</div>
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+        <div className="text-[8px] font-bold text-slate-500 uppercase tracking-wider mb-1">By Exit Reason</div>
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-1">
           {Object.entries(byReason)
             .sort((a, b) => b[1].count - a[1].count)
             .map(([reason, data]) => (
-              <div key={reason} className="bg-slate-800/30 rounded px-2 py-1.5 border border-slate-800/40 text-center">
-                <div className="text-[8px] font-bold text-slate-400">{reason}</div>
-                <div className="text-[10px] font-medium text-slate-300 tabular-nums">{data.count}</div>
+              <div key={reason} className="bg-slate-800/30 rounded px-1.5 py-1 border border-slate-800/40 text-center">
+                <div className="text-[7px] font-bold text-slate-400">{reason}</div>
+                <div className="text-[9px] font-medium text-slate-300 tabular-nums">{data.count}</div>
                 <div className={`text-[8px] tabular-nums ${data.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                   {data.pnl >= 0 ? "+" : ""}${data.pnl.toFixed(0)}
                 </div>
@@ -276,15 +276,15 @@ function AnalyticsTab({ trades, metrics }: { trades: US1HTrade[]; metrics: US1HM
 
       {/* Streaks */}
       <div>
-        <div className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Streaks</div>
-        <div className="grid grid-cols-2 gap-2">
-          <div className="bg-slate-800/30 rounded px-2 py-1.5 border border-slate-800/40">
+        <div className="text-[8px] font-bold text-slate-500 uppercase tracking-wider mb-1">Streaks</div>
+        <div className="grid grid-cols-2 gap-1.5">
+          <div className="bg-slate-800/30 rounded px-1.5 py-1 border border-slate-800/40">
             <div className="text-[7px] text-slate-600 uppercase">Max Win Streak</div>
-            <div className="text-sm font-bold text-emerald-400">{maxWinStreak}</div>
+            <div className="text-xs font-bold text-emerald-400">{maxWinStreak}</div>
           </div>
-          <div className="bg-slate-800/30 rounded px-2 py-1.5 border border-slate-800/40">
+          <div className="bg-slate-800/30 rounded px-1.5 py-1 border border-slate-800/40">
             <div className="text-[7px] text-slate-600 uppercase">Max Loss Streak</div>
-            <div className="text-sm font-bold text-rose-400">{maxLossStreak}</div>
+            <div className="text-xs font-bold text-rose-400">{maxLossStreak}</div>
           </div>
         </div>
       </div>
@@ -361,7 +361,7 @@ export default function USBottomPanel({
       <div className="flex-1 min-h-0 overflow-auto">
         {/* Backtest */}
         {tab === "Backtest" && (
-          <div className="p-3 space-y-3">
+          <div className="p-2 space-y-2">
             {!btData ? (
               <div className="text-center py-8">
                 <div className="text-[10px] text-slate-600 mb-2">No backtest data yet</div>
@@ -382,8 +382,8 @@ export default function USBottomPanel({
                 <div className="flex flex-col sm:flex-row gap-3">
                   {/* Equity Curve */}
                   <div className="w-full sm:w-2/5 rounded-lg border border-slate-800/40 overflow-hidden">
-                    <div className="px-2 py-1 border-b border-slate-800/40 bg-slate-900/60">
-                      <span className="text-[8px] text-slate-600 uppercase tracking-wider">Equity Curve</span>
+                    <div className="px-2 py-0.5 border-b border-slate-800/40 bg-slate-900/60">
+                      <span className="text-[7px] text-slate-600 uppercase tracking-wider">Equity Curve</span>
                     </div>
                     <div style={{ height: 140 }}>
                       <EquityCurve curve={btData.equity_curve} />
@@ -392,11 +392,11 @@ export default function USBottomPanel({
 
                   {/* Trade List */}
                   <div className="flex-1 rounded-lg border border-slate-800/40 overflow-hidden">
-                    <div className="px-2 py-1 border-b border-slate-800/40 bg-slate-900/60 flex items-center">
-                      <span className="text-[8px] text-slate-600 uppercase tracking-wider">
+                    <div className="px-2 py-0.5 border-b border-slate-800/40 bg-slate-900/60 flex items-center">
+                      <span className="text-[7px] text-slate-600 uppercase tracking-wider">
                         Trades ({trades.length})
                       </span>
-                      <span className="ml-2 text-[8px] text-slate-600">Click to highlight on chart</span>
+                      <span className="ml-2 text-[7px] text-slate-600">Click to highlight on chart</span>
                     </div>
                     <TradeTable
                       trades={trades}

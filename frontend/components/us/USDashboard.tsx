@@ -128,7 +128,7 @@ export default function USDashboard() {
           <button
             key={tab.key}
             onClick={() => setMobilePanel(tab.key)}
-            className={`flex-1 py-2 text-xs font-bold tracking-wide transition border-b-2 ${
+            className={`flex-1 py-1.5 text-[11px] font-bold tracking-wide transition border-b-2 ${
               mobilePanel === tab.key
                 ? "text-blue-400 border-blue-400 bg-blue-500/5"
                 : "text-slate-600 border-transparent hover:text-slate-400"
@@ -172,7 +172,7 @@ export default function USDashboard() {
           </div>
 
           {/* Bottom Panel */}
-          <div className="shrink-0 h-[240px] sm:h-[280px]">
+          <div className="shrink-0 h-[220px] sm:h-[260px]">
             <USBottomPanel
               btData={btData}
               onTradeClick={handleTradeClick}
