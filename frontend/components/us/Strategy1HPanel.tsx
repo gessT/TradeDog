@@ -12,7 +12,7 @@ import {
 } from "lightweight-charts";
 import { halfTrend, type HalfTrendPoint } from "../../utils/indicators";
 import { SGT_OFFSET_SEC, toSGT, fmtDateTimeSGT, fmtInputDateSGT } from "../../utils/time";
-import TradeDetailDialog from "../strategy5min/TradeDetailDialog";
+import TradeDetailDialog from "../futures/TradeDetailDialog";
 import {
   fetchUS1HBacktest,
   type US1HBacktestResponse,

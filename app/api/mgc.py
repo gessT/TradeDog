@@ -17,10 +17,10 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
-from mgc_trading.backtest import Backtester
-from mgc_trading.config import DEFAULT_PARAMS, INITIAL_CAPITAL, TIGER_ACCOUNT, TIGER_ID, TIGER_PRIVATE_KEY
-from mgc_trading.data_loader import load_yfinance
-from mgc_trading.strategy import MGCStrategy
+from strategies.futures.backtest import Backtester
+from strategies.futures.config import DEFAULT_PARAMS, INITIAL_CAPITAL, TIGER_ACCOUNT, TIGER_ID, TIGER_PRIVATE_KEY
+from strategies.futures.data_loader import load_yfinance
+from strategies.futures.strategy import MGCStrategy
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["mgc"])
@@ -464,6 +464,11 @@ except ImportError:
 
 def _get_tiger_clients():
     """Create Tiger quote + trade clients (cached — reuse across calls)."""
+    if not TIGER_ID or not TIGER_ACCOUNT:
+        raise HTTPException(
+            status_code=503,
+            detail="Tiger API not configured. Set TIGER_ID and TIGER_ACCOUNT in .env",
+        )
     if not hasattr(_get_tiger_clients, "_cache"):
         config = _TConfig()
         config.tiger_id = TIGER_ID
@@ -484,7 +489,7 @@ async def mgc_live(
 
     def _run():
         import pandas as pd
-        from mgc_trading import indicators as ind
+        from strategies.futures import indicators as ind
 
         # Resolve yfinance symbol from commodity map
         commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": "MGC=F"})
@@ -1308,7 +1313,7 @@ async def close_position(symbol: str = "MGC"):
 
         # ── Reset execution engine ──────────────────────────────────
         try:
-            from mgc_trading.execution_engine import get_engine
+            from strategies.futures.execution_engine import get_engine
             engine = get_engine(base_symbol)
             engine.record_exit(reason="MANUAL_CLOSE", exit_price=0.0)
             msg_parts.append("Engine reset")
@@ -1433,10 +1438,10 @@ async def scan_trade(req: ScanTradeRequest) -> ScanTradeResponse:
         import math
         import numpy as np
         import pandas as pd
-        from mgc_trading import indicators as ind
-        from mgc_trading.backtest import Backtester
-        from mgc_trading.config import CONTRACT_SIZE, RISK_PER_TRADE
-        from mgc_trading.tiger_execution import TigerTrader
+        from strategies.futures import indicators as ind
+        from strategies.futures.backtest import Backtester
+        from strategies.futures.config import CONTRACT_SIZE, RISK_PER_TRADE
+        from strategies.futures.tiger_execution import TigerTrader
 
         symbol = req.symbols[0] if req.symbols else "MGC"
         identifier = symbol
@@ -1811,8 +1816,8 @@ async def mgc_backtest_5min(
 
     def _run():
         import pandas as _pd
-        from mgc_trading.backtest_5min import Backtester5Min
-        from mgc_trading.strategy_5min import MGCStrategy5Min, DEFAULT_5MIN_PARAMS
+        from strategies.futures.backtest_5min import Backtester5Min
+        from strategies.futures.strategy_5min import MGCStrategy5Min, DEFAULT_5MIN_PARAMS
 
         # Always load 60d so indicators are fully warmed up
         # (EMA, RSI, MACD, Supertrend need history to stabilize)
@@ -2069,7 +2074,7 @@ async def mgc_scan_5min(
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid} or None
 
     def _run():
-        from mgc_trading.scanner_5min import scan_5min, scan_5min_all, scan_5min_mtf
+        from strategies.futures.scanner_5min import scan_5min, scan_5min_all, scan_5min_mtf
 
         effective_period = period
         if period not in ("1d", "2d", "5d", "7d", "30d", "60d"):
@@ -2174,7 +2179,7 @@ async def mgc_scan_5min_live(
 
     def _run():
         import pandas as pd
-        from mgc_trading.scanner_5min import scan_5min, scan_5min_all, scan_5min_mtf
+        from strategies.futures.scanner_5min import scan_5min, scan_5min_all, scan_5min_mtf
 
         if not _tiger_quote_ok:
             raise ValueError("Tiger SDK not available")
@@ -2318,8 +2323,8 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
     Uses ExecutionEngine state machine for validation + fail-safe.
     """
     def _run():
-        from mgc_trading.tiger_execution import TigerTrader
-        from mgc_trading.execution_engine import get_engine
+        from strategies.futures.tiger_execution import TigerTrader
+        from strategies.futures.execution_engine import get_engine
 
         engine = get_engine(req.symbol)
 
@@ -2516,7 +2521,7 @@ async def backtest_position(
     live should enter immediately.
     """
     def _run():
-        from mgc_trading.backtest_5min import Backtester5Min
+        from strategies.futures.backtest_5min import Backtester5Min
 
         effective_period = period if period in ("1d", "2d", "5d", "7d", "30d", "60d") else "60d"
         df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
@@ -2544,7 +2549,7 @@ async def backtest_position(
 @router.get("/engine_state")
 async def get_engine_state(symbol: str = "MGC"):
     """Return current execution engine state for a symbol."""
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     tiger_qty = _get_tiger_position(symbol)
     engine.sync_with_broker(tiger_qty)
@@ -2558,7 +2563,7 @@ async def get_engine_state(symbol: str = "MGC"):
 @router.post("/engine_sync")
 async def engine_sync(symbol: str = "MGC"):
     """Force-sync execution engine state with Tiger broker position."""
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     tiger_qty = _get_tiger_position(symbol)
     # Try to get current price for P&L estimation on sync
@@ -2588,7 +2593,7 @@ async def engine_seed(req: EngineSeedRequest, symbol: str = "MGC"):
     Used when auto-trading starts and Tiger already holds a position
     that matches the backtest — seeds the engine so it tracks SL/TP exits.
     """
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     engine.seed_position(
         direction=req.direction,
@@ -2609,7 +2614,7 @@ async def engine_seed(req: EngineSeedRequest, symbol: str = "MGC"):
 @router.post("/engine_reset")
 async def engine_reset(symbol: str = "MGC"):
     """Emergency reset: clear all engine state for a symbol."""
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     engine.force_reset()
     return {"reset": True, **engine.get_state_summary()}
@@ -2618,7 +2623,7 @@ async def engine_reset(symbol: str = "MGC"):
 @router.get("/engine_log")
 async def get_engine_log(symbol: str = "MGC", limit: int = 50):
     """Return recent execution log entries."""
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     entries = engine.execution_log[-limit:]
     return {
@@ -2663,7 +2668,7 @@ async def mgc_optimize_5min(
     """Run 5-minute strategy optimisation (grid search)."""
 
     def _run():
-        from mgc_trading.optimizer_5min import (
+        from strategies.futures.optimizer_5min import (
             optimize_5min,
             QUICK_5MIN_GRID,
             DEFAULT_5MIN_GRID,
@@ -2733,7 +2738,7 @@ async def mgc_trade_log_5min(
     """Return the last N trades from 5-minute backtest."""
 
     def _run():
-        from mgc_trading.backtest_5min import Backtester5Min
+        from strategies.futures.backtest_5min import Backtester5Min
 
         effective_period = period
         if period not in ("1d", "2d", "5d", "7d", "30d", "60d"):
@@ -2752,7 +2757,7 @@ async def mgc_trade_log_5min(
         if open_pos and all_trades and all_trades[-1].reason == "EOD":
             last_t = all_trades[-1]
             if round(last_t.entry_price, 2) == open_pos["entry_price"]:
-                from mgc_trading.backtest_5min import Trade5Min
+                from strategies.futures.backtest_5min import Trade5Min
                 all_trades[-1] = Trade5Min(
                     entry_time=last_t.entry_time,
                     exit_time=last_t.exit_time,
@@ -3019,7 +3024,7 @@ def save_auto_trade_settings(
 @router.get("/daily_pnl")
 async def get_daily_pnl(symbol: str = "MGC"):
     """Return today's realized P&L and daily loss limit status."""
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     return engine.get_daily_pnl()
 
@@ -3034,7 +3039,7 @@ async def set_daily_loss_limit(
     symbol: str = Query("MGC"),
 ):
     """Set the daily loss limit. 0 = disabled."""
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     engine.set_daily_loss_limit(payload.limit)
     return {"status": "ok", "daily_loss_limit": payload.limit}
@@ -3050,7 +3055,7 @@ async def add_daily_pnl(
     symbol: str = Query("MGC"),
 ):
     """Manually add a realized P&L entry (e.g. from externally-detected exit)."""
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     engine.add_manual_pnl(payload.pnl)
     return engine.get_daily_pnl()
@@ -3059,7 +3064,7 @@ async def add_daily_pnl(
 @router.post("/daily_pnl/reset")
 async def reset_daily_pnl(symbol: str = Query("MGC")):
     """Reset today's daily P&L counter."""
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     engine.reset_daily_pnl()
     return {"status": "ok", "message": "Daily P&L reset"}
@@ -3148,8 +3153,8 @@ async def optimize_5min_conditions(
     
     def _run():
         import pandas as _pd
-        from mgc_trading.backtest_5min import Backtester5Min
-        from mgc_trading.strategy_5min import DEFAULT_5MIN_PARAMS
+        from strategies.futures.backtest_5min import Backtester5Min
+        from strategies.futures.strategy_5min import DEFAULT_5MIN_PARAMS
         from itertools import combinations
 
         # Load 5m data
@@ -3199,7 +3204,7 @@ async def optimize_5min_conditions(
         results = []
 
         # Pre-compute indicators ONCE (the expensive part — SMC, swing detection etc.)
-        from mgc_trading.strategy_5min import MGCStrategy5Min
+        from strategies.futures.strategy_5min import MGCStrategy5Min
         full_params = {**DEFAULT_5MIN_PARAMS, **custom_params}
         strategy = MGCStrategy5Min(full_params)
         df_ind = strategy.compute_indicators(
@@ -3422,8 +3427,8 @@ async def mgc_backtest_v2(
 
     def _run():
         import pandas as _pd
-        from mgc_trading.backtest_v2 import BacktesterV2
-        from mgc_trading.strategy_v2 import StrategyV2, DEFAULT_V2_PARAMS
+        from strategies.futures.backtest_v2 import BacktesterV2
+        from strategies.futures.strategy_v2 import StrategyV2, DEFAULT_V2_PARAMS
 
         effective_period = period if period in ("1d", "2d", "5d", "7d", "30d", "60d") else "60d"
 
@@ -3535,7 +3540,7 @@ async def mgc_scan_v2(
     """Scan for V2 entry signals on latest 5m data."""
 
     def _run():
-        from mgc_trading.scanner_v2 import scan_v2, scan_v2_all
+        from strategies.futures.scanner_v2 import scan_v2, scan_v2_all
 
         effective_period = period if period in ("1d", "2d", "5d", "7d", "30d", "60d") else "60d"
         df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
@@ -3594,7 +3599,7 @@ async def mgc_optimize_v2(
     """Run V2 grid-search optimizer. Returns best result + top 20."""
 
     def _run():
-        from mgc_trading.backtest_v2 import optimize_v2 as _optimize
+        from strategies.futures.backtest_v2 import optimize_v2 as _optimize
 
         effective_period = period if period in ("1d", "2d", "5d", "7d", "30d", "60d") else "60d"
         df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
@@ -3647,7 +3652,7 @@ async def get_market_structure(
         return cached["data"]
 
     def _compute():
-        from mgc_trading.indicators_5min import market_structure
+        from strategies.futures.indicators_5min import market_structure
 
         commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": "MGC=F"})
         yf_symbol = commodity["yf"]

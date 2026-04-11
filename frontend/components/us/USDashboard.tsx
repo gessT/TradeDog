@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import DailyScanner from "../DailyScanner";
-import NearATH from "../NearATH";
-import TopVolume from "../TopVolume";
-import SectorList from "../SectorList";
-import StockPicker from "../StockPicker";
-import TVChart, { type TVChartHandle, type EmaConfig } from "../TVChart";
+import DailyScanner from "../klse/DailyScanner";
+import NearATH from "../klse/NearATH";
+import TopVolume from "../klse/TopVolume";
+import SectorList from "../klse/SectorList";
+import StockPicker from "../common/StockPicker";
+import TVChart, { type TVChartHandle, type EmaConfig } from "../common/TVChart";
 import type { DemoPoint, US1HTrade } from "../../services/api";
 import { fetchSectorChart } from "../../services/api";
 import { useStock } from "../../hooks/useStock";

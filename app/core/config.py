@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # Tiger Open API
     tiger_id: str = ""
     tiger_account: str = ""
-    tiger_private_key: str = "mgc_trading/tiger_private.pem"
+    tiger_private_key: str = "strategies/futures/tiger_private.pem"
 
     model_config = SettingsConfigDict(
         env_file=".env",

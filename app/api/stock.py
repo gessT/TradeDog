@@ -1572,9 +1572,9 @@ async def us_stock_backtest_1h(
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
 
     def _run():
-        from mgc_trading.data_loader import load_yfinance
-        from us_stock.backtest_1h import Backtester1H
-        from us_stock.strategy_1h import USStrategy1H, DEFAULT_1H_PARAMS
+        from strategies.futures.data_loader import load_yfinance
+        from strategies.us_stock.backtest_1h import Backtester1H
+        from strategies.us_stock.strategy_1h import USStrategy1H, DEFAULT_1H_PARAMS
 
         # yfinance: 1h data max 730d
         effective_period = period
