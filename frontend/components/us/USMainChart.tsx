@@ -50,6 +50,9 @@ export default function USMainChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
+  // Trade markers toggle (default off)
+  const [markersOn, setMarkersOn] = useState(showMarkers);
+
   // Replay controls
   const [replayIdx, setReplayIdx] = useState(0);
   const [replayPlaying, setReplayPlaying] = useState(false);
@@ -196,7 +199,7 @@ export default function USMainChart({
     }
 
     // ── Trade Markers (entry/exit with P&L) ──
-    const visibleTrades = showMarkers
+    const visibleTrades = markersOn
       ? trades.filter((t) => {
           const ts = parseTS(t.entry_time);
           const first = parseTS(visibleCandles[0].time);
@@ -256,7 +259,7 @@ export default function USMainChart({
       ro.disconnect();
       chart.remove();
     };
-  }, [visibleCandles, trades, overlays, indicators, focusTime, showMarkers]);
+  }, [visibleCandles, trades, overlays, indicators, focusTime, markersOn]);
 
   // ── Replay controls ──
   useEffect(() => {
@@ -301,6 +304,18 @@ export default function USMainChart({
           {mode === "Backtest" && "◉ Backtest Mode"}
           {mode === "Replay" && "▷ Replay Mode"}
         </span>
+
+        {/* Trade markers toggle */}
+        <button
+          onClick={() => setMarkersOn((v) => !v)}
+          className={`text-[10px] px-2 py-0.5 rounded border transition font-medium ${
+            markersOn
+              ? "border-blue-500/50 bg-blue-500/15 text-blue-400"
+              : "border-slate-700 text-slate-600 hover:text-slate-400 hover:border-slate-600"
+          }`}
+        >
+          {markersOn ? "⚑ Trades" : "⚐ Trades"}
+        </button>
 
         {mode === "Replay" && candles.length > 0 && (
           <div className="flex items-center gap-1.5 sm:gap-2 ml-auto flex-wrap">

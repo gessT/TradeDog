@@ -215,13 +215,13 @@ export default function USDashboard() {
           <button
             key={tab.key}
             onClick={() => setMobilePanel(tab.key)}
-            className={`flex-1 py-1.5 text-[11px] font-bold tracking-wide transition border-b-2 ${
+            className={`flex-1 py-2.5 text-xs font-bold tracking-wide transition border-b-2 ${
               mobilePanel === tab.key
                 ? "text-blue-400 border-blue-400 bg-blue-500/5"
                 : "text-slate-600 border-transparent hover:text-slate-400"
             }`}
           >
-            <span className="mr-1">{tab.icon}</span>
+            <span className="mr-1.5">{tab.icon}</span>
             {tab.label}
           </button>
         ))}
@@ -232,7 +232,7 @@ export default function USDashboard() {
         {/* ── LEFT SIDEBAR (Watchlist) — desktop or mobile-selected ── */}
         <aside className={`${
           mobilePanel === "watchlist" ? "flex w-full" : "hidden"
-        } lg:flex lg:w-[20%] shrink-0 flex-col overflow-hidden border-r border-slate-800/60`}>
+        } lg:flex lg:w-1/5 shrink-0 flex-col overflow-hidden border-r border-slate-800/60`}>
           <USWatchlist
             activeSymbol={selectedSymbol}
             onSelectSymbol={(sym, name) => {
@@ -245,7 +245,7 @@ export default function USDashboard() {
         {/* ── CENTER (Chart + Bottom Panel) — desktop or mobile-selected ── */}
         <div className={`${
           mobilePanel === "chart" ? "flex" : "hidden"
-        } lg:flex lg:w-[40%] flex-col overflow-hidden`}>
+        } lg:flex lg:w-2/5 flex-col overflow-hidden`}>
           {/* Chart — 40% height */}
           <div className="h-[40%] min-h-[160px] shrink-0">
             <USMainChart
@@ -273,12 +273,12 @@ export default function USDashboard() {
         {/* ── RIGHT PANEL (Execution + Strategy) — desktop or mobile-selected ── */}
         <aside className={`${
           mobilePanel === "orders" ? "flex w-full" : "hidden"
-        } lg:flex lg:w-[40%] shrink-0 flex-col overflow-hidden border-l border-slate-800/60`}>
+        } lg:flex lg:w-2/5 shrink-0 flex-col overflow-hidden border-l border-slate-800/60`}>
           {/* Right panel tabs */}
           <div className="flex border-b border-slate-800/40 shrink-0">
             <button
               onClick={() => setRightTab("orders")}
-              className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider transition border-b-2 ${
+              className={`flex-1 py-2 text-xs font-bold uppercase tracking-wider transition border-b-2 ${
                 rightTab === "orders"
                   ? "text-blue-400 border-blue-400"
                   : "text-slate-600 border-transparent hover:text-slate-400"
@@ -288,7 +288,7 @@ export default function USDashboard() {
             </button>
             <button
               onClick={() => setRightTab("strategy")}
-              className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider transition border-b-2 ${
+              className={`flex-1 py-2 text-xs font-bold uppercase tracking-wider transition border-b-2 ${
                 rightTab === "strategy"
                   ? "text-blue-400 border-blue-400"
                   : "text-slate-600 border-transparent hover:text-slate-400"

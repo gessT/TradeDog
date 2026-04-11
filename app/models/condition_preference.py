@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 from sqlalchemy import Boolean, Float, Integer, String, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -64,14 +65,14 @@ class USStrategyPreset(Base):
     strategy_type: Mapped[str] = mapped_column(String(16), default="breakout_1h")  # breakout_1h | vpb_v1 | vpb_v2
 
     # Backtest metrics (populated after running backtest)
-    bt_symbol: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    bt_win_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
-    bt_return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
-    bt_max_dd_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
-    bt_profit_factor: Mapped[float | None] = mapped_column(Float, nullable=True)
-    bt_sharpe: Mapped[float | None] = mapped_column(Float, nullable=True)
-    bt_total_trades: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    bt_tested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    bt_symbol: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    bt_win_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bt_return_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bt_max_dd_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bt_profit_factor: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bt_sharpe: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bt_total_trades: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    bt_tested_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())

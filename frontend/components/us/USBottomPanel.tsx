@@ -26,33 +26,69 @@ type Props = {
 // ── Performance Metrics Grid ─────────────────────────────
 function MetricsGrid({ m }: { m: US1HMetrics }) {
   const up = m.total_return_pct >= 0;
+  const pnl = m.final_equity - m.initial_capital;
 
-  const items = [
-    { label: "Total P&L", value: `${up ? "+" : ""}$${(m.final_equity - m.initial_capital).toFixed(0)}`, color: up ? "text-emerald-400" : "text-rose-400", large: true },
-    { label: "Return", value: `${up ? "+" : ""}${m.total_return_pct.toFixed(1)}%`, color: up ? "text-emerald-400" : "text-rose-400", large: true },
-    { label: "Win Rate", value: `${m.win_rate.toFixed(0)}%`, color: m.win_rate >= 55 ? "text-emerald-400" : m.win_rate >= 45 ? "text-amber-400" : "text-rose-400" },
-    { label: "Profit Factor", value: m.profit_factor >= 999 ? "∞" : m.profit_factor.toFixed(2), color: m.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400" },
-    { label: "Sharpe Ratio", value: m.sharpe_ratio.toFixed(2), color: m.sharpe_ratio >= 1.5 ? "text-emerald-400" : m.sharpe_ratio >= 0.5 ? "text-amber-400" : "text-rose-400" },
-    { label: "Max Drawdown", value: `${m.max_drawdown_pct.toFixed(1)}%`, color: m.max_drawdown_pct <= 10 ? "text-emerald-400" : m.max_drawdown_pct <= 20 ? "text-amber-400" : "text-rose-400" },
-    { label: "Avg Win", value: `$${m.avg_win.toFixed(0)}`, color: "text-emerald-400" },
-    { label: "Avg Loss", value: `$${m.avg_loss.toFixed(0)}`, color: "text-rose-400" },
-    { label: "Total Trades", value: String(m.total_trades), color: "text-slate-300" },
-    { label: "Risk:Reward", value: m.risk_reward_ratio.toFixed(2), color: m.risk_reward_ratio >= 1.5 ? "text-emerald-400" : "text-amber-400" },
-    { label: "OOS Win Rate", value: `${m.oos_win_rate.toFixed(0)}%`, color: m.oos_win_rate >= 50 ? "text-emerald-400" : "text-rose-400" },
-    { label: "OOS Trades", value: String(m.oos_total_trades), color: "text-slate-300" },
-  ];
+  const wrColor = m.win_rate >= 55 ? "text-emerald-400" : m.win_rate >= 45 ? "text-amber-400" : "text-rose-400";
+  const pfColor = m.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400";
+  const srColor = m.sharpe_ratio >= 1.5 ? "text-emerald-400" : m.sharpe_ratio >= 0.5 ? "text-amber-400" : "text-rose-400";
+  const ddColor = m.max_drawdown_pct <= 10 ? "text-emerald-400" : m.max_drawdown_pct <= 20 ? "text-amber-400" : "text-rose-400";
+  const rrColor = m.risk_reward_ratio >= 1.5 ? "text-emerald-400" : "text-amber-400";
+  const oosColor = m.oos_win_rate >= 50 ? "text-emerald-400" : "text-rose-400";
 
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-1">
-      {items.map(({ label, value, color }) => (
-        <div
-          key={label}
-          className="bg-slate-800/30 rounded px-1.5 py-1 border border-slate-800/40"
-        >
-          <div className="text-[8px] text-slate-600 uppercase tracking-wider">{label}</div>
-          <div className={`text-[11px] font-bold tabular-nums ${color}`}>{value}</div>
+    <div className="space-y-2">
+      {/* ── Hero Row: P&L + Return ── */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className={`rounded-lg p-3 border ${up ? "bg-emerald-500/5 border-emerald-500/20" : "bg-rose-500/5 border-rose-500/20"}`}>
+          <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-0.5">Total P&L</div>
+          <div className={`text-xl font-extrabold tabular-nums leading-tight ${up ? "text-emerald-400" : "text-rose-400"}`}>
+            {up ? "+" : ""}${pnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </div>
+          <div className="text-[10px] text-slate-600 tabular-nums mt-0.5">
+            ${m.initial_capital.toLocaleString()} → ${m.final_equity.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </div>
         </div>
-      ))}
+        <div className={`rounded-lg p-3 border ${up ? "bg-emerald-500/5 border-emerald-500/20" : "bg-rose-500/5 border-rose-500/20"}`}>
+          <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-0.5">Return</div>
+          <div className={`text-xl font-extrabold tabular-nums leading-tight ${up ? "text-emerald-400" : "text-rose-400"}`}>
+            {up ? "+" : ""}{m.total_return_pct.toFixed(1)}%
+          </div>
+          <div className="text-[10px] text-slate-600 tabular-nums mt-0.5">
+            {m.total_trades} trades · Max DD {m.max_drawdown_pct.toFixed(1)}%
+          </div>
+        </div>
+      </div>
+
+      {/* ── Key Metrics ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-1.5">
+        {([
+          ["Win Rate", `${m.win_rate.toFixed(0)}%`, wrColor],
+          ["Profit Factor", m.profit_factor >= 999 ? "∞" : m.profit_factor.toFixed(2), pfColor],
+          ["Sharpe", m.sharpe_ratio.toFixed(2), srColor],
+          ["Max DD", `${m.max_drawdown_pct.toFixed(1)}%`, ddColor],
+          ["R:R", m.risk_reward_ratio.toFixed(2), rrColor],
+        ] as const).map(([label, value, clr]) => (
+          <div key={label} className="bg-slate-800/40 rounded-lg px-2.5 py-2 border border-slate-700/30">
+            <div className="text-[10px] text-slate-500 uppercase tracking-wide">{label}</div>
+            <div className={`text-sm font-bold tabular-nums ${clr}`}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Detail Metrics ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+        {([
+          ["Avg Win", `$${m.avg_win.toFixed(0)}`, "text-emerald-400"],
+          ["Avg Loss", `$${m.avg_loss.toFixed(0)}`, "text-rose-400"],
+          ["OOS WR", `${m.oos_win_rate.toFixed(0)}%`, oosColor],
+          ["OOS Trades", String(m.oos_total_trades), "text-slate-300"],
+        ] as const).map(([label, value, clr]) => (
+          <div key={label} className="bg-slate-800/20 rounded px-2.5 py-1.5 border border-slate-800/30">
+            <div className="text-[10px] text-slate-600 uppercase tracking-wide">{label}</div>
+            <div className={`text-xs font-semibold tabular-nums ${clr}`}>{value}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -84,19 +120,19 @@ function TradeTable({
 
   return (
     <div className="overflow-auto flex-1">
-      <table className="w-full text-left text-[10px] sm:text-[9px] min-w-[600px]">
-        <thead className="sticky top-0 bg-slate-900/95">
-          <tr className="text-[9px] sm:text-[8px] text-slate-600 uppercase border-b border-slate-800/40">
-            <th className="px-2 py-1.5">#</th>
-            <th className="px-2 py-1.5">Entry</th>
-            <th className="px-2 py-1.5">Exit</th>
-            <th className="px-2 py-1.5 text-right">Entry$</th>
-            <th className="px-2 py-1.5 text-right">Exit$</th>
-            <th className="px-2 py-1.5 text-right">P&L</th>
-            <th className="px-2 py-1.5 text-right">P&L%</th>
-            <th className="px-2 py-1.5 text-center">Dir</th>
-            <th className="px-2 py-1.5 text-center">Exit</th>
-            <th className="px-2 py-1.5 text-right">MAE</th>
+      <table className="w-full text-left text-xs min-w-[640px]">
+        <thead className="sticky top-0 bg-slate-900/95 z-10">
+          <tr className="text-[10px] text-slate-500 uppercase border-b border-slate-700/50">
+            <th className="px-2.5 py-2">#</th>
+            <th className="px-2.5 py-2">Entry</th>
+            <th className="px-2.5 py-2">Exit</th>
+            <th className="px-2.5 py-2 text-right">Entry$</th>
+            <th className="px-2.5 py-2 text-right">Exit$</th>
+            <th className="px-2.5 py-2 text-right">P&L</th>
+            <th className="px-2.5 py-2 text-right">P&L%</th>
+            <th className="px-2.5 py-2 text-center">Dir</th>
+            <th className="px-2.5 py-2 text-center">Exit</th>
+            <th className="px-2.5 py-2 text-right">MAE</th>
           </tr>
         </thead>
         <tbody>
@@ -116,26 +152,26 @@ function TradeTable({
                 onClick={() => onTradeClick(t)}
                 className="cursor-pointer hover:bg-blue-500/8 transition border-b border-slate-800/20"
               >
-                <td className="px-2 py-1 text-slate-600 tabular-nums">{i + 1}</td>
-                <td className="px-2 py-1 text-slate-400 tabular-nums">{fmtDateTimeSGT(t.entry_time)}</td>
-                <td className="px-2 py-1 text-slate-400 tabular-nums">{fmtDateTimeSGT(t.exit_time)}</td>
-                <td className="px-2 py-1 text-right tabular-nums">{t.entry_price.toFixed(2)}</td>
-                <td className="px-2 py-1 text-right tabular-nums">{t.exit_price.toFixed(2)}</td>
-                <td className={`px-2 py-1 text-right font-bold tabular-nums ${win ? "text-emerald-400" : "text-rose-400"}`}>
+                <td className="px-2.5 py-1.5 text-slate-600 tabular-nums">{i + 1}</td>
+                <td className="px-2.5 py-1.5 text-slate-400 tabular-nums whitespace-nowrap">{fmtDateTimeSGT(t.entry_time)}</td>
+                <td className="px-2.5 py-1.5 text-slate-400 tabular-nums whitespace-nowrap">{fmtDateTimeSGT(t.exit_time)}</td>
+                <td className="px-2.5 py-1.5 text-right tabular-nums">{t.entry_price.toFixed(2)}</td>
+                <td className="px-2.5 py-1.5 text-right tabular-nums">{t.exit_price.toFixed(2)}</td>
+                <td className={`px-2.5 py-1.5 text-right font-bold tabular-nums ${win ? "text-emerald-400" : "text-rose-400"}`}>
                   {win ? "+" : ""}{t.pnl.toFixed(2)}
                 </td>
-                <td className={`px-2 py-1 text-right tabular-nums ${win ? "text-emerald-400" : "text-rose-400"}`}>
+                <td className={`px-2.5 py-1.5 text-right tabular-nums ${win ? "text-emerald-400" : "text-rose-400"}`}>
                   {win ? "+" : ""}{t.pnl_pct.toFixed(1)}%
                 </td>
-                <td className="px-2 py-1 text-center">
+                <td className="px-2.5 py-1.5 text-center">
                   <span className={t.direction === "CALL" ? "text-emerald-400" : "text-rose-400"}>
                     {t.direction === "CALL" ? "▲" : "▼"}
                   </span>
                 </td>
-                <td className="px-2 py-1 text-center">
-                  <span className={`text-[8px] px-1.5 py-0.5 rounded border ${rs}`}>{t.reason}</span>
+                <td className="px-2.5 py-1.5 text-center">
+                  <span className={`text-[9px] px-2 py-0.5 rounded border ${rs}`}>{t.reason}</span>
                 </td>
-                <td className="px-2 py-1 text-right text-slate-600 tabular-nums">{t.mae.toFixed(2)}</td>
+                <td className="px-2.5 py-1.5 text-right text-slate-500 tabular-nums">{t.mae.toFixed(2)}</td>
               </tr>
             );
           })}
@@ -306,20 +342,18 @@ export default function USBottomPanel({
               </div>
             ) : (
               <>
-                {/* Metrics (left) + Trade List (right) — side by side */}
-                <div className="flex flex-col sm:flex-row gap-2 flex-1 min-h-0">
-                  {/* Left: Metrics */}
-                  <div className="w-full sm:w-2/5 shrink-0">
-                    <MetricsGrid m={btData.metrics} />
-                  </div>
+                {/* Metrics (top) + Trade List (bottom) — stacked cleanly */}
+                <div className="flex flex-col gap-2 flex-1 min-h-0">
+                  {/* Metrics */}
+                  <MetricsGrid m={btData.metrics} />
 
-                  {/* Right: Trade List */}
+                  {/* Trade List */}
                   <div className="flex-1 rounded-lg border border-slate-800/40 overflow-hidden flex flex-col min-h-0">
-                    <div className="px-2 py-0.5 border-b border-slate-800/40 bg-slate-900/60 flex items-center shrink-0">
-                      <span className="text-[7px] text-slate-600 uppercase tracking-wider">
+                    <div className="px-3 py-1.5 border-b border-slate-800/40 bg-slate-900/60 flex items-center shrink-0">
+                      <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
                         Trades ({trades.length})
                       </span>
-                      <span className="ml-2 text-[7px] text-slate-600">Click to highlight on chart</span>
+                      <span className="ml-2 text-[10px] text-slate-600">Click to highlight on chart</span>
                     </div>
                     <div className="flex-1 min-h-0 overflow-auto">
                       <TradeTable

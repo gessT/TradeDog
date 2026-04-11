@@ -62,7 +62,7 @@ function Section({
         <span className="text-[9px] text-slate-600 w-3">{open ? "▼" : "▶"}</span>
         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{title}</span>
         {badge && (
-          <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30">
+          <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30">
             {badge}
           </span>
         )}
@@ -163,9 +163,9 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/60">
-      {/* ── Tiger-style Search Bar ──────────────────── */}
+      {/* ── Search Bar ──────────────────────────────── */}
       <div className="px-2 pt-2 pb-1.5 shrink-0">
-        <div className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 transition-colors ${
+        <div className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition-colors ${
           searchQuery ? "bg-slate-800 ring-1 ring-blue-500/40" : "bg-slate-800/60"
         }`}>
           <svg className="w-3.5 h-3.5 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -175,12 +175,12 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search stocks…"
-            className="flex-1 bg-transparent text-[11px] text-slate-200 placeholder-slate-500 outline-none min-w-0"
+            placeholder="Search…"
+            className="flex-1 bg-transparent text-xs text-slate-200 placeholder-slate-500 outline-none min-w-0"
           />
           {searchQuery && (
-            <button onClick={() => setSearchQuery("")} className="text-slate-500 hover:text-slate-300 shrink-0">
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <button onClick={() => setSearchQuery("")} className="text-slate-500 hover:text-slate-300 shrink-0 p-0.5">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
@@ -192,7 +192,7 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
       <div className="flex items-center gap-1 px-2 pb-1.5 shrink-0 overflow-x-auto scrollbar-none">
         <button
           onClick={() => setSectorFilter("ALL")}
-          className={`text-[9px] px-2 py-1 rounded-full font-medium transition-all whitespace-nowrap ${
+          className={`text-[10px] px-2 py-0.5 rounded-full font-medium transition-all whitespace-nowrap ${
             sectorFilter === "ALL"
               ? "bg-blue-500/20 text-blue-300 shadow-sm shadow-blue-500/10"
               : "bg-slate-800/50 text-slate-500 hover:bg-slate-800 hover:text-slate-300"
@@ -204,7 +204,7 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
           <button
             key={s}
             onClick={() => setSectorFilter(s)}
-            className={`text-[9px] px-2 py-1 rounded-full font-medium transition-all whitespace-nowrap ${
+            className={`text-[10px] px-2 py-0.5 rounded-full font-medium transition-all whitespace-nowrap ${
               sectorFilter === s
                 ? "bg-blue-500/20 text-blue-300 shadow-sm shadow-blue-500/10"
                 : "bg-slate-800/50 text-slate-500 hover:bg-slate-800 hover:text-slate-300"
@@ -216,16 +216,15 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
       </div>
 
       {/* ── Header row ──────────────────────────────── */}
-      <div className="flex items-center px-2.5 py-1 text-[8px] font-medium text-slate-600 uppercase tracking-wider shrink-0 border-b border-slate-800/30">
+      <div className="flex items-center px-2.5 py-1 text-[9px] font-semibold text-slate-500 uppercase tracking-wider shrink-0 border-b border-slate-800/30">
         <span className="flex-1">Symbol</span>
-        <span className="w-14 text-right">Price</span>
-        <span className="w-10 text-right">Chg%</span>
+        <span className="text-right">Price / Chg</span>
       </div>
 
       {/* ── Add-to-watchlist suggestions ─────────────── */}
       {addableSuggestions.length > 0 && (
         <div className="shrink-0 border-b border-slate-800/30">
-          <div className="text-[8px] text-slate-600 px-2.5 py-0.5">Add to watchlist:</div>
+          <div className="text-[9px] text-slate-500 px-2.5 py-0.5">Add to watchlist:</div>
           {addableSuggestions.map((s) => (
             <button
               key={s.symbol}
@@ -233,17 +232,17 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
                 addToWatchlist(s.symbol);
                 setSearchQuery("");
               }}
-              className="w-full flex items-center gap-1.5 px-2.5 py-1 text-left hover:bg-emerald-500/10 transition"
+              className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-emerald-500/10 transition"
             >
-              <span className="text-[10px] font-bold text-emerald-400 shrink-0">+</span>
-              <span className="text-[10px] font-bold text-slate-300">{s.symbol}</span>
-              <span className="text-[8px] text-slate-500 truncate flex-1 min-w-0">{s.name}</span>
+              <span className="text-[11px] font-bold text-emerald-400 shrink-0">+</span>
+              <span className="text-[11px] font-bold text-slate-300">{s.symbol}</span>
+              <span className="text-[9px] text-slate-500 truncate flex-1 min-w-0">{s.name}</span>
             </button>
           ))}
         </div>
       )}
 
-      {/* ── Stock rows (Tiger-style compact list) ──── */}
+      {/* ── Stock rows ──────────────────────────── */}
       <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">
         {filtered.length === 0 && (
           <p className="text-[10px] text-slate-500 text-center py-6">No stocks found</p>
@@ -255,7 +254,7 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
             <button
               key={item.symbol}
               onClick={() => onSelectSymbol(item.symbol, item.name)}
-              className={`w-full flex items-center gap-1 px-2.5 py-1.5 text-left transition border-l-2 ${
+              className={`w-full flex items-center gap-1.5 px-2.5 py-2 text-left transition border-l-[3px] ${
                 active
                   ? "border-l-blue-400 bg-blue-500/8"
                   : "border-l-transparent hover:bg-slate-800/50"
@@ -266,19 +265,17 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
                 <span className={`text-[11px] font-bold leading-tight ${active ? "text-blue-300" : "text-slate-200"}`}>
                   {item.symbol}
                 </span>
-                <span className="text-[8px] text-slate-500 truncate leading-tight">{item.name}</span>
+                <span className="text-[9px] text-slate-500 truncate leading-tight">{item.name}</span>
               </div>
 
-              {/* Price */}
-              <span className={`text-[10px] font-bold tabular-nums w-14 text-right shrink-0 ${item.price === 0 ? "text-slate-600" : up ? "text-emerald-400" : "text-rose-400"}`}>
-                {item.price === 0 ? "···" : `$${item.price >= 1000 ? item.price.toFixed(0) : item.price.toFixed(2)}`}
-              </span>
-
-              {/* Change % badge */}
-              <div className="w-10 text-right shrink-0">
+              {/* Price + Change stacked */}
+              <div className="flex flex-col items-end shrink-0">
+                <span className={`text-[11px] font-bold tabular-nums leading-tight ${item.price === 0 ? "text-slate-600" : up ? "text-emerald-400" : "text-rose-400"}`}>
+                  {item.price === 0 ? "···" : `$${item.price >= 1000 ? item.price.toFixed(0) : item.price.toFixed(2)}`}
+                </span>
                 {item.price > 0 && (
-                  <span className={`text-[9px] font-semibold tabular-nums px-1 py-px rounded ${
-                    up ? "bg-emerald-500/15 text-emerald-400" : "bg-rose-500/15 text-rose-400"
+                  <span className={`text-[9px] font-semibold tabular-nums leading-tight ${
+                    up ? "text-emerald-400/70" : "text-rose-400/70"
                   }`}>
                     {up ? "+" : ""}{item.change_pct.toFixed(1)}%
                   </span>
@@ -290,17 +287,17 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
       </div>
 
       {/* ── Footer count ───────────────────────────── */}
-      <div className="px-2.5 py-1 border-t border-slate-800/40 text-[8px] text-slate-600 text-center shrink-0">
+      <div className="px-2.5 py-1 border-t border-slate-800/40 text-[9px] text-slate-500 text-center shrink-0">
         {filtered.length} of {items.length} stocks
       </div>
 
       {/* ── High-Impact News ───────────────────────── */}
       <Section title="Market News" badge="Live" defaultOpen={false}>
-        <div className="px-2.5 pb-1.5 space-y-0.5">
+        <div className="px-2 pb-1.5 space-y-0.5">
           {NEWS_ITEMS.map((n, i) => (
             <div
               key={i}
-              className={`flex items-start gap-2 px-2 py-1.5 rounded border transition ${
+              className={`flex items-start gap-1.5 px-2 py-1.5 rounded border transition ${
                 n.impact === "high"
                   ? "border-rose-500/20 bg-rose-500/5"
                   : n.impact === "medium"
@@ -308,7 +305,7 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
                     : "border-slate-800/40 bg-slate-900/30"
               }`}
             >
-              <span className="text-[8px] text-slate-600 tabular-nums shrink-0 mt-0.5">{n.time}</span>
+              <span className="text-[9px] text-slate-500 tabular-nums shrink-0 mt-0.5">{n.time}</span>
               <div className="flex-1 min-w-0">
                 <span
                   className={`text-[9px] font-bold uppercase px-1 py-0.5 rounded mr-1 ${
@@ -326,7 +323,7 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
                 <span className="text-[10px] text-slate-400">{n.title}</span>
               </div>
               {n.impact === "high" && (
-                <span className="text-[7px] text-rose-400 font-bold shrink-0">⚠</span>
+                <span className="text-[10px] text-rose-400 font-bold shrink-0">⚠</span>
               )}
             </div>
           ))}
