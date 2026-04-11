@@ -35,6 +35,7 @@ type Props = {
   overlays: Set<Overlay>;
   indicators: Set<Indicator>;
   focusTime?: number | null;
+  showMarkers?: boolean;
 };
 
 export default function USMainChart({
@@ -44,6 +45,7 @@ export default function USMainChart({
   overlays,
   indicators,
   focusTime,
+  showMarkers = false,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -194,12 +196,14 @@ export default function USMainChart({
     }
 
     // ── Trade Markers (entry/exit with P&L) ──
-    const visibleTrades = trades.filter((t) => {
-      const ts = parseTS(t.entry_time);
-      const first = parseTS(visibleCandles[0].time);
-      const last = parseTS(visibleCandles[visibleCandles.length - 1].time);
-      return ts >= first && ts <= last;
-    });
+    const visibleTrades = showMarkers
+      ? trades.filter((t) => {
+          const ts = parseTS(t.entry_time);
+          const first = parseTS(visibleCandles[0].time);
+          const last = parseTS(visibleCandles[visibleCandles.length - 1].time);
+          return ts >= first && ts <= last;
+        })
+      : [];
 
     if (visibleTrades.length > 0) {
       const markers = visibleTrades.flatMap((t) => {
@@ -252,7 +256,7 @@ export default function USMainChart({
       ro.disconnect();
       chart.remove();
     };
-  }, [visibleCandles, trades, overlays, indicators, focusTime]);
+  }, [visibleCandles, trades, overlays, indicators, focusTime, showMarkers]);
 
   // ── Replay controls ──
   useEffect(() => {

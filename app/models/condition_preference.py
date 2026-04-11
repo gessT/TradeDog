@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Boolean, String, DateTime, Text
+from sqlalchemy import Boolean, Float, Integer, String, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -47,4 +47,30 @@ class StrategyConfig(Base):
 
     symbol: Mapped[str] = mapped_column(String(16), primary_key=True, index=True)
     config_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+
+class USStrategyPreset(Base):
+    """Saved US stock strategy presets — reusable across symbols."""
+    __tablename__ = "us_strategy_presets"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    conditions_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON: {"ema_trend":true,...}
+    atr_sl_mult: Mapped[float] = mapped_column(default=3.0)
+    atr_tp_mult: Mapped[float] = mapped_column(default=2.5)
+    period: Mapped[str] = mapped_column(String(8), default="1y")
+    skip_flat: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Backtest metrics (populated after running backtest)
+    bt_symbol: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    bt_win_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bt_return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bt_max_dd_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bt_profit_factor: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bt_sharpe: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bt_total_trades: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bt_tested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())

@@ -41,6 +41,29 @@ def startup() -> None:
     except SQLAlchemyError:
         pass
 
+    # Migrate: add backtest metric columns to us_strategy_presets if missing
+    try:
+        from sqlalchemy import text as _text, inspect as _inspect
+        insp = _inspect(engine)
+        if "us_strategy_presets" in insp.get_table_names():
+            existing_cols = {c["name"] for c in insp.get_columns("us_strategy_presets")}
+            new_cols = {
+                "bt_symbol": "VARCHAR(16)",
+                "bt_win_rate": "FLOAT",
+                "bt_return_pct": "FLOAT",
+                "bt_max_dd_pct": "FLOAT",
+                "bt_profit_factor": "FLOAT",
+                "bt_sharpe": "FLOAT",
+                "bt_total_trades": "INTEGER",
+                "bt_tested_at": "TIMESTAMP",
+            }
+            with engine.begin() as conn:
+                for col, col_type in new_cols.items():
+                    if col not in existing_cols:
+                        conn.execute(_text(f'ALTER TABLE us_strategy_presets ADD COLUMN {col} {col_type}'))
+    except Exception:
+        pass
+
 
 @app.on_event("shutdown")
 async def shutdown() -> None:

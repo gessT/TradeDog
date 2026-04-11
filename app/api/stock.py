@@ -11,6 +11,7 @@ import pandas as pd
 from pydantic import BaseModel, Field
 import requests as http_requests
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 import yfinance as yf
 
 from app.core.config import get_settings
@@ -1556,6 +1557,106 @@ class US1HBacktestResponse(BaseModel):
     daily_pnl: list[dict] = []
     params: dict
     timestamp: str
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# US Strategy Presets — save / load / delete
+# ═══════════════════════════════════════════════════════════════════════
+import json as _json
+from app.models.condition_preference import USStrategyPreset
+
+
+class StrategyPresetPayload(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    conditions: dict[str, bool]
+    atr_sl_mult: float = 3.0
+    atr_tp_mult: float = 2.5
+    period: str = "1y"
+    skip_flat: bool = False
+
+
+@router.get("/us-strategy-presets")
+def list_strategy_presets(db: Session = Depends(get_db)):
+    rows = db.query(USStrategyPreset).order_by(USStrategyPreset.name).all()
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "conditions": _json.loads(r.conditions_json),
+            "atr_sl_mult": r.atr_sl_mult,
+            "atr_tp_mult": r.atr_tp_mult,
+            "period": r.period,
+            "skip_flat": r.skip_flat,
+            "bt_symbol": r.bt_symbol,
+            "bt_win_rate": r.bt_win_rate,
+            "bt_return_pct": r.bt_return_pct,
+            "bt_max_dd_pct": r.bt_max_dd_pct,
+            "bt_profit_factor": r.bt_profit_factor,
+            "bt_sharpe": r.bt_sharpe,
+            "bt_total_trades": r.bt_total_trades,
+            "bt_tested_at": r.bt_tested_at.isoformat() if r.bt_tested_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/us-strategy-presets")
+def save_strategy_preset(payload: StrategyPresetPayload, db: Session = Depends(get_db)):
+    existing = db.query(USStrategyPreset).filter(USStrategyPreset.name == payload.name).first()
+    if existing:
+        existing.conditions_json = _json.dumps(payload.conditions)
+        existing.atr_sl_mult = payload.atr_sl_mult
+        existing.atr_tp_mult = payload.atr_tp_mult
+        existing.period = payload.period
+        existing.skip_flat = payload.skip_flat
+    else:
+        db.add(USStrategyPreset(
+            name=payload.name,
+            conditions_json=_json.dumps(payload.conditions),
+            atr_sl_mult=payload.atr_sl_mult,
+            atr_tp_mult=payload.atr_tp_mult,
+            period=payload.period,
+            skip_flat=payload.skip_flat,
+        ))
+    db.commit()
+    return {"status": "ok", "name": payload.name}
+
+
+class PresetMetricsPayload(BaseModel):
+    symbol: str
+    win_rate: float
+    total_return_pct: float
+    max_drawdown_pct: float
+    profit_factor: float
+    sharpe_ratio: float
+    total_trades: int
+
+
+@router.put("/us-strategy-presets/{preset_id}/metrics")
+def update_preset_metrics(preset_id: int, payload: PresetMetricsPayload, db: Session = Depends(get_db)):
+    preset = db.query(USStrategyPreset).filter(USStrategyPreset.id == preset_id).first()
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    preset.bt_symbol = payload.symbol
+    preset.bt_win_rate = payload.win_rate
+    preset.bt_return_pct = payload.total_return_pct
+    preset.bt_max_dd_pct = payload.max_drawdown_pct
+    preset.bt_profit_factor = payload.profit_factor
+    preset.bt_sharpe = payload.sharpe_ratio
+    preset.bt_total_trades = payload.total_trades
+    preset.bt_tested_at = func.now()
+    db.commit()
+    return {"status": "ok", "id": preset_id}
+
+
+@router.delete("/us-strategy-presets/{preset_id}")
+def delete_strategy_preset(preset_id: int, db: Session = Depends(get_db)):
+    row = db.query(USStrategyPreset).filter(USStrategyPreset.id == preset_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    db.delete(row)
+    db.commit()
+    return {"status": "deleted", "id": preset_id}
 
 
 @router.get("/backtest_1h")

@@ -7,6 +7,7 @@ import USWatchlist from "./USWatchlist";
 import USMainChart from "./USMainChart";
 import USOrderPanel from "./USOrderPanel";
 import USBottomPanel from "./USBottomPanel";
+import USStrategyPlanner, { type StrategyPreset } from "./USStrategyPlanner";
 
 // ═══════════════════════════════════════════════════════════════════════
 // US Stock Trading Dashboard — Moomoo-inspired, strategy-first layout
@@ -57,12 +58,74 @@ export default function USDashboard() {
   // ── Focus time (click trade → scroll chart) ────────────
   const [focusTime, setFocusTime] = useState<number | null>(null);
 
+  // ── Strategy preset ────────────────────────────────────
+  const [activePreset, setActivePreset] = useState<StrategyPreset | null>(null);
+  const [rightTab, setRightTab] = useState<"orders" | "strategy">("orders");
+  const [savedPresets, setSavedPresets] = useState<StrategyPreset[]>([]);
+
+  // Called by StrategyPlanner whenever presets list changes (save/delete)
+  const handlePresetsChanged = useCallback((presets: StrategyPreset[]) => {
+    setSavedPresets(presets);
+  }, []);
+
+  // Handle strategy change from TopBar dropdown (may be a saved preset name)
+  const handleStrategyChange = useCallback((name: string) => {
+    setStrategy(name);
+    const found = savedPresets.find((p) => p.name === name);
+    if (found) {
+      setActivePreset(found);
+    } else {
+      setActivePreset(null);
+    }
+  }, [savedPresets]);
+
   // ── Run backtest ───────────────────────────────────────
   const runBacktest = useCallback(async () => {
     setBtLoading(true);
     try {
-      const data = await fetchUS1HBacktest(selectedSymbol, "1y", 0.3, 3, 2.5);
+      const disabledConditions = activePreset
+        ? Object.entries(activePreset.conditions)
+            .filter(([, v]) => !v)
+            .map(([k]) => k)
+        : undefined;
+      const data = await fetchUS1HBacktest(
+        selectedSymbol,
+        activePreset?.period ?? "1y",
+        0.3,
+        activePreset?.atr_sl_mult ?? 3,
+        activePreset?.atr_tp_mult ?? 2.5,
+        undefined,
+        undefined,
+        disabledConditions,
+        activePreset?.skip_flat,
+      );
       setBtData(data);
+
+      // Save backtest metrics to preset in DB
+      if (activePreset?.id && data.metrics) {
+        try {
+          await fetch(`http://127.0.0.1:8000/stock/us-strategy-presets/${activePreset.id}/metrics`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              symbol: selectedSymbol,
+              win_rate: data.metrics.win_rate,
+              total_return_pct: data.metrics.total_return_pct,
+              max_drawdown_pct: data.metrics.max_drawdown_pct,
+              profit_factor: data.metrics.profit_factor,
+              sharpe_ratio: data.metrics.sharpe_ratio,
+              total_trades: data.metrics.total_trades,
+            }),
+          });
+          // Refresh presets so strategy cards get updated metrics
+          const res = await fetch("http://127.0.0.1:8000/stock/us-strategy-presets");
+          if (res.ok) {
+            const updated = await res.json();
+            setSavedPresets(updated);
+            handlePresetsChanged(updated);
+          }
+        } catch { /* metrics save failed — non-critical */ }
+      }
 
       // Update price from latest candle
       if (data.candles.length > 0) {
@@ -77,12 +140,12 @@ export default function USDashboard() {
     } finally {
       setBtLoading(false);
     }
-  }, [selectedSymbol]);
+  }, [selectedSymbol, activePreset, handlePresetsChanged]);
 
-  // Auto-run on symbol change
+  // Auto-run on symbol or preset change
   useEffect(() => {
     runBacktest();
-  }, [selectedSymbol]);
+  }, [selectedSymbol, activePreset]);
 
   // ── Handlers ───────────────────────────────────────────
   const handleSymbolChange = useCallback((sym: string, name: string) => {
@@ -95,6 +158,11 @@ export default function USDashboard() {
     setFocusTime(ts);
   }, []);
 
+  const handlePresetApply = useCallback((preset: StrategyPreset) => {
+    setActivePreset(preset);
+    if (preset.name) setStrategy(preset.name);
+  }, []);
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       {/* ═══ TOP CONTROL BAR ═══ */}
@@ -103,7 +171,7 @@ export default function USDashboard() {
         symbolName={selectedName}
         onSymbolChange={handleSymbolChange}
         strategy={strategy}
-        onStrategyChange={setStrategy}
+        onStrategyChange={handleStrategyChange}
         timeframe={timeframe}
         onTimeframeChange={setTimeframe}
         mode={mode}
@@ -116,6 +184,7 @@ export default function USDashboard() {
         bid={price > 0 ? price - 0.01 : 0}
         ask={price > 0 ? price + 0.01 : 0}
         volume={btData?.candles?.length ? btData.candles[btData.candles.length - 1].volume : 0}
+        savedPresetNames={savedPresets.map((p) => p.name)}
       />
 
       {/* ═══ MOBILE PANEL TABS (visible < lg) ═══ */}
@@ -145,7 +214,7 @@ export default function USDashboard() {
         {/* ── LEFT SIDEBAR (Watchlist) — desktop or mobile-selected ── */}
         <aside className={`${
           mobilePanel === "watchlist" ? "flex w-full" : "hidden"
-        } lg:flex lg:w-[30%] shrink-0 flex-col overflow-hidden border-r border-slate-800/60`}>
+        } lg:flex lg:w-[20%] shrink-0 flex-col overflow-hidden border-r border-slate-800/60`}>
           <USWatchlist
             activeSymbol={selectedSymbol}
             onSelectSymbol={(sym, name) => {
@@ -186,14 +255,45 @@ export default function USDashboard() {
         {/* ── RIGHT PANEL (Execution + Strategy) — desktop or mobile-selected ── */}
         <aside className={`${
           mobilePanel === "orders" ? "flex w-full" : "hidden"
-        } lg:flex lg:w-[30%] shrink-0 flex-col overflow-hidden border-l border-slate-800/60`}>
-          <USOrderPanel
-            symbol={selectedSymbol}
-            price={price}
-            metrics={btData?.metrics ?? null}
-            mode={mode}
-            tradingActive={tradingActive}
-          />
+        } lg:flex lg:w-[40%] shrink-0 flex-col overflow-hidden border-l border-slate-800/60`}>
+          {/* Right panel tabs */}
+          <div className="flex border-b border-slate-800/40 shrink-0">
+            <button
+              onClick={() => setRightTab("orders")}
+              className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider transition border-b-2 ${
+                rightTab === "orders"
+                  ? "text-blue-400 border-blue-400"
+                  : "text-slate-600 border-transparent hover:text-slate-400"
+              }`}
+            >
+              Orders
+            </button>
+            <button
+              onClick={() => setRightTab("strategy")}
+              className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider transition border-b-2 ${
+                rightTab === "strategy"
+                  ? "text-blue-400 border-blue-400"
+                  : "text-slate-600 border-transparent hover:text-slate-400"
+              }`}
+            >
+              Strategy
+            </button>
+          </div>
+          {rightTab === "orders" ? (
+            <USOrderPanel
+              symbol={selectedSymbol}
+              price={price}
+              metrics={btData?.metrics ?? null}
+              mode={mode}
+              tradingActive={tradingActive}
+            />
+          ) : (
+            <USStrategyPlanner
+              activePreset={activePreset}
+              onApply={handlePresetApply}
+              onPresetsChanged={handlePresetsChanged}
+            />
+          )}
         </aside>
       </div>
     </div>

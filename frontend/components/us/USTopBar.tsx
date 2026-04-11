@@ -7,7 +7,7 @@ import { US_STOCKS } from "../../constants/usStocks";
 // Top Control Bar — always visible, Moomoo-inspired
 // ═══════════════════════════════════════════════════════════════════════
 
-const STRATEGIES = [
+const DEFAULT_STRATEGIES = [
   { id: "breakout_v2", label: "Breakout V2" },
   { id: "pullback", label: "Pullback" },
   { id: "ema_cross", label: "EMA Cross" },
@@ -43,6 +43,7 @@ type Props = {
   bid: number;
   ask: number;
   volume: number;
+  savedPresetNames?: string[];
 };
 
 export default function USTopBar({
@@ -63,6 +64,7 @@ export default function USTopBar({
   bid,
   ask,
   volume,
+  savedPresetNames = [],
 }: Props) {
   const up = change >= 0;
   const spread = ask - bid;
@@ -169,9 +171,16 @@ export default function USTopBar({
           onChange={(e) => onStrategyChange(e.target.value)}
           className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700/60 bg-slate-800/60 text-slate-300 outline-none cursor-pointer hover:border-blue-500/50 transition shrink-0"
         >
-          {STRATEGIES.map((s) => (
+          {DEFAULT_STRATEGIES.map((s) => (
             <option key={s.id} value={s.id}>{s.label}</option>
           ))}
+          {savedPresetNames.length > 0 && (
+            <optgroup label="── Saved Strategies ──">
+              {savedPresetNames.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </optgroup>
+          )}
         </select>
 
         {/* ── Timeframe ──────────────────────────────── */}

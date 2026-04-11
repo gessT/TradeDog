@@ -74,7 +74,6 @@ function Section({
 
 export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
   const [items, setItems] = useState<WatchlistItem[]>(INITIAL_WATCHLIST);
-  const [filter, setFilter] = useState<"ALL" | "BUY" | "SELL" | "HOLD">("ALL");
   const [sectorFilter, setSectorFilter] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -145,7 +144,6 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
   }, [items]);
 
   const filtered = items.filter((i) => {
-    if (filter !== "ALL" && i.signal !== filter) return false;
     if (sectorFilter !== "ALL" && i.sector !== sectorFilter) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -163,190 +161,138 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
       }).slice(0, 8)
     : [];
 
-  // Count signals
-  const buys = items.filter((i) => i.signal === "BUY").length;
-  const sells = items.filter((i) => i.signal === "SELL").length;
-  const holds = items.filter((i) => i.signal === "HOLD" || i.signal === "—").length;
-
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/60">
-      {/* ── Watchlist ──────────────────────────────── */}
-      <Section title="Watchlist" badge={`${items.length}`} defaultOpen>
-        {/* Search */}
-        <div className="px-2.5 pb-1">
+      {/* ── Tiger-style Search Bar ──────────────────── */}
+      <div className="px-2 pt-2 pb-1.5 shrink-0">
+        <div className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 transition-colors ${
+          searchQuery ? "bg-slate-800 ring-1 ring-blue-500/40" : "bg-slate-800/60"
+        }`}>
+          <svg className="w-3.5 h-3.5 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search symbol or name…"
-            className="w-full px-2 py-1 text-[10px] bg-slate-800/60 border border-slate-700/60 rounded text-slate-200 placeholder-slate-600 outline-none focus:border-blue-500/60"
+            placeholder="Search stocks…"
+            className="flex-1 bg-transparent text-[11px] text-slate-200 placeholder-slate-500 outline-none min-w-0"
           />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery("")} className="text-slate-500 hover:text-slate-300 shrink-0">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
         </div>
+      </div>
 
-        {/* Sector filter */}
-        <div className="flex items-center gap-0.5 px-2.5 pb-1 overflow-x-auto scrollbar-none">
+      {/* ── Sector tags (scrollable pills) ──────── */}
+      <div className="flex items-center gap-1 px-2 pb-1.5 shrink-0 overflow-x-auto scrollbar-none">
+        <button
+          onClick={() => setSectorFilter("ALL")}
+          className={`text-[9px] px-2 py-1 rounded-full font-medium transition-all whitespace-nowrap ${
+            sectorFilter === "ALL"
+              ? "bg-blue-500/20 text-blue-300 shadow-sm shadow-blue-500/10"
+              : "bg-slate-800/50 text-slate-500 hover:bg-slate-800 hover:text-slate-300"
+          }`}
+        >
+          All
+        </button>
+        {US_SECTORS.map((s) => (
           <button
-            onClick={() => setSectorFilter("ALL")}
-            className={`text-[8px] px-1.5 py-0.5 rounded border font-medium transition whitespace-nowrap ${
-              sectorFilter === "ALL"
-                ? "border-blue-500/50 bg-blue-500/15 text-blue-400"
-                : "border-slate-700 text-slate-600 hover:text-slate-400"
+            key={s}
+            onClick={() => setSectorFilter(s)}
+            className={`text-[9px] px-2 py-1 rounded-full font-medium transition-all whitespace-nowrap ${
+              sectorFilter === s
+                ? "bg-blue-500/20 text-blue-300 shadow-sm shadow-blue-500/10"
+                : "bg-slate-800/50 text-slate-500 hover:bg-slate-800 hover:text-slate-300"
             }`}
           >
-            All
+            {s}
           </button>
-          {US_SECTORS.map((s) => (
+        ))}
+      </div>
+
+      {/* ── Header row ──────────────────────────────── */}
+      <div className="flex items-center px-2.5 py-1 text-[8px] font-medium text-slate-600 uppercase tracking-wider shrink-0 border-b border-slate-800/30">
+        <span className="flex-1">Symbol</span>
+        <span className="w-14 text-right">Price</span>
+        <span className="w-10 text-right">Chg%</span>
+      </div>
+
+      {/* ── Add-to-watchlist suggestions ─────────────── */}
+      {addableSuggestions.length > 0 && (
+        <div className="shrink-0 border-b border-slate-800/30">
+          <div className="text-[8px] text-slate-600 px-2.5 py-0.5">Add to watchlist:</div>
+          {addableSuggestions.map((s) => (
             <button
-              key={s}
-              onClick={() => setSectorFilter(s)}
-              className={`text-[8px] px-1.5 py-0.5 rounded border font-medium transition whitespace-nowrap ${
-                sectorFilter === s
-                  ? "border-blue-500/50 bg-blue-500/15 text-blue-400"
-                  : "border-slate-700 text-slate-600 hover:text-slate-400"
-              }`}
+              key={s.symbol}
+              onClick={() => {
+                addToWatchlist(s.symbol);
+                setSearchQuery("");
+              }}
+              className="w-full flex items-center gap-1.5 px-2.5 py-1 text-left hover:bg-emerald-500/10 transition"
             >
-              {s}
+              <span className="text-[10px] font-bold text-emerald-400 shrink-0">+</span>
+              <span className="text-[10px] font-bold text-slate-300">{s.symbol}</span>
+              <span className="text-[8px] text-slate-500 truncate flex-1 min-w-0">{s.name}</span>
             </button>
           ))}
         </div>
+      )}
 
-        {/* Signal filter */}
-        <div className="flex items-center gap-1 px-2.5 pb-1">
-          {(["ALL", "BUY", "SELL", "HOLD"] as const).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`text-[9px] px-1.5 py-0.5 rounded border font-medium transition ${
-                filter === f
-                  ? f === "BUY"
-                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-400"
-                    : f === "SELL"
-                      ? "border-rose-500/50 bg-rose-500/15 text-rose-400"
-                      : f === "HOLD"
-                        ? "border-amber-500/50 bg-amber-500/15 text-amber-400"
-                        : "border-blue-500/50 bg-blue-500/15 text-blue-400"
-                  : "border-slate-700 text-slate-600 hover:text-slate-400"
-              }`}
-            >
-              {f}
-            </button>
-          ))}
-        </div>
-
-        {/* Add-to-watchlist suggestions (search from full 200+ list) */}
-        {addableSuggestions.length > 0 && (
-          <div className="px-2.5 pb-1">
-            <div className="text-[8px] text-slate-600 px-0.5 pb-0.5">Add to watchlist:</div>
-            {addableSuggestions.map((s) => (
-              <button
-                key={s.symbol}
-                onClick={() => {
-                  addToWatchlist(s.symbol);
-                  setSearchQuery("");
-                }}
-                className="w-full flex items-center gap-1.5 px-2 py-1 text-left hover:bg-emerald-500/10 rounded transition"
-              >
-                <span className="text-[10px] font-bold text-emerald-400">+</span>
-                <span className="text-[10px] font-bold text-slate-300">{s.symbol}</span>
-                <span className="text-[8px] text-slate-500 truncate">{s.name}</span>
-                <span className="ml-auto text-[7px] px-1 py-px rounded bg-slate-800/60 text-slate-500">{s.sector}</span>
-              </button>
-            ))}
-          </div>
+      {/* ── Stock rows (Tiger-style compact list) ──── */}
+      <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">
+        {filtered.length === 0 && (
+          <p className="text-[10px] text-slate-500 text-center py-6">No stocks found</p>
         )}
+        {filtered.map((item) => {
+          const up = item.change_pct >= 0;
+          const active = item.symbol === activeSymbol;
+          return (
+            <button
+              key={item.symbol}
+              onClick={() => onSelectSymbol(item.symbol, item.name)}
+              className={`w-full flex items-center gap-1 px-2.5 py-1.5 text-left transition border-l-2 ${
+                active
+                  ? "border-l-blue-400 bg-blue-500/8"
+                  : "border-l-transparent hover:bg-slate-800/50"
+              }`}
+            >
+              {/* Symbol + Name */}
+              <div className="flex flex-col min-w-0 flex-1">
+                <span className={`text-[11px] font-bold leading-tight ${active ? "text-blue-300" : "text-slate-200"}`}>
+                  {item.symbol}
+                </span>
+                <span className="text-[8px] text-slate-500 truncate leading-tight">{item.name}</span>
+              </div>
 
-        {/* Stock rows */}
-        <div className="max-h-[400px] lg:max-h-[320px] overflow-y-auto">
-          {filtered.map((item) => {
-            const up = item.change_pct >= 0;
-            const active = item.symbol === activeSymbol;
-            return (
-              <button
-                key={item.symbol}
-                onClick={() => onSelectSymbol(item.symbol, item.name)}
-                className={`w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left transition group ${
-                  active
-                    ? "bg-blue-500/10 border-l-2 border-blue-400"
-                    : "hover:bg-slate-800/40 border-l-2 border-transparent"
-                }`}
-              >
-                {/* Symbol + Name + Sector */}
-                <div className="flex flex-col min-w-0 flex-1">
-                  <div className="flex items-center gap-1">
-                    <span className={`text-[11px] font-bold ${active ? "text-blue-300" : "text-slate-300"}`}>
-                      {item.symbol}
-                    </span>
-                    <span
-                      className={`text-[7px] px-1 py-px rounded font-medium ${
-                        item.cap === "L"
-                          ? "bg-blue-500/15 text-blue-400"
-                          : item.cap === "M"
-                            ? "bg-violet-500/15 text-violet-400"
-                            : "bg-orange-500/15 text-orange-400"
-                      }`}
-                    >
-                      {item.cap === "L" ? "LC" : item.cap === "M" ? "MC" : "SC"}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1 min-w-0">
-                    <span className="text-[8px] text-slate-600 truncate">{item.name}</span>
-                    <span className="text-[7px] px-1 py-px rounded bg-slate-800/60 text-slate-500 whitespace-nowrap">
-                      {item.sector}
-                    </span>
-                  </div>
-                </div>
+              {/* Price */}
+              <span className={`text-[10px] font-bold tabular-nums w-14 text-right shrink-0 ${item.price === 0 ? "text-slate-600" : up ? "text-emerald-400" : "text-rose-400"}`}>
+                {item.price === 0 ? "···" : `$${item.price >= 1000 ? item.price.toFixed(0) : item.price.toFixed(2)}`}
+              </span>
 
-                {/* Price & Change */}
-                <div className="flex flex-col items-end shrink-0">
-                  <span className={`text-[11px] font-bold tabular-nums ${item.price === 0 ? "text-slate-600" : up ? "text-emerald-400" : "text-rose-400"}`}>
-                    {item.price === 0 ? "···" : `$${item.price >= 1000 ? item.price.toFixed(0) : item.price.toFixed(2)}`}
+              {/* Change % badge */}
+              <div className="w-10 text-right shrink-0">
+                {item.price > 0 && (
+                  <span className={`text-[9px] font-semibold tabular-nums px-1 py-px rounded ${
+                    up ? "bg-emerald-500/15 text-emerald-400" : "bg-rose-500/15 text-rose-400"
+                  }`}>
+                    {up ? "+" : ""}{item.change_pct.toFixed(1)}%
                   </span>
-                  {item.price > 0 && (
-                    <span className={`text-[9px] tabular-nums ${up ? "text-emerald-400/70" : "text-rose-400/70"}`}>
-                      {up ? "+" : ""}{item.change_pct.toFixed(2)}%
-                    </span>
-                  )}
-                </div>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
 
-                {/* Signal Badge */}
-                <div className="w-8 text-center">
-                  {item.signal !== "—" && (
-                    <span
-                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                        item.signal === "BUY"
-                          ? "bg-emerald-500/20 text-emerald-400"
-                          : item.signal === "SELL"
-                            ? "bg-rose-500/20 text-rose-400"
-                            : "bg-amber-500/20 text-amber-400"
-                      }`}
-                    >
-                      {item.signal}
-                    </span>
-                  )}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </Section>
-
-      {/* ── Strategy Signals Summary ───────────────── */}
-      <Section title="Strategy Signals" defaultOpen>
-        <div className="grid grid-cols-3 gap-1 px-2.5 pb-1.5">
-          <div className="flex flex-col items-center py-1.5 rounded-lg bg-emerald-500/8 border border-emerald-500/20">
-            <span className="text-sm font-bold text-emerald-400">{buys}</span>
-            <span className="text-[7px] text-emerald-400/70 uppercase tracking-wider">Buy</span>
-          </div>
-          <div className="flex flex-col items-center py-1.5 rounded-lg bg-rose-500/8 border border-rose-500/20">
-            <span className="text-sm font-bold text-rose-400">{sells}</span>
-            <span className="text-[7px] text-rose-400/70 uppercase tracking-wider">Sell</span>
-          </div>
-          <div className="flex flex-col items-center py-1.5 rounded-lg bg-amber-500/8 border border-amber-500/20">
-            <span className="text-sm font-bold text-amber-400">{holds}</span>
-            <span className="text-[7px] text-amber-400/70 uppercase tracking-wider">Hold</span>
-          </div>
-        </div>
-      </Section>
+      {/* ── Footer count ───────────────────────────── */}
+      <div className="px-2.5 py-1 border-t border-slate-800/40 text-[8px] text-slate-600 text-center shrink-0">
+        {filtered.length} of {items.length} stocks
+      </div>
 
       {/* ── High-Impact News ───────────────────────── */}
       <Section title="Market News" badge="Live" defaultOpen={false}>
