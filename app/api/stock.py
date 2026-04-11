@@ -1841,6 +1841,7 @@ async def us_stock_backtest_vpb(
     capital: _Ann[float, Query()] = 5000.0,
     disabled_conditions: _Ann[_Opt[str], Query()] = None,
     # VPB params overrides
+    atr_sl_mult: _Ann[_Opt[float], Query()] = None,
     tp_r_multiple: _Ann[_Opt[float], Query()] = None,
     vol_multiplier: _Ann[_Opt[float], Query()] = None,
     body_ratio_min: _Ann[_Opt[float], Query()] = None,
@@ -1871,6 +1872,8 @@ async def us_stock_backtest_vpb(
 
         # Build param overrides
         param_overrides: dict = {}
+        if atr_sl_mult is not None:
+            param_overrides["atr_sl_mult"] = atr_sl_mult
         if tp_r_multiple is not None:
             param_overrides["tp_r_multiple"] = tp_r_multiple
         if vol_multiplier is not None:

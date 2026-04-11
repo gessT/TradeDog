@@ -100,8 +100,8 @@ export default function USDashboard() {
           "v2",
           disabledConditions,
           {
+            atr_sl_mult: activePreset?.atr_sl_mult,
             tp_r_multiple: activePreset?.atr_tp_mult,
-            vol_multiplier: undefined,
           },
           activePreset?.capital ?? 5000,
         );

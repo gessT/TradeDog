@@ -48,6 +48,8 @@ def startup() -> None:
         if "us_strategy_presets" in insp.get_table_names():
             existing_cols = {c["name"] for c in insp.get_columns("us_strategy_presets")}
             new_cols = {
+                "strategy_type": "VARCHAR(16) DEFAULT 'breakout_1h'",
+                "capital": "FLOAT DEFAULT 5000.0",
                 "bt_symbol": "VARCHAR(16)",
                 "bt_win_rate": "FLOAT",
                 "bt_return_pct": "FLOAT",
