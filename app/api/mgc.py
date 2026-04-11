@@ -9,16 +9,18 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime, timedelta, timezone
+
+SGT = timezone(timedelta(hours=8))  # Asia/Singapore UTC+8
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
-from mgc_trading.backtest import Backtester
-from mgc_trading.config import DEFAULT_PARAMS, INITIAL_CAPITAL, TIGER_ACCOUNT, TIGER_ID, TIGER_PRIVATE_KEY
-from mgc_trading.data_loader import load_yfinance
-from mgc_trading.strategy import MGCStrategy
+from strategies.futures.backtest import Backtester
+from strategies.futures.config import DEFAULT_PARAMS, INITIAL_CAPITAL, TIGER_ACCOUNT, TIGER_ID, TIGER_PRIVATE_KEY
+from strategies.futures.data_loader import load_yfinance
+from strategies.futures.strategy import MGCStrategy
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["mgc"])
@@ -190,7 +192,7 @@ async def mgc_backtest(
         equity_curve=eq_curve,
         metrics=metrics,
         params=params,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
 
 
@@ -199,6 +201,102 @@ def _isnan(v) -> bool:
         return math.isnan(float(v))
     except (TypeError, ValueError):
         return True
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Single-symbol live price (lightweight) — cached 2 seconds
+# ═══════════════════════════════════════════════════════════════════════
+
+import time as _time
+
+_price_cache: dict[str, tuple[float, float]] = {}  # symbol → (price, timestamp)
+_PRICE_CACHE_TTL = 2.0  # seconds
+
+
+def _get_cached_price(symbol: str) -> float | None:
+    """Return cached price if fresh, else None."""
+    entry = _price_cache.get(symbol)
+    if entry and (_time.monotonic() - entry[1]) < _PRICE_CACHE_TTL:
+        return entry[0]
+    return None
+
+
+def _set_cached_price(symbol: str, price: float) -> None:
+    _price_cache[symbol] = (price, _time.monotonic())
+
+
+def _tiger_live_price(symbol: str) -> float:
+    """Fetch live price from Tiger API. Returns 0 on failure."""
+    if not _tiger_quote_ok:
+        return 0.0
+    try:
+        quote_client, trade_client = _get_tiger_clients()
+        tiger_sym = _COMMODITY_SYMBOLS.get(symbol, {}).get("tiger", symbol)
+        contracts = trade_client.get_contracts(tiger_sym, sec_type="FUT")
+        identifier = contracts[0].identifier if contracts else tiger_sym
+        period_1m = _BAR_PERIOD_MAP.get("1m")
+        if period_1m:
+            df = quote_client.get_future_bars(identifier, period=period_1m, limit=1)
+            if df is not None and not df.empty:
+                return round(float(df["close"].iloc[-1]), 2)
+    except Exception:
+        logger.warning("Tiger live price failed for %s", symbol)
+    return 0.0
+
+
+def _tiger_bars(symbol: str, interval: str, limit: int = 500):
+    """Fetch OHLCV bars from Tiger API. Returns (identifier, DataFrame) or (symbol, None)."""
+    import pandas as pd
+
+    if not _tiger_quote_ok:
+        return symbol, None
+    try:
+        quote_client, trade_client = _get_tiger_clients()
+        tiger_sym = _COMMODITY_SYMBOLS.get(symbol, {}).get("tiger", symbol)
+        contracts = trade_client.get_contracts(tiger_sym, sec_type="FUT")
+        identifier = contracts[0].identifier if contracts else tiger_sym
+
+        period = _BAR_PERIOD_MAP.get(interval)
+        if period is None:
+            return identifier, None
+
+        df_raw = quote_client.get_future_bars(identifier, period=period, limit=limit)
+        if df_raw is not None and not df_raw.empty:
+            times = df_raw["time"].tolist()
+            df = df_raw[["open", "high", "low", "close", "volume"]].copy()
+            df.index = pd.to_datetime(df_raw["time"], unit="ms")
+            df["_time_ms"] = times
+            df = df.sort_index()
+            return identifier, df
+        return identifier, None
+    except Exception:
+        logger.warning("Tiger bars failed for %s/%s", symbol, interval)
+        return symbol, None
+
+
+@router.get("/price/{symbol}")
+async def live_price(symbol: str):
+    """Quick single-symbol price — Tiger API (cached 2s)."""
+    cached = _get_cached_price(symbol)
+    if cached is not None:
+        return {"symbol": symbol, "price": cached}
+
+    def _run():
+        price = _tiger_live_price(symbol)
+        if price > 0:
+            return price
+        # Last-resort fallback: yfinance
+        try:
+            import yfinance as yf
+            commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": f"{symbol}=F"})
+            t = yf.Ticker(commodity["yf"])
+            return round(float(t.fast_info.last_price or 0), 2)
+        except Exception:
+            return 0.0
+
+    price = await run_in_threadpool(_run)
+    _set_cached_price(symbol, price)
+    return {"symbol": symbol, "price": price}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -233,31 +331,58 @@ class CommodityQuotesResponse(BaseModel):
 
 @router.get("/quotes")
 async def commodity_quotes() -> CommodityQuotesResponse:
-    """Fetch latest quotes for multiple commodity futures via yfinance."""
+    """Fetch latest quotes for multiple commodity futures — Tiger API primary."""
 
     def _run():
-        import yfinance as yf
-
         quotes: list[CommodityQuote] = []
         symbols = list(_COMMODITY_SYMBOLS.keys())
-        yf_tickers = [_COMMODITY_SYMBOLS[s]["yf"] for s in symbols]
 
-        tickers = yf.Tickers(" ".join(yf_tickers))
-
-        for sym_key, yf_sym in zip(symbols, yf_tickers):
+        for sym_key in symbols:
             meta = _COMMODITY_SYMBOLS[sym_key]
             try:
-                info = tickers.tickers[yf_sym].fast_info
-                price = float(info.last_price or 0)
-                prev = float(info.previous_close or 0)
-                change = price - prev
-                change_pct = (change / prev * 100) if prev else 0.0
+                # ── Tiger API for live price + day bars ──────────
+                price = _tiger_live_price(sym_key)
+                prev = 0.0
+                day_high = price
+                day_low = price
+                day_vol = 0
 
-                # Get today's high/low/volume from 1d history
-                hist = tickers.tickers[yf_sym].history(period="1d", interval="1m")
-                day_high = float(hist["High"].max()) if not hist.empty else price
-                day_low = float(hist["Low"].min()) if not hist.empty else price
-                day_vol = int(hist["Volume"].sum()) if not hist.empty else 0
+                if _tiger_quote_ok:
+                    try:
+                        quote_client, trade_client = _get_tiger_clients()
+                        tiger_sym = meta.get("tiger", sym_key)
+                        contracts = trade_client.get_contracts(tiger_sym, sec_type="FUT")
+                        identifier = contracts[0].identifier if contracts else tiger_sym
+
+                        # Get today's 1m bars for high/low/vol/prev_close
+                        period_1m = _BAR_PERIOD_MAP.get("1m")
+                        if period_1m:
+                            df = quote_client.get_future_bars(identifier, period=period_1m, limit=390)
+                            if df is not None and not df.empty:
+                                if price <= 0:
+                                    price = round(float(df["close"].iloc[-1]), 2)
+                                day_high = round(float(df["high"].max()), 2)
+                                day_low = round(float(df["low"].min()), 2)
+                                day_vol = int(df["volume"].sum())
+                                # Previous close = first bar's open (approx)
+                                prev = round(float(df["open"].iloc[0]), 2)
+                    except Exception:
+                        logger.warning("Tiger quotes detail failed for %s", sym_key)
+
+                # yfinance fallback for prev_close if Tiger didn't provide
+                if prev == 0.0 or price <= 0:
+                    try:
+                        import yfinance as yf
+                        t = yf.Ticker(meta["yf"])
+                        if price <= 0:
+                            price = round(float(t.fast_info.last_price or 0), 2)
+                        if prev == 0.0:
+                            prev = round(float(t.fast_info.previous_close or 0), 2)
+                    except Exception:
+                        pass
+
+                change = round(price - prev, 2) if prev else 0.0
+                change_pct = round((change / prev * 100), 2) if prev else 0.0
 
                 quotes.append(CommodityQuote(
                     symbol=sym_key,
@@ -265,12 +390,12 @@ async def commodity_quotes() -> CommodityQuotesResponse:
                     icon=meta["icon"],
                     price=round(price, 2),
                     prev_close=round(prev, 2),
-                    change=round(change, 2),
-                    change_pct=round(change_pct, 2),
+                    change=change,
+                    change_pct=change_pct,
                     high=round(day_high, 2),
                     low=round(day_low, 2),
                     volume=day_vol,
-                    updated=datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                    updated=datetime.now(SGT).strftime("%H:%M:%S SGT"),
                 ))
             except Exception as exc:
                 logger.warning("Quote fetch failed for %s: %s", sym_key, exc)
@@ -285,7 +410,7 @@ async def commodity_quotes() -> CommodityQuotesResponse:
     quotes = await run_in_threadpool(_run)
     return CommodityQuotesResponse(
         quotes=quotes,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -339,6 +464,11 @@ except ImportError:
 
 def _get_tiger_clients():
     """Create Tiger quote + trade clients (cached — reuse across calls)."""
+    if not TIGER_ID or not TIGER_ACCOUNT:
+        raise HTTPException(
+            status_code=503,
+            detail="Tiger API not configured. Set TIGER_ID and TIGER_ACCOUNT in .env",
+        )
     if not hasattr(_get_tiger_clients, "_cache"):
         config = _TConfig()
         config.tiger_id = TIGER_ID
@@ -359,36 +489,15 @@ async def mgc_live(
 
     def _run():
         import pandas as pd
-        from mgc_trading import indicators as ind
+        from strategies.futures import indicators as ind
 
         # Resolve yfinance symbol from commodity map
         commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": "MGC=F"})
         yf_symbol = commodity["yf"]
 
-        identifier = symbol
-        use_tiger = False
-
-        # ── Try Tiger API first (only for MGC) ───────────────────
-        if _tiger_quote_ok and symbol == "MGC":
-            try:
-                quote_client, trade_client = _get_tiger_clients()
-                contracts = trade_client.get_contracts("MGC", sec_type="FUT")
-                identifier = contracts[0].identifier if contracts else "MGC"
-
-                period = _BAR_PERIOD_MAP.get(interval)
-                if period is None:
-                    raise ValueError(f"Unsupported interval: {interval}")
-
-                df_raw = quote_client.get_future_bars(identifier, period=period, limit=limit)
-                if df_raw is not None and not df_raw.empty:
-                    times = df_raw["time"].tolist()
-                    df = df_raw[["open", "high", "low", "close", "volume"]].copy()
-                    df.index = pd.to_datetime(df_raw["time"], unit="ms")
-                    df["_time_ms"] = times
-                    df = df.sort_index()
-                    use_tiger = True
-            except Exception:
-                logger.warning("Tiger API unavailable, falling back to yfinance")
+        # ── Try Tiger API first (all symbols) ────────────────────
+        identifier, df = _tiger_bars(symbol, interval, limit)
+        use_tiger = df is not None
 
         # ── Fallback: yfinance ───────────────────────────────────
         if not use_tiger:
@@ -445,10 +554,16 @@ async def mgc_live(
 
         return identifier, candles, ema_fast_list, ema_slow_list, rsi_list, signal_list, current_price
 
-    identifier, candles, ema_fast, ema_slow, rsi_vals, signals, price = await run_in_threadpool(_run)
+    try:
+        identifier, candles, ema_fast, ema_slow, rsi_vals, signals, price = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("Live data fetch failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
 
     return MGCLiveResponse(
-        symbol="MGC",
+        symbol=symbol,
         identifier=identifier,
         interval=interval,
         candles=candles,
@@ -457,7 +572,7 @@ async def mgc_live(
         rsi=rsi_vals,
         signals=signals,
         current_price=round(price, 2),
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -550,11 +665,51 @@ def _get_tiger_position(symbol: str = "MGC") -> int:
         return 0
 
 
+def _get_tiger_position_detail(symbol: str = "MGC") -> dict:
+    """Get current position detail (qty, average_cost, unrealized_pnl) from Tiger.
+    Recalculates unrealized_pnl with live price for consistency with /account."""
+    result = {"current_qty": 0, "average_cost": 0.0, "unrealized_pnl": 0.0, "latest_price": 0.0, "symbol": symbol}
+    try:
+        _, trade_client = _get_tiger_clients()
+        if trade_client is None:
+            return result
+        positions = trade_client.get_positions(
+            account=TIGER_ACCOUNT, sec_type="FUT"
+        )
+        if not positions:
+            return result
+        for p in positions:
+            if p.contract and p.contract.symbol and p.contract.symbol.startswith(symbol):
+                qty = int(p.quantity)
+                avg_cost = float(getattr(p, "average_cost", 0) or 0)
+                tiger_latest = float(getattr(p, "latest_price", 0) or 0)
+                orig_pnl = float(getattr(p, "unrealized_pnl", 0) or 0)
+
+                # Use shared live price for consistency (same as /account)
+                sym = p.contract.symbol
+                live = _tiger_live_price(sym) if sym else 0.0
+                best_price = live if live > 0 else tiger_latest
+
+                # Recalculate P&L with live price × contract multiplier
+                if best_price > 0 and avg_cost > 0 and qty != 0:
+                    calc_pnl = (best_price - avg_cost) * qty * 10.0
+                else:
+                    calc_pnl = orig_pnl
+
+                result["current_qty"] += qty
+                result["average_cost"] = avg_cost
+                result["unrealized_pnl"] = round(calc_pnl, 2)
+                result["latest_price"] = round(best_price, 2)
+        return result
+    except Exception:
+        return result
+
+
 @router.get("/position")
 async def get_position(symbol: str = "MGC"):
-    """Return current Tiger position for a symbol."""
-    qty = _get_tiger_position(symbol)
-    return {"current_qty": qty, "symbol": symbol}
+    """Return current Tiger position for a symbol (qty, fill price, P&L)."""
+    detail = _get_tiger_position_detail(symbol)
+    return detail
 
 
 # ── Tiger Account: Positions, Orders, Assets, Buy/Sell, Cancel ──────
@@ -564,10 +719,12 @@ class TigerPositionItem(BaseModel):
     symbol: str
     quantity: int
     average_cost: float
+    latest_price: float = 0.0
     market_value: float
     unrealized_pnl: float
     realized_pnl: float
     currency: str = "USD"
+    open_time: str = ""
 
 
 class TigerOrderItem(BaseModel):
@@ -597,6 +754,7 @@ class TigerAccountResponse(BaseModel):
     positions: list[TigerPositionItem]
     open_orders: list[TigerOrderItem]
     filled_orders: list[TigerOrderItem]
+    today_pnl: float = 0.0
     timestamp: str
 
 
@@ -654,12 +812,28 @@ async def tiger_account() -> TigerAccountResponse:
                 sym = ""
                 if p.contract and p.contract.symbol:
                     sym = p.contract.symbol
+                # Use shared live price for consistency across the app
+                tiger_latest = float(getattr(p, "latest_price", 0) or getattr(p, "market_price", 0) or 0)
+                live = _tiger_live_price(sym) if sym else 0.0
+                best_price = live if live > 0 else tiger_latest
+                # Recalculate unrealized P&L with the live price for consistency
+                qty = int(getattr(p, "quantity", 0) or 0)
+                avg_cost = float(getattr(p, "average_cost", 0) or 0)
+                orig_pnl = float(getattr(p, "unrealized_pnl", 0) or 0)
+                if best_price > 0 and avg_cost > 0 and qty != 0:
+                    # Tiger MGC contract multiplier = 10
+                    multiplier = 10.0
+                    calc_pnl = (best_price - avg_cost) * qty * multiplier
+                    upnl = calc_pnl
+                else:
+                    upnl = orig_pnl
                 positions.append(TigerPositionItem(
                     symbol=sym,
-                    quantity=int(getattr(p, "quantity", 0) or 0),
-                    average_cost=float(getattr(p, "average_cost", 0) or 0),
+                    quantity=qty,
+                    average_cost=avg_cost,
+                    latest_price=round(best_price, 2),
                     market_value=float(getattr(p, "market_value", 0) or 0),
-                    unrealized_pnl=float(getattr(p, "unrealized_pnl", 0) or 0),
+                    unrealized_pnl=round(upnl, 2),
                     realized_pnl=float(getattr(p, "realized_pnl", 0) or 0),
                 ))
         except Exception:
@@ -678,19 +852,49 @@ async def tiger_account() -> TigerAccountResponse:
         filled_orders: list[TigerOrderItem] = []
         try:
             _start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-            _end = datetime.now().strftime("%Y-%m-%d")
+            _end = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
             raw_filled = trade_client.get_filled_orders(account=TIGER_ACCOUNT, sec_type="FUT", start_date=_start, end_date=_end)
-            for o in (raw_filled or [])[-50:]:
-                filled_orders.append(_order_to_item(o))
+            all_items = [_order_to_item(o) for o in (raw_filled or [])]
+            filled_orders = all_items[:50]  # Tiger returns newest-first; keep most recent 50
         except Exception:
             logger.exception("Failed to get Tiger filled orders")
+
+        # Cross-reference positions with filled orders to find open time
+        for pos in positions:
+            if not pos.symbol:
+                continue
+            # Find the direction that opened this position (BUY for long, SELL for short)
+            open_action = "BUY" if pos.quantity > 0 else "SELL"
+            # Strip trailing digits from position symbol (e.g. MGC2606 → MGC) to match order symbol
+            import re
+            pos_base = re.sub(r"\d+$", "", pos.symbol)
+            # Find earliest filled order for this symbol + direction
+            matching = [
+                o for o in filled_orders
+                if o.symbol == pos_base and o.action == open_action and o.trade_time
+            ]
+            if matching:
+                matching.sort(key=lambda o: o.trade_time, reverse=True)
+                pos.open_time = matching[0].trade_time
+
+        # Fix unrealized P&L: if account-level is 0 but positions have P&L, sum them
+        if account_info.unrealized_pnl == 0 and positions:
+            pos_pnl = sum(p.unrealized_pnl for p in positions)
+            if pos_pnl != 0:
+                account_info.unrealized_pnl = pos_pnl
+
+        # Today's realized P&L: sum realized_pnl from positions
+        today_pnl = account_info.realized_pnl
+        if today_pnl == 0 and positions:
+            today_pnl = sum(p.realized_pnl for p in positions)
 
         return TigerAccountResponse(
             account=account_info,
             positions=positions,
             open_orders=open_orders,
             filled_orders=filled_orders,
-            timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+            today_pnl=round(today_pnl, 2),
+            timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
         )
 
     return await run_in_threadpool(_run)
@@ -765,7 +969,7 @@ async def tiger_trade_history(
         if not raw_filled:
             return TradeHistoryResponse(
                 trades=[], summary=_empty_summary(),
-                timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+                timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
             )
 
         # Normalize fills
@@ -903,7 +1107,7 @@ async def tiger_trade_history(
 
         return TradeHistoryResponse(
             trades=trades, summary=summary,
-            timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+            timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
         )
 
     return await run_in_threadpool(_run)
@@ -933,7 +1137,7 @@ def _order_to_item(o) -> TigerOrderItem:
         order_type=str(getattr(o, "order_type", "") or ""),
         quantity=int(getattr(o, "quantity", 0) or 0),
         filled_quantity=int(getattr(o, "filled", 0) or getattr(o, "filled_quantity", 0) or 0),
-        limit_price=float(getattr(o, "limit_price", 0) or 0),
+        limit_price=float(getattr(o, "limit_price", 0) or 0) or float(getattr(o, "aux_price", 0) or 0),
         avg_fill_price=float(getattr(o, "avg_fill_price", 0) or 0),
         status=status_raw,
         trade_time=_fmt_tiger_time(getattr(o, "trade_time", None) or getattr(o, "order_time", None)),
@@ -941,13 +1145,13 @@ def _order_to_item(o) -> TigerOrderItem:
 
 
 def _fmt_tiger_time(raw) -> str:
-    """Convert Tiger SDK time (ms timestamp or string) to ISO format with UTC offset."""
+    """Convert Tiger SDK time (ms timestamp or string) to ISO format in SGT."""
     if not raw:
         return ""
     if isinstance(raw, (int, float)):
         # Millisecond timestamp
         ts = raw / 1000 if raw > 1e12 else raw
-        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return datetime.fromtimestamp(ts, tz=SGT).strftime("%Y-%m-%dT%H:%M:%S+08:00")
     return str(raw)
 
 
@@ -1031,7 +1235,17 @@ async def cancel_order(order_id: str):
 
 @router.post("/close_position")
 async def close_position(symbol: str = "MGC"):
-    """Close all positions for a symbol by placing a market order in the opposite direction."""
+    """Close all positions for a symbol by placing a market order in the opposite direction.
+
+    Also cancels all related open orders (SL/TP) and resets the execution engine.
+    """
+
+    _NOT_CANCELLABLE = {
+        "FILLED", "CANCELLED", "CANCELED", "EXPIRED", "INACTIVE",
+        "DEACTIVATED", "REJECTED",
+        "filled", "cancelled", "canceled", "expired", "inactive",
+        "deactivated", "rejected",
+    }
 
     def _run():
         import re
@@ -1067,10 +1281,50 @@ async def close_position(symbol: str = "MGC"):
             action=close_side, quantity=close_qty,
         )
         result = trade_client.place_order(order)
+        msg_parts = [f"Closed {close_qty}x {symbol} ({close_side}) → {result}"]
+
+        # ── Cancel all related open orders (SL/TP) ─────────────────
+        cancelled_orders = []
+        try:
+            open_orders = trade_client.get_open_orders(account=TIGER_ACCOUNT, sec_type="FUT")
+            for o in (open_orders or []):
+                global_id = getattr(o, "id", None) or getattr(o, "order_id", None)
+                if not global_id:
+                    continue
+                status_raw = str(getattr(o, "status", "") or "")
+                if "." in status_raw:
+                    status_raw = status_raw.rsplit(".", 1)[-1]
+                if status_raw in _NOT_CANCELLABLE:
+                    continue
+                try:
+                    trade_client.cancel_order(id=int(global_id))
+                    cancelled_orders.append(str(global_id))
+                    logger.info("🧹 Auto-cancelled order %s after close_position", global_id)
+                except Exception as cancel_exc:
+                    err_msg = str(cancel_exc).lower()
+                    if not any(kw in err_msg for kw in
+                               ["filled", "cancelled", "canceled", "not found",
+                                "invalid status", "does not exist"]):
+                        logger.warning("⚠️ Failed to cancel order %s: %s", global_id, cancel_exc)
+            if cancelled_orders:
+                msg_parts.append(f"Cancelled {len(cancelled_orders)} open order(s)")
+        except Exception as exc:
+            logger.warning("Could not cleanup open orders after close: %s", exc)
+
+        # ── Reset execution engine ──────────────────────────────────
+        try:
+            from strategies.futures.execution_engine import get_engine
+            engine = get_engine(base_symbol)
+            engine.record_exit(reason="MANUAL_CLOSE", exit_price=0.0)
+            msg_parts.append("Engine reset")
+        except Exception as exc:
+            logger.warning("Could not reset engine after close: %s", exc)
+
         return {
             "success": True,
             "order_id": str(result),
-            "message": f"Closed {close_qty}x {symbol} ({close_side}) → {result}",
+            "cancelled_orders": cancelled_orders,
+            "message": " | ".join(msg_parts),
         }
 
     try:
@@ -1184,10 +1438,10 @@ async def scan_trade(req: ScanTradeRequest) -> ScanTradeResponse:
         import math
         import numpy as np
         import pandas as pd
-        from mgc_trading import indicators as ind
-        from mgc_trading.backtest import Backtester
-        from mgc_trading.config import CONTRACT_SIZE, RISK_PER_TRADE
-        from mgc_trading.tiger_execution import TigerTrader
+        from strategies.futures import indicators as ind
+        from strategies.futures.backtest import Backtester
+        from strategies.futures.config import CONTRACT_SIZE, RISK_PER_TRADE
+        from strategies.futures.tiger_execution import TigerTrader
 
         symbol = req.symbols[0] if req.symbols else "MGC"
         identifier = symbol
@@ -1442,7 +1696,7 @@ async def scan_trade(req: ScanTradeRequest) -> ScanTradeResponse:
         execution=exec_result,
         risk_check=risk_check,
         position=position_info,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -1463,6 +1717,9 @@ class MGC5MinCandle(BaseModel):
     macd_hist: Optional[float] = None
     st_dir: Optional[int] = None
     signal: int = 0
+    mkt_structure: Optional[int] = None
+    sma_28: Optional[float] = None
+    adx: Optional[float] = None
 
 
 class MGC5MinTrade(BaseModel):
@@ -1500,6 +1757,9 @@ class MGC5MinMetrics(BaseModel):
     oos_win_rate: float = 0.0
     oos_total_trades: int = 0
     oos_return_pct: float = 0.0
+    # Daily loss limit
+    worst_daily_loss: float = 0.0
+    days_stopped: int = 0
 
 
 class MGC5MinBacktestResponse(BaseModel):
@@ -1528,6 +1788,13 @@ async def mgc_backtest_5min(
     date_to: Annotated[Optional[str], Query()] = None,
     disabled_conditions: Annotated[Optional[str], Query()] = None,
     skip_flat: Annotated[bool, Query()] = False,
+    skip_counter_trend: Annotated[bool, Query()] = True,
+    use_ema_exit: Annotated[bool, Query()] = False,
+    use_struct_fade: Annotated[bool, Query()] = False,
+    use_sma28_cut: Annotated[bool, Query()] = False,
+    daily_loss_limit: Annotated[float, Query(ge=0, le=5000)] = 0.0,
+    skip_hours: Annotated[Optional[str], Query()] = None,
+    max_loss_per_trade: Annotated[float, Query(ge=0, le=2000)] = 0.0,
 ) -> MGC5MinBacktestResponse:
     """Run 5-minute strategy backtest with out-of-sample validation.
 
@@ -1538,13 +1805,19 @@ async def mgc_backtest_5min(
     _disabled: set[str] = set()
     if disabled_conditions:
         _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
-                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok"}
+                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok",
+                  "smc_ob","smc_fvg","smc_bos"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
+
+    # Parse skip_hours from comma-separated string (e.g. "4,16")
+    _skip_hours: set[int] | None = None
+    if skip_hours:
+        _skip_hours = {int(h.strip()) for h in skip_hours.split(",") if h.strip().isdigit()}
 
     def _run():
         import pandas as _pd
-        from mgc_trading.backtest_5min import Backtester5Min
-        from mgc_trading.strategy_5min import MGCStrategy5Min, DEFAULT_5MIN_PARAMS
+        from strategies.futures.backtest_5min import Backtester5Min
+        from strategies.futures.strategy_5min import MGCStrategy5Min, DEFAULT_5MIN_PARAMS
 
         # Always load 60d so indicators are fully warmed up
         # (EMA, RSI, MACD, Supertrend need history to stabilize)
@@ -1559,9 +1832,9 @@ async def mgc_backtest_5min(
             df = df[df.index < trade_end]
 
         # ── Run full 60d simulation for consistent results ──────
-        custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
+        custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult, "use_ema_exit": use_ema_exit, "use_struct_fade": use_struct_fade, "use_sma28_cut": use_sma28_cut}
         bt = Backtester5Min(capital=capital)
-        result = bt.run(df, params=custom_params, oos_split=oos_split, disabled_conditions=_disabled or None, skip_flat=skip_flat)
+        result = bt.run(df, params=custom_params, oos_split=oos_split, disabled_conditions=_disabled or None, skip_flat=skip_flat, skip_counter_trend=skip_counter_trend, daily_loss_limit=daily_loss_limit, skip_hours=_skip_hours, max_loss_per_trade=max_loss_per_trade)
 
         # ── Determine display window ────────────────────────────
         display_start: str | None = None
@@ -1576,17 +1849,11 @@ async def mgc_backtest_5min(
                 display_start = cutoff.strftime("%Y-%m-%d")
 
         # ── Filter trades to display window ─────────────────────
+        # Return ALL trades — frontend filters by period client-side
         filtered_trades = result.trades
-        if display_start:
-            filtered_trades = [
-                t for t in result.trades
-                if str(t.exit_time)[:10] >= display_start
-            ]
 
-        # ── Filter daily_pnl to display window ─────────────────
+        # ── Return ALL daily_pnl (frontend filters by period) ──
         filtered_daily = result.daily_pnl
-        if display_start:
-            filtered_daily = [d for d in result.daily_pnl if d["date"] >= display_start]
 
         # ── Recompute metrics for the display window ────────────
         display_wins = [t for t in filtered_trades if t.pnl > 0]
@@ -1613,6 +1880,8 @@ async def mgc_backtest_5min(
             oos_win_rate=result.oos_win_rate,
             oos_total_trades=result.oos_total_trades,
             oos_return_pct=result.oos_return_pct,
+            worst_daily_loss=result.worst_daily_loss,
+            days_stopped=result.days_stopped,
         )
 
         # ── Build candle list (display window only) ─────────────
@@ -1642,6 +1911,9 @@ async def mgc_backtest_5min(
                 macd_hist=round(float(row["macd_hist"]), 4) if not _isnan(row.get("macd_hist")) else None,
                 st_dir=int(row["st_dir"]) if not _isnan(row.get("st_dir")) else None,
                 signal=int(row.get("signal", 0)),
+                mkt_structure=int(row["mkt_structure"]) if not _isnan(row.get("mkt_structure")) else None,
+                sma_28=round(float(row["sma_28"]), 2) if not _isnan(row.get("sma_28")) else None,
+                adx=round(float(row["adx"]), 1) if not _isnan(row.get("adx")) else None,
             ))
 
         trades = [
@@ -1674,40 +1946,43 @@ async def mgc_backtest_5min(
         logger.exception("5min backtest failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
-    # Check if backtest currently has an open position
+    # ── Detect open position from the last EOD trade ─────────────────
+    # The backtester force-closes any open position at data end as "EOD".
+    # If the very last trade (unfiltered or filtered) is EOD, it means
+    # the position is still live → convert it to "OPEN".
     open_pos = None
-    try:
-        def _get_open_pos():
-            from mgc_trading.backtest_5min import Backtester5Min
-            df = load_yfinance(symbol=symbol, interval="5m", period="60d")
-            bt = Backtester5Min()
-            _disabled_set = set()
-            if disabled_conditions:
-                _disabled_set = {c.strip() for c in disabled_conditions.split(",") if c.strip()}
-            return bt.get_live_position(df, params={"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}, disabled_conditions=_disabled_set or None)
-        open_pos = await run_in_threadpool(_get_open_pos)
-    except Exception:
-        pass
+    if trades:
+        # Only convert if the very last trade is EOD (position still open at end of data)
+        last_eod_idx = None
+        if trades[-1].reason == "EOD":
+            last_eod_idx = len(trades) - 1
 
-    # If last trade is EOD at data end and backtest still has open position → mark as OPEN
-    if open_pos and trades:
-        last_t = trades[-1]
-        if last_t.reason == "EOD" and round(last_t.entry_price, 2) == open_pos["entry_price"]:
-            trades[-1] = MGC5MinTrade(
-                entry_time=last_t.entry_time,
-                exit_time=last_t.exit_time,
-                entry_price=last_t.entry_price,
-                exit_price=last_t.exit_price,
-                qty=last_t.qty,
-                pnl=last_t.pnl,
-                pnl_pct=last_t.pnl_pct,
+        if last_eod_idx is not None:
+            t = trades[last_eod_idx]
+            open_pos = {
+                "direction": t.direction or "CALL",
+                "entry_price": t.entry_price,
+                "sl": t.sl,
+                "tp": t.tp,
+                "entry_time": t.entry_time,
+                "signal_type": t.signal_type,
+                "bar_time": t.entry_time,
+            }
+            trades[last_eod_idx] = MGC5MinTrade(
+                entry_time=t.entry_time,
+                exit_time=t.exit_time,
+                entry_price=t.entry_price,
+                exit_price=t.exit_price,
+                qty=t.qty,
+                pnl=t.pnl,
+                pnl_pct=t.pnl_pct,
                 reason="OPEN",
-                signal_type=last_t.signal_type,
-                direction=last_t.direction,
-                mae=last_t.mae,
-                mkt_structure=last_t.mkt_structure,
-                sl=round(open_pos["sl"], 2),
-                tp=round(open_pos["tp"], 2),
+                signal_type=t.signal_type,
+                direction=t.direction,
+                mae=t.mae,
+                mkt_structure=t.mkt_structure,
+                sl=t.sl,
+                tp=t.tp,
             )
 
     return MGC5MinBacktestResponse(
@@ -1721,7 +1996,7 @@ async def mgc_backtest_5min(
         daily_pnl=daily_pnl,
         params=params,
         open_position=open_pos,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
 
 
@@ -1794,11 +2069,12 @@ async def mgc_scan_5min(
     _disabled: set[str] | None = None
     if disabled_conditions:
         _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
-                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok"}
+                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok",
+                  "smc_ob","smc_fvg","smc_bos"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid} or None
 
     def _run():
-        from mgc_trading.scanner_5min import scan_5min, scan_5min_all, scan_5min_mtf
+        from strategies.futures.scanner_5min import scan_5min, scan_5min_all, scan_5min_mtf
 
         effective_period = period
         if period not in ("1d", "2d", "5d", "7d", "30d", "60d"):
@@ -1881,7 +2157,7 @@ async def mgc_scan_5min(
         bias=bias,
         conditions_met=met,
         conditions_total=total,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -1897,12 +2173,13 @@ async def mgc_scan_5min_live(
     _disabled: set[str] | None = None
     if disabled_conditions:
         _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
-                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok"}
+                  "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok",
+                  "smc_ob","smc_fvg","smc_bos"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid} or None
 
     def _run():
         import pandas as pd
-        from mgc_trading.scanner_5min import scan_5min, scan_5min_all, scan_5min_mtf
+        from strategies.futures.scanner_5min import scan_5min, scan_5min_all, scan_5min_mtf
 
         if not _tiger_quote_ok:
             raise ValueError("Tiger SDK not available")
@@ -2008,7 +2285,7 @@ async def mgc_scan_5min_live(
         bias=bias,
         conditions_met=met,
         conditions_total=total,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -2024,6 +2301,9 @@ class Execute5MinRequest(BaseModel):
     stop_loss: float = 0.0
     take_profit: float = 0.0
     bar_time: str = ""            # signal bar timestamp for dedup + parity
+    allow_scale_in: bool = False  # permit adding to existing position during retracement
+    current_price: float = 0.0    # live price for retracement check
+    limit_price: float = 0.0      # if > 0, place LMT entry at this price instead of MKT
 
 
 class Execute5MinResponse(BaseModel):
@@ -2043,8 +2323,8 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
     Uses ExecutionEngine state machine for validation + fail-safe.
     """
     def _run():
-        from mgc_trading.tiger_execution import TigerTrader
-        from mgc_trading.execution_engine import get_engine
+        from strategies.futures.tiger_execution import TigerTrader
+        from strategies.futures.execution_engine import get_engine
 
         engine = get_engine(req.symbol)
 
@@ -2077,6 +2357,8 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
             qty=req.qty,
             max_qty=req.max_qty,
             current_tiger_qty=current_pos,
+            allow_scale_in=req.allow_scale_in,
+            current_price=req.current_price,
         )
         if rejection is not None:
             exec_result = ExecutionResult(
@@ -2110,12 +2392,16 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
             return exec_result, position_info, rec.to_dict(), engine.get_state_summary()
 
         try:
+            # Get live price so bracket order knows whether to use LMT or STP
+            live_px = _tiger_live_price(req.symbol) or req.current_price or req.entry_price
             bracket = trader.place_bracket_order(
                 symbol=tiger_sym,
                 qty=req.qty,
                 side=side,
                 stop_loss_price=sl_price,
                 take_profit_price=tp_price,
+                limit_price=req.limit_price if req.limit_price > 0 else None,
+                current_price=live_px,
             )
         except Exception as exc:
             logger.exception("Bracket order placement failed")
@@ -2149,18 +2435,24 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
             )
 
             if rec.status == "REJECTED":
-                # OCO failed — must cancel entry order
+                # OCO failed — actually cancel the entry order on Tiger
                 logger.error(
                     "FAIL-SAFE TRIGGERED: SL=%s TP=%s — cancelling entry %s",
                     sl_ok, tp_ok, bracket.entry.order_id,
                 )
+                try:
+                    cancelled = trader.cancel_order(bracket.entry.order_id)
+                    cancel_msg = "entry cancelled" if cancelled else "CANCEL FAILED — manual intervention required"
+                except Exception as cancel_exc:
+                    logger.exception("Failed to cancel entry order %s", bracket.entry.order_id)
+                    cancel_msg = f"CANCEL FAILED ({cancel_exc}) — manual intervention required"
                 exec_result = ExecutionResult(
                     executed=False,
                     order_id=bracket.entry.order_id,
                     side=side,
                     qty=req.qty,
                     status="CANCELLED_FAILSAFE",
-                    reason=f"OCO not confirmed (SL={sl_ok}, TP={tp_ok}) — entry cancelled",
+                    reason=f"OCO not confirmed (SL={sl_ok}, TP={tp_ok}) — {cancel_msg}",
                 )
             else:
                 parts = [f"Entry {bracket.entry.order_id} {side}"]
@@ -2209,7 +2501,7 @@ async def mgc_execute_5min(req: Execute5MinRequest) -> Execute5MinResponse:
         position=position_info,
         engine_state=engine_state,
         execution_record=exec_record,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -2229,7 +2521,7 @@ async def backtest_position(
     live should enter immediately.
     """
     def _run():
-        from mgc_trading.backtest_5min import Backtester5Min
+        from strategies.futures.backtest_5min import Backtester5Min
 
         effective_period = period if period in ("1d", "2d", "5d", "7d", "30d", "60d") else "60d"
         df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
@@ -2248,7 +2540,7 @@ async def backtest_position(
         }
 
     result = await run_in_threadpool(_run)
-    result["timestamp"] = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC")
+    result["timestamp"] = datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT")
     return result
 
 
@@ -2257,7 +2549,7 @@ async def backtest_position(
 @router.get("/engine_state")
 async def get_engine_state(symbol: str = "MGC"):
     """Return current execution engine state for a symbol."""
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     tiger_qty = _get_tiger_position(symbol)
     engine.sync_with_broker(tiger_qty)
@@ -2271,10 +2563,12 @@ async def get_engine_state(symbol: str = "MGC"):
 @router.post("/engine_sync")
 async def engine_sync(symbol: str = "MGC"):
     """Force-sync execution engine state with Tiger broker position."""
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     tiger_qty = _get_tiger_position(symbol)
-    engine.sync_with_broker(tiger_qty)
+    # Try to get current price for P&L estimation on sync
+    current_price = _tiger_live_price(symbol)
+    engine.sync_with_broker(tiger_qty, current_price=current_price)
     return {
         "synced": True,
         **engine.get_state_summary(),
@@ -2299,7 +2593,7 @@ async def engine_seed(req: EngineSeedRequest, symbol: str = "MGC"):
     Used when auto-trading starts and Tiger already holds a position
     that matches the backtest — seeds the engine so it tracks SL/TP exits.
     """
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     engine.seed_position(
         direction=req.direction,
@@ -2320,7 +2614,7 @@ async def engine_seed(req: EngineSeedRequest, symbol: str = "MGC"):
 @router.post("/engine_reset")
 async def engine_reset(symbol: str = "MGC"):
     """Emergency reset: clear all engine state for a symbol."""
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     engine.force_reset()
     return {"reset": True, **engine.get_state_summary()}
@@ -2329,7 +2623,7 @@ async def engine_reset(symbol: str = "MGC"):
 @router.get("/engine_log")
 async def get_engine_log(symbol: str = "MGC", limit: int = 50):
     """Return recent execution log entries."""
-    from mgc_trading.execution_engine import get_engine
+    from strategies.futures.execution_engine import get_engine
     engine = get_engine(symbol)
     entries = engine.execution_log[-limit:]
     return {
@@ -2374,7 +2668,7 @@ async def mgc_optimize_5min(
     """Run 5-minute strategy optimisation (grid search)."""
 
     def _run():
-        from mgc_trading.optimizer_5min import (
+        from strategies.futures.optimizer_5min import (
             optimize_5min,
             QUICK_5MIN_GRID,
             DEFAULT_5MIN_GRID,
@@ -2420,7 +2714,7 @@ async def mgc_optimize_5min(
         total_combos=total_combos,
         passed_filter=passed,
         results=top,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
 
 
@@ -2444,7 +2738,7 @@ async def mgc_trade_log_5min(
     """Return the last N trades from 5-minute backtest."""
 
     def _run():
-        from mgc_trading.backtest_5min import Backtester5Min
+        from strategies.futures.backtest_5min import Backtester5Min
 
         effective_period = period
         if period not in ("1d", "2d", "5d", "7d", "30d", "60d"):
@@ -2463,7 +2757,7 @@ async def mgc_trade_log_5min(
         if open_pos and all_trades and all_trades[-1].reason == "EOD":
             last_t = all_trades[-1]
             if round(last_t.entry_price, 2) == open_pos["entry_price"]:
-                from mgc_trading.backtest_5min import Trade5Min
+                from strategies.futures.backtest_5min import Trade5Min
                 all_trades[-1] = Trade5Min(
                     entry_time=last_t.entry_time,
                     exit_time=last_t.exit_time,
@@ -2516,12 +2810,12 @@ async def mgc_trade_log_5min(
         win_rate=wr,
         total_pnl=pnl,
         open_position=open_pos,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 5-Minute Condition Preferences (persisted in SQLite)
+# 5-Minute Condition Preferences (persisted in PostgreSQL)
 # ═══════════════════════════════════════════════════════════════════════
 
 # Valid 5min condition keys
@@ -2669,12 +2963,13 @@ def delete_5min_condition_preset(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Auto-Trade Settings (verify lock, qty — persisted in SQLite)
+# Auto-Trade Settings (verify lock, qty — persisted in PostgreSQL)
 # ═══════════════════════════════════════════════════════════════════════
 
 class AutoTradeSettingsPayload(BaseModel):
     verify_lock: bool = True
     auto_qty: int = 1
+    enabled: Optional[bool] = None
 
 
 @router.get("/auto_trade_settings")
@@ -2688,12 +2983,12 @@ def get_auto_trade_settings(
     sym = symbol.upper()
     with engine.connect() as conn:
         row = conn.execute(
-            text("SELECT verify_lock, auto_qty FROM auto_trade_settings WHERE symbol = :sym"),
+            text("SELECT verify_lock, auto_qty, enabled FROM auto_trade_settings WHERE symbol = :sym"),
             {"sym": sym},
         ).fetchone()
     if row:
-        return {"verify_lock": bool(row[0]), "auto_qty": int(row[1])}
-    return {"verify_lock": True, "auto_qty": 1}  # defaults
+        return {"verify_lock": bool(row[0]), "auto_qty": int(row[1]), "enabled": bool(row[2]) if row[2] is not None else False}
+    return {"verify_lock": True, "auto_qty": 1, "enabled": False}  # defaults
 
 
 @router.post("/auto_trade_settings")
@@ -2709,14 +3004,132 @@ def save_auto_trade_settings(
     with engine.begin() as conn:
         conn.execute(
             text("""
-                INSERT INTO auto_trade_settings (symbol, verify_lock, auto_qty, updated_at)
-                VALUES (:sym, :vl, :aq, CURRENT_TIMESTAMP)
+                INSERT INTO auto_trade_settings (symbol, verify_lock, auto_qty, enabled, updated_at)
+                VALUES (:sym, :vl, :aq, :en, CURRENT_TIMESTAMP)
                 ON CONFLICT (symbol) DO UPDATE SET
                     verify_lock = EXCLUDED.verify_lock,
                     auto_qty = EXCLUDED.auto_qty,
+                    enabled = EXCLUDED.enabled,
                     updated_at = CURRENT_TIMESTAMP
             """),
-            {"sym": sym, "vl": payload.verify_lock, "aq": payload.auto_qty},
+            {"sym": sym, "vl": payload.verify_lock, "aq": payload.auto_qty, "en": payload.enabled or False},
+        )
+    return {"status": "ok"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Daily P&L Tracking & Loss Limit
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/daily_pnl")
+async def get_daily_pnl(symbol: str = "MGC"):
+    """Return today's realized P&L and daily loss limit status."""
+    from strategies.futures.execution_engine import get_engine
+    engine = get_engine(symbol)
+    return engine.get_daily_pnl()
+
+
+class DailyLossLimitPayload(BaseModel):
+    limit: float = 350.0
+
+
+@router.post("/daily_loss_limit")
+async def set_daily_loss_limit(
+    payload: DailyLossLimitPayload,
+    symbol: str = Query("MGC"),
+):
+    """Set the daily loss limit. 0 = disabled."""
+    from strategies.futures.execution_engine import get_engine
+    engine = get_engine(symbol)
+    engine.set_daily_loss_limit(payload.limit)
+    return {"status": "ok", "daily_loss_limit": payload.limit}
+
+
+class ManualPnlPayload(BaseModel):
+    pnl: float
+
+
+@router.post("/daily_pnl/add")
+async def add_daily_pnl(
+    payload: ManualPnlPayload,
+    symbol: str = Query("MGC"),
+):
+    """Manually add a realized P&L entry (e.g. from externally-detected exit)."""
+    from strategies.futures.execution_engine import get_engine
+    engine = get_engine(symbol)
+    engine.add_manual_pnl(payload.pnl)
+    return engine.get_daily_pnl()
+
+
+@router.post("/daily_pnl/reset")
+async def reset_daily_pnl(symbol: str = Query("MGC")):
+    """Reset today's daily P&L counter."""
+    from strategies.futures.execution_engine import get_engine
+    engine = get_engine(symbol)
+    engine.reset_daily_pnl()
+    return {"status": "ok", "message": "Daily P&L reset"}
+
+
+# ── Strategy Config (persist period, SL/TP, risk filters) ────────────
+
+
+class StrategyConfigPayload(BaseModel):
+    period: str = "3d"
+    sl_mult: float = 4.0
+    tp_mult: float = 3.0
+    risk_filters: dict[str, bool] = {}
+    active_preset: str | None = None
+
+
+@router.get("/strategy_config")
+def get_strategy_config(symbol: str = Query("MGC")) -> dict:
+    """Load persisted strategy config for a symbol."""
+    import json
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    sym = f"{symbol.upper()}_5MIN"
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT config_json FROM strategy_configs WHERE symbol = :sym"),
+            {"sym": sym},
+        ).fetchone()
+    if row:
+        try:
+            return json.loads(row[0])
+        except Exception:
+            pass
+    return {}
+
+
+@router.post("/strategy_config")
+def save_strategy_config(
+    payload: StrategyConfigPayload,
+    symbol: str = Query("MGC"),
+) -> dict[str, str]:
+    """Save strategy config for a symbol."""
+    import json
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    sym = f"{symbol.upper()}_5MIN"
+    config = json.dumps({
+        "period": payload.period,
+        "sl_mult": payload.sl_mult,
+        "tp_mult": payload.tp_mult,
+        "risk_filters": payload.risk_filters,
+        "active_preset": payload.active_preset,
+    })
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO strategy_configs (symbol, config_json, updated_at)
+                VALUES (:sym, :cfg, CURRENT_TIMESTAMP)
+                ON CONFLICT (symbol) DO UPDATE SET
+                    config_json = EXCLUDED.config_json,
+                    updated_at = CURRENT_TIMESTAMP
+            """),
+            {"sym": sym, "cfg": config},
         )
     return {"status": "ok"}
 
@@ -2726,20 +3139,53 @@ async def optimize_5min_conditions(
     symbol: Annotated[str, Query()] = "MGC=F",
     period: Annotated[str, Query()] = "60d",
     top_n: Annotated[int, Query(ge=1, le=10)] = 5,
+    atr_sl_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 4.0,
+    atr_tp_mult: Annotated[float, Query(ge=0.5, le=10.0)] = 3.0,
+    skip_flat: Annotated[bool, Query()] = False,
+    skip_counter_trend: Annotated[bool, Query()] = True,
+    use_ema_exit: Annotated[bool, Query()] = False,
+    use_struct_fade: Annotated[bool, Query()] = False,
+    use_sma28_cut: Annotated[bool, Query()] = False,
+    skip_hours: Annotated[Optional[str], Query()] = None,
+    max_loss_per_trade: Annotated[float, Query(ge=0, le=2000)] = 0.0,
 ) -> list[dict]:
-    """Optimize 5-minute condition combinations and return top performing ones."""
+    """Optimize 5-minute condition combinations using current risk filters and SL/TP."""
     
     def _run():
-        from mgc_trading.backtest_5min import Backtester5Min
-        from mgc_trading.strategy_5min import DEFAULT_5MIN_PARAMS
+        import pandas as _pd
+        from strategies.futures.backtest_5min import Backtester5Min
+        from strategies.futures.strategy_5min import DEFAULT_5MIN_PARAMS
         from itertools import combinations
 
         # Load 5m data
-        df = load_yfinance(symbol=symbol, interval="5m", period=period)
+        df = load_yfinance(symbol=symbol, interval="5m", period="60d")
         if df.empty or len(df) < 20:
             raise ValueError("Not enough 5m data from yfinance.")
 
-        # Use 8 core conditions for optimization
+        # Determine display window (same logic as backtest_5min endpoint)
+        display_start: str | None = None
+        if period != "60d":
+            _period_days = {"1d": 1, "2d": 2, "3d": 3, "5d": 5, "7d": 7, "30d": 30}
+            days_back = _period_days.get(period, 60)
+            if days_back < 60:
+                last_date = df.index[-1]
+                cutoff = last_date - _pd.Timedelta(days=days_back)
+                display_start = cutoff.strftime("%Y-%m-%d")
+
+        # Build params matching the user's current settings
+        # Parse skip_hours
+        _skip_hours: set[int] | None = None
+        if skip_hours:
+            _skip_hours = {int(h.strip()) for h in skip_hours.split(",") if h.strip().isdigit()}
+
+        custom_params = {
+            "atr_sl_mult": atr_sl_mult,
+            "atr_tp_mult": atr_tp_mult,
+            "use_ema_exit": use_ema_exit,
+            "use_struct_fade": use_struct_fade,
+            "use_sma28_cut": use_sma28_cut,
+        }
+
         condition_keys = [
             "ema_trend",
             "ema_slope",
@@ -2749,30 +3195,69 @@ async def optimize_5min_conditions(
             "macd_momentum",
             "rsi_momentum",
             "volume_spike",
-            # optional advanced condition in the 8th slot
             "atr_range",
-            # currently supporting 10, but results will include the top 8 combos
+            "smc_ob",
+            "smc_fvg",
+            "smc_bos",
         ]
 
-        # We'll evaluate all subsets with at least 8 active conditions (8, 9, 10)
         results = []
 
-        for r in range(8, len(condition_keys) + 1):
+        # Pre-compute indicators ONCE (the expensive part — SMC, swing detection etc.)
+        from strategies.futures.strategy_5min import MGCStrategy5Min
+        full_params = {**DEFAULT_5MIN_PARAMS, **custom_params}
+        strategy = MGCStrategy5Min(full_params)
+        df_ind = strategy.compute_indicators(
+            df[["open", "high", "low", "close", "volume"]].copy()
+        )
+
+        _skip_flat = skip_flat or full_params.get("skip_flat", False)
+        _skip_counter = skip_counter_trend or full_params.get("skip_counter_trend", False)
+
+        min_enabled = max(7, len(condition_keys) - 3)  # allow disabling up to 3 conditions
+        for r in range(min_enabled, len(condition_keys) + 1):
             for combo in combinations(condition_keys, r):
                 enabled = set(combo)
                 disabled = set(condition_keys) - enabled
 
                 try:
+                    # Only regenerate signals (fast) — reuse precomputed indicators
+                    signals = strategy.generate_signals(df_ind, disabled=disabled or None)
+
                     bt = Backtester5Min()
-                    result = bt.run(df, params=DEFAULT_5MIN_PARAMS, oos_split=0.3, disabled_conditions=disabled or None)
+                    result = bt.run_from_precomputed(
+                        df_ind, signals, full_params,
+                        oos_split=0.3,
+                        skip_flat=_skip_flat,
+                        skip_counter_trend=_skip_counter,
+                        skip_hours=_skip_hours,
+                        max_loss_per_trade=max_loss_per_trade,
+                    )
 
                     if result.total_trades < 10:
                         continue
 
-                    # Combined score for win rate + return + risk
+                    # Filter trades to the display window (same as backtest_5min)
+                    filtered = result.trades
+                    if display_start:
+                        filtered = [t for t in result.trades if str(t.exit_time)[:10] >= display_start]
+
+                    n_trades = len(filtered)
+                    if n_trades < 3:
+                        continue
+
+                    wins = [t for t in filtered if t.pnl > 0]
+                    losses = [t for t in filtered if t.pnl <= 0]
+                    total_pnl = sum(t.pnl for t in filtered)
+                    win_rate = round(len(wins) / n_trades * 100, 1) if n_trades else 0
+                    return_pct = round(total_pnl / bt.initial_capital * 100, 2)
+                    total_loss = abs(sum(t.pnl for t in losses)) if losses else 0
+                    total_win = sum(t.pnl for t in wins) if wins else 0
+                    pf = round(total_win / total_loss, 2) if total_loss > 0 else 999.0
+
                     score = (
-                        (result.total_return_pct / 100) * 0.45
-                        + (result.win_rate / 100) * 0.35
+                        (return_pct / 100) * 0.45
+                        + (win_rate / 100) * 0.35
                         - (result.max_drawdown_pct / 100) * 0.20
                     )
 
@@ -2780,19 +3265,45 @@ async def optimize_5min_conditions(
                         "conditions": sorted(list(enabled)),
                         "disabled": sorted(list(disabled)),
                         "score": round(score, 6),
-                        "win_rate": round(result.win_rate, 2),
-                        "total_return_pct": round(result.total_return_pct, 2),
+                        "win_rate": win_rate,
+                        "total_return_pct": return_pct,
                         "max_drawdown_pct": round(result.max_drawdown_pct, 2),
                         "sharpe_ratio": round(result.sharpe_ratio, 4),
-                        "profit_factor": round(result.profit_factor, 4),
-                        "total_trades": result.total_trades,
+                        "profit_factor": pf,
+                        "total_trades": n_trades,
+                        "oos_win_rate": round(result.oos_win_rate, 2),
+                        "oos_return_pct": round(result.oos_return_pct, 2),
+                        "oos_total_trades": result.oos_total_trades,
                     })
 
                 except Exception:
                     continue
 
         results.sort(key=lambda x: x["score"], reverse=True)
-        return results[:top_n]
+
+        # Pick 3 category winners: best WR, best Return, lowest risk (DD)
+        if not results:
+            return []
+
+        best_wr = max(results, key=lambda x: x["win_rate"])
+        best_wr["category"] = "best_winrate"
+
+        best_ret = max(results, key=lambda x: x["total_return_pct"])
+        best_ret["category"] = "best_return"
+
+        best_safe = min(results, key=lambda x: x["max_drawdown_pct"])
+        best_safe["category"] = "low_risk"
+
+        # De-duplicate: if same combo wins multiple categories, keep first
+        seen: set[str] = set()
+        top3: list[dict] = []
+        for r in [best_wr, best_ret, best_safe]:
+            key = ",".join(r["conditions"])
+            if key not in seen:
+                seen.add(key)
+                top3.append(r)
+
+        return top3
 
     top = await run_in_threadpool(_run)
     return top
@@ -2916,8 +3427,8 @@ async def mgc_backtest_v2(
 
     def _run():
         import pandas as _pd
-        from mgc_trading.backtest_v2 import BacktesterV2
-        from mgc_trading.strategy_v2 import StrategyV2, DEFAULT_V2_PARAMS
+        from strategies.futures.backtest_v2 import BacktesterV2
+        from strategies.futures.strategy_v2 import StrategyV2, DEFAULT_V2_PARAMS
 
         effective_period = period if period in ("1d", "2d", "5d", "7d", "30d", "60d") else "60d"
 
@@ -3013,7 +3524,7 @@ async def mgc_backtest_v2(
         symbol=symbol, interval="5m", period=period,
         candles=candles, trades=trades, equity_curve=eq_curve,
         metrics=metrics, params=params,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
 
 
@@ -3029,7 +3540,7 @@ async def mgc_scan_v2(
     """Scan for V2 entry signals on latest 5m data."""
 
     def _run():
-        from mgc_trading.scanner_v2 import scan_v2, scan_v2_all
+        from strategies.futures.scanner_v2 import scan_v2, scan_v2_all
 
         effective_period = period if period in ("1d", "2d", "5d", "7d", "30d", "60d") else "60d"
         df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
@@ -3073,7 +3584,7 @@ async def mgc_scan_v2(
     return V2ScanResponse(
         opportunity=found, signal=sig, signals=all_sigs,
         candles=candles_out,
-        timestamp=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC"),
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M:%S SGT"),
     )
 
 
@@ -3088,7 +3599,7 @@ async def mgc_optimize_v2(
     """Run V2 grid-search optimizer. Returns best result + top 20."""
 
     def _run():
-        from mgc_trading.backtest_v2 import optimize_v2 as _optimize
+        from strategies.futures.backtest_v2 import optimize_v2 as _optimize
 
         effective_period = period if period in ("1d", "2d", "5d", "7d", "30d", "60d") else "60d"
         df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
@@ -3109,7 +3620,7 @@ async def mgc_optimize_v2(
             },
             "top_results": top_results,
             "total_combos": len(top_results),
-            "timestamp": datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+            "timestamp": datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
         }
 
     try:
@@ -3141,7 +3652,7 @@ async def get_market_structure(
         return cached["data"]
 
     def _compute():
-        from mgc_trading.indicators_5min import market_structure
+        from strategies.futures.indicators_5min import market_structure
 
         commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": "MGC=F"})
         yf_symbol = commodity["yf"]
@@ -3160,7 +3671,7 @@ async def get_market_structure(
             "label": label,
             "bars": len(df),
             "last_price": round(float(df["close"].iloc[-1]), 4),
-            "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
+            "timestamp": datetime.now(SGT).strftime("%H:%M:%S SGT"),
         }
 
     try:
@@ -3170,3 +3681,135 @@ async def get_market_structure(
     except Exception as exc:
         logger.exception("Market structure failed")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# UI Preferences (persisted in PostgreSQL)
+# ═══════════════════════════════════════════════════════════════════════
+
+class UIPreferencesPayload(BaseModel):
+    hide_prices: bool = False
+
+
+@router.get("/ui_preferences")
+def get_ui_preferences() -> dict:
+    """Return saved UI preferences."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS ui_preferences (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                hide_prices BOOLEAN NOT NULL DEFAULT FALSE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.commit()
+        row = conn.execute(
+            text("SELECT hide_prices FROM ui_preferences WHERE id = 1"),
+        ).fetchone()
+    if row:
+        return {"hide_prices": bool(row[0])}
+    return {"hide_prices": False}
+
+
+@router.post("/ui_preferences")
+def save_ui_preferences(payload: UIPreferencesPayload) -> dict[str, str]:
+    """Save UI preferences."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS ui_preferences (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                hide_prices BOOLEAN NOT NULL DEFAULT FALSE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(
+            text("""
+                INSERT INTO ui_preferences (id, hide_prices, updated_at)
+                VALUES (1, :hp, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO UPDATE SET
+                    hide_prices = EXCLUDED.hide_prices,
+                    updated_at = CURRENT_TIMESTAMP
+            """),
+            {"hp": payload.hide_prices},
+        )
+    return {"status": "ok"}
+
+
+# ─── Position Tags (strategy label per symbol) ──────────────────────
+
+class PositionTagPayload(BaseModel):
+    symbol: str
+    tag: str
+
+
+@router.get("/position_tags")
+def get_position_tags() -> dict[str, str]:
+    """Return all saved position tags {symbol: tag}."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS position_tags (
+                symbol TEXT PRIMARY KEY,
+                tag TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.commit()
+        rows = conn.execute(text("SELECT symbol, tag FROM position_tags")).fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+@router.post("/position_tag")
+def save_position_tag(payload: PositionTagPayload) -> dict[str, str]:
+    """Save/update the strategy tag for a symbol."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS position_tags (
+                symbol TEXT PRIMARY KEY,
+                tag TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(
+            text("""
+                INSERT INTO position_tags (symbol, tag, updated_at)
+                VALUES (:sym, :tag, CURRENT_TIMESTAMP)
+                ON CONFLICT (symbol) DO UPDATE SET
+                    tag = EXCLUDED.tag,
+                    updated_at = CURRENT_TIMESTAMP
+            """),
+            {"sym": payload.symbol, "tag": payload.tag},
+        )
+    return {"status": "ok"}
+
+
+@router.delete("/position_tag/{symbol}")
+def delete_position_tag(symbol: str) -> dict[str, str]:
+    """Remove a position tag when position is closed."""
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS position_tags (
+                symbol TEXT PRIMARY KEY,
+                tag TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(
+            text("DELETE FROM position_tags WHERE symbol = :sym"),
+            {"sym": symbol},
+        )
+    return {"status": "ok"}

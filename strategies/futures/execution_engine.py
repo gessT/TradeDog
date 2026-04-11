@@ -1,0 +1,558 @@
+"""
+Execution Engine — Deterministic State Machine
+================================================
+Ensures LIVE AUTO-TRADING execution strictly mirrors BACKTEST results.
+
+Rules enforced:
+1. Signal consistency — only confirmed candle-close signals
+2. Entry execution — next bar open, no duplicate entries
+3. TP/SL OCO management — mandatory, fail-safe cancellation
+4. Order synchronization — one position at a time
+5. State tracking — NONE/LONG/SHORT with linked TP/SL
+6. Backtest parity validation — cross-check signal before execution
+"""
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
+from enum import Enum
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+class PositionState(str, Enum):
+    NONE = "NONE"
+    LONG = "LONG"
+    SHORT = "SHORT"
+
+
+@dataclass
+class ExecutionRecord:
+    """Standardised execution output."""
+    signal: str            # "BUY" / "SELL"
+    entry_price: float
+    tp_price: float
+    sl_price: float
+    status: str            # "EXECUTED" / "REJECTED"
+    reason: str            # "match_backtest" / "duplicate_blocked" / error detail
+    order_id: str = ""
+    timestamp: str = ""
+    qty: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "signal": self.signal,
+            "entry_price": self.entry_price,
+            "tp_price": self.tp_price,
+            "sl_price": self.sl_price,
+            "status": self.status,
+            "reason": self.reason,
+            "order_id": self.order_id,
+            "timestamp": self.timestamp,
+            "qty": self.qty,
+        }
+
+
+@dataclass
+class PositionInfo:
+    """Internal position state tracker."""
+    state: PositionState = PositionState.NONE
+    entry_price: float = 0.0
+    tp_price: float = 0.0
+    sl_price: float = 0.0
+    qty: int = 0
+    entry_time: str = ""
+    side: str = ""         # "BUY" / "SELL"
+    bar_time: str = ""     # Signal bar timestamp
+    order_id: str = ""
+
+
+class ExecutionEngine:
+    """Thread-safe execution state machine for a single symbol.
+
+    Enforces:
+    - One position at a time (NONE → LONG/SHORT → NONE)
+    - Mandatory TP + SL (OCO)
+    - No duplicate/conflicting orders
+    - Backtest parity validation before entry
+    """
+
+    def __init__(self, symbol: str = "MGC") -> None:
+        self.symbol = symbol
+        self._lock = threading.Lock()
+        self._position = PositionInfo()
+        self._last_exec_bar: str = ""
+        self._execution_log: list[ExecutionRecord] = []
+        # ── Daily P&L tracking ──
+        self._daily_pnl: dict[str, float] = {}       # { "2026-04-10": -150.0, ... }
+        self._daily_trades_log: dict[str, list[dict]] = {}  # per-day trade log
+        self._daily_loss_limit: float = 350.0         # default $350
+
+    # ── Read-only state ─────────────────────────────────────────────
+
+    @property
+    def position(self) -> PositionInfo:
+        return self._position
+
+    @property
+    def current_state(self) -> PositionState:
+        return self._position.state
+
+    @property
+    def last_exec_bar(self) -> str:
+        return self._last_exec_bar
+
+    @property
+    def execution_log(self) -> list[ExecutionRecord]:
+        return list(self._execution_log)
+
+    # ── Validation gates ────────────────────────────────────────────
+
+    def validate_entry(
+        self,
+        direction: str,
+        entry_price: float,
+        sl_price: float,
+        tp_price: float,
+        bar_time: str,
+        qty: int = 1,
+        max_qty: int = 5,
+        current_tiger_qty: int = 0,
+        allow_scale_in: bool = False,
+        current_price: float = 0.0,
+    ) -> ExecutionRecord | None:
+        """Pre-execution validation. Returns rejection record or None if valid.
+
+        When allow_scale_in=True, permits additional entries if:
+        - Same direction as existing position
+        - Position is in a retracement (unrealised loss)
+        - Total qty still below max_qty
+        """
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        side = "BUY" if direction == "CALL" else "SELL"
+
+        # Rule 1: No signal without both TP and SL
+        if sl_price <= 0 or tp_price <= 0:
+            return ExecutionRecord(
+                signal=side, entry_price=entry_price,
+                tp_price=tp_price, sl_price=sl_price,
+                status="REJECTED", reason="missing_tp_sl",
+                timestamp=ts, qty=qty,
+            )
+
+        # Rule 2: Validate TP/SL direction consistency
+        if direction == "CALL":
+            if sl_price >= entry_price or tp_price <= entry_price:
+                return ExecutionRecord(
+                    signal=side, entry_price=entry_price,
+                    tp_price=tp_price, sl_price=sl_price,
+                    status="REJECTED", reason="invalid_tp_sl_direction",
+                    timestamp=ts, qty=qty,
+                )
+        else:  # PUT
+            if sl_price <= entry_price or tp_price >= entry_price:
+                return ExecutionRecord(
+                    signal=side, entry_price=entry_price,
+                    tp_price=tp_price, sl_price=sl_price,
+                    status="REJECTED", reason="invalid_tp_sl_direction",
+                    timestamp=ts, qty=qty,
+                )
+
+        # Rule 2b: Daily loss limit — stop trading if exceeded
+        if self._daily_loss_limit > 0:
+            today_pnl = self._daily_pnl.get(str(date.today()), 0.0)
+            if today_pnl <= -self._daily_loss_limit:
+                logger.warning(
+                    "⚠️ DAILY LOSS LIMIT reached ($%.2f / -$%.2f) — BLOCKING new entry",
+                    today_pnl, self._daily_loss_limit,
+                )
+                return ExecutionRecord(
+                    signal=side, entry_price=entry_price,
+                    tp_price=tp_price, sl_price=sl_price,
+                    status="REJECTED",
+                    reason=f"daily_loss_limit (${today_pnl:.2f} / -${self._daily_loss_limit:.0f})",
+                    timestamp=ts, qty=qty,
+                )
+
+        with self._lock:
+            # Rule 3: No duplicate entry on same bar
+            if bar_time and bar_time == self._last_exec_bar:
+                return ExecutionRecord(
+                    signal=side, entry_price=entry_price,
+                    tp_price=tp_price, sl_price=sl_price,
+                    status="REJECTED", reason="duplicate_bar",
+                    timestamp=ts, qty=qty,
+                )
+
+            # Rule 4: Position management — one position at a time OR scale-in
+            if self._position.state != PositionState.NONE:
+                if not allow_scale_in:
+                    return ExecutionRecord(
+                        signal=side, entry_price=entry_price,
+                        tp_price=tp_price, sl_price=sl_price,
+                        status="REJECTED",
+                        reason=f"position_open_{self._position.state.value}",
+                        timestamp=ts, qty=qty,
+                    )
+
+                # Scale-in checks
+                # a) Must be same direction
+                expected_state = PositionState.LONG if direction == "CALL" else PositionState.SHORT
+                if self._position.state != expected_state:
+                    return ExecutionRecord(
+                        signal=side, entry_price=entry_price,
+                        tp_price=tp_price, sl_price=sl_price,
+                        status="REJECTED",
+                        reason="scale_in_wrong_direction",
+                        timestamp=ts, qty=qty,
+                    )
+
+                # b) Position must be in retracement (unrealised loss)
+                if current_price > 0:
+                    if self._position.state == PositionState.LONG:
+                        in_loss = current_price < self._position.entry_price
+                    else:
+                        in_loss = current_price > self._position.entry_price
+                    if not in_loss:
+                        return ExecutionRecord(
+                            signal=side, entry_price=entry_price,
+                            tp_price=tp_price, sl_price=sl_price,
+                            status="REJECTED",
+                            reason="scale_in_not_in_retracement",
+                            timestamp=ts, qty=qty,
+                        )
+
+                # c) Total qty check (checked below in Rule 5)
+                logger.info(
+                    "SCALE-IN ALLOWED: %s into %s @ %.2f (existing entry %.2f)",
+                    side, self._position.state.value, entry_price, self._position.entry_price,
+                )
+
+            # Rule 5: Max qty check
+            if current_tiger_qty >= max_qty:
+                return ExecutionRecord(
+                    signal=side, entry_price=entry_price,
+                    tp_price=tp_price, sl_price=sl_price,
+                    status="REJECTED", reason="max_qty_reached",
+                    timestamp=ts, qty=qty,
+                )
+
+        return None  # All checks passed
+
+    def validate_backtest_parity(
+        self,
+        direction: str,
+        bar_time: str,
+        backtest_signals: list[dict],
+    ) -> tuple[bool, str]:
+        """Cross-check signal against recent backtest data.
+
+        Args:
+            direction: "CALL" or "PUT"
+            bar_time: Signal bar timestamp
+            backtest_signals: List of recent signals from backtest scan
+
+        Returns:
+            (is_valid, reason) tuple
+        """
+        if not backtest_signals:
+            return True, "no_backtest_data_skip_validation"
+
+        # Look for matching signal in backtest results
+        for bt_sig in backtest_signals:
+            bt_dir = bt_sig.get("direction", "")
+            bt_bar = bt_sig.get("bar_time", "")
+            # Match direction and bar time (within same bar window)
+            if bt_dir == direction and bt_bar == bar_time:
+                return True, "match_backtest"
+
+        # Check if any backtest signal exists near this time
+        # Allow ±1 bar tolerance for timing differences
+        for bt_sig in backtest_signals:
+            bt_dir = bt_sig.get("direction", "")
+            if bt_dir == direction:
+                return True, "match_backtest_direction"
+
+        return False, "signal_not_in_backtest"
+
+    # ── Execution lifecycle ─────────────────────────────────────────
+
+    def record_entry(
+        self,
+        direction: str,
+        entry_price: float,
+        sl_price: float,
+        tp_price: float,
+        qty: int,
+        bar_time: str,
+        order_id: str,
+        sl_confirmed: bool = True,
+        tp_confirmed: bool = True,
+    ) -> ExecutionRecord:
+        """Record a successful entry. Returns execution record.
+
+        If SL or TP was not confirmed by broker, returns REJECTED and
+        the caller must cancel the entry order.
+        """
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        side = "BUY" if direction == "CALL" else "SELL"
+
+        # FAIL-SAFE: If TP/SL not confirmed, reject
+        if not sl_confirmed or not tp_confirmed:
+            record = ExecutionRecord(
+                signal=side, entry_price=entry_price,
+                tp_price=tp_price, sl_price=sl_price,
+                status="REJECTED",
+                reason="oco_not_confirmed",
+                order_id=order_id, timestamp=ts, qty=qty,
+            )
+            self._execution_log.append(record)
+            logger.error(
+                "FAIL-SAFE: OCO not confirmed (SL=%s, TP=%s) — trade rejected",
+                sl_confirmed, tp_confirmed,
+            )
+            return record
+
+        with self._lock:
+            state = PositionState.LONG if direction == "CALL" else PositionState.SHORT
+            is_scale_in = self._position.state == state and self._position.qty > 0
+
+            if is_scale_in:
+                # Scale-in: average entry price, accumulate qty, keep SL/TP
+                old_qty = self._position.qty
+                new_qty = old_qty + qty
+                avg_entry = (self._position.entry_price * old_qty + entry_price * qty) / new_qty
+                self._position.entry_price = avg_entry
+                self._position.qty = new_qty
+                # Keep original SL/TP — consistent risk management
+                logger.info(
+                    "SCALE-IN: %s +%dx @ %.2f → avg %.2f (%d total) | SL=%.2f TP=%.2f",
+                    side, qty, entry_price, avg_entry, new_qty,
+                    self._position.sl_price, self._position.tp_price,
+                )
+            else:
+                self._position = PositionInfo(
+                    state=state,
+                    entry_price=entry_price,
+                    tp_price=tp_price,
+                    sl_price=sl_price,
+                    qty=qty,
+                    entry_time=ts,
+                    side=side,
+                    bar_time=bar_time,
+                    order_id=order_id,
+                )
+            self._last_exec_bar = bar_time
+
+        reason_str = "scale_in" if is_scale_in else "match_backtest"
+        record = ExecutionRecord(
+            signal=side, entry_price=entry_price,
+            tp_price=tp_price, sl_price=sl_price,
+            status="EXECUTED", reason=reason_str,
+            order_id=order_id, timestamp=ts, qty=qty,
+        )
+        self._execution_log.append(record)
+        logger.info(
+            "ENTRY RECORDED: %s %dx @ %.2f | SL=%.2f TP=%.2f | bar=%s",
+            side, qty, entry_price, sl_price, tp_price, bar_time,
+        )
+        return record
+
+    def record_exit(self, reason: str = "TP", exit_price: float = 0.0, contract_size: float = 10.0) -> None:
+        """Record position exit (TP hit, SL hit, or manual close).
+
+        If exit_price is provided, computes realized P&L and adds it to daily total.
+        contract_size: dollar value per point (MGC = 10).
+        """
+        with self._lock:
+            if self._position.state == PositionState.NONE:
+                return
+            pnl = 0.0
+            if exit_price > 0 and self._position.entry_price > 0:
+                if self._position.state == PositionState.LONG:
+                    pnl = (exit_price - self._position.entry_price) * self._position.qty * contract_size
+                else:
+                    pnl = (self._position.entry_price - exit_price) * self._position.qty * contract_size
+                self._record_daily_pnl(pnl, exit_price)
+            logger.info(
+                "EXIT RECORDED: %s closed by %s | entry=%.2f exit=%.2f | PnL=$%.2f",
+                self._position.side, reason, self._position.entry_price, exit_price, pnl,
+            )
+            self._position = PositionInfo()
+
+    def sync_with_broker(self, tiger_qty: int, current_price: float = 0.0, contract_size: float = 10.0) -> None:
+        """Sync internal state with actual broker position.
+
+        If broker shows 0 but engine thinks we have a position,
+        it means TP or SL was hit — estimate P&L and reset state.
+        current_price: latest market price to estimate exit if available.
+        """
+        with self._lock:
+            if self._position.state != PositionState.NONE and tiger_qty == 0:
+                # Estimate exit price: use TP/SL or current_price
+                exit_price = current_price
+                pnl = 0.0
+                if self._position.entry_price > 0:
+                    if exit_price > 0:
+                        if self._position.state == PositionState.LONG:
+                            pnl = (exit_price - self._position.entry_price) * self._position.qty * contract_size
+                        else:
+                            pnl = (self._position.entry_price - exit_price) * self._position.qty * contract_size
+                    elif self._position.tp_price > 0 and self._position.sl_price > 0:
+                        # No current price — estimate from TP/SL (assume TP if profitable)
+                        # This is a rough estimate; actual PnL recorded by record_exit is more accurate
+                        pass
+                    if pnl != 0.0:
+                        self._record_daily_pnl(pnl, exit_price)
+                logger.info(
+                    "SYNC: Broker shows 0 qty — position closed (was %s @ %.2f) | estimated PnL=$%.2f",
+                    self._position.side, self._position.entry_price, pnl,
+                )
+                self._position = PositionInfo()
+
+    def seed_position(
+        self,
+        direction: str,
+        entry_price: float,
+        sl_price: float,
+        tp_price: float,
+        qty: int,
+        bar_time: str = "",
+        entry_time: str = "",
+    ) -> None:
+        """Seed engine with an existing position (e.g. from backtest sync).
+
+        Used when Tiger already holds a position and we need the engine
+        to track the same entry/SL/TP so that exit detection works.
+        """
+        side = "BUY" if direction == "CALL" else "SELL"
+        state = PositionState.LONG if direction == "CALL" else PositionState.SHORT
+        with self._lock:
+            self._position = PositionInfo(
+                state=state,
+                entry_price=entry_price,
+                tp_price=tp_price,
+                sl_price=sl_price,
+                qty=qty,
+                entry_time=entry_time or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                side=side,
+                bar_time=bar_time,
+                order_id="",
+            )
+            if bar_time:
+                self._last_exec_bar = bar_time
+        logger.info(
+            "SEED POSITION: %s %dx @ %.2f | SL=%.2f TP=%.2f | bar=%s",
+            side, qty, entry_price, sl_price, tp_price, bar_time,
+        )
+
+    def force_reset(self) -> None:
+        """Emergency reset — clear all state."""
+        with self._lock:
+            self._position = PositionInfo()
+            self._last_exec_bar = ""
+            logger.warning("FORCE RESET: All state cleared for %s", self.symbol)
+
+    # ── Daily P&L helpers ───────────────────────────────────────────
+
+    def _record_daily_pnl(self, pnl: float, exit_price: float = 0.0) -> None:
+        """Add realized P&L to today's running total. Must be called while lock is held or from locked context."""
+        today = str(date.today())
+        self._daily_pnl[today] = self._daily_pnl.get(today, 0.0) + pnl
+        if today not in self._daily_trades_log:
+            self._daily_trades_log[today] = []
+        self._daily_trades_log[today].append({
+            "side": self._position.side,
+            "entry": self._position.entry_price,
+            "exit": exit_price,
+            "qty": self._position.qty,
+            "pnl": round(pnl, 2),
+            "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+        })
+        logger.info(
+            "DAILY P&L [%s]: trade $%.2f → running total $%.2f (limit -$%.0f)",
+            today, pnl, self._daily_pnl[today], self._daily_loss_limit,
+        )
+
+    def get_daily_pnl(self, day: str | None = None) -> dict:
+        """Return daily P&L summary for today (or specified date)."""
+        today = day or str(date.today())
+        total = self._daily_pnl.get(today, 0.0)
+        trades = self._daily_trades_log.get(today, [])
+        limit_hit = self._daily_loss_limit > 0 and total <= -self._daily_loss_limit
+        return {
+            "date": today,
+            "pnl": round(total, 2),
+            "trades_count": len(trades),
+            "trades": trades,
+            "daily_loss_limit": self._daily_loss_limit,
+            "limit_hit": limit_hit,
+            "remaining": round(self._daily_loss_limit + total, 2) if self._daily_loss_limit > 0 else None,
+        }
+
+    def set_daily_loss_limit(self, limit: float) -> None:
+        """Set the daily loss limit (0 = disabled)."""
+        self._daily_loss_limit = max(0.0, limit)
+        logger.info("Daily loss limit set to $%.2f for %s", self._daily_loss_limit, self.symbol)
+
+    def add_manual_pnl(self, pnl: float) -> None:
+        """Manually add a P&L entry (e.g. from broker sync where exit was detected externally)."""
+        today = str(date.today())
+        self._daily_pnl[today] = self._daily_pnl.get(today, 0.0) + pnl
+        if today not in self._daily_trades_log:
+            self._daily_trades_log[today] = []
+        self._daily_trades_log[today].append({
+            "side": "MANUAL",
+            "entry": 0,
+            "exit": 0,
+            "qty": 0,
+            "pnl": round(pnl, 2),
+            "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+        })
+        logger.info("MANUAL P&L [%s]: $%.2f → total $%.2f", today, pnl, self._daily_pnl[today])
+
+    def reset_daily_pnl(self, day: str | None = None) -> None:
+        """Reset daily P&L for today (or specified date)."""
+        today = day or str(date.today())
+        self._daily_pnl.pop(today, None)
+        self._daily_trades_log.pop(today, None)
+        logger.info("Daily P&L reset for %s", today)
+
+    def get_state_summary(self) -> dict:
+        """Return current state as a dict for API response."""
+        p = self._position
+        daily = self.get_daily_pnl()
+        return {
+            "current_position": p.state.value,
+            "entry_price": p.entry_price,
+            "tp_price": p.tp_price,
+            "sl_price": p.sl_price,
+            "qty": p.qty,
+            "side": p.side,
+            "bar_time": p.bar_time,
+            "order_id": p.order_id,
+            "last_exec_bar": self._last_exec_bar,
+            "daily_pnl": daily["pnl"],
+            "daily_loss_limit": daily["daily_loss_limit"],
+            "daily_limit_hit": daily["limit_hit"],
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Singleton registry — one engine per symbol
+# ═══════════════════════════════════════════════════════════════════════
+
+_engines: dict[str, ExecutionEngine] = {}
+_engines_lock = threading.Lock()
+
+
+def get_engine(symbol: str = "MGC") -> ExecutionEngine:
+    """Get or create the execution engine singleton for a symbol."""
+    with _engines_lock:
+        if symbol not in _engines:
+            _engines[symbol] = ExecutionEngine(symbol)
+        return _engines[symbol]

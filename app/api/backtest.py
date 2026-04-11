@@ -995,8 +995,8 @@ class KLSEStrategyRequest(BaseModel):
 @router.post("/strategy/klse")
 async def run_klse_strategy(payload: KLSEStrategyRequest) -> dict[str, object]:
     """Run KLSE HalfTrend + Weekly Supertrend strategy."""
-    from klse_strategy.strategy import StrategyParams
-    from klse_strategy.backtest import run_backtest as klse_backtest
+    from strategies.klse.strategy import StrategyParams
+    from strategies.klse.backtest import run_backtest as klse_backtest
 
     frame = await run_in_threadpool(fetch_stock, payload.symbol, payload.period)
     if "Close" not in frame.columns:
@@ -1105,7 +1105,7 @@ class KLSEOptimizeRequest(BaseModel):
 @router.post("/strategy/klse/optimize")
 async def optimize_klse_strategy(payload: KLSEOptimizeRequest) -> dict[str, object]:
     """Run EMA Trend-Pullback + Supertrend + RSI grid optimisation (strategy_v2)."""
-    from klse_strategy.strategy_v2 import (
+    from strategies.klse.strategy_v2 import (
         build_indicators, generate_signals, backtest as v2_backtest,
         calc_metrics, optimize as v2_optimize, DEFAULT_GRID,
     )
@@ -1136,7 +1136,7 @@ async def optimize_klse_strategy(payload: KLSEOptimizeRequest) -> dict[str, obje
         raise HTTPException(status_code=400, detail=f"Need at least 120 bars, got {len(df)}")
 
     def _optimize():
-        from klse_strategy.strategy_v2 import QUICK_GRID
+        from strategies.klse.strategy_v2 import QUICK_GRID
         # Use quick grid for shorter datasets, full grid for longer ones
         grid = DEFAULT_GRID if len(df) >= 500 else QUICK_GRID
         return v2_optimize(df, capital=payload.capital, grid=grid, top_n=10)

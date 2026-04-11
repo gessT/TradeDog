@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import FuturesDashboard from "../components/FuturesDashboard";
+import FuturesDashboard from "../components/futures/FuturesDashboard";
 import KLSEDashboard from "../components/klse/KLSEDashboard";
 import USDashboard from "../components/us/USDashboard";
 

@@ -1,0 +1,471 @@
+"""
+Tiger Open API — Execution Module
+===================================
+Handles connection, position sizing, order placement, and risk controls
+for Micro Gold Futures (MGC) via Tiger Brokers demo or live account.
+
+Requires: pip install tigeropen
+If tigeropen is not installed, falls back to paper-trade logging.
+"""
+from __future__ import annotations
+
+import hashlib
+import logging
+import time
+from dataclasses import dataclass, field
+from datetime import date
+
+from .config import (
+    CONTRACT_SIZE,
+    MAX_CONSECUTIVE_LOSSES,
+    MAX_DAILY_TRADES,
+    RISK_PER_TRADE,
+    TIGER_ACCOUNT,
+    TIGER_ID,
+    TIGER_IS_SANDBOX,
+    TIGER_PRIVATE_KEY,
+)
+
+logger = logging.getLogger(__name__)
+
+# ── Lazy Tiger SDK import ──────────────────────────────────────────
+_tiger_available = False
+try:
+    from tigeropen.common.consts import Language, Market  # noqa: F401
+    from tigeropen.common.util.signature_utils import read_private_key
+    from tigeropen.tiger_open_config import TigerOpenClientConfig
+    from tigeropen.trade.trade_client import TradeClient
+    _tiger_available = True
+except ImportError:
+    logger.warning("tigeropen SDK not installed — using paper-trade mode")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Data
+# ═══════════════════════════════════════════════════════════════════════
+
+@dataclass
+class OrderRecord:
+    timestamp: float
+    symbol: str
+    side: str
+    qty: int
+    price: float
+    order_id: str
+    status: str
+
+
+@dataclass
+class BracketResult:
+    """Result of a bracket order (entry + SL + TP)."""
+    entry: OrderRecord | None = None
+    stop_loss: OrderRecord | None = None
+    take_profit: OrderRecord | None = None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tiger Trader
+# ═══════════════════════════════════════════════════════════════════════
+
+class TigerTrader:
+    """Wrapper around Tiger Open API with built-in risk controls."""
+
+    def __init__(
+        self,
+        tiger_id: str = TIGER_ID,
+        private_key_path: str = TIGER_PRIVATE_KEY,
+        account: str = TIGER_ACCOUNT,
+        sandbox: bool = TIGER_IS_SANDBOX,
+        risk_per_trade: float = RISK_PER_TRADE,
+        max_consec_losses: int = MAX_CONSECUTIVE_LOSSES,
+        max_daily_trades: int = MAX_DAILY_TRADES,
+    ) -> None:
+        self.tiger_id = tiger_id
+        self.private_key_path = private_key_path
+        self.account = account
+        self.sandbox = sandbox
+        self.risk_per_trade = risk_per_trade
+        self.max_consec_losses = max_consec_losses
+        self.max_daily_trades = max_daily_trades
+
+        self._client: TradeClient | None = None  # type: ignore[name-defined]
+        self._order_log: list[OrderRecord] = []
+        self._recent_hashes: set[str] = set()
+        self._consec_losses: int = 0
+        self._daily_trades: dict[str, int] = {}
+
+    # ── Connection ──────────────────────────────────────────────────
+    def connect(self) -> bool:
+        """Initialise Tiger API client. Returns True on success."""
+        if not _tiger_available:
+            logger.info("Paper-trade mode — no real connection")
+            return True
+
+        if not self.tiger_id or not self.private_key_path:
+            logger.error("Tiger credentials not configured in config.py")
+            return False
+
+        try:
+            config = TigerOpenClientConfig()
+            config.tiger_id = self.tiger_id
+            config.language = Language.en_US
+            config.private_key = read_private_key(self.private_key_path)
+            config.account = self.account
+            self._client = TradeClient(config)
+            logger.info("Connected to Tiger (account: %s)", self.account)
+            return True
+        except Exception:
+            logger.exception("Failed to connect to Tiger API")
+            return False
+
+    # ── Account info ────────────────────────────────────────────────
+    def get_account_balance(self) -> float:
+        """Return current account cash balance (USD)."""
+        if self._client is None:
+            logger.warning("Not connected — returning default $50k")
+            return 50_000.0
+        try:
+            assets = self._client.get_assets(account=self.account)
+            for asset in assets:
+                if hasattr(asset, "net_liquidation"):
+                    return float(asset.net_liquidation)
+            return 50_000.0
+        except Exception:
+            logger.exception("Failed to get account balance")
+            return 50_000.0
+
+    # ── Position sizing ─────────────────────────────────────────────
+    def calculate_qty(self, entry_price: float, sl_price: float) -> int:
+        """Risk-based position sizing: risk_per_trade % of account equity."""
+        balance = self.get_account_balance()
+        risk_amount = balance * self.risk_per_trade
+        risk_per_contract = abs(entry_price - sl_price) * CONTRACT_SIZE
+        if risk_per_contract <= 0:
+            return 1
+        qty = max(1, int(risk_amount / risk_per_contract))
+        return qty
+
+    # ── Duplicate prevention ────────────────────────────────────────
+    def _order_hash(self, symbol: str, side: str, qty: int, tag: str = "") -> str:
+        """Deterministic hash to prevent duplicate orders within 60 s."""
+        minute = int(time.time() / 60)
+        raw = f"{symbol}:{side}:{qty}:{tag}:{minute}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+    # ── Risk gates ──────────────────────────────────────────────────
+    def _check_risk_gates(self) -> bool:
+        today = str(date.today())
+
+        if self._consec_losses >= self.max_consec_losses:
+            logger.warning("⚠️  Max consecutive losses (%d) reached — BLOCKING", self.max_consec_losses)
+            return False
+
+        if self._daily_trades.get(today, 0) >= self.max_daily_trades:
+            logger.warning("⚠️  Max daily trades (%d) reached — BLOCKING", self.max_daily_trades)
+            return False
+
+        return True
+
+    # ── Place order ─────────────────────────────────────────────────
+    def place_order(
+        self,
+        symbol: str,
+        qty: int,
+        side: str = "BUY",
+        order_type: str = "MKT",
+        limit_price: float | None = None,
+        aux_price: float | None = None,
+        retries: int = 3,
+    ) -> OrderRecord | None:
+        """Place an order via Tiger API (or paper-log if SDK absent).
+
+        Args:
+            symbol: e.g. "MGC2406" (specific contract) or "MGC" (front-month)
+            qty: number of contracts
+            side: "BUY" or "SELL"
+            order_type: "MKT", "LMT", or "STP"
+            limit_price: required for LMT orders
+            aux_price: stop trigger price for STP orders
+            retries: retry count on transient failures
+
+        Returns:
+            OrderRecord on success, None on failure.
+        """
+        # Duplicate guard
+        h = self._order_hash(symbol, side, qty)
+        if h in self._recent_hashes:
+            logger.warning("Duplicate order blocked: %s %s ×%d", side, symbol, qty)
+            return None
+        self._recent_hashes.add(h)
+
+        # Risk gates
+        if not self._check_risk_gates():
+            return None
+
+        record = OrderRecord(
+            timestamp=time.time(),
+            symbol=symbol,
+            side=side,
+            qty=qty,
+            price=limit_price or aux_price or 0.0,
+            order_id="",
+            status="PENDING",
+        )
+
+        # ── Paper-trade fallback ────────────────────────────────────
+        if self._client is None:
+            record.order_id = f"PAPER-{int(time.time())}"
+            record.status = "FILLED_PAPER"
+            logger.info("📝 PAPER %s %s ×%d  @ %s (%s)", side, symbol, qty,
+                        limit_price or aux_price or "MKT", order_type)
+            self._register_fill(record)
+            return record
+
+        # ── Real Tiger execution ────────────────────────────────────
+        from tigeropen.common.util.order_utils import market_order, limit_order, stop_order
+
+        for attempt in range(1, retries + 1):
+            try:
+                contracts = self._client.get_contracts(symbol, sec_type="FUT")
+                if not contracts:
+                    logger.error("No contract found for %s", symbol)
+                    return None
+                contract = contracts[0]
+                contract.expiry = None  # deprecated in SDK v3.5.7
+
+                if order_type == "STP" and aux_price is not None:
+                    order = stop_order(
+                        account=self.account,
+                        contract=contract,
+                        action=side,
+                        quantity=qty,
+                        aux_price=aux_price,
+                    )
+                elif order_type == "LMT" and limit_price is not None:
+                    order = limit_order(
+                        account=self.account,
+                        contract=contract,
+                        action=side,
+                        quantity=qty,
+                        limit_price=limit_price,
+                    )
+                else:
+                    order = market_order(
+                        account=self.account,
+                        contract=contract,
+                        action=side,
+                        quantity=qty,
+                    )
+
+                result = self._client.place_order(order)
+                record.order_id = str(result)
+                record.status = "SUBMITTED"
+                logger.info("✅ ORDER %s %s %s ×%d → %s", order_type, side, symbol, qty, record.order_id)
+                self._register_fill(record)
+                return record
+
+            except Exception:
+                logger.exception("Order attempt %d/%d failed", attempt, retries)
+                if attempt < retries:
+                    time.sleep(2 ** attempt)
+
+        record.status = "FAILED"
+        logger.error("❌ Order FAILED after %d attempts", retries)
+        return None
+
+    # ── Post-fill bookkeeping ───────────────────────────────────────
+    def _register_fill(self, record: OrderRecord) -> None:
+        self._order_log.append(record)
+        today = str(date.today())
+        self._daily_trades[today] = self._daily_trades.get(today, 0) + 1
+
+    # ── Bracket order (entry + OCA SL/TP) ─────────────────────────
+    def place_bracket_order(
+        self,
+        symbol: str,
+        qty: int,
+        side: str = "BUY",
+        stop_loss_price: float | None = None,
+        take_profit_price: float | None = None,
+        limit_price: float | None = None,
+        current_price: float | None = None,
+    ) -> BracketResult:
+        """Place an entry order, then an OCA order for SL + TP.
+
+        OCA (One-Cancels-All): when SL fills → TP auto-cancelled, and vice versa.
+
+        If *limit_price* is provided the entry is queued (not instant market):
+        - If price needs to RISE to reach limit → STP order (triggers on breakout)
+        - If price needs to DROP to reach limit → LMT order (fills on pullback)
+        This ensures the order only fills around the target entry price ±$1,
+        never at the current (possibly distant) market price.
+        """
+        result = BracketResult()
+        close_side = "SELL" if side == "BUY" else "BUY"
+
+        # 1. Entry — choose order type to WAIT for the target price
+        if limit_price is not None and limit_price > 0 and current_price and current_price > 0:
+            if side == "BUY":
+                if current_price < limit_price:
+                    # Price below target → need price to RISE → STP BUY
+                    entry = self.place_order(symbol=symbol, qty=qty, side=side,
+                                             order_type="STP", aux_price=limit_price)
+                else:
+                    # Price above target → need price to DROP → LMT BUY
+                    entry = self.place_order(symbol=symbol, qty=qty, side=side,
+                                             order_type="LMT", limit_price=limit_price)
+            else:  # SELL
+                if current_price > limit_price:
+                    # Price above target → need price to DROP → STP SELL
+                    entry = self.place_order(symbol=symbol, qty=qty, side=side,
+                                             order_type="STP", aux_price=limit_price)
+                else:
+                    # Price below target → need price to RISE → LMT SELL
+                    entry = self.place_order(symbol=symbol, qty=qty, side=side,
+                                             order_type="LMT", limit_price=limit_price)
+        elif limit_price is not None and limit_price > 0:
+            # No current_price available — fall back to LMT
+            entry = self.place_order(symbol=symbol, qty=qty, side=side,
+                                     order_type="LMT", limit_price=limit_price)
+        else:
+            entry = self.place_order(symbol=symbol, qty=qty, side=side, order_type="MKT")
+        result.entry = entry
+        if not entry or entry.status == "FAILED":
+            return result
+
+        # Need both SL and TP for OCA
+        if not stop_loss_price or not take_profit_price:
+            logger.warning("OCA requires both SL and TP prices")
+            return result
+
+        # Paper mode
+        if self._client is None:
+            sl_rec = OrderRecord(
+                timestamp=time.time(), symbol=symbol, side=close_side,
+                qty=qty, price=stop_loss_price,
+                order_id=f"PAPER-SL-{int(time.time())}", status="SL_PLACED_PAPER",
+            )
+            tp_rec = OrderRecord(
+                timestamp=time.time(), symbol=symbol, side=close_side,
+                qty=qty, price=take_profit_price,
+                order_id=f"PAPER-TP-{int(time.time())}", status="TP_PLACED_PAPER",
+            )
+            logger.info("📝 PAPER OCA  SL %s ×%d @ %.2f  |  TP @ %.2f",
+                        close_side, qty, stop_loss_price, take_profit_price)
+            result.stop_loss = sl_rec
+            result.take_profit = tp_rec
+            return result
+
+        # Real Tiger: OCA order (one cancels the other)
+        from tigeropen.common.util.order_utils import oca_order, order_leg
+
+        oca_placed = False
+        for oca_attempt in range(1, 4):  # retry OCA up to 3 times
+            try:
+                contracts = self._client.get_contracts(symbol, sec_type="FUT")
+                if not contracts:
+                    logger.error("No contract found for %s (OCA)", symbol)
+                    break
+                contract = contracts[0]
+                contract.expiry = None
+
+                sl_leg = order_leg("STP", price=stop_loss_price, time_in_force="GTC")
+                tp_leg = order_leg("LMT", limit_price=take_profit_price, time_in_force="GTC")
+
+                oca = oca_order(
+                    account=self.account,
+                    contract=contract,
+                    action=close_side,
+                    order_legs=[sl_leg, tp_leg],
+                    quantity=qty,
+                )
+                oca_id = self._client.place_order(oca)
+                oca_id_str = str(oca_id)
+
+                sl_rec = OrderRecord(
+                    timestamp=time.time(), symbol=symbol, side=close_side,
+                    qty=qty, price=stop_loss_price,
+                    order_id=oca_id_str, status="OCA_SUBMITTED",
+                )
+                tp_rec = OrderRecord(
+                    timestamp=time.time(), symbol=symbol, side=close_side,
+                    qty=qty, price=take_profit_price,
+                    order_id=oca_id_str, status="OCA_SUBMITTED",
+                )
+                result.stop_loss = sl_rec
+                result.take_profit = tp_rec
+                logger.info("🔄 OCA ORDER %s ×%d  SL @ %.2f | TP @ %.2f → %s",
+                            close_side, qty, stop_loss_price, take_profit_price, oca_id_str)
+                oca_placed = True
+                break
+
+            except Exception:
+                logger.exception("OCA attempt %d/3 failed", oca_attempt)
+                if oca_attempt < 3:
+                    time.sleep(2 ** oca_attempt)
+
+        # Fallback: place individual SL + TP orders if OCA failed
+        if not oca_placed:
+            logger.warning("⚠️ OCA failed after 3 attempts — placing individual SL + TP orders")
+            try:
+                sl_order = self.place_order(
+                    symbol=symbol, qty=qty, side=close_side,
+                    order_type="STP", aux_price=stop_loss_price,
+                )
+                if sl_order and sl_order.status != "FAILED":
+                    result.stop_loss = sl_order
+                    logger.info("✅ Fallback SL placed: %s @ %.2f", sl_order.order_id, stop_loss_price)
+            except Exception:
+                logger.exception("Fallback SL order failed")
+
+            try:
+                tp_order = self.place_order(
+                    symbol=symbol, qty=qty, side=close_side,
+                    order_type="LMT", limit_price=take_profit_price,
+                )
+                if tp_order and tp_order.status != "FAILED":
+                    result.take_profit = tp_order
+                    logger.info("✅ Fallback TP placed: %s @ %.2f", tp_order.order_id, take_profit_price)
+            except Exception:
+                logger.exception("Fallback TP order failed")
+
+        return result
+
+    def record_loss(self) -> None:
+        """Call after a trade closes at a loss."""
+        self._consec_losses += 1
+
+    def record_win(self) -> None:
+        """Call after a trade closes at a profit."""
+        self._consec_losses = 0
+
+    def cancel_order(self, order_id: str) -> bool:
+        """Cancel a pending order by ID. Returns True if cancel succeeded."""
+        if not order_id:
+            return False
+        if self._client is None:
+            logger.info("📝 PAPER CANCEL order %s", order_id)
+            return True
+        try:
+            self._client.cancel_order(id=int(order_id))
+            logger.info("❌ CANCELLED order %s", order_id)
+            return True
+        except Exception:
+            logger.exception("Failed to cancel order %s", order_id)
+            return False
+
+    def reset_daily(self) -> None:
+        """Clear daily trade counter (call at start of new session)."""
+        today = str(date.today())
+        self._daily_trades[today] = 0
+        self._recent_hashes.clear()
+
+    # ── Diagnostics ────────────────────────────────────────────────
+    def print_log(self) -> None:
+        print(f"\n{'═' * 60}")
+        print(f"  📋  ORDER LOG  ({len(self._order_log)} orders)")
+        print(f"{'═' * 60}")
+        for rec in self._order_log:
+            print(f"  {rec.side:4s}  {rec.symbol:10s}  ×{rec.qty}  "
+                  f"${rec.price:.2f}  {rec.status}  [{rec.order_id}]")
+        print(f"{'═' * 60}")

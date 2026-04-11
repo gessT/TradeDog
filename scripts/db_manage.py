@@ -31,20 +31,20 @@ from app.db.database import engine, SessionLocal, Base  # noqa: E402
 
 # Import all models so Base.metadata is populated
 from app.models.backtest_trade import BacktestTrade  # noqa: F401
-from app.models.signal import TradingSignal  # noqa: F401
-from app.models.stock import StockSnapshot, StockPreference  # noqa: F401
-from app.models.condition_preference import ConditionPreference, ConditionPreset, LogicPreference  # noqa: F401
+from app.models.stock import StockPreference  # noqa: F401
+from app.models.condition_preference import ConditionPreference, LogicPreference, AutoTradeSetting, StrategyConfig  # noqa: F401
+from app.models.starred_stock import StarredStock  # noqa: F401
 
 
 # ── Tables ordered for safe truncation ────────────────────────────────
 ALL_TABLES = [
     "backtest_trades",
-    "trading_signals",
-    "stock_snapshots",
     "stock_preferences",
     "condition_preferences",
-    "condition_presets",
     "logic_preferences",
+    "auto_trade_settings",
+    "strategy_configs",
+    "starred_stocks",
 ]
 
 # ── Seed data ─────────────────────────────────────────────────────────
@@ -79,7 +79,7 @@ def _detect_env() -> str:
     if env:
         return env
     db_url = os.environ.get("DATABASE_URL", "")
-    if "sqlite" in db_url or "localhost" in db_url or "127.0.0.1" in db_url or "db/" in db_url:
+    if "localhost" in db_url or "127.0.0.1" in db_url:
         return "development"
     return "production"
 
@@ -155,8 +155,6 @@ def seed(session=None):
             session.close()
 
 
-def _is_sqlite() -> bool:
-    return str(engine.url).startswith("sqlite")
 
 
 def reset(confirm: bool = False):
@@ -174,20 +172,9 @@ def reset(confirm: bool = False):
     session = SessionLocal()
     try:
         print("\n── Clearing all tables ──")
-        if _is_sqlite():
-            for table in ALL_TABLES:
-                session.execute(text(f"DELETE FROM {table}"))  # noqa: S608
-                print(f"  ✓ {table} cleared")
-            # Reset autoincrement counters if the table exists
-            try:
-                session.execute(text("DELETE FROM sqlite_sequence"))
-                print("  ✓ Auto-increment counters reset")
-            except Exception:
-                pass  # sqlite_sequence only exists with AUTOINCREMENT columns
-        else:
-            for table in ALL_TABLES:
-                session.execute(text(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE"))  # noqa: S608
-                print(f"  ✓ {table} truncated")
+        for table in ALL_TABLES:
+            session.execute(text(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE"))  # noqa: S608
+            print(f"  ✓ {table} truncated")
 
         session.commit()
         print("  ✓ All tables truncated\n")

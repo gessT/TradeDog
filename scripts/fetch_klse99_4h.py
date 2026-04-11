@@ -73,7 +73,7 @@ result = {
     "data": all_records,
 }
 
-out_path = f"klse_{code}_4h.json"
+out_path = f"data/klse_{code}_4h.json"
 with open(out_path, "w", encoding="utf-8") as f:
     json.dump(result, f, indent=2)
 

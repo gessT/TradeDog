@@ -1,15 +1,20 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi import Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
+import logging
+import traceback
 
 from app.api import backtest, demo, mgc, stock, webhook, ws
 from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.core.logger import configure_logging, render_metrics, track
 from app.db.database import Base, engine
-from app.models import backtest_trade as backtest_trade_model, condition_preference as condition_preference_model, signal as signal_model, stock as stock_model, starred_stock as starred_stock_model  # noqa: F401
+from app.models import backtest_trade as backtest_trade_model, condition_preference as condition_preference_model, stock as stock_model, starred_stock as starred_stock_model  # noqa: F401
 from app.services.redis_client import redis_service
+
+_logger = logging.getLogger(__name__)
 
 
 settings = get_settings()
@@ -56,6 +61,12 @@ app.include_router(ws.router)
 app.include_router(demo.router)
 app.include_router(backtest.router)
 app.include_router(mgc.router, prefix="/mgc")
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    _logger.error("Unhandled exception on %s %s: %s\n%s", request.method, request.url.path, exc, traceback.format_exc())
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 
 @app.get("/")

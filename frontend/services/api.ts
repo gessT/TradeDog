@@ -706,6 +706,15 @@ export async function fetchCommodityQuotes(): Promise<CommodityQuotesResponse> {
   return (await response.json()) as CommodityQuotesResponse;
 }
 
+/** Lightweight single-symbol live price */
+export async function fetchLivePrice(symbol: string): Promise<number> {
+  const url = `${API_BASE}/mgc/price/${encodeURIComponent(symbol)}`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error("Price fetch failed");
+  const data = await response.json();
+  return data.price as number;
+}
+
 
 // ── Tiger Account ───────────────────────────────────────────────────
 
@@ -713,10 +722,12 @@ export type TigerPositionItem = {
   symbol: string;
   quantity: number;
   average_cost: number;
+  latest_price: number;
   market_value: number;
   unrealized_pnl: number;
   realized_pnl: number;
   currency: string;
+  open_time: string;
 };
 
 export type TigerOrderItem = {
@@ -746,6 +757,7 @@ export type TigerAccountResponse = {
   positions: TigerPositionItem[];
   open_orders: TigerOrderItem[];
   filled_orders: TigerOrderItem[];
+  today_pnl: number;
   timestamp: string;
 };
 
@@ -905,7 +917,7 @@ export type ScanTradeResponse = {
   timestamp: string;
 };
 
-export async function getMgcPosition(symbol: string = "MGC"): Promise<{ current_qty: number; symbol: string }> {
+export async function getMgcPosition(symbol: string = "MGC"): Promise<{ current_qty: number; symbol: string; average_cost?: number; unrealized_pnl?: number; latest_price?: number }> {
   const res = await fetch(`${API_BASE}/mgc/position?symbol=${encodeURIComponent(symbol)}`);
   if (!res.ok) return { current_qty: 0, symbol };
   return res.json();
@@ -953,6 +965,9 @@ export type MGC5MinCandle = {
   macd_hist: number | null;
   st_dir: number | null;
   signal: number;
+  mkt_structure: number | null;
+  sma_28: number | null;
+  adx: number | null;
 };
 
 export type MGC5MinTrade = {
@@ -989,6 +1004,8 @@ export type MGC5MinMetrics = {
   oos_win_rate: number;
   oos_total_trades: number;
   oos_return_pct: number;
+  worst_daily_loss: number;
+  days_stopped: number;
 };
 
 export type DailyPnl = {
@@ -1041,16 +1058,41 @@ export async function save5MinConditionToggles(toggles: Record<string, boolean>,
   });
 }
 
+// ── Strategy Config (period, SL/TP, risk filters — persisted) ───────
+
+export type StrategyConfig = {
+  period?: string;
+  sl_mult?: number;
+  tp_mult?: number;
+  risk_filters?: Record<string, boolean>;
+  active_preset?: string;
+};
+
+export async function loadStrategyConfig(symbol: string = "MGC"): Promise<StrategyConfig> {
+  const res = await fetch(`${API_BASE}/mgc/strategy_config?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+  if (!res.ok) return {};
+  return (await res.json()) as StrategyConfig;
+}
+
+export async function saveStrategyConfig(config: StrategyConfig, symbol: string = "MGC"): Promise<void> {
+  await fetch(`${API_BASE}/mgc/strategy_config?symbol=${encodeURIComponent(symbol)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+}
+
 // ── Auto-Trade Settings (verify lock, qty — persisted) ──────────────
 
 export type AutoTradeSettings = {
   verify_lock: boolean;
   auto_qty: number;
+  enabled?: boolean;
 };
 
 export async function getAutoTradeSettings(symbol: string = "MGC"): Promise<AutoTradeSettings> {
   const res = await fetch(`${API_BASE}/mgc/auto_trade_settings?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
-  if (!res.ok) return { verify_lock: true, auto_qty: 1 };
+  if (!res.ok) return { verify_lock: true, auto_qty: 1, enabled: false };
   return (await res.json()) as AutoTradeSettings;
 }
 
@@ -1059,6 +1101,48 @@ export async function saveAutoTradeSettings(settings: AutoTradeSettings, symbol:
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(settings),
+  });
+}
+
+// ── UI Preferences (zen mode etc.) ──────────────────────
+
+export type UIPreferences = {
+  hide_prices: boolean;
+};
+
+export async function getUIPreferences(): Promise<UIPreferences> {
+  const res = await fetch(`${API_BASE}/mgc/ui_preferences`, { cache: "no-store" });
+  if (!res.ok) return { hide_prices: false };
+  return (await res.json()) as UIPreferences;
+}
+
+export async function saveUIPreferences(prefs: UIPreferences): Promise<void> {
+  await fetch(`${API_BASE}/mgc/ui_preferences`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(prefs),
+  });
+}
+
+// ── Position Tags (strategy label per symbol) ───────────
+
+export async function getPositionTags(): Promise<Record<string, string>> {
+  const res = await fetch(`${API_BASE}/mgc/position_tags`, { cache: "no-store" });
+  if (!res.ok) return {};
+  return (await res.json()) as Record<string, string>;
+}
+
+export async function savePositionTag(symbol: string, tag: string): Promise<void> {
+  await fetch(`${API_BASE}/mgc/position_tag`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol, tag }),
+  });
+}
+
+export async function deletePositionTag(symbol: string): Promise<void> {
+  await fetch(`${API_BASE}/mgc/position_tag/${encodeURIComponent(symbol)}`, {
+    method: "DELETE",
   });
 }
 
@@ -1117,12 +1201,26 @@ export async function fetchMGC5MinBacktest(
   symbol: string = "MGC",
   disabledConditions?: string[],
   skipFlat?: boolean,
+  skipCounterTrend: boolean = true,
+  useEmaExit: boolean = false,
+  useStructFade: boolean = false,
+  useSma28Cut: boolean = false,
+  dailyLossLimit: number = 0,
+  skipHours?: number[],
+  maxLossPerTrade: number = 0,
 ): Promise<MGC5MinBacktestResponse> {
   let url = `${API_BASE}/mgc/backtest_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
   if (date_from) url += `&date_from=${date_from}`;
   if (date_to) url += `&date_to=${date_to}`;
   if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
   if (skipFlat) url += `&skip_flat=true`;
+  url += `&skip_counter_trend=${skipCounterTrend}`;
+  if (useEmaExit) url += `&use_ema_exit=true`;
+  if (useStructFade) url += `&use_struct_fade=true`;
+  if (useSma28Cut) url += `&use_sma28_cut=true`;
+  if (dailyLossLimit > 0) url += `&daily_loss_limit=${dailyLossLimit}`;
+  if (skipHours && skipHours.length > 0) url += `&skip_hours=${encodeURIComponent(skipHours.join(","))}`;
+  if (maxLossPerTrade > 0) url += `&max_loss_per_trade=${maxLossPerTrade}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
@@ -1144,14 +1242,34 @@ export type ConditionOptimizationResult = {
   sharpe_ratio: number;
   total_trades: number;
   profit_factor: number;
+  oos_win_rate: number;
+  oos_return_pct: number;
+  oos_total_trades: number;
+  category?: string;
 };
 
 export async function optimize5MinConditions(
   symbol: string = "MGC",
   period: string = "60d",
   top_n: number = 5,
+  atr_sl_mult: number = 4.0,
+  atr_tp_mult: number = 3.0,
+  skipFlat: boolean = false,
+  skipCounterTrend: boolean = true,
+  useEmaExit: boolean = false,
+  useStructFade: boolean = false,
+  useSma28Cut: boolean = false,
+  skipHours?: number[],
+  maxLossPerTrade: number = 0,
 ): Promise<ConditionOptimizationResult[]> {
-  const url = `${API_BASE}/mgc/optimize_conditions_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&top_n=${top_n}`;
+  let url = `${API_BASE}/mgc/optimize_conditions_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&top_n=${top_n}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  if (skipFlat) url += `&skip_flat=true`;
+  url += `&skip_counter_trend=${skipCounterTrend}`;
+  if (useEmaExit) url += `&use_ema_exit=true`;
+  if (useStructFade) url += `&use_struct_fade=true`;
+  if (useSma28Cut) url += `&use_sma28_cut=true`;
+  if (skipHours && skipHours.length > 0) url += `&skip_hours=${encodeURIComponent(skipHours.join(","))}`;
+  if (maxLossPerTrade > 0) url += `&max_loss_per_trade=${maxLossPerTrade}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
@@ -1206,10 +1324,9 @@ export type Scan5MinConditions = {
   atr_range: boolean;
   session_ok: boolean;
   adx_ok: boolean;
-  htf_15m_trend: boolean;
-  htf_15m_supertrend: boolean;
-  htf_1h_trend: boolean;
-  htf_1h_supertrend: boolean;
+  smc_ob: boolean;
+  smc_fvg: boolean;
+  smc_bos: boolean;
   mkt_structure: number;  // 1=BULL, -1=BEAR, 0=SIDEWAYS
 };
 
@@ -1268,6 +1385,9 @@ export type EngineState = {
   bar_time: string;
   order_id: string;
   last_exec_bar: string;
+  daily_pnl?: number;
+  daily_loss_limit?: number;
+  daily_limit_hit?: boolean;
 };
 
 export type Execute5MinResponse = {
@@ -1287,6 +1407,9 @@ export async function execute5Min(
   takeProfit: number = 0,
   symbol: string = "MGC",
   barTime: string = "",
+  allowScaleIn: boolean = false,
+  currentPrice: number = 0,
+  limitPrice: number = 0,
 ): Promise<Execute5MinResponse> {
   const response = await fetch(`${API_BASE}/mgc/execute_5min`, {
     method: "POST",
@@ -1300,6 +1423,9 @@ export async function execute5Min(
       stop_loss: stopLoss,
       take_profit: takeProfit,
       bar_time: barTime,
+      allow_scale_in: allowScaleIn,
+      current_price: currentPrice,
+      limit_price: limitPrice,
     }),
   });
   if (!response.ok) {
@@ -1349,6 +1475,45 @@ export async function seedEngine(
   });
   if (!response.ok) throw new Error("Failed to seed engine");
   return response.json();
+}
+
+// ── Daily P&L Tracking & Loss Limit ─────────────────────────────────
+
+export type DailyPnlStatus = {
+  date: string;
+  pnl: number;
+  trades_count: number;
+  trades: Array<{ side: string; entry: number; exit: number; qty: number; pnl: number; time: string }>;
+  daily_loss_limit: number;
+  limit_hit: boolean;
+  remaining: number | null;
+};
+
+export async function getDailyPnl(symbol: string = "MGC"): Promise<DailyPnlStatus> {
+  const res = await fetch(`${API_BASE}/mgc/daily_pnl?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+  if (!res.ok) return { date: "", pnl: 0, trades_count: 0, trades: [], daily_loss_limit: 350, limit_hit: false, remaining: 350 };
+  return (await res.json()) as DailyPnlStatus;
+}
+
+export async function setDailyLossLimit(limit: number, symbol: string = "MGC"): Promise<void> {
+  await fetch(`${API_BASE}/mgc/daily_loss_limit?symbol=${encodeURIComponent(symbol)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ limit }),
+  });
+}
+
+export async function addManualPnl(pnl: number, symbol: string = "MGC"): Promise<DailyPnlStatus> {
+  const res = await fetch(`${API_BASE}/mgc/daily_pnl/add?symbol=${encodeURIComponent(symbol)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pnl }),
+  });
+  return (await res.json()) as DailyPnlStatus;
+}
+
+export async function resetDailyPnl(symbol: string = "MGC"): Promise<void> {
+  await fetch(`${API_BASE}/mgc/daily_pnl/reset?symbol=${encodeURIComponent(symbol)}`, { method: "POST" });
 }
 
 // ── Backtest Live Position (sync auto-trade to backtest) ────────────
