@@ -1,12 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  createChart,
-  LineSeries,
-  type IChartApi,
-  type UTCTimestamp,
-} from "lightweight-charts";
 import { fmtDateTimeSGT, fmtInputDateSGT } from "../../utils/time";
 import type {
   US1HBacktestResponse,
@@ -28,69 +22,6 @@ type Props = {
   loading: boolean;
   symbol: string;
 };
-
-// ── Equity Curve Chart ───────────────────────────────────
-function EquityCurve({ curve }: { curve: number[] }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!containerRef.current || curve.length === 0) return;
-    const container = containerRef.current;
-    container.innerHTML = "";
-
-    const chart = createChart(container, {
-      width: container.clientWidth,
-      height: container.clientHeight || 140,
-      layout: {
-        background: { color: "#0a0f1e" },
-        textColor: "#475569",
-        fontSize: 9,
-      },
-      grid: {
-        vertLines: { color: "#1e293b20" },
-        horzLines: { color: "#1e293b20" },
-      },
-      rightPriceScale: { borderColor: "#1e293b40" },
-      timeScale: { visible: false },
-      crosshair: { mode: 0 },
-    });
-
-    const series = chart.addSeries(LineSeries, {
-      color: "#3b82f6",
-      lineWidth: 2,
-      lastValueVisible: true,
-      priceLineVisible: false,
-    });
-
-    const startVal = curve[0];
-    const data = curve.map((v, i) => ({
-      time: (i + 1) as UTCTimestamp,
-      value: v,
-    }));
-    series.setData(data);
-
-    // Color based on performance
-    const endVal = curve[curve.length - 1];
-    if (endVal >= startVal) {
-      series.applyOptions({ color: "#10b981" });
-    } else {
-      series.applyOptions({ color: "#ef4444" });
-    }
-
-    const ro = new ResizeObserver(() => {
-      if (container.clientWidth > 0)
-        chart.resize(container.clientWidth, container.clientHeight || 140);
-    });
-    ro.observe(container);
-
-    return () => {
-      ro.disconnect();
-      chart.remove();
-    };
-  }, [curve]);
-
-  return <div ref={containerRef} className="w-full h-full" />;
-}
 
 // ── Performance Metrics Grid ─────────────────────────────
 function MetricsGrid({ m }: { m: US1HMetrics }) {
@@ -152,7 +83,7 @@ function TradeTable({
   }
 
   return (
-    <div className="overflow-auto max-h-[250px]">
+    <div className="overflow-auto flex-1">
       <table className="w-full text-left text-[10px] sm:text-[9px] min-w-[600px]">
         <thead className="sticky top-0 bg-slate-900/95">
           <tr className="text-[9px] sm:text-[8px] text-slate-600 uppercase border-b border-slate-800/40">
@@ -238,7 +169,7 @@ function AnalyticsTab({ trades, metrics }: { trades: US1HTrade[]; metrics: US1HM
   }
 
   return (
-    <div className="p-2 space-y-2 overflow-y-auto max-h-[280px]">
+    <div className="p-2 space-y-2 overflow-y-auto flex-1">
       {/* Direction breakdown */}
       <div>
         <div className="text-[8px] font-bold text-slate-500 uppercase tracking-wider mb-1">By Direction</div>
@@ -375,34 +306,28 @@ export default function USBottomPanel({
               </div>
             ) : (
               <>
-                {/* Metrics */}
-                <MetricsGrid m={btData.metrics} />
-
-                {/* Equity Curve + Trade List — stack on mobile, side-by-side on desktop */}
-                <div className="flex flex-col sm:flex-row gap-3">
-                  {/* Equity Curve */}
-                  <div className="w-full sm:w-2/5 rounded-lg border border-slate-800/40 overflow-hidden">
-                    <div className="px-2 py-0.5 border-b border-slate-800/40 bg-slate-900/60">
-                      <span className="text-[7px] text-slate-600 uppercase tracking-wider">Equity Curve</span>
-                    </div>
-                    <div style={{ height: 140 }}>
-                      <EquityCurve curve={btData.equity_curve} />
-                    </div>
+                {/* Metrics (left) + Trade List (right) — side by side */}
+                <div className="flex flex-col sm:flex-row gap-2 flex-1 min-h-0">
+                  {/* Left: Metrics */}
+                  <div className="w-full sm:w-2/5 shrink-0">
+                    <MetricsGrid m={btData.metrics} />
                   </div>
 
-                  {/* Trade List */}
-                  <div className="flex-1 rounded-lg border border-slate-800/40 overflow-hidden">
-                    <div className="px-2 py-0.5 border-b border-slate-800/40 bg-slate-900/60 flex items-center">
+                  {/* Right: Trade List */}
+                  <div className="flex-1 rounded-lg border border-slate-800/40 overflow-hidden flex flex-col min-h-0">
+                    <div className="px-2 py-0.5 border-b border-slate-800/40 bg-slate-900/60 flex items-center shrink-0">
                       <span className="text-[7px] text-slate-600 uppercase tracking-wider">
                         Trades ({trades.length})
                       </span>
                       <span className="ml-2 text-[7px] text-slate-600">Click to highlight on chart</span>
                     </div>
-                    <TradeTable
-                      trades={trades}
-                      onTradeClick={onTradeClick}
-                      filter={tradeFilter}
-                    />
+                    <div className="flex-1 min-h-0 overflow-auto">
+                      <TradeTable
+                        trades={trades}
+                        onTradeClick={onTradeClick}
+                        filter={tradeFilter}
+                      />
+                    </div>
                   </div>
                 </div>
               </>
@@ -449,7 +374,7 @@ export default function USBottomPanel({
 
         {/* Logs */}
         {tab === "Logs" && (
-          <div className="p-3 font-mono text-[9px] text-slate-500 space-y-0.5 max-h-[250px] overflow-y-auto">
+          <div className="p-3 font-mono text-[9px] text-slate-500 space-y-0.5 overflow-y-auto flex-1">
             {btData ? (
               <>
                 <div className="text-slate-400">[{btData.timestamp}] Backtest completed for {btData.symbol}</div>

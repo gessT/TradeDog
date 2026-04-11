@@ -1425,29 +1425,37 @@ def remove_starred(symbol: str = Query(min_length=1), db: Session = Depends(get_
 # US Stock Quotes (for USStockCards)
 # ═══════════════════════════════════════════════════════════════════════
 
-_US_STOCKS = [
-    {"symbol": "AAPL", "name": "Apple"},
-    {"symbol": "MSFT", "name": "Microsoft"},
-    {"symbol": "NVDA", "name": "Nvidia"},
-    {"symbol": "GOOGL", "name": "Alphabet"},
-    {"symbol": "AMZN", "name": "Amazon"},
-    {"symbol": "META", "name": "Meta"},
-    {"symbol": "TSLA", "name": "Tesla"},
-    {"symbol": "AMD", "name": "AMD"},
-    {"symbol": "NFLX", "name": "Netflix"},
-    {"symbol": "PLTR", "name": "Palantir"},
-]
+# Tiger hot-pick 明星股票 — default watchlist
+_US_HOT_STOCKS: dict[str, str] = {
+    "NVDA": "Nvidia",
+    "TSLA": "Tesla",
+    "AAPL": "Apple",
+    "MSFT": "Microsoft",
+    "META": "Meta",
+    "AMZN": "Amazon",
+    "GOOGL": "Alphabet",
+    "AMD": "AMD",
+    "PLTR": "Palantir",
+    "COIN": "Coinbase",
+}
 
 
 @router.get("/us-quotes")
-async def us_stock_quotes():
-    """Fetch latest quotes for popular US stocks via yfinance."""
+async def us_stock_quotes(
+    symbols: str = Query(default="", description="Comma-separated symbols. Empty = default hot list"),
+):
+    """Fetch latest quotes for US stocks via yfinance."""
+
+    if symbols.strip():
+        sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    else:
+        sym_list = list(_US_HOT_STOCKS.keys())
 
     def _run():
         quotes = []
-        tickers = yf.Tickers(" ".join([s["symbol"] for s in _US_STOCKS]))
-        for meta in _US_STOCKS:
-            sym = meta["symbol"]
+        tickers = yf.Tickers(" ".join(sym_list))
+        for sym in sym_list:
+            name = _US_HOT_STOCKS.get(sym, sym)
             try:
                 info = tickers.tickers[sym].fast_info
                 price = float(info.last_price or 0)
@@ -1456,7 +1464,7 @@ async def us_stock_quotes():
                 change_pct = (change / prev * 100) if prev else 0.0
                 quotes.append({
                     "symbol": sym,
-                    "name": meta["name"],
+                    "name": name,
                     "price": round(price, 2),
                     "prev_close": round(prev, 2),
                     "change": round(change, 2),
@@ -1464,7 +1472,7 @@ async def us_stock_quotes():
                 })
             except Exception:
                 quotes.append({
-                    "symbol": sym, "name": meta["name"],
+                    "symbol": sym, "name": name,
                     "price": 0, "prev_close": 0, "change": 0, "change_pct": 0,
                 })
         return quotes

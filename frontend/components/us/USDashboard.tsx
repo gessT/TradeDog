@@ -145,7 +145,7 @@ export default function USDashboard() {
         {/* ── LEFT SIDEBAR (Watchlist) — desktop or mobile-selected ── */}
         <aside className={`${
           mobilePanel === "watchlist" ? "flex w-full" : "hidden"
-        } lg:flex lg:w-1/3 shrink-0 flex-col overflow-hidden border-r border-slate-800/60`}>
+        } lg:flex lg:w-[30%] shrink-0 flex-col overflow-hidden border-r border-slate-800/60`}>
           <USWatchlist
             activeSymbol={selectedSymbol}
             onSelectSymbol={(sym, name) => {
@@ -158,9 +158,9 @@ export default function USDashboard() {
         {/* ── CENTER (Chart + Bottom Panel) — desktop or mobile-selected ── */}
         <div className={`${
           mobilePanel === "chart" ? "flex" : "hidden"
-        } lg:flex lg:w-1/3 flex-col overflow-hidden`}>
-          {/* Chart */}
-          <div className="flex-1 min-h-0">
+        } lg:flex lg:w-[40%] flex-col overflow-hidden`}>
+          {/* Chart — 40% height */}
+          <div className="h-[40%] min-h-[160px] shrink-0">
             <USMainChart
               candles={btData?.candles ?? []}
               trades={btData?.trades ?? []}
@@ -171,8 +171,8 @@ export default function USDashboard() {
             />
           </div>
 
-          {/* Bottom Panel */}
-          <div className="shrink-0 h-[220px] sm:h-[260px]">
+          {/* Bottom Panel — 60% height (backtest results, trade history, analytics) */}
+          <div className="flex-1 min-h-0 border-t border-slate-700/40">
             <USBottomPanel
               btData={btData}
               onTradeClick={handleTradeClick}
@@ -186,7 +186,7 @@ export default function USDashboard() {
         {/* ── RIGHT PANEL (Execution + Strategy) — desktop or mobile-selected ── */}
         <aside className={`${
           mobilePanel === "orders" ? "flex w-full" : "hidden"
-        } lg:flex lg:w-1/3 shrink-0 flex-col overflow-hidden border-l border-slate-800/60`}>
+        } lg:flex lg:w-[30%] shrink-0 flex-col overflow-hidden border-l border-slate-800/60`}>
           <USOrderPanel
             symbol={selectedSymbol}
             price={price}
