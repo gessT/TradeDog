@@ -1,213 +1,169 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
-import DailyScanner from "../klse/DailyScanner";
-import NearATH from "../klse/NearATH";
-import TopVolume from "../klse/TopVolume";
-import SectorList from "../klse/SectorList";
-import StockPicker from "../common/StockPicker";
-import TVChart, { type TVChartHandle, type EmaConfig } from "../common/TVChart";
-import type { DemoPoint, US1HTrade } from "../../services/api";
-import { fetchSectorChart } from "../../services/api";
-import { useStock } from "../../hooks/useStock";
-import USStockCards from "./USStockCards";
-import Strategy1HPanel from "./Strategy1HPanel";
+import { useCallback, useEffect, useState } from "react";
+import { fetchUS1HBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
+import USTopBar from "./USTopBar";
+import USWatchlist from "./USWatchlist";
+import USMainChart from "./USMainChart";
+import USOrderPanel from "./USOrderPanel";
+import USBottomPanel from "./USBottomPanel";
+
+// ═══════════════════════════════════════════════════════════════════════
+// US Stock Trading Dashboard — Moomoo-inspired, strategy-first layout
+// ─────────────────────────────────────────────────────────────────────
+//  ┌─────────────────────────────────────────────────────────────────┐
+//  │ Top Control Bar (symbol, market data, strategy, mode)          │
+//  ├──────────┬──────────────────────────────────┬───────────────────┤
+//  │          │                                  │                   │
+//  │  Left    │    Main Chart Area               │  Right Panel      │
+//  │  Watch   │    (Candlestick + Overlays)       │  (Orders +        │
+//  │  list    │                                  │   Strategy Intel)  │
+//  │          ├──────────────────────────────────┤                   │
+//  │          │ Bottom Panel (Backtest, Orders,  │                   │
+//  │          │ History, Analytics, Logs)         │                   │
+//  └──────────┴──────────────────────────────────┴───────────────────┘
+// ═══════════════════════════════════════════════════════════════════════
+
+type Mode = "Live" | "Backtest" | "Replay";
 
 export default function USDashboard() {
+  // ── Core state ──────────────────────────────────────────
   const [selectedSymbol, setSelectedSymbol] = useState("AAPL");
   const [selectedName, setSelectedName] = useState("Apple");
+  const [strategy, setStrategy] = useState("breakout_v2");
+  const [timeframe, setTimeframe] = useState("1h");
+  const [mode, setMode] = useState<Mode>("Backtest");
+  const [tradingActive, setTradingActive] = useState(false);
 
-  const { symbol, setSymbol, period, setPeriod, stockName, rows, rawPoints, loading, error, refresh, lastRefreshed } = useStock(selectedSymbol);
-  const chartRef = useRef<TVChartHandle>(null);
+  // ── Price data (from latest backtest candle or live) ──
+  const [price, setPrice] = useState(0);
+  const [change, setChange] = useState(0);
+  const [changePct, setChangePct] = useState(0);
 
-  // Sector chart overlay
-  const [sectorChartData, setSectorChartData] = useState<DemoPoint[] | null>(null);
-  const [sectorChartName, setSectorChartName] = useState("");
-  const [sectorChartLoading, setSectorChartLoading] = useState(false);
+  // ── Backtest state ──────────────────────────────────────
+  const [btData, setBtData] = useState<US1HBacktestResponse | null>(null);
+  const [btLoading, setBtLoading] = useState(false);
 
-  // EMA configuration
-  const [emaConfigs, setEmaConfigs] = useState<EmaConfig[]>([
-    { period: 9,   color: "#facc15", enabled: false },
-    { period: 20,  color: "#38bdf8", enabled: true },
-    { period: 50,  color: "#a78bfa", enabled: false },
-    { period: 100, color: "#f97316", enabled: false },
-    { period: 200, color: "#ef4444", enabled: false },
-  ]);
-  const [showEmaPanel, setShowEmaPanel] = useState(false);
-  const [showHalfTrend, setShowHalfTrend] = useState(false);
-  const [showWstBg, setShowWstBg] = useState(true);
+  // ── Chart overlay toggles ──────────────────────────────
+  type Overlay = "ema_fast" | "ema_slow" | "vwap" | "halftrend";
+  type Indicator = "rsi" | "macd" | "volume";
+  const [overlays] = useState<Set<Overlay>>(() => new Set<Overlay>(["ema_fast", "ema_slow"]));
+  const [indicators] = useState<Set<Indicator>>(() => new Set<Indicator>(["volume"]));
 
-  // Latest Weekly Supertrend direction
-  const latestWst = rows.length > 0 ? rows[rows.length - 1].wst : null;
-  const wstUp = latestWst ? latestWst.dir === -1 : false;
-
-  // Focus time for chart scrolling on trade click
+  // ── Focus time (click trade → scroll chart) ────────────
   const [focusTime, setFocusTime] = useState<number | null>(null);
-  const [focusInterval, setFocusInterval] = useState<string | null>(null);
 
-  const toggleEma = useCallback((p: number) => {
-    setEmaConfigs((prev) => prev.map((e) => (e.period === p ? { ...e, enabled: !e.enabled } : e)));
-  }, []);
+  // ── Bottom panel height ────────────────────────────────
+  const bottomH = 280;
 
-  const handleSelectSector = useCallback(async (sectorName: string) => {
-    setSectorChartLoading(true);
+  // ── Run backtest ───────────────────────────────────────
+  const runBacktest = useCallback(async () => {
+    setBtLoading(true);
     try {
-      const res = await fetchSectorChart(sectorName, "6mo", "US");
-      setSectorChartData(res.data);
-      setSectorChartName(res.stock_name);
+      const data = await fetchUS1HBacktest(selectedSymbol, "1y", 0.3, 3, 2.5);
+      setBtData(data);
+
+      // Update price from latest candle
+      if (data.candles.length > 0) {
+        const last = data.candles[data.candles.length - 1];
+        const prev = data.candles.length > 1 ? data.candles[data.candles.length - 2] : last;
+        setPrice(last.close);
+        setChange(last.close - prev.close);
+        setChangePct(prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0);
+      }
     } catch {
-      setSectorChartData(null);
-      setSectorChartName("");
+      // Error handled silently — backtest data stays null
     } finally {
-      setSectorChartLoading(false);
+      setBtLoading(false);
     }
-  }, []);
+  }, [selectedSymbol]);
 
-  const clearSectorChart = useCallback(() => {
-    setSectorChartData(null);
-    setSectorChartName("");
-  }, []);
+  // Auto-run on symbol change
+  useEffect(() => {
+    runBacktest();
+  }, [selectedSymbol]);
 
-  const handleStockSelect = useCallback((sym: string, name: string) => {
+  // ── Handlers ───────────────────────────────────────────
+  const handleSymbolChange = useCallback((sym: string, name: string) => {
     setSelectedSymbol(sym);
     setSelectedName(name);
-    setSymbol(sym);
-  }, [setSymbol]);
-
-  const handleScannerSelect = useCallback((sym: string) => {
-    setSelectedSymbol(sym);
-    setSelectedName(sym);
-    setSymbol(sym);
-  }, [setSymbol]);
+  }, []);
 
   const handleTradeClick = useCallback((t: US1HTrade) => {
     const ts = Math.floor(new Date(t.entry_time).getTime() / 1000);
-    setFocusInterval("1h");
     setFocusTime(ts);
   }, []);
 
-  const PERIODS = [
-    { value: "1mo", label: "1M" },
-    { value: "3mo", label: "3M" },
-    { value: "6mo", label: "6M" },
-    { value: "1y", label: "1Y" },
-    { value: "2y", label: "2Y" },
-    { value: "5y", label: "5Y" },
-    { value: "10y", label: "10Y" },
-    { value: "max", label: "MAX" },
-  ];
-
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className="flex flex-col flex-1 overflow-hidden">
+      {/* ═══ TOP CONTROL BAR ═══ */}
+      <USTopBar
+        symbol={selectedSymbol}
+        symbolName={selectedName}
+        onSymbolChange={handleSymbolChange}
+        strategy={strategy}
+        onStrategyChange={setStrategy}
+        timeframe={timeframe}
+        onTimeframeChange={setTimeframe}
+        mode={mode}
+        onModeChange={setMode}
+        tradingActive={tradingActive}
+        onTradingToggle={() => setTradingActive((p) => !p)}
+        price={price}
+        change={change}
+        changePct={changePct}
+        bid={price > 0 ? price - 0.01 : 0}
+        ask={price > 0 ? price + 0.01 : 0}
+        volume={btData?.candles?.length ? btData.candles[btData.candles.length - 1].volume : 0}
+      />
 
-      {/* ═══════════════════════════════════════════════════════════════ */}
-      {/* COL 1 — Stock Cards + Live Chart                              */}
-      {/* ═══════════════════════════════════════════════════════════════ */}
-      <section className="hidden md:flex md:w-1/3 flex-col overflow-hidden border-r border-slate-800/60">
-        {/* Stock selector cards */}
-        <div className="shrink-0 border-b border-slate-800/60 bg-slate-950/80">
-          <USStockCards selected={selectedSymbol} onSelect={handleStockSelect} />
-        </div>
+      {/* ═══ MAIN BODY (3-column) ═══ */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* ── LEFT SIDEBAR (Watchlist) ─────────────── */}
+        <aside className="hidden lg:flex w-56 shrink-0 flex-col overflow-hidden border-r border-slate-800/60">
+          <USWatchlist
+            activeSymbol={selectedSymbol}
+            onSelectSymbol={handleSymbolChange}
+          />
+        </aside>
 
-        {/* Chart toolbar */}
-        <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-slate-800/60 bg-slate-900/60">
-          {sectorChartData ? (
-            <>
-              <span className="text-xs font-bold text-blue-300">{sectorChartName}</span>
-              <button onClick={clearSectorChart} className="ml-auto text-[10px] text-rose-400 hover:text-rose-300 border border-rose-800/50 rounded px-1.5 py-0.5">
-                ✕ Back
-              </button>
-            </>
-          ) : (
-            <>
-              <StockPicker symbol={symbol} stockName={stockName} market="US" onSymbolChange={handleScannerSelect} />
-              <div className="flex items-center rounded border border-slate-700 bg-slate-950 overflow-hidden ml-1">
-                {PERIODS.map((p) => (
-                  <button key={p.value} onClick={() => setPeriod(p.value)}
-                    className={`px-1 py-0.5 text-[9px] font-medium transition ${period === p.value ? "bg-sky-500 text-slate-950" : "text-slate-500 hover:text-slate-100 hover:bg-slate-800"}`}
-                  >{p.label}</button>
-                ))}
-              </div>
-              <button onClick={refresh} disabled={loading}
-                className="text-[10px] px-1.5 py-0.5 rounded border border-sky-600 bg-sky-500/20 text-sky-300 hover:bg-sky-500/40 disabled:opacity-40 transition"
-              >{loading ? "…" : "↻"}</button>
-              <div className="flex items-center gap-1 ml-1">
-                <button onClick={() => setShowHalfTrend(!showHalfTrend)}
-                  className={`text-[9px] px-1 py-0.5 rounded border transition font-bold ${showHalfTrend ? "border-blue-500 bg-blue-900/30 text-blue-400" : "border-slate-700 text-slate-500 hover:text-slate-300"}`}
-                >HT</button>
-                <button onClick={() => setShowWstBg(!showWstBg)}
-                  className={`text-[9px] font-bold px-1 py-0.5 rounded border transition ${showWstBg ? (wstUp ? "text-emerald-400 border-emerald-600/50 bg-emerald-950/40" : "text-rose-400 border-rose-600/50 bg-rose-950/40") : "text-slate-500 border-slate-700 bg-slate-900/40"}`}
-                >WST</button>
-                <button onClick={() => setShowEmaPanel(!showEmaPanel)}
-                  className={`text-[9px] px-1 py-0.5 rounded border transition ${showEmaPanel ? "border-cyan-600 bg-cyan-900/30 text-cyan-300" : "border-slate-700 text-slate-500 hover:text-slate-300"}`}
-                >EMA</button>
-              </div>
-            </>
-          )}
-        </div>
-
-        {showEmaPanel && !sectorChartData && (
-          <div className="shrink-0 flex items-center gap-2 px-3 py-1 border-b border-slate-800/40 bg-slate-900/60">
-            <span className="text-[9px] text-slate-500 mr-1">EMA:</span>
-            {emaConfigs.map((e) => (
-              <button key={e.period} onClick={() => toggleEma(e.period)}
-                className={`flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded-full border transition ${e.enabled ? "border-opacity-60 bg-opacity-20" : "border-slate-700 text-slate-600 hover:text-slate-400"}`}
-                style={e.enabled ? { color: e.color, borderColor: e.color, backgroundColor: e.color + "15" } : {}}
-              >
-                <span className="w-2 h-0.5 rounded-full inline-block" style={{ backgroundColor: e.enabled ? e.color : "#475569" }} />
-                {e.period}
-              </button>
-            ))}
+        {/* ── CENTER (Chart + Bottom Panel) ────────── */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Chart */}
+          <div className="flex-1 min-h-0">
+            <USMainChart
+              candles={btData?.candles ?? []}
+              trades={btData?.trades ?? []}
+              mode={mode}
+              overlays={overlays}
+              indicators={indicators}
+              focusTime={focusTime}
+            />
           </div>
-        )}
 
-        {error && (
-          <div className="shrink-0 px-3 py-1 text-[10px] text-rose-300 bg-rose-950/40 border-b border-rose-800/40">{error}</div>
-        )}
-
-        {sectorChartLoading && (
-          <div className="flex items-center justify-center py-8 text-xs text-slate-500">Loading sector chart…</div>
-        )}
-
-        {/* Live chart */}
-        <div className="flex-1 min-h-0">
-          {sectorChartData ? (
-            <TVChart ref={chartRef} data={sectorChartData} trades={[]} buySignals={[]} />
-          ) : (
-            <TVChart ref={chartRef} data={rawPoints} trades={[]} buySignals={[]} emaConfigs={emaConfigs} showHalfTrend={showHalfTrend} showWstBackground={showWstBg} />
-          )}
-        </div>
-      </section>
-
-      {/* ═══════════════════════════════════════════════════════════════ */}
-      {/* COL 2 — 1H Strategy Workspace                                */}
-      {/* ═══════════════════════════════════════════════════════════════ */}
-      <section className="w-full md:w-1/3 overflow-y-auto border-r border-slate-800/60">
-        <Strategy1HPanel
-          onTradeClick={handleTradeClick}
-          symbol={selectedSymbol}
-          symbolName={selectedName}
-        />
-      </section>
-
-      {/* ═══════════════════════════════════════════════════════════════ */}
-      {/* COL 3 — Scanners                                             */}
-      {/* ═══════════════════════════════════════════════════════════════ */}
-      <aside className="hidden md:flex md:w-1/3 flex-col overflow-y-auto bg-slate-900/40">
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
-          <DailyScanner onSelectSymbol={handleScannerSelect} market="US" />
-          <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-2.5">
-            <NearATH onSelectSymbol={handleScannerSelect} market="US" />
-          </div>
-          <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-2.5">
-            <TopVolume onSelectSymbol={handleScannerSelect} market="US" />
-          </div>
-          <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-2.5">
-            <SectorList onSelectSymbol={handleScannerSelect} onSelectSector={handleSelectSector} market="US" />
+          {/* Bottom Panel */}
+          <div style={{ height: bottomH }} className="shrink-0">
+            <USBottomPanel
+              btData={btData}
+              onTradeClick={handleTradeClick}
+              onRunBacktest={runBacktest}
+              loading={btLoading}
+              symbol={selectedSymbol}
+            />
           </div>
         </div>
-      </aside>
 
+        {/* ── RIGHT PANEL (Execution + Strategy) ──── */}
+        <aside className="hidden lg:flex w-64 shrink-0 flex-col overflow-hidden border-l border-slate-800/60">
+          <USOrderPanel
+            symbol={selectedSymbol}
+            price={price}
+            metrics={btData?.metrics ?? null}
+            mode={mode}
+            tradingActive={tradingActive}
+          />
+        </aside>
+      </div>
     </div>
   );
 }
