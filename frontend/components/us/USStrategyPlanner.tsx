@@ -6,11 +6,10 @@ import { useCallback, useEffect, useState } from "react";
 // Strategy Planner — Modern unified view
 // ═══════════════════════════════════════════════════════════════════════
 
-type StrategyType = "breakout_1h" | "vpb_v1" | "vpb_v2";
+type StrategyType = "breakout_1h" | "vpb_v2";
 
 const STRATEGY_TYPES: { key: StrategyType; label: string; desc: string }[] = [
   { key: "breakout_1h", label: "Breakout 1H", desc: "EMA/MACD/RSI breakout" },
-  { key: "vpb_v1", label: "VPB v1", desc: "Volume-Price Breakout" },
   { key: "vpb_v2", label: "VPB v2", desc: "High WR two-step retest" },
 ];
 
@@ -55,6 +54,7 @@ export type StrategyPreset = {
   period: string;
   skip_flat: boolean;
   strategy_type: StrategyType;
+  capital: number;
   bt_symbol?: string | null;
   bt_win_rate?: number | null;
   bt_return_pct?: number | null;
@@ -73,6 +73,7 @@ const EMPTY_PRESET: StrategyPreset = {
   period: "1y",
   skip_flat: false,
   strategy_type: "breakout_1h",
+  capital: 5000,
 };
 
 type Props = {
@@ -116,7 +117,6 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
       conditions: { ...getAllOn(t) },
       // Reset params to defaults for VPB
       ...(t === "vpb_v2" ? { atr_sl_mult: 1.0, atr_tp_mult: 1.0, period: "2y" } :
-          t === "vpb_v1" ? { atr_sl_mult: 1.5, atr_tp_mult: 2.0, period: "2y" } :
           { atr_sl_mult: 3.0, atr_tp_mult: 2.5 }),
     }));
   };
@@ -213,11 +213,9 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                     <div className="flex items-center gap-1 mt-0.5">
                       <span className={`text-[7px] px-1 py-0.5 rounded font-bold uppercase tracking-wider ${
                         (p as StrategyPreset).strategy_type === "vpb_v2" ? "bg-purple-500/20 text-purple-300" :
-                        (p as StrategyPreset).strategy_type === "vpb_v1" ? "bg-orange-500/20 text-orange-300" :
                         "bg-blue-500/20 text-blue-300"
                       }`}>
-                        {(p as StrategyPreset).strategy_type === "vpb_v2" ? "VPB v2" :
-                         (p as StrategyPreset).strategy_type === "vpb_v1" ? "VPB v1" : "1H"}
+                        {(p as StrategyPreset).strategy_type === "vpb_v2" ? "VPB v2" : "1H"}
                       </span>
                     </div>
                     <div className="flex items-center gap-1 mt-1">
@@ -307,7 +305,6 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                     className={`flex-1 px-2 py-1.5 rounded-lg border text-center transition-all ${
                       active
                         ? st.key === "vpb_v2" ? "border-purple-500/50 bg-purple-500/10 text-purple-300" :
-                          st.key === "vpb_v1" ? "border-orange-500/50 bg-orange-500/10 text-orange-300" :
                           "border-blue-500/50 bg-blue-500/10 text-blue-300"
                         : "border-slate-800/50 bg-slate-900/30 text-slate-500 hover:border-slate-700 hover:text-slate-400"
                     }`}
@@ -364,7 +361,17 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
           </div>
 
           {/* Parameters */}
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+            <div className="bg-slate-900/40 rounded-lg p-2 border border-slate-800/30">
+              <div className="text-[7px] text-slate-600 uppercase tracking-wider mb-0.5">Capital $</div>
+              <input
+                type="number"
+                value={editing.capital}
+                onChange={(e) => setEditing((p) => ({ ...p, capital: Number(e.target.value) }))}
+                step={1000} min={500} max={1000000}
+                className="w-full text-[13px] font-bold bg-transparent text-sky-400 tabular-nums outline-none"
+              />
+            </div>
             <div className="bg-slate-900/40 rounded-lg p-2 border border-slate-800/30">
               <div className="text-[7px] text-slate-600 uppercase tracking-wider mb-0.5">
                 {isVPB ? "Min SL" : "Stop Loss"}

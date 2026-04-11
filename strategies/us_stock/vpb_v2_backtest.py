@@ -236,13 +236,9 @@ class VPB2Backtester:
                     if sl_price >= entry_price:
                         sl_price = entry_price - params["atr_sl_mult"] * atr_val
                 else:
-                    pb_high = float(prev.get("pullback_high", np.nan))
-                    if np.isnan(pb_high):
-                        pb_high = float(prev["high"])
-                    max_sl = entry_price + params["atr_sl_mult"] * atr_val
-                    sl_price = min(pb_high, max_sl)
-                    if sl_price <= entry_price:
-                        sl_price = entry_price + params["atr_sl_mult"] * atr_val
+                    # Long-only strategy — skip short signals
+                    equity_curve.append(equity)
+                    continue
 
                 risk_per_share = abs(entry_price - sl_price) * SHARE_SIZE
                 if risk_per_share <= 0:

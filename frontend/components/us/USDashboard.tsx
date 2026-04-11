@@ -93,16 +93,17 @@ export default function USDashboard() {
 
       let data: US1HBacktestResponse;
 
-      if (stratType === "vpb_v1" || stratType === "vpb_v2") {
+      if (stratType === "vpb_v2") {
         data = await fetchVPBBacktest(
           selectedSymbol,
           activePreset?.period ?? "2y",
-          stratType === "vpb_v2" ? "v2" : "v1",
+          "v2",
           disabledConditions,
           {
             tp_r_multiple: activePreset?.atr_tp_mult,
             vol_multiplier: undefined,
           },
+          activePreset?.capital ?? 5000,
         );
       } else {
         data = await fetchUS1HBacktest(
@@ -115,6 +116,7 @@ export default function USDashboard() {
           undefined,
           disabledConditions,
           activePreset?.skip_flat,
+          activePreset?.capital ?? 5000,
         );
       }
       setBtData(data);

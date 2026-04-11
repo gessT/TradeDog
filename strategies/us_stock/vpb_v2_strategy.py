@@ -75,7 +75,7 @@ DEFAULT_VPB2_PARAMS: dict = {
     "trailing_atr_mult": 1.0,
 
     # ── Direction ──
-    "long_only": True,                # shorts had very poor WR in v1
+    "long_only": True,                # only BUY, no PUT/short
 
     # ── Cooldown ──
     "cooldown_bars": 5,
@@ -187,7 +187,7 @@ class VPBv2Strategy:
     ) -> pd.Series:
         """
         +1 = LONG (two-step confirmed breakout), 0 = no signal.
-        -1 = SHORT (only if long_only=False).
+        Short signals are disabled — long-only strategy.
         """
         p = self.p
         off = disabled or set()
@@ -221,7 +221,6 @@ class VPBv2Strategy:
         require_retest = p.get("require_retest", True)
         retest_max = p.get("retest_max_bars", 10)
         retest_tol = p.get("retest_tolerance_atr", 0.3)
-        long_only = p.get("long_only", True)
         vol_mult = p["vol_multiplier"]
 
         last_signal_bar = -cooldown - 1
@@ -278,26 +277,6 @@ class VPBv2Strategy:
                     phase_start_bar = i
                     continue
 
-                # SHORT first breakout (if enabled)
-                if not long_only and c[i] < base_low[i]:
-                    if not require_retest:
-                        if self._check_short_filters(
-                            i, c, h, l_, o, ema_f, ema_m, ema_s, ema_slope,
-                            atr_val, vol, vol_ma, vol_ramp, body_atr,
-                            close_pos, in_session, off, p
-                        ):
-                            signals.iloc[i] = -1
-                            last_signal_bar = i
-                        continue
-
-                    phase = 1
-                    phase_direction = -1
-                    phase_base_high = base_high[i]
-                    phase_base_low = base_low[i]
-                    phase_pullback_low = h[i]  # for short, track high
-                    phase_start_bar = i
-                    continue
-
             # ── PHASE 1: waiting for pullback to base level ──
             elif phase == 1:
                 bars_since = i - phase_start_bar
@@ -305,33 +284,20 @@ class VPBv2Strategy:
                     phase = 0
                     continue
 
-                if phase_direction == 1:
-                    # Track pullback low
-                    if l_[i] < phase_pullback_low:
-                        phase_pullback_low = l_[i]
+                # Track pullback low
+                if l_[i] < phase_pullback_low:
+                    phase_pullback_low = l_[i]
 
-                    # Pullback condition: price pulled back near base_high
-                    tolerance = retest_tol * atr_val[i] if atr_val[i] > 0 else 0
-                    pulled_back = l_[i] <= phase_base_high + tolerance
+                # Pullback condition: price pulled back near base_high
+                tolerance = retest_tol * atr_val[i] if atr_val[i] > 0 else 0
+                pulled_back = l_[i] <= phase_base_high + tolerance
 
-                    # Support held: didn't close below base_low
-                    support_held = c[i] >= phase_base_low
+                # Support held: didn't close below base_low
+                support_held = c[i] >= phase_base_low
 
-                    if pulled_back and support_held:
-                        phase = 2
-                        continue
-                else:
-                    # Short pullback
-                    if h[i] > phase_pullback_low:
-                        phase_pullback_low = h[i]
-
-                    tolerance = retest_tol * atr_val[i] if atr_val[i] > 0 else 0
-                    pulled_back = h[i] >= phase_base_low - tolerance
-                    support_held = c[i] <= phase_base_high
-
-                    if pulled_back and support_held:
-                        phase = 2
-                        continue
+                if pulled_back and support_held:
+                    phase = 2
+                    continue
 
             # ── PHASE 2: waiting for second breakout ──
             elif phase == 2:
@@ -340,7 +306,7 @@ class VPBv2Strategy:
                     phase = 0
                     continue
 
-                if phase_direction == 1 and c[i] > phase_base_high:
+                if c[i] > phase_base_high:
                     # Second breakout — lighter filters (vol/body already
                     # validated on the base candle in Phase 0)
                     if self._check_retest_entry_long(
@@ -348,18 +314,6 @@ class VPBv2Strategy:
                         in_session, off, p
                     ):
                         signals.iloc[i] = 1
-                        last_signal_bar = i
-                        phase = 0
-                        continue
-                    phase = 0
-                    continue
-
-                elif phase_direction == -1 and c[i] < phase_base_low:
-                    if self._check_retest_entry_short(
-                        i, c, o, ema_f, ema_m, ema_s, ema_slope,
-                        in_session, off, p
-                    ):
-                        signals.iloc[i] = -1
                         last_signal_bar = i
                         phase = 0
                         continue
@@ -394,15 +348,6 @@ class VPBv2Strategy:
                     if not np.isnan(base_high[j]) and h[j] >= base_high[i]:
                         break
                 df.iloc[i, df.columns.get_loc("pullback_low")] = pb_low
-            elif signals.iloc[i] == -1:
-                lookback = min(i, retest_max + 5)
-                pb_high = h[i]
-                for j in range(i - 1, max(i - lookback, 0) - 1, -1):
-                    if h[j] > pb_high:
-                        pb_high = h[j]
-                    if not np.isnan(base_high[j]):
-                        break
-                df.iloc[i, df.columns.get_loc("pullback_high")] = pb_high
 
     @staticmethod
     def _check_long_filters(
@@ -459,43 +404,6 @@ class VPBv2Strategy:
 
         return True
 
-    @staticmethod
-    def _check_short_filters(
-        i, c, h, l_, o, ema_f, ema_m, ema_s, ema_slope,
-        atr_val, vol, vol_ma, vol_ramp, body_atr,
-        close_pos, in_session, off, p,
-    ) -> bool:
-        """Check all quality filters for a SHORT signal."""
-        if "ema_alignment" not in off:
-            if not (ema_f[i] < ema_m[i] < ema_s[i]):
-                return False
-        if "ema_slope" not in off:
-            if ema_slope[i] > -p["ema_slope_min"]:
-                return False
-        if "ema_trend" not in off:
-            if c[i] >= ema_f[i]:
-                return False
-        if "vol_ramp" not in off:
-            ramp_n = p["vol_ramp_bars"]
-            if ramp_n > 0 and vol_ramp[i] < ramp_n:
-                return False
-        if "vol_spike" not in off:
-            if vol[i] <= vol_ma[i] * p["vol_multiplier"]:
-                return False
-        if "body_strength" not in off:
-            if body_atr[i] < p["body_atr_min"]:
-                return False
-        if "close_near_high" not in off:
-            if close_pos[i] > p["close_near_high_pct"]:
-                return False
-        if "bullish_candle" not in off:
-            if c[i] >= o[i]:
-                return False
-        if "session" not in off:
-            if in_session[i] == 0:
-                return False
-        return True
-
     # ── Lighter filters for Phase-2 retest entry ────────────────────
     # Vol/body quality was already validated on the base candle.
     # Here we only need trend direction + bullish candle + session.
@@ -514,26 +422,6 @@ class VPBv2Strategy:
                 return False
         if "bullish_candle" not in off:
             if c[i] <= o[i]:
-                return False
-        if "session" not in off:
-            if in_session[i] == 0:
-                return False
-        return True
-
-    @staticmethod
-    def _check_retest_entry_short(i, c, o, ema_f, ema_m, ema_s, ema_slope,
-                                   in_session, off, p) -> bool:
-        if "ema_alignment" not in off:
-            if not (ema_f[i] < ema_m[i] < ema_s[i]):
-                return False
-        if "ema_slope" not in off:
-            if ema_slope[i] > -p["ema_slope_min"]:
-                return False
-        if "ema_trend" not in off:
-            if c[i] >= ema_f[i]:
-                return False
-        if "bullish_candle" not in off:
-            if c[i] >= o[i]:
                 return False
         if "session" not in off:
             if in_session[i] == 0:

@@ -1691,8 +1691,9 @@ export async function fetchUS1HBacktest(
   date_to?: string,
   disabledConditions?: string[],
   skipFlat?: boolean,
+  capital: number = 5000,
 ): Promise<US1HBacktestResponse> {
-  let url = `${API_BASE}/stock/backtest_1h?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  let url = `${API_BASE}/stock/backtest_1h?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}&capital=${capital}`;
   if (date_from) url += `&date_from=${date_from}`;
   if (date_to) url += `&date_to=${date_to}`;
   if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
@@ -1711,8 +1712,9 @@ export async function fetchVPBBacktest(
   version: string = "v2",
   disabledConditions?: string[],
   params?: Record<string, unknown>,
+  capital: number = 5000,
 ): Promise<US1HBacktestResponse> {
-  let url = `${API_BASE}/stock/backtest_vpb?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&version=${version}`;
+  let url = `${API_BASE}/stock/backtest_vpb?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&version=${version}&capital=${capital}`;
   if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
   if (params) {
     for (const [k, v] of Object.entries(params)) {

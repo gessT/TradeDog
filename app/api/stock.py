@@ -1573,7 +1573,8 @@ class StrategyPresetPayload(BaseModel):
     atr_tp_mult: float = 2.5
     period: str = "1y"
     skip_flat: bool = False
-    strategy_type: str = "breakout_1h"  # breakout_1h | vpb_v1 | vpb_v2
+    strategy_type: str = "breakout_1h"  # breakout_1h | vpb_v2
+    capital: float = 5000.0
 
 
 @router.get("/us-strategy-presets")
@@ -1588,6 +1589,7 @@ def list_strategy_presets(db: Session = Depends(get_db)):
             "atr_tp_mult": r.atr_tp_mult,
             "period": r.period,
             "skip_flat": r.skip_flat,
+            "capital": getattr(r, "capital", 5000.0) or 5000.0,
             "bt_symbol": r.bt_symbol,
             "bt_win_rate": r.bt_win_rate,
             "bt_return_pct": r.bt_return_pct,
@@ -1612,6 +1614,7 @@ def save_strategy_preset(payload: StrategyPresetPayload, db: Session = Depends(g
         existing.period = payload.period
         existing.skip_flat = payload.skip_flat
         existing.strategy_type = payload.strategy_type
+        existing.capital = payload.capital
     else:
         db.add(USStrategyPreset(
             name=payload.name,
@@ -1621,6 +1624,7 @@ def save_strategy_preset(payload: StrategyPresetPayload, db: Session = Depends(g
             period=payload.period,
             skip_flat=payload.skip_flat,
             strategy_type=payload.strategy_type,
+            capital=payload.capital,
         ))
     db.commit()
     return {"status": "ok", "name": payload.name}
@@ -1667,7 +1671,7 @@ def delete_strategy_preset(preset_id: int, db: Session = Depends(get_db)):
 async def us_stock_backtest_1h(
     symbol: _Ann[str, Query()] = "AAPL",
     period: _Ann[str, Query()] = "2y",
-    capital: _Ann[float, Query()] = 25000.0,
+    capital: _Ann[float, Query()] = 5000.0,
     oos_split: _Ann[float, Query(ge=0, le=0.5)] = 0.3,
     atr_sl_mult: _Ann[float, Query(ge=0.5, le=10.0)] = 3.0,
     atr_tp_mult: _Ann[float, Query(ge=0.5, le=10.0)] = 2.5,
@@ -1834,7 +1838,7 @@ async def us_stock_backtest_vpb(
     symbol: _Ann[str, Query()] = "AAPL",
     period: _Ann[str, Query()] = "2y",
     version: _Ann[str, Query()] = "v2",
-    capital: _Ann[float, Query()] = 25000.0,
+    capital: _Ann[float, Query()] = 5000.0,
     disabled_conditions: _Ann[_Opt[str], Query()] = None,
     # VPB params overrides
     tp_r_multiple: _Ann[_Opt[float], Query()] = None,
@@ -1843,7 +1847,6 @@ async def us_stock_backtest_vpb(
     consol_range_atr_mult: _Ann[_Opt[float], Query()] = None,
     ema_slope_min: _Ann[_Opt[float], Query()] = None,
     require_retest: _Ann[_Opt[bool], Query()] = None,
-    long_only: _Ann[_Opt[bool], Query()] = None,
     date_from: _Ann[_Opt[str], Query()] = None,
     date_to: _Ann[_Opt[str], Query()] = None,
 ) -> US1HBacktestResponse:
@@ -1851,10 +1854,8 @@ async def us_stock_backtest_vpb(
 
     _disabled: set[str] = set()
     if disabled_conditions:
-        _valid_v1 = {"ema_trend", "ema_slope", "vol_spike", "body_strength", "close_near_high",
-                     "bullish_candle", "consolidation"}
-        _valid_v2 = _valid_v1 | {"ema_alignment", "vol_ramp", "session"}
-        _valid = _valid_v2 if version == "v2" else _valid_v1
+        _valid = {"ema_trend", "ema_slope", "ema_alignment", "vol_spike", "vol_ramp",
+                  "body_strength", "close_near_high", "bullish_candle", "session"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
 
     def _run():
@@ -1882,8 +1883,6 @@ async def us_stock_backtest_vpb(
             param_overrides["ema_slope_min"] = ema_slope_min
         if require_retest is not None:
             param_overrides["require_retest"] = require_retest
-        if long_only is not None:
-            param_overrides["long_only"] = long_only
 
         if version == "v2":
             from strategies.us_stock.vpb_v2_backtest import VPB2Backtester
@@ -1893,12 +1892,7 @@ async def us_stock_backtest_vpb(
             full_params = {**DEFAULT_VPB2_PARAMS, **param_overrides}
             strategy = VPBv2Strategy(full_params)
         else:
-            from strategies.us_stock.vpb_backtest import VPBBacktester
-            from strategies.us_stock.vpb_strategy import VPBStrategy, DEFAULT_VPB_PARAMS
-            bt = VPBBacktester(capital=capital)
-            result = bt.run(df, params=param_overrides, disabled_conditions=_disabled or None)
-            full_params = {**DEFAULT_VPB_PARAMS, **param_overrides}
-            strategy = VPBStrategy(full_params)
+            raise ValueError("Only VPB v2 is supported. Use version=v2.")
 
         # Build candles with indicators
         df_ind = strategy.compute_indicators(
@@ -1989,7 +1983,7 @@ async def us_stock_backtest_vpb(
                 pnl_pct=round(t.pnl_pct, 2),
                 reason=t.reason,
                 signal_type=getattr(t, "signal_type", "VPB"),
-                direction=t.direction,
+                direction="CALL" if t.direction == "LONG" else "PUT",
                 mae=round(t.mae, 2),
             )
             for t in filtered_trades
