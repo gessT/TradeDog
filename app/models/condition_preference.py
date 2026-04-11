@@ -61,6 +61,7 @@ class USStrategyPreset(Base):
     atr_tp_mult: Mapped[float] = mapped_column(default=2.5)
     period: Mapped[str] = mapped_column(String(8), default="1y")
     skip_flat: Mapped[bool] = mapped_column(Boolean, default=False)
+    strategy_type: Mapped[str] = mapped_column(String(16), default="breakout_1h")  # breakout_1h | vpb_v1 | vpb_v2
 
     # Backtest metrics (populated after running backtest)
     bt_symbol: Mapped[str | None] = mapped_column(String(16), nullable=True)

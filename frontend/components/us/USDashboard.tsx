@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { fetchUS1HBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
+import { fetchUS1HBacktest, fetchVPBBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
 import USTopBar from "./USTopBar";
 import USWatchlist from "./USWatchlist";
 import USMainChart from "./USMainChart";
@@ -88,17 +88,35 @@ export default function USDashboard() {
             .filter(([, v]) => !v)
             .map(([k]) => k)
         : undefined;
-      const data = await fetchUS1HBacktest(
-        selectedSymbol,
-        activePreset?.period ?? "1y",
-        0.3,
-        activePreset?.atr_sl_mult ?? 3,
-        activePreset?.atr_tp_mult ?? 2.5,
-        undefined,
-        undefined,
-        disabledConditions,
-        activePreset?.skip_flat,
-      );
+
+      const stratType = activePreset?.strategy_type ?? "breakout_1h";
+
+      let data: US1HBacktestResponse;
+
+      if (stratType === "vpb_v1" || stratType === "vpb_v2") {
+        data = await fetchVPBBacktest(
+          selectedSymbol,
+          activePreset?.period ?? "2y",
+          stratType === "vpb_v2" ? "v2" : "v1",
+          disabledConditions,
+          {
+            tp_r_multiple: activePreset?.atr_tp_mult,
+            vol_multiplier: undefined,
+          },
+        );
+      } else {
+        data = await fetchUS1HBacktest(
+          selectedSymbol,
+          activePreset?.period ?? "1y",
+          0.3,
+          activePreset?.atr_sl_mult ?? 3,
+          activePreset?.atr_tp_mult ?? 2.5,
+          undefined,
+          undefined,
+          disabledConditions,
+          activePreset?.skip_flat,
+        );
+      }
       setBtData(data);
 
       // Save backtest metrics to preset in DB
