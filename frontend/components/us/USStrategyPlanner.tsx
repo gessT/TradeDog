@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { fetchUS1HBacktest, fetchVPBBacktest } from "../../services/api";
+import { US_DEFAULT_SYMBOLS } from "../../constants/usStocks";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Strategy Planner — Modern unified view
@@ -102,6 +104,12 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
+  // ── Compare stocks state ────────────────────────────
+  type CompareRow = { symbol: string; win_rate: number; total_trades: number; return_pct: number; profit_factor: number; max_dd: number; sharpe: number; status: "pending" | "done" | "error" };
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [comparing, setComparing] = useState(false);
+  const [compareRows, setCompareRows] = useState<CompareRow[]>([]);
+
   // ── Load saved presets ──────────────────────────────
   const fetchPresets = useCallback(async () => {
     try {
@@ -166,6 +174,58 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
       if (activePreset?.name === name) onApply({ ...EMPTY_PRESET, name: "breakout_v2" });
       showToast(`Deleted "${name}"`);
     } catch { /* offline */ }
+  };
+
+  // ── Compare across 10 hot-pick stocks ───────────────
+  const runCompare = async () => {
+    setCompareOpen(true);
+    setComparing(true);
+    const symbols = [...US_DEFAULT_SYMBOLS];
+    const initial: CompareRow[] = symbols.map((s) => ({
+      symbol: s, win_rate: 0, total_trades: 0, return_pct: 0, profit_factor: 0, max_dd: 0, sharpe: 0, status: "pending" as const,
+    }));
+    setCompareRows(initial);
+
+    const disabledConditions = Object.entries(editing.conditions).filter(([, v]) => !v).map(([k]) => k);
+    const stratType = editing.strategy_type ?? "breakout_1h";
+
+    // Run all in parallel
+    const promises = symbols.map(async (sym, idx) => {
+      try {
+        let data;
+        if (stratType === "vpb_v2" || stratType === "vpb_v3") {
+          data = await fetchVPBBacktest(
+            sym, editing.period, stratType === "vpb_v3" ? "v3" : "v2",
+            disabledConditions.length > 0 ? disabledConditions : undefined,
+            { atr_sl_mult: editing.atr_sl_mult, tp_r_multiple: editing.atr_tp_mult },
+            editing.capital,
+          );
+        } else {
+          data = await fetchUS1HBacktest(
+            sym, editing.period, 0.0,
+            editing.atr_sl_mult, editing.atr_tp_mult,
+            undefined, undefined,
+            disabledConditions.length > 0 ? disabledConditions : undefined,
+            editing.skip_flat, editing.capital,
+          );
+        }
+        const m = data.metrics;
+        setCompareRows((prev) => {
+          const next = [...prev];
+          next[idx] = { symbol: sym, win_rate: m.win_rate, total_trades: m.total_trades, return_pct: m.total_return_pct, profit_factor: m.profit_factor, max_dd: m.max_drawdown_pct, sharpe: m.sharpe_ratio, status: "done" };
+          return next;
+        });
+      } catch {
+        setCompareRows((prev) => {
+          const next = [...prev];
+          next[idx] = { ...next[idx], status: "error" };
+          return next;
+        });
+      }
+    });
+
+    await Promise.all(promises);
+    setComparing(false);
   };
 
   const handleLoadPreset = (preset: StrategyPreset) => {
@@ -445,6 +505,13 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
             </label>
             <div className="flex-1" />
             <button
+              onClick={runCompare}
+              disabled={comparing}
+              className="px-3 py-1.5 rounded-lg text-[10px] font-bold transition bg-purple-500/70 hover:bg-purple-500 text-white"
+            >
+              {comparing ? "⏳ Running…" : "🔍 Compare 10"}
+            </button>
+            <button
               onClick={() => onApply(editing)}
               className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition ${
                 isModified
@@ -457,6 +524,88 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
           </div>
         </div>
       </div>
+
+      {/* ═══ COMPARE DIALOG ═══ */}
+      {compareOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => !comparing && setCompareOpen(false)}>
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-[90vw] max-w-[640px] max-h-[80vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800">
+              <div>
+                <h2 className="text-sm font-bold text-white">Strategy Comparison</h2>
+                <p className="text-[10px] text-slate-500 mt-0.5">
+                  {STRATEGY_TYPES.find((s) => s.key === editing.strategy_type)?.label ?? editing.strategy_type} · {editing.period} · ${editing.capital.toLocaleString()}
+                </p>
+              </div>
+              <button onClick={() => !comparing && setCompareOpen(false)} className="text-slate-500 hover:text-white text-lg leading-none">✕</button>
+            </div>
+
+            {/* Table */}
+            <div className="overflow-auto max-h-[60vh]">
+              <table className="w-full text-[11px]">
+                <thead className="sticky top-0 bg-slate-900 border-b border-slate-800">
+                  <tr className="text-slate-500 uppercase tracking-wider">
+                    <th className="text-left pl-5 py-2 font-semibold">Stock</th>
+                    <th className="text-right px-2 py-2 font-semibold">Win Rate</th>
+                    <th className="text-right px-2 py-2 font-semibold">Trades</th>
+                    <th className="text-right px-2 py-2 font-semibold">Return</th>
+                    <th className="text-right px-2 py-2 font-semibold">PF</th>
+                    <th className="text-right px-2 py-2 font-semibold">DD</th>
+                    <th className="text-right pr-5 py-2 font-semibold">Sharpe</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...compareRows].sort((a, b) => b.win_rate - a.win_rate).map((row) => (
+                    <tr key={row.symbol} className="border-b border-slate-800/40 hover:bg-slate-800/30 transition">
+                      <td className="pl-5 py-2 font-bold text-white">{row.symbol}</td>
+                      {row.status === "pending" ? (
+                        <td colSpan={6} className="text-center text-slate-600 py-2">
+                          <span className="animate-pulse">loading…</span>
+                        </td>
+                      ) : row.status === "error" ? (
+                        <td colSpan={6} className="text-center text-red-400/70 py-2">failed</td>
+                      ) : (
+                        <>
+                          <td className={`text-right px-2 py-2 font-bold ${row.win_rate >= 60 ? "text-emerald-400" : row.win_rate >= 50 ? "text-yellow-400" : "text-red-400"}`}>
+                            {row.win_rate.toFixed(1)}%
+                          </td>
+                          <td className="text-right px-2 py-2 text-slate-300">{row.total_trades}</td>
+                          <td className={`text-right px-2 py-2 font-semibold ${row.return_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                            {row.return_pct >= 0 ? "+" : ""}{row.return_pct.toFixed(1)}%
+                          </td>
+                          <td className={`text-right px-2 py-2 ${row.profit_factor >= 1.5 ? "text-emerald-400" : row.profit_factor >= 1.0 ? "text-slate-300" : "text-red-400"}`}>
+                            {row.profit_factor.toFixed(2)}
+                          </td>
+                          <td className="text-right px-2 py-2 text-rose-400">
+                            {row.max_dd.toFixed(1)}%
+                          </td>
+                          <td className={`text-right pr-5 py-2 ${row.sharpe >= 1.0 ? "text-emerald-400" : "text-slate-400"}`}>
+                            {row.sharpe.toFixed(2)}
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-2 border-t border-slate-800 flex items-center justify-between">
+              <span className="text-[10px] text-slate-600">
+                {comparing ? `Running… ${compareRows.filter((r) => r.status === "done").length}/${compareRows.length}` : `${compareRows.filter((r) => r.status === "done").length} stocks compared`}
+              </span>
+              <button
+                onClick={() => setCompareOpen(false)}
+                disabled={comparing}
+                className="px-3 py-1 rounded text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
