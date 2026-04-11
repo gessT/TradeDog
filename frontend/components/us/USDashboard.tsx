@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { fetchUS1HBacktest, fetchVPBBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
+import { fetchUS1HBacktest, fetchVPBBacktest, fetchVPRBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
 import USTopBar from "./USTopBar";
 import USWatchlist from "./USWatchlist";
 import USMainChart from "./USMainChart";
@@ -93,7 +93,18 @@ export default function USDashboard() {
 
       let data: US1HBacktestResponse;
 
-      if (stratType === "vpb_v2" || stratType === "vpb_v3") {
+      if (stratType === "vpr") {
+        data = await fetchVPRBacktest(
+          selectedSymbol,
+          activePreset?.period ?? "2y",
+          disabledConditions,
+          {
+            atr_sl_mult: activePreset?.atr_sl_mult,
+            tp2_r_mult: activePreset?.atr_tp_mult,
+          },
+          activePreset?.capital ?? 5000,
+        );
+      } else if (stratType === "vpb_v2" || stratType === "vpb_v3") {
         data = await fetchVPBBacktest(
           selectedSymbol,
           activePreset?.period ?? "2y",

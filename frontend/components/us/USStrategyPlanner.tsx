@@ -1,19 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { fetchUS1HBacktest, fetchVPBBacktest } from "../../services/api";
+import { fetchUS1HBacktest, fetchVPBBacktest, fetchVPRBacktest } from "../../services/api";
 import { US_DEFAULT_SYMBOLS } from "../../constants/usStocks";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Strategy Planner — Modern unified view
 // ═══════════════════════════════════════════════════════════════════════
 
-type StrategyType = "breakout_1h" | "vpb_v2" | "vpb_v3";
+type StrategyType = "breakout_1h" | "vpb_v2" | "vpb_v3" | "vpr";
 
 const STRATEGY_TYPES: { key: StrategyType; label: string; desc: string }[] = [
   { key: "breakout_1h", label: "Breakout 1H", desc: "EMA/MACD/RSI breakout" },
   { key: "vpb_v2", label: "VPB v2", desc: "High WR two-step retest" },
   { key: "vpb_v3", label: "VPB v3 量价", desc: "Multi-TF volume-price" },
+  { key: "vpr", label: "VPR", desc: "VWAP+VolProfile+RSI" },
 ];
 
 const CONDITIONS_BREAKOUT = [
@@ -51,9 +52,18 @@ const CONDITIONS_VPB3 = [
   { key: "session", label: "Session Filter", icon: "🕐", desc: "Skip first/last 30min" },
 ] as const;
 
+const CONDITIONS_VPR = [
+  { key: "vwap_bias", label: "VWAP Bias", icon: "📈", desc: "Price above session VWAP" },
+  { key: "vol_profile", label: "Vol Profile", icon: "📊", desc: "Above POC or near HVN" },
+  { key: "rsi_momentum", label: "RSI Momentum", icon: "🎯", desc: "RSI in zone & rising" },
+  { key: "bullish_candle", label: "Bullish Candle", icon: "🟢", desc: "Close > Open" },
+  { key: "session", label: "Session Filter", icon: "🕐", desc: "Skip off-hours" },
+] as const;
+
 function getConditionsForType(t: StrategyType) {
   if (t === "breakout_1h") return CONDITIONS_BREAKOUT;
   if (t === "vpb_v3") return CONDITIONS_VPB3;
+  if (t === "vpr") return CONDITIONS_VPR;
   return CONDITIONS_VPB;
 }
 
@@ -137,8 +147,9 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
       ...p,
       strategy_type: t,
       conditions: { ...getAllOn(t) },
-      // Reset params to defaults for VPB
+      // Reset params to defaults per strategy type
       ...(t === "vpb_v2" ? { atr_sl_mult: 1.0, atr_tp_mult: 1.0, period: "2y" } :
+          t === "vpr" ? { atr_sl_mult: 1.3, atr_tp_mult: 1.8, period: "2y" } :
           { atr_sl_mult: 3.0, atr_tp_mult: 2.5 }),
     }));
   };
@@ -193,7 +204,14 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
     const promises = symbols.map(async (sym, idx) => {
       try {
         let data;
-        if (stratType === "vpb_v2" || stratType === "vpb_v3") {
+        if (stratType === "vpr") {
+          data = await fetchVPRBacktest(
+            sym, editing.period,
+            disabledConditions.length > 0 ? disabledConditions : undefined,
+            { atr_sl_mult: editing.atr_sl_mult, tp2_r_mult: editing.atr_tp_mult },
+            editing.capital,
+          );
+        } else if (stratType === "vpb_v2" || stratType === "vpb_v3") {
           data = await fetchVPBBacktest(
             sym, editing.period, stratType === "vpb_v3" ? "v3" : "v2",
             disabledConditions.length > 0 ? disabledConditions : undefined,
@@ -236,6 +254,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
   const enabledCount = Object.values(editing.conditions).filter(Boolean).length;
   const totalConditions = currentConditions.length;
   const isVPB = (editing.strategy_type ?? "breakout_1h") !== "breakout_1h";
+  const isVPR = editing.strategy_type === "vpr";
   const isModified = activePreset && (
     JSON.stringify(editing.conditions) !== JSON.stringify(activePreset.conditions) ||
     editing.strategy_type !== activePreset.strategy_type
@@ -286,11 +305,13 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                     </div>
                     <div className="flex items-center gap-1 mt-0.5">
                       <span className={`text-[7px] px-1 py-0.5 rounded font-bold uppercase tracking-wider ${
+                        (p as StrategyPreset).strategy_type === "vpr" ? "bg-cyan-500/20 text-cyan-300" :
                         (p as StrategyPreset).strategy_type === "vpb_v3" ? "bg-emerald-500/20 text-emerald-300" :
                         (p as StrategyPreset).strategy_type === "vpb_v2" ? "bg-purple-500/20 text-purple-300" :
                         "bg-blue-500/20 text-blue-300"
                       }`}>
-                        {(p as StrategyPreset).strategy_type === "vpb_v3" ? "VPB v3 量价" :
+                        {(p as StrategyPreset).strategy_type === "vpr" ? "VPR" :
+                         (p as StrategyPreset).strategy_type === "vpb_v3" ? "VPB v3 量价" :
                          (p as StrategyPreset).strategy_type === "vpb_v2" ? "VPB v2" : "1H"}
                       </span>
                     </div>
@@ -380,7 +401,8 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                     onClick={() => handleStrategyTypeChange(st.key)}
                     className={`flex-1 px-2 py-1.5 rounded-lg border text-center transition-all ${
                       active
-                        ? st.key === "vpb_v3" ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300" :
+                        ? st.key === "vpr" ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300" :
+                          st.key === "vpb_v3" ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300" :
                           st.key === "vpb_v2" ? "border-purple-500/50 bg-purple-500/10 text-purple-300" :
                           "border-blue-500/50 bg-blue-500/10 text-blue-300"
                         : "border-slate-800/50 bg-slate-900/30 text-slate-500 hover:border-slate-700 hover:text-slate-400"
@@ -451,7 +473,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
             </div>
             <div className="bg-slate-900/40 rounded-lg p-2 border border-slate-800/30">
               <div className="text-[7px] text-slate-600 uppercase tracking-wider mb-0.5">
-                {isVPB ? "Min SL" : "Stop Loss"}
+                {isVPR ? "SL ATR×" : isVPB ? "Min SL" : "Stop Loss"}
               </div>
               <div className="flex items-baseline gap-0.5">
                 <input
@@ -466,7 +488,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
             </div>
             <div className="bg-slate-900/40 rounded-lg p-2 border border-slate-800/30">
               <div className="text-[7px] text-slate-600 uppercase tracking-wider mb-0.5">
-                {isVPB ? "TP R-mult" : "Take Profit"}
+                {isVPR ? "TP2 R-mult" : isVPB ? "TP R-mult" : "Take Profit"}
               </div>
               <div className="flex items-baseline gap-0.5">
                 <input

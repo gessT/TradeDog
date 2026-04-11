@@ -2051,3 +2051,167 @@ async def us_stock_backtest_vpb(
         params=params,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# VPR Strategy Backtest (Volume Profile + VWAP + RSI)
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/backtest_vpr")
+async def us_stock_backtest_vpr(
+    symbol: _Ann[str, Query()] = "AAPL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 5000.0,
+    disabled_conditions: _Ann[_Opt[str], Query()] = None,
+    atr_sl_mult: _Ann[_Opt[float], Query()] = None,
+    rsi_low: _Ann[_Opt[int], Query()] = None,
+    rsi_high: _Ann[_Opt[int], Query()] = None,
+    tp2_r_mult: _Ann[_Opt[float], Query()] = None,
+    date_from: _Ann[_Opt[str], Query()] = None,
+    date_to: _Ann[_Opt[str], Query()] = None,
+) -> US1HBacktestResponse:
+    """Run VPR strategy backtest (Volume Profile + VWAP + RSI) on a US stock."""
+
+    _disabled: set[str] = set()
+    if disabled_conditions:
+        _valid = {"vwap_bias", "vol_profile", "rsi_momentum", "bullish_candle", "session"}
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
+
+    def _run():
+        from strategies.futures.data_loader import load_yfinance
+        from strategies.us_stock.vpr.backtest import VPRBacktester
+        from strategies.us_stock.vpr.strategy import VPRStrategy
+        from strategies.us_stock.vpr.config import DEFAULT_VPR_PARAMS
+
+        df = load_yfinance(symbol=symbol, interval="1h", period=period)
+        if df.empty or len(df) < 120:
+            raise ValueError(f"Not enough 1h data for {symbol}.")
+
+        if date_to:
+            trade_end = pd.Timestamp(date_to, tz=df.index.tz) + pd.Timedelta(days=1)
+            df = df[df.index < trade_end]
+
+        param_overrides: dict = {}
+        if atr_sl_mult is not None:
+            param_overrides["atr_sl_mult"] = atr_sl_mult
+        if rsi_low is not None:
+            param_overrides["rsi_low"] = rsi_low
+        if rsi_high is not None:
+            param_overrides["rsi_high"] = rsi_high
+        if tp2_r_mult is not None:
+            param_overrides["tp2_r_mult"] = tp2_r_mult
+
+        bt = VPRBacktester(capital=capital)
+        result = bt.run(df, params=param_overrides, disabled_conditions=_disabled or None)
+        full_params = {**DEFAULT_VPR_PARAMS, **param_overrides}
+
+        # Build candles with VWAP + POC + RSI
+        strategy = VPRStrategy(full_params)
+        df_ind = strategy.compute_indicators(
+            df[["open", "high", "low", "close", "volume"]].copy()
+        )
+        signals = strategy.generate_signals(df_ind, disabled=_disabled or None)
+
+        display_start: _Opt[str] = None
+        if date_from:
+            display_start = date_from
+        elif period not in ("2y", "max"):
+            _period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
+            _days = _period_days.get(period, 730)
+            if _days < 730:
+                cutoff = df_ind.index[-1] - pd.Timedelta(days=_days)
+                display_start = cutoff.strftime("%Y-%m-%d")
+
+        if display_start:
+            ts = pd.Timestamp(display_start, tz=df_ind.index.tz)
+            df_ind = df_ind[df_ind.index >= ts]
+            signals = signals[df_ind.index]
+        df_ind["signal"] = signals
+
+        candles = []
+        for ts_val, row in df_ind.iterrows():
+            candles.append(US1HCandle(
+                time=ts_val.isoformat(),
+                open=round(float(row["open"]), 2),
+                high=round(float(row["high"]), 2),
+                low=round(float(row["low"]), 2),
+                close=round(float(row["close"]), 2),
+                volume=float(row.get("volume", 0)),
+                ema_fast=round(float(row["vwap"]), 2) if not _isnan(row.get("vwap")) else None,
+                ema_slow=round(float(row["poc"]), 2) if not _isnan(row.get("poc")) else None,
+                rsi=round(float(row["rsi"]), 1) if not _isnan(row.get("rsi")) else None,
+                macd_hist=None,
+                st_dir=None,
+                signal=int(row.get("signal", 0)),
+            ))
+
+        filtered_trades = result.trades
+        if display_start:
+            filtered_trades = [t for t in result.trades if str(t.exit_time)[:10] >= display_start]
+
+        filtered_daily = result.daily_pnl if hasattr(result, "daily_pnl") else []
+        if display_start and filtered_daily:
+            filtered_daily = [d for d in filtered_daily if d["date"] >= display_start]
+
+        wins = [t for t in filtered_trades if t.pnl > 0]
+        losses = [t for t in filtered_trades if t.pnl <= 0]
+        n_trades = len(filtered_trades)
+        total_pnl = sum(t.pnl for t in filtered_trades)
+
+        metrics = US1HMetrics(
+            initial_capital=result.initial_capital,
+            final_equity=round(result.initial_capital + total_pnl, 2),
+            total_return_pct=round(total_pnl / result.initial_capital * 100, 2) if result.initial_capital else 0,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            total_trades=n_trades,
+            winners=len(wins),
+            losers=len(losses),
+            win_rate=round(len(wins) / n_trades * 100, 1) if n_trades else 0,
+            avg_win=round(sum(t.pnl for t in wins) / len(wins), 2) if wins else 0,
+            avg_loss=round(sum(t.pnl for t in losses) / len(losses), 2) if losses else 0,
+            profit_factor=round(
+                abs(sum(t.pnl for t in wins) / sum(t.pnl for t in losses)), 2
+            ) if losses and sum(t.pnl for t in losses) != 0 else 999.0,
+            risk_reward_ratio=round(abs(result.avg_win / result.avg_loss), 2) if result.avg_loss != 0 else 999.0,
+        )
+
+        trades_out = [
+            US1HTrade(
+                entry_time=t.entry_time.isoformat() if hasattr(t.entry_time, "isoformat") else str(t.entry_time),
+                exit_time=t.exit_time.isoformat() if hasattr(t.exit_time, "isoformat") else str(t.exit_time),
+                entry_price=round(t.entry_price, 2),
+                exit_price=round(t.exit_price, 2),
+                qty=t.qty,
+                pnl=round(t.pnl, 2),
+                pnl_pct=round(t.pnl_pct, 2),
+                reason=t.reason,
+                signal_type="VPR",
+                direction="CALL",
+                mae=0.0,
+            )
+            for t in filtered_trades
+        ]
+
+        return candles, trades_out, result.equity_curve, metrics, full_params, filtered_daily
+
+    try:
+        candles, trades, eq_curve, metrics, params, daily_pnl = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("VPR backtest failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return US1HBacktestResponse(
+        symbol=symbol,
+        interval="1h",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        daily_pnl=daily_pnl,
+        params=params,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )

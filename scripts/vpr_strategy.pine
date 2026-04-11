@@ -1,0 +1,244 @@
+// ═══════════════════════════════════════════════════════════════════════
+// VPR Strategy — Volume Profile + VWAP + RSI  (Pine Script v5)
+// ═══════════════════════════════════════════════════════════════════════
+// Market:     US Stocks (SPY, QQQ, NVDA, TSLA, AAPL etc.)
+// Timeframes: 5m, 15m, 1H
+// Direction:  LONG only
+// Indicators: VWAP, Volume Profile (POC/HVN approx), RSI(14)
+// ═══════════════════════════════════════════════════════════════════════
+
+//@version=5
+strategy("VPR Strategy — VWAP + Volume Profile + RSI",
+     overlay        = true,
+     initial_capital = 5000,
+     default_qty_type = strategy.percent_of_equity,
+     default_qty_value = 2,
+     commission_type  = strategy.commission.percent,
+     commission_value = 0.05,
+     slippage         = 1,
+     pyramiding       = 0,
+     calc_on_every_tick = false)
+
+// ═══════════════════════════════════════════════════════════════════════
+// INPUTS — Backtesting Controls
+// ═══════════════════════════════════════════════════════════════════════
+i_backtest_on  = input.bool(true,  "Enable Backtesting", group = "Backtest")
+i_start_date   = input.time(timestamp("2024-01-01"), "Start Date", group = "Backtest")
+i_end_date     = input.time(timestamp("2026-12-31"), "End Date",   group = "Backtest")
+
+// ═══════════════════════════════════════════════════════════════════════
+// INPUTS — Indicators
+// ═══════════════════════════════════════════════════════════════════════
+i_rsi_len      = input.int(14,   "RSI Period",       minval = 2,  group = "RSI")
+i_rsi_low      = input.int(45,   "RSI Low Bound",    minval = 20, group = "RSI")
+i_rsi_high     = input.int(65,   "RSI High Bound",   minval = 40, group = "RSI")
+
+i_vp_lookback  = input.int(100,  "VP Lookback Bars",     minval = 20,  group = "Volume Profile")
+i_vp_bins      = input.int(50,   "VP Bin Count",         minval = 10,  group = "Volume Profile")
+i_hvn_pct      = input.float(70, "HVN Percentile",       minval = 50,  group = "Volume Profile")
+i_vp_tol_atr   = input.float(0.3,"POC/HVN Tolerance (×ATR)", minval = 0.1, group = "Volume Profile")
+
+// ═══════════════════════════════════════════════════════════════════════
+// INPUTS — Risk Management
+// ═══════════════════════════════════════════════════════════════════════
+i_atr_len      = input.int(14,   "ATR Period",       minval = 2,  group = "Risk")
+i_sl_mult      = input.float(1.3,"SL ATR Multiplier", minval = 0.5, step = 0.1, group = "Risk")
+i_tp1_r        = input.float(1.0,"TP1 R-Multiple (Partial)", minval = 0.5, step = 0.1, group = "Risk")
+i_tp2_r        = input.float(1.8,"TP2 R-Multiple (Final)",   minval = 1.0, step = 0.1, group = "Risk")
+i_tp1_pct      = input.float(50, "TP1 Exit % of Position",   minval = 10,  maxval = 90, group = "Risk")
+
+// ═══════════════════════════════════════════════════════════════════════
+// INPUTS — Session Filter
+// ═══════════════════════════════════════════════════════════════════════
+i_session_filter = input.bool(true, "US Session Only (9:30-16:00 ET)", group = "Session")
+
+// ═══════════════════════════════════════════════════════════════════════
+// DATE WINDOW
+// ═══════════════════════════════════════════════════════════════════════
+in_date_range = (time >= i_start_date) and (time <= i_end_date)
+can_trade     = i_backtest_on and in_date_range
+
+// ═══════════════════════════════════════════════════════════════════════
+// SESSION FILTER
+// ═══════════════════════════════════════════════════════════════════════
+is_us_session = true
+if i_session_filter
+    // US Regular Session: 09:30 - 16:00 ET
+    is_us_session := not na(time(timeframe.period, "0930-1600:23456", "America/New_York"))
+
+// ═══════════════════════════════════════════════════════════════════════
+// MAX 1 TRADE PER SESSION
+// ═══════════════════════════════════════════════════════════════════════
+var int  trades_today  = 0
+var int  last_day      = 0
+current_day = dayofmonth
+if current_day != last_day
+    trades_today := 0
+    last_day     := current_day
+
+// ═══════════════════════════════════════════════════════════════════════
+// INDICATORS
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── 1. Session VWAP ──
+vwap_val = ta.vwap(hlc3)
+
+// ── 2. RSI ──
+rsi_val      = ta.rsi(close, i_rsi_len)
+rsi_prev     = rsi_val[1]
+rsi_in_zone  = (rsi_val >= i_rsi_low) and (rsi_val <= i_rsi_high)
+rsi_rising   = rsi_val > rsi_prev
+
+// ── 3. ATR ──
+atr_val = ta.atr(i_atr_len)
+
+// ── 4. Volume Profile Approximation (POC & HVN) ──
+// Pine Script cannot do true volume profile bins natively,
+// so we approximate POC as the price level with highest volume
+// and HVN as the VWAP-anchored high-volume zone.
+
+// POC approximation: find the close price within lookback that had
+// the highest single-bar volume (institutional participation level)
+var float poc_price = na
+var float hvn_price = na
+
+// Rolling POC: highest volume bar's close in lookback window
+float max_vol_in_window = 0.0
+float poc_candidate     = close
+for j = 0 to i_vp_lookback - 1
+    if volume[j] > max_vol_in_window
+        max_vol_in_window := volume[j]
+        poc_candidate     := close[j]
+poc_price := poc_candidate
+
+// HVN approximation: volume-weighted average price over lookback
+// (represents the "average institutional entry zone")
+float sum_pv  = 0.0
+float sum_vol = 0.0
+for j = 0 to i_vp_lookback - 1
+    sum_pv  += hlc3[j] * volume[j]
+    sum_vol += volume[j]
+hvn_price := sum_vol > 0 ? sum_pv / sum_vol : close
+
+// Tolerance for POC/HVN proximity
+float tol = i_vp_tol_atr * atr_val
+
+// ═══════════════════════════════════════════════════════════════════════
+// ENTRY CONDITIONS (LONG ONLY)
+// ═══════════════════════════════════════════════════════════════════════
+
+// 1. VWAP Bias — price above VWAP
+bias_ok = close > vwap_val
+
+// 2. Volume Profile Structure — price >= POC or near HVN
+above_poc   = close >= poc_price
+near_hvn    = math.abs(close - hvn_price) <= tol
+structure_ok = above_poc or near_hvn
+
+// 3. RSI Momentum — in zone and rising
+momentum_ok = rsi_in_zone and rsi_rising
+
+// 4. Bullish candle
+bullish = close > open
+
+// Combined entry
+long_signal = bias_ok and structure_ok and momentum_ok and bullish
+             and can_trade and is_us_session and trades_today < 1
+             and strategy.position_size == 0
+
+// ═══════════════════════════════════════════════════════════════════════
+// RISK LEVELS
+// ═══════════════════════════════════════════════════════════════════════
+float entry_price = close
+float risk_dist   = i_sl_mult * atr_val
+float sl_price    = entry_price - risk_dist
+float tp1_price   = entry_price + i_tp1_r * risk_dist
+float tp2_price   = entry_price + i_tp2_r * risk_dist
+
+// Persist SL/TP across bars
+var float active_sl  = na
+var float active_tp1 = na
+var float active_tp2 = na
+var bool  tp1_done   = false
+
+// ═══════════════════════════════════════════════════════════════════════
+// ENTRY EXECUTION
+// ═══════════════════════════════════════════════════════════════════════
+if long_signal
+    strategy.entry("Long", strategy.long)
+    active_sl  := sl_price
+    active_tp1 := tp1_price
+    active_tp2 := tp2_price
+    tp1_done   := false
+    trades_today += 1
+
+// ═══════════════════════════════════════════════════════════════════════
+// EXIT LOGIC — Partial TP + Trailing SL
+// ═══════════════════════════════════════════════════════════════════════
+if strategy.position_size > 0
+    // TP1 — partial exit (50%)
+    if not tp1_done and high >= active_tp1
+        strategy.close("Long", comment = "TP1", qty_percent = i_tp1_pct)
+        tp1_done  := true
+        active_sl := strategy.position_avg_price  // move SL to breakeven
+
+    // TP2 — final exit
+    if tp1_done and high >= active_tp2
+        strategy.close("Long", comment = "TP2")
+
+    // SL
+    if low <= active_sl
+        strategy.close("Long", comment = "SL")
+
+// ═══════════════════════════════════════════════════════════════════════
+// PLOTS
+// ═══════════════════════════════════════════════════════════════════════
+
+// VWAP
+plot(vwap_val, "VWAP", color = color.new(color.yellow, 0), linewidth = 2)
+
+// POC & HVN
+plot(poc_price, "POC",  color = color.new(color.fuchsia, 30), style = plot.style_circles, linewidth = 2)
+plot(hvn_price, "HVN",  color = color.new(color.aqua,    40), style = plot.style_cross,   linewidth = 1)
+
+// SL / TP levels (only when in position)
+plot(strategy.position_size > 0 ? active_sl  : na, "Stop Loss", color = color.red,   style = plot.style_linebr, linewidth = 1)
+plot(strategy.position_size > 0 ? active_tp1 : na, "TP1",       color = color.lime,  style = plot.style_linebr, linewidth = 1)
+plot(strategy.position_size > 0 ? active_tp2 : na, "TP2",       color = color.green, style = plot.style_linebr, linewidth = 1)
+
+// Entry markers
+plotshape(long_signal and strategy.position_size == 0, "Entry",
+     style = shape.triangleup, location = location.belowbar,
+     color = color.lime, size = size.small, text = "VPR")
+
+// ═══════════════════════════════════════════════════════════════════════
+// RSI PANEL (separate pane)
+// ═══════════════════════════════════════════════════════════════════════
+// Uncomment below to add RSI in a separate pane:
+// plot(rsi_val, "RSI", color = color.blue)
+// hline(i_rsi_low,  "RSI Low",  color = color.gray)
+// hline(i_rsi_high, "RSI High", color = color.gray)
+// hline(50,         "RSI 50",   color = color.gray, linestyle = hline.style_dotted)
+
+// ═══════════════════════════════════════════════════════════════════════
+// INFO TABLE — Win Rate, Total Trades, Net Profit
+// ═══════════════════════════════════════════════════════════════════════
+if barstate.islastconfirmedhistory
+    var table info = table.new(position.top_right, 2, 4, bgcolor = color.new(color.black, 70))
+
+    n_closed  = strategy.closedtrades
+    n_wins    = strategy.wintrades
+    win_pct   = n_closed > 0 ? (n_wins / n_closed) * 100 : 0.0
+    net_pnl   = strategy.netprofit
+
+    table.cell(info, 0, 0, "Metric",       text_color = color.gray,   text_size = size.small)
+    table.cell(info, 1, 0, "Value",        text_color = color.gray,   text_size = size.small)
+    table.cell(info, 0, 1, "Win Rate",     text_color = color.white,  text_size = size.small)
+    table.cell(info, 1, 1, str.tostring(win_pct, "#.#") + "%",
+         text_color = win_pct >= 60 ? color.lime : color.orange, text_size = size.small)
+    table.cell(info, 0, 2, "Total Trades", text_color = color.white,  text_size = size.small)
+    table.cell(info, 1, 2, str.tostring(n_closed),
+         text_color = color.white, text_size = size.small)
+    table.cell(info, 0, 3, "Net Profit",   text_color = color.white,  text_size = size.small)
+    table.cell(info, 1, 3, "$" + str.tostring(net_pnl, "#.##"),
+         text_color = net_pnl >= 0 ? color.lime : color.red, text_size = size.small)
