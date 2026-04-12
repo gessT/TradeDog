@@ -93,8 +93,8 @@ def supertrend(
 
     trend = np.ones(n, dtype=np.int8)
     st = np.empty(n, dtype=np.float64)
-    st[0] = upper[0]
-    trend[0] = -1
+    st[0] = lower[0]
+    trend[0] = 1  # start bullish — matches PineScript nz(direction[1], -1)
 
     for i in range(1, n):
         if lower[i] < lower[i - 1] and c[i - 1] > lower[i - 1]:

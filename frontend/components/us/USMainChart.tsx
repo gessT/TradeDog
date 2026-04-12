@@ -100,7 +100,7 @@ export default function USMainChart({
 
   // Chart timeframe (bar size)
   type ChartTF = "1H" | "1D" | "1W";
-  const [chartTF, setChartTF] = useState<ChartTF>("1H");
+  const [chartTF, setChartTF] = useState<ChartTF>("1D");
 
   // Replay controls
   const [replayIdx, setReplayIdx] = useState(0);
@@ -260,41 +260,6 @@ export default function USMainChart({
           visible: false,
         });
         bgSeries.setData(bgData);
-      }
-
-      // SuperTrend line
-      const stUp: { time: UTCTimestamp; value: number }[] = [];
-      const stDn: { time: UTCTimestamp; value: number }[] = [];
-      for (let i = 0; i < visibleCandles.length; i++) {
-        const c = visibleCandles[i];
-        if (c.st_line == null || c.st_dir == null) continue;
-        const pt = { time: cData[i].time, value: c.st_line };
-        if (c.st_dir === 1) stUp.push(pt);
-        else stDn.push(pt);
-      }
-      if (stUp.length > 0) {
-        chart
-          .addSeries(LineSeries, {
-            color: "#10b981",
-            lineWidth: 2,
-            lineStyle: 2,
-            lastValueVisible: false,
-            priceLineVisible: false,
-            crosshairMarkerVisible: false,
-          })
-          .setData(stUp);
-      }
-      if (stDn.length > 0) {
-        chart
-          .addSeries(LineSeries, {
-            color: "#ef4444",
-            lineWidth: 2,
-            lineStyle: 2,
-            lastValueVisible: false,
-            priceLineVisible: false,
-            crosshairMarkerVisible: false,
-          })
-          .setData(stDn);
       }
     }
 
