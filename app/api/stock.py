@@ -1600,6 +1600,7 @@ def list_strategy_presets(db: Session = Depends(get_db)):
             "bt_total_trades": r.bt_total_trades,
             "bt_tested_at": r.bt_tested_at.isoformat() if r.bt_tested_at else None,
             "strategy_type": getattr(r, "strategy_type", "breakout_1h") or "breakout_1h",
+            "is_favorite": getattr(r, "is_favorite", False) or False,
         }
         for r in rows
     ]
@@ -1666,6 +1667,16 @@ def delete_strategy_preset(preset_id: int, db: Session = Depends(get_db)):
     db.delete(row)
     db.commit()
     return {"status": "deleted", "id": preset_id}
+
+
+@router.put("/us-strategy-presets/{preset_id}/favorite")
+def toggle_preset_favorite(preset_id: int, db: Session = Depends(get_db)):
+    preset = db.query(USStrategyPreset).filter(USStrategyPreset.id == preset_id).first()
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    preset.is_favorite = not (preset.is_favorite or False)
+    db.commit()
+    return {"status": "ok", "id": preset_id, "is_favorite": preset.is_favorite}
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -129,6 +129,7 @@ export type StrategyPreset = {
   skip_flat: boolean;
   strategy_type: StrategyType;
   capital: number;
+  is_favorite?: boolean;
   bt_symbol?: string | null;
   bt_win_rate?: number | null;
   bt_return_pct?: number | null;
@@ -157,9 +158,10 @@ type Props = {
   onTagSaved?: () => void;
   favSymbols?: string[];
   allTags?: { id: number; symbol: string; strategy_type: string }[];
+  selectedSymbol?: string;
 };
 
-export default function USStrategyPlanner({ activePreset, onApply, onPresetsChanged, onTagSaved, favSymbols = [], allTags = [] }: Props) {
+export default function USStrategyPlanner({ activePreset, onApply, onPresetsChanged, onTagSaved, favSymbols = [], allTags = [], selectedSymbol }: Props) {
   const [presets, setPresets] = useState<StrategyPreset[]>([]);
   const [showStocksFor, setShowStocksFor] = useState<string | null>(null);
   const [editing, setEditing] = useState<StrategyPreset>({ ...EMPTY_PRESET });
@@ -187,6 +189,12 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
       }
     } catch { /* offline */ }
   }, [onPresetsChanged]);
+
+  // ── Toggle favorite ─────────────────────────────────
+  const toggleFavorite = useCallback(async (id: number) => {
+    await fetch(`http://127.0.0.1:8000/stock/us-strategy-presets/${id}/favorite`, { method: "PUT" });
+    await fetchPresets();
+  }, [fetchPresets]);
 
   useEffect(() => { fetchPresets(); }, [fetchPresets]);
 
@@ -435,17 +443,53 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                       </div>
                     </div>
                   )}
-                  {/* Clone button */}
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleStrategyTypeChange(st.key);
-                      setEditing((p) => ({ ...p, name: st.label + " Custom" }));
-                    }}
-                    className="mt-1 block text-center text-[7px] text-slate-600 hover:text-blue-400 cursor-pointer transition"
-                  >
-                    + Clone
-                  </span>
+                  {/* Action buttons — Tag & Clone */}
+                  <div className="flex gap-1 mt-1.5 opacity-0 group-hover:opacity-100 transition">
+                    {(() => {
+                      const existingTag = selectedSymbol && allTags.find((t) => t.symbol === selectedSymbol && t.strategy_type === st.key);
+                      return (
+                        <span
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (!selectedSymbol) return;
+                            try {
+                              if (existingTag) {
+                                await fetch(`http://127.0.0.1:8000/stock/us-stock-tags/${existingTag.id}`, { method: "DELETE" });
+                                onTagSaved?.();
+                                showToast(`Untagged ${selectedSymbol} ✕ ${st.label}`);
+                              } else {
+                                await fetch("http://127.0.0.1:8000/stock/us-stock-tags", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ symbol: selectedSymbol, strategy_type: st.key }),
+                                });
+                                onTagSaved?.();
+                                showToast(`🏷 ${selectedSymbol} → ${st.label}`);
+                              }
+                            } catch { /* offline */ }
+                          }}
+                          className={`flex-1 text-center text-[7px] py-0.5 rounded border cursor-pointer transition font-semibold ${
+                            existingTag
+                              ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400 hover:bg-rose-500/15 hover:border-rose-500/30 hover:text-rose-400"
+                              : "bg-blue-500/10 border-blue-500/30 text-blue-400 hover:bg-blue-500/20"
+                          }`}
+                        >
+                          {existingTag ? "✓ Tagged" : "🏷 Tag"}
+                        </span>
+                      );
+                    })()}
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleStrategyTypeChange(st.key);
+                        setEditing((p) => ({ ...p, name: st.label + " Custom", strategy_type: st.key, conditions: { ...getAllOn(st.key) } }));
+                        showToast(`Cloned "${st.label}" → edit & save`);
+                      }}
+                      className="flex-1 text-center text-[7px] py-0.5 rounded bg-slate-700/40 border border-slate-600/30 text-slate-400 hover:text-blue-400 hover:border-blue-500/30 cursor-pointer transition font-semibold"
+                    >
+                      ⧉ Clone
+                    </span>
+                  </div>
                   {active && (
                     <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-blue-400 border-2 border-slate-950 shadow" />
                   )}
@@ -460,7 +504,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
           <div className="px-2.5 pt-1 pb-1">
             <div className="text-[8px] text-slate-600 uppercase tracking-widest mb-1.5 px-0.5">My Strategies</div>
             <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-              {presets.map((p) => {
+              {[...presets].sort((a, b) => (b.is_favorite ? 1 : 0) - (a.is_favorite ? 1 : 0)).map((p) => {
                 const active = activePreset?.name === p.name;
                 const onCount = Object.values(p.conditions).filter(Boolean).length;
                 const hasMetrics = p.bt_total_trades != null && p.bt_total_trades > 0;
@@ -478,6 +522,17 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                         : "border-slate-800/50 bg-slate-900/40 hover:border-slate-700 hover:bg-slate-800/30"
                     }`}
                   >
+                    {/* Favorite star */}
+                    <span
+                      onClick={(e) => { e.stopPropagation(); p.id && toggleFavorite(p.id); }}
+                      className={`absolute top-1 left-1.5 text-[11px] cursor-pointer transition ${
+                        p.is_favorite
+                          ? "text-amber-400 opacity-100"
+                          : "text-slate-700 hover:text-amber-400 opacity-0 group-hover:opacity-100"
+                      }`}
+                    >
+                      {p.is_favorite ? "★" : "☆"}
+                    </span>
                     {/* Delete button */}
                     <span
                       onClick={(e) => { e.stopPropagation(); p.id && handleDelete(p.id, p.name, p.strategy_type); }}
@@ -546,8 +601,41 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                     {active && (
                       <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-blue-400 border-2 border-slate-950 shadow" />
                     )}
-                    {/* Clone + Edit buttons */}
+                    {/* Tag + Clone + Edit buttons */}
                     <div className="absolute bottom-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+                      {(() => {
+                        const existingTag = selectedSymbol && allTags.find((t) => t.symbol === selectedSymbol && t.strategy_type === p.strategy_type);
+                        return (
+                          <span
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (!selectedSymbol) return;
+                              try {
+                                if (existingTag) {
+                                  await fetch(`http://127.0.0.1:8000/stock/us-stock-tags/${existingTag.id}`, { method: "DELETE" });
+                                  onTagSaved?.();
+                                  showToast(`Untagged ${selectedSymbol} ✕ ${p.name}`);
+                                } else {
+                                  await fetch("http://127.0.0.1:8000/stock/us-stock-tags", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ symbol: selectedSymbol, strategy_type: p.strategy_type, strategy_name: p.name }),
+                                  });
+                                  onTagSaved?.();
+                                  showToast(`🏷 ${selectedSymbol} → ${p.name}`);
+                                }
+                              } catch { /* offline */ }
+                            }}
+                            className={`text-[7px] px-1.5 py-0.5 rounded border cursor-pointer transition ${
+                              existingTag
+                                ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400 hover:bg-rose-500/15 hover:border-rose-500/30 hover:text-rose-400"
+                                : "bg-blue-500/10 border-blue-500/30 text-blue-400 hover:bg-blue-500/20"
+                            }`}
+                          >
+                            {existingTag ? "✓" : "🏷"}
+                          </span>
+                        );
+                      })()}
                       <span
                         onClick={(e) => {
                           e.stopPropagation();

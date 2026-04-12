@@ -411,7 +411,8 @@ export default function USMainChart({
           {markersOn ? "⚑ Trades" : "⚐ Trades"}
         </button>
 
-        {/* Weekly SuperTrend toggle */}
+        {/* Weekly SuperTrend toggle — only show if strategy has weekly ST data */}
+        {candles.some((c) => c.st_line != null) && (
         <button
           onClick={() => setWSuperTrendOn((v) => !v)}
           className={`text-[10px] px-2 py-0.5 rounded border transition font-medium ${
@@ -422,6 +423,7 @@ export default function USMainChart({
         >
           {wSuperTrendOn ? "⚡ W.ST" : "⚡ W.ST"}
         </button>
+        )}
 
 
         {/* Timeframe (bar size) */}

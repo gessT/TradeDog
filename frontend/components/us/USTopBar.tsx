@@ -18,6 +18,9 @@ const DEFAULT_STRATEGIES = [
 const MODES = ["Live", "Backtest", "Replay"] as const;
 type Mode = (typeof MODES)[number];
 
+type StockTag = { strategy_type: string; win_rate: number | null; return_pct: number | null };
+type SavedStrategy = { name: string; strategy_type: string; is_favorite?: boolean };
+
 type Props = {
   symbol: string;
   symbolName: string;
@@ -37,8 +40,10 @@ type Props = {
   ask: number;
   volume: number;
   savedPresetNames?: string[];
+  savedStrategies?: SavedStrategy[];
   onTestAll?: () => void;
-  stockTags?: { strategy_type: string; win_rate: number | null; return_pct: number | null }[];
+  onApplyStrategy?: (strategyName: string) => void;
+  stockTags?: StockTag[];
 };
 
 export default function USTopBar({
@@ -55,10 +60,19 @@ export default function USTopBar({
   changePct,
   volume,
   savedPresetNames = [],
+  savedStrategies = [],
   onTestAll,
+  onApplyStrategy,
   stockTags = [],
 }: Props) {
   const up = change >= 0;
+  const [applyOpen, setApplyOpen] = useState(false);
+
+  // Strategies available to apply (not already tagged on this stock)
+  const taggedTypes = new Set(stockTags.map((t) => t.strategy_type));
+  const availableStrategies = savedStrategies.filter(
+    (s) => !taggedTypes.has(s.strategy_type) || !taggedTypes.has(s.name)
+  );
 
   return (
     <div className="shrink-0 border-b border-slate-800/60 bg-slate-950/90 backdrop-blur-sm">
@@ -122,6 +136,42 @@ export default function USTopBar({
               </button>
             );
           })}
+
+          {/* ── Apply Strategy Button ── */}
+          {onApplyStrategy && availableStrategies.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setApplyOpen((v) => !v)}
+                className="inline-flex items-center justify-center w-6 h-6 rounded-md border border-dashed border-slate-700 text-slate-600 hover:text-blue-400 hover:border-blue-500/40 transition text-[12px] font-bold"
+                title="Apply a strategy to this stock"
+              >
+                +
+              </button>
+              {applyOpen && (
+                <div className="absolute top-8 left-0 z-50 w-48 rounded-lg border border-slate-700/60 bg-slate-900/95 backdrop-blur-lg shadow-xl py-1">
+                  <div className="px-2.5 py-1.5 text-[8px] text-slate-500 uppercase tracking-widest font-bold">
+                    Apply Strategy
+                  </div>
+                  {availableStrategies.map((s) => (
+                    <button
+                      key={s.name}
+                      onClick={() => {
+                        setApplyOpen(false);
+                        onApplyStrategy(s.name);
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 text-[10px] text-slate-300 hover:bg-blue-500/15 hover:text-blue-300 transition flex items-center gap-2"
+                    >
+                      {s.is_favorite && <span className="text-amber-400 text-[9px]">★</span>}
+                      <span className="truncate">{s.name}</span>
+                      <span className="ml-auto text-[8px] text-slate-600 uppercase">{
+                        DEFAULT_STRATEGIES.find((d) => d.id === s.strategy_type)?.label ?? s.strategy_type
+                      }</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ── spacer → push right ── */}

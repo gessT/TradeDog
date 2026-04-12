@@ -334,6 +334,15 @@ export default function USDashboard() {
     } catch { /* offline */ }
   }, [selectedSymbol, activePreset, fetchTags]);
 
+  // ── Apply a saved strategy to current stock ────────────
+  const applyStrategy = useCallback(async (presetName: string) => {
+    const preset = savedPresets.find((p) => p.name === presetName);
+    if (!preset) return;
+    // Switch to this strategy & run backtest
+    setActivePreset(preset);
+    setStrategy(presetName);
+  }, [savedPresets]);
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       {/* ═══ TEST ALL STRATEGIES DIALOG ═══ */}
@@ -479,7 +488,9 @@ export default function USDashboard() {
         ask={price > 0 ? price + 0.01 : 0}
         volume={btData?.candles?.length ? btData.candles[btData.candles.length - 1].volume : 0}
         savedPresetNames={savedPresets.map((p) => p.name)}
+        savedStrategies={savedPresets.map((p) => ({ name: p.name, strategy_type: p.strategy_type, is_favorite: p.is_favorite }))}
         onTestAll={runTestAll}
+        onApplyStrategy={applyStrategy}
         stockTags={stockTags.filter((t) => t.symbol === selectedSymbol)}
       />
 
@@ -615,6 +626,7 @@ export default function USDashboard() {
               onTagSaved={fetchTags}
               favSymbols={favSymbols}
               allTags={stockTags}
+              selectedSymbol={selectedSymbol}
             />
           )}
         </aside>
