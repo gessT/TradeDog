@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { fetchUS1HBacktest, fetchVPBBacktest, fetchVPRBacktest, fetchMTFBacktest } from "../../services/api";
-import { US_DEFAULT_SYMBOLS } from "../../constants/usStocks";
+import { US_DEFAULT_SYMBOLS, US_SECTORS, US_STOCKS_BY_SECTOR } from "../../constants/usStocks";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Strategy Planner — Modern unified view
@@ -133,6 +133,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
   const [compareOpen, setCompareOpen] = useState(false);
   const [comparing, setComparing] = useState(false);
   const [compareRows, setCompareRows] = useState<CompareRow[]>([]);
+  const [compareSector, setCompareSector] = useState<string>("FAVS");
 
   // ── Load saved presets ──────────────────────────────
   const fetchPresets = useCallback(async () => {
@@ -206,7 +207,9 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
   const runCompare = async () => {
     setCompareOpen(true);
     setComparing(true);
-    const symbols = favSymbols.length > 0 ? [...favSymbols] : [...US_DEFAULT_SYMBOLS];
+    const symbols = compareSector === "FAVS"
+      ? (favSymbols.length > 0 ? [...favSymbols] : [...US_DEFAULT_SYMBOLS])
+      : (US_STOCKS_BY_SECTOR[compareSector] ?? []).map((s) => s.symbol);
     const initial: CompareRow[] = symbols.map((s) => ({
       symbol: s, win_rate: 0, total_trades: 0, return_pct: 0, profit_factor: 0, max_dd: 0, sharpe: 0, status: "pending" as const,
     }));
@@ -552,12 +555,25 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
               <span className="text-[9px] text-slate-400">Skip flat days</span>
             </label>
             <div className="flex-1" />
+            {/* Sector / Category picker for Compare */}
+            <select
+              value={compareSector}
+              onChange={(e) => setCompareSector(e.target.value)}
+              className="text-[9px] px-1.5 py-1 rounded-lg border border-slate-700/50 bg-slate-800/60 text-slate-300 outline-none cursor-pointer hover:border-purple-500/50 transition shrink-0"
+            >
+              <option value="FAVS">★ {favSymbols.length > 0 ? `Favorites (${favSymbols.length})` : "Default 10"}</option>
+              <optgroup label="── By Sector ──">
+                {US_SECTORS.map((s) => (
+                  <option key={s} value={s}>{s} ({(US_STOCKS_BY_SECTOR[s] ?? []).length})</option>
+                ))}
+              </optgroup>
+            </select>
             <button
               onClick={runCompare}
               disabled={comparing}
               className="px-3 py-1.5 rounded-lg text-[10px] font-bold transition bg-purple-500/70 hover:bg-purple-500 text-white"
             >
-              {comparing ? "⏳ Running…" : favSymbols.length > 0 ? `⭐ Compare ${favSymbols.length}` : "🔍 Compare 10"}
+              {comparing ? "⏳ Running…" : "🔍 Compare"}
             </button>
             <button
               onClick={() => onApply(editing)}
@@ -576,7 +592,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
       {/* ═══ COMPARE DIALOG — MODERN FULL-WIDTH ═══ */}
       {compareOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md" onClick={() => !comparing && setCompareOpen(false)}>
-          <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-700/60 rounded-3xl shadow-2xl shadow-black/50 w-[95vw] max-w-[900px] max-h-[88vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-700/60 rounded-3xl shadow-2xl shadow-black/50 w-[98vw] max-w-[1200px] h-[94vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
             {/* ── Header ── */}
             <div className="px-6 py-4 border-b border-slate-800/60 bg-gradient-to-r from-slate-900 to-slate-900/80">
               <div className="flex items-center justify-between">
@@ -594,7 +610,11 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                      editing.strategy_type === "vpb_v2" ? "V2" : "🚀"}
                   </div>
                   <div>
-                    <h2 className="text-base font-black text-white tracking-tight">{favSymbols.length > 0 ? `Compare ${favSymbols.length} Favorites` : "Compare 10 Stocks"}</h2>
+                    <h2 className="text-base font-black text-white tracking-tight">
+                      {compareSector === "FAVS"
+                        ? (favSymbols.length > 0 ? `Compare ${favSymbols.length} Favorites` : "Compare 10 Stocks")
+                        : `Compare ${compareSector} (${compareRows.length})`}
+                    </h2>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
                         editing.strategy_type === "mtf" ? "bg-amber-500/20 text-amber-300" :
@@ -605,15 +625,15 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                       }`}>
                         {STRATEGY_TYPES.find((s) => s.key === editing.strategy_type)?.label ?? editing.strategy_type}
                       </span>
-                      <span className="text-[10px] text-slate-500">{editing.period}</span>
-                      <span className="text-[10px] text-slate-600">·</span>
-                      <span className="text-[10px] text-slate-500">${editing.capital.toLocaleString()}</span>
-                      <span className="text-[10px] text-slate-600">·</span>
-                      <span className="text-[10px] text-slate-500">SL {editing.atr_sl_mult}× / TP {editing.atr_tp_mult}×</span>
+                      <span className="text-[11px] text-slate-500">{editing.period}</span>
+                      <span className="text-[11px] text-slate-600">·</span>
+                      <span className="text-[11px] text-slate-500">${editing.capital.toLocaleString()}</span>
+                      <span className="text-[11px] text-slate-600">·</span>
+                      <span className="text-[11px] text-slate-500">SL {editing.atr_sl_mult}× / TP {editing.atr_tp_mult}×</span>
                     </div>
                   </div>
                 </div>
-                <button onClick={() => !comparing && setCompareOpen(false)} className="w-8 h-8 rounded-lg bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition text-sm">✕</button>
+                <button onClick={() => !comparing && setCompareOpen(false)} className="w-9 h-9 rounded-lg bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition text-base">✕</button>
               </div>
 
               {/* ── Summary Stats (after all loaded) ── */}
@@ -624,23 +644,23 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                 const bestStock = done.reduce((best, r) => r.return_pct > best.return_pct ? r : best, done[0]);
                 const profitable = done.filter((r) => r.return_pct > 0).length;
                 return (
-                  <div className="grid grid-cols-4 gap-3 mt-3">
-                    <div className="bg-slate-800/40 rounded-xl px-3 py-2 border border-slate-700/30">
-                      <div className="text-[8px] text-slate-500 uppercase tracking-wider">Avg Win Rate</div>
-                      <div className={`text-lg font-black tabular-nums ${avgWR >= 50 ? "text-emerald-400" : "text-amber-400"}`}>{avgWR.toFixed(1)}%</div>
+                  <div className="grid grid-cols-4 gap-4 mt-3">
+                    <div className="bg-slate-800/40 rounded-xl px-4 py-3 border border-slate-700/30">
+                      <div className="text-[9px] text-slate-500 uppercase tracking-wider">Avg Win Rate</div>
+                      <div className={`text-xl font-black tabular-nums ${avgWR >= 50 ? "text-emerald-400" : "text-amber-400"}`}>{avgWR.toFixed(1)}%</div>
                     </div>
-                    <div className="bg-slate-800/40 rounded-xl px-3 py-2 border border-slate-700/30">
-                      <div className="text-[8px] text-slate-500 uppercase tracking-wider">Avg Return</div>
-                      <div className={`text-lg font-black tabular-nums ${avgReturn >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{avgReturn >= 0 ? "+" : ""}{avgReturn.toFixed(1)}%</div>
+                    <div className="bg-slate-800/40 rounded-xl px-4 py-3 border border-slate-700/30">
+                      <div className="text-[9px] text-slate-500 uppercase tracking-wider">Avg Return</div>
+                      <div className={`text-xl font-black tabular-nums ${avgReturn >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{avgReturn >= 0 ? "+" : ""}{avgReturn.toFixed(1)}%</div>
                     </div>
-                    <div className="bg-slate-800/40 rounded-xl px-3 py-2 border border-slate-700/30">
-                      <div className="text-[8px] text-slate-500 uppercase tracking-wider">Best Stock</div>
-                      <div className="text-lg font-black text-white">{bestStock.symbol}</div>
-                      <div className="text-[9px] text-emerald-400/80">+{bestStock.return_pct.toFixed(1)}%</div>
+                    <div className="bg-slate-800/40 rounded-xl px-4 py-3 border border-slate-700/30">
+                      <div className="text-[9px] text-slate-500 uppercase tracking-wider">Best Stock</div>
+                      <div className="text-xl font-black text-white">{bestStock.symbol}</div>
+                      <div className="text-[10px] text-emerald-400/80">+{bestStock.return_pct.toFixed(1)}%</div>
                     </div>
-                    <div className="bg-slate-800/40 rounded-xl px-3 py-2 border border-slate-700/30">
-                      <div className="text-[8px] text-slate-500 uppercase tracking-wider">Profitable</div>
-                      <div className="text-lg font-black text-white">{profitable}<span className="text-sm text-slate-500">/{done.length}</span></div>
+                    <div className="bg-slate-800/40 rounded-xl px-4 py-3 border border-slate-700/30">
+                      <div className="text-[9px] text-slate-500 uppercase tracking-wider">Profitable</div>
+                      <div className="text-xl font-black text-white">{profitable}<span className="text-sm text-slate-500">/{done.length}</span></div>
                     </div>
                   </div>
                 );
@@ -648,20 +668,20 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
             </div>
 
             {/* ── Table ── */}
-            <div className="overflow-auto max-h-[55vh]">
-              <table className="w-full">
+            <div className="overflow-auto flex-1 min-h-0">
+              <table className="w-full text-[13px]">
                 <thead className="sticky top-0 bg-slate-900/95 backdrop-blur-sm z-10">
-                  <tr className="text-[9px] text-slate-500 uppercase tracking-wider border-b border-slate-800/60">
-                    <th className="text-left pl-6 py-2.5 font-bold w-8">#</th>
-                    <th className="text-left py-2.5 font-bold">Stock</th>
-                    <th className="text-right px-3 py-2.5 font-bold">Win Rate</th>
-                    <th className="text-right px-3 py-2.5 font-bold">Trades</th>
-                    <th className="text-right px-3 py-2.5 font-bold">Return</th>
-                    <th className="text-right px-3 py-2.5 font-bold">P.Factor</th>
-                    <th className="text-right px-3 py-2.5 font-bold">Max DD</th>
-                    <th className="text-right px-3 py-2.5 font-bold">Sharpe</th>
-                    <th className="text-center px-3 py-2.5 font-bold">Grade</th>
-                    <th className="text-center px-3 pr-6 py-2.5 font-bold w-20">Action</th>
+                  <tr className="text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-800/60">
+                    <th className="text-left pl-6 py-3 font-bold w-10">#</th>
+                    <th className="text-left py-3 font-bold min-w-[80px]">Stock</th>
+                    <th className="text-right px-4 py-3 font-bold">Win Rate</th>
+                    <th className="text-right px-4 py-3 font-bold">Trades</th>
+                    <th className="text-right px-4 py-3 font-bold">Return</th>
+                    <th className="text-right px-4 py-3 font-bold">P.Factor</th>
+                    <th className="text-right px-4 py-3 font-bold">Max DD</th>
+                    <th className="text-right px-4 py-3 font-bold">Sharpe</th>
+                    <th className="text-center px-4 py-3 font-bold">Grade</th>
+                    <th className="text-center px-4 pr-6 py-3 font-bold w-24">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -693,9 +713,9 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                         "hover:bg-slate-800/20"
                       }`}>
                         {/* Rank */}
-                        <td className="pl-6 py-3">
+                        <td className="pl-6 py-3.5">
                           {row.status === "done" ? (
-                            <span className={`text-[11px] font-black tabular-nums ${
+                            <span className={`text-[13px] font-black tabular-nums ${
                               idx === 0 ? "text-amber-400" : idx === 1 ? "text-slate-300" : idx === 2 ? "text-amber-600" : "text-slate-600"
                             }`}>
                               {idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `${idx + 1}`}
@@ -704,36 +724,36 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                         </td>
 
                         {/* Stock */}
-                        <td className="py-3">
-                          <span className="text-[12px] font-black text-white">{row.symbol}</span>
+                        <td className="py-3.5">
+                          <span className="text-[14px] font-black text-white">{row.symbol}</span>
                         </td>
 
                         {row.status === "pending" ? (
-                          <td colSpan={8} className="text-center py-3">
+                          <td colSpan={8} className="text-center py-3.5">
                             <div className="flex items-center justify-center gap-2">
                               <div className="flex gap-0.5">
                                 <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: "0ms" }} />
                                 <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: "150ms" }} />
                                 <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: "300ms" }} />
                               </div>
-                              <span className="text-[10px] text-slate-500">Backtesting…</span>
+                              <span className="text-[11px] text-slate-500">Backtesting…</span>
                             </div>
                           </td>
                         ) : row.status === "error" ? (
-                          <td colSpan={8} className="text-center py-3">
-                            <span className="text-[10px] text-red-400/70 bg-red-500/10 px-3 py-1 rounded-full">✕ Failed</span>
+                          <td colSpan={8} className="text-center py-3.5">
+                            <span className="text-[11px] text-red-400/70 bg-red-500/10 px-3 py-1 rounded-full">✕ Failed</span>
                           </td>
                         ) : (
                           <>
                             {/* Win Rate with bar */}
-                            <td className="text-right px-3 py-3">
+                            <td className="text-right px-4 py-3.5">
                               <div className="flex flex-col items-end gap-0.5">
-                                <span className={`text-[12px] font-black tabular-nums ${
+                                <span className={`text-[14px] font-black tabular-nums ${
                                   row.win_rate >= 60 ? "text-emerald-400" : row.win_rate >= 50 ? "text-amber-400" : "text-rose-400"
                                 }`}>
                                   {row.win_rate.toFixed(1)}%
                                 </span>
-                                <div className="w-14 h-1 rounded-full bg-slate-800 overflow-hidden">
+                                <div className="w-16 h-1.5 rounded-full bg-slate-800 overflow-hidden">
                                   <div className={`h-full rounded-full transition-all duration-700 ${
                                     row.win_rate >= 60 ? "bg-emerald-500" : row.win_rate >= 50 ? "bg-amber-500" : "bg-rose-500"
                                   }`} style={{ width: `${Math.min(row.win_rate, 100)}%` }} />
@@ -742,13 +762,13 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                             </td>
 
                             {/* Trades */}
-                            <td className="text-right px-3 py-3">
-                              <span className="text-[12px] font-bold text-slate-300 tabular-nums">{row.total_trades}</span>
+                            <td className="text-right px-4 py-3.5">
+                              <span className="text-[14px] font-bold text-slate-300 tabular-nums">{row.total_trades}</span>
                             </td>
 
                             {/* Return */}
-                            <td className="text-right px-3 py-3">
-                              <span className={`text-[12px] font-black tabular-nums ${
+                            <td className="text-right px-4 py-3.5">
+                              <span className={`text-[14px] font-black tabular-nums ${
                                 row.return_pct >= 10 ? "text-emerald-400" : row.return_pct >= 0 ? "text-emerald-400/70" : "text-rose-400"
                               }`}>
                                 {row.return_pct >= 0 ? "+" : ""}{row.return_pct.toFixed(1)}%
@@ -756,8 +776,8 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                             </td>
 
                             {/* Profit Factor */}
-                            <td className="text-right px-3 py-3">
-                              <span className={`text-[12px] font-bold tabular-nums ${
+                            <td className="text-right px-4 py-3.5">
+                              <span className={`text-[14px] font-bold tabular-nums ${
                                 row.profit_factor >= 2.0 ? "text-emerald-400" : row.profit_factor >= 1.0 ? "text-slate-300" : "text-rose-400"
                               }`}>
                                 {row.profit_factor.toFixed(2)}
@@ -765,8 +785,8 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                             </td>
 
                             {/* Max Drawdown */}
-                            <td className="text-right px-3 py-3">
-                              <span className={`text-[12px] font-bold tabular-nums ${
+                            <td className="text-right px-4 py-3.5">
+                              <span className={`text-[14px] font-bold tabular-nums ${
                                 Math.abs(row.max_dd) < 5 ? "text-emerald-400/70" : Math.abs(row.max_dd) < 15 ? "text-amber-400" : "text-rose-400"
                               }`}>
                                 -{Math.abs(row.max_dd).toFixed(1)}%
@@ -774,8 +794,8 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                             </td>
 
                             {/* Sharpe */}
-                            <td className="text-right px-3 py-3">
-                              <span className={`text-[12px] font-bold tabular-nums ${
+                            <td className="text-right px-4 py-3.5">
+                              <span className={`text-[14px] font-bold tabular-nums ${
                                 row.sharpe >= 1.5 ? "text-emerald-400" : row.sharpe >= 0.5 ? "text-slate-300" : "text-rose-400"
                               }`}>
                                 {row.sharpe.toFixed(2)}
@@ -783,14 +803,14 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                             </td>
 
                             {/* Grade */}
-                            <td className="text-center px-3 py-3">
-                              <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg border text-[11px] font-black ${gradeColor}`}>
+                            <td className="text-center px-4 py-3.5">
+                              <span className={`inline-flex items-center justify-center w-10 h-10 rounded-lg border text-[13px] font-black ${gradeColor}`}>
                                 {grade}
                               </span>
                             </td>
 
                             {/* Tag Action */}
-                            <td className="text-center px-3 pr-6 py-3">
+                            <td className="text-center px-4 pr-6 py-3.5">
                               <button
                                 onClick={async () => {
                                   try {
@@ -818,7 +838,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                                   } catch { /* offline */ }
                                 }}
                                 disabled={row.saved}
-                                className={`px-3 py-1.5 rounded-lg text-[9px] font-bold tracking-wide transition-all ${
+                                className={`px-3.5 py-1.5 rounded-lg text-[11px] font-bold tracking-wide transition-all ${
                                   row.saved
                                     ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 cursor-default"
                                     : "bg-blue-500/80 hover:bg-blue-400 text-white shadow-sm hover:shadow-blue-500/20 active:scale-95"
@@ -837,21 +857,21 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
             </div>
 
             {/* ── Footer ── */}
-            <div className="px-6 py-3 border-t border-slate-800/60 bg-slate-900/80 flex items-center justify-between">
+            <div className="px-6 py-3.5 border-t border-slate-800/60 bg-slate-900/80 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 {comparing ? (
                   <div className="flex items-center gap-2">
                     <div className="w-4 h-4 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
-                    <span className="text-[11px] text-blue-400 font-medium">Running {compareRows.filter((r) => r.status === "done").length}/{compareRows.length}…</span>
+                    <span className="text-[12px] text-blue-400 font-medium">Running {compareRows.filter((r) => r.status === "done").length}/{compareRows.length}…</span>
                   </div>
                 ) : (
-                  <span className="text-[11px] text-slate-500">{compareRows.filter((r) => r.status === "done").length} stocks compared</span>
+                  <span className="text-[12px] text-slate-500">{compareRows.filter((r) => r.status === "done").length} stocks compared</span>
                 )}
               </div>
               <button
                 onClick={() => setCompareOpen(false)}
                 disabled={comparing}
-                className="px-4 py-1.5 rounded-lg text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/50 transition disabled:opacity-40"
+                className="px-5 py-2 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/50 transition disabled:opacity-40"
               >
                 Close
               </button>
