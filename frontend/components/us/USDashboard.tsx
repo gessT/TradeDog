@@ -74,6 +74,39 @@ export default function USDashboard() {
   }, []);
   useEffect(() => { fetchTags(); }, [fetchTags]);
 
+  // ── Favorite stocks (persisted in DB via StarredStock market=US) ──
+  const [favSymbols, setFavSymbols] = useState<string[]>([]);
+  const fetchFavs = useCallback(async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/stock/starred?market=US");
+      if (res.ok) {
+        const data: { symbol: string }[] = await res.json();
+        setFavSymbols(data.map((d) => d.symbol));
+      }
+    } catch { /* offline */ }
+  }, []);
+  useEffect(() => { fetchFavs(); }, [fetchFavs]);
+
+  const toggleFav = useCallback(async (symbol: string, name: string) => {
+    if (favSymbols.includes(symbol)) {
+      // Remove
+      try {
+        await fetch(`http://127.0.0.1:8000/stock/starred?symbol=${encodeURIComponent(symbol)}`, { method: "DELETE" });
+        setFavSymbols((prev) => prev.filter((s) => s !== symbol));
+      } catch { /* offline */ }
+    } else {
+      // Add
+      try {
+        await fetch("http://127.0.0.1:8000/stock/starred", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbol, name, market: "US" }),
+        });
+        setFavSymbols((prev) => [...prev, symbol]);
+      } catch { /* offline */ }
+    }
+  }, [favSymbols]);
+
   // Called by StrategyPlanner whenever presets list changes (save/delete)
   const handlePresetsChanged = useCallback((presets: StrategyPreset[]) => {
     setSavedPresets(presets);
@@ -275,6 +308,8 @@ export default function USDashboard() {
               setMobilePanel("chart");
             }}
             stockTags={stockTags}
+            favSymbols={favSymbols}
+            onToggleFav={toggleFav}
           />
         </aside>
 
@@ -347,6 +382,7 @@ export default function USDashboard() {
               onApply={handlePresetApply}
               onPresetsChanged={handlePresetsChanged}
               onTagSaved={fetchTags}
+              favSymbols={favSymbols}
             />
           )}
         </aside>

@@ -119,9 +119,10 @@ type Props = {
   onApply: (preset: StrategyPreset) => void;
   onPresetsChanged: (presets: StrategyPreset[]) => void;
   onTagSaved?: () => void;
+  favSymbols?: string[];
 };
 
-export default function USStrategyPlanner({ activePreset, onApply, onPresetsChanged, onTagSaved }: Props) {
+export default function USStrategyPlanner({ activePreset, onApply, onPresetsChanged, onTagSaved, favSymbols = [] }: Props) {
   const [presets, setPresets] = useState<StrategyPreset[]>([]);
   const [editing, setEditing] = useState<StrategyPreset>({ ...EMPTY_PRESET });
   const [saving, setSaving] = useState(false);
@@ -205,7 +206,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
   const runCompare = async () => {
     setCompareOpen(true);
     setComparing(true);
-    const symbols = [...US_DEFAULT_SYMBOLS];
+    const symbols = favSymbols.length > 0 ? [...favSymbols] : [...US_DEFAULT_SYMBOLS];
     const initial: CompareRow[] = symbols.map((s) => ({
       symbol: s, win_rate: 0, total_trades: 0, return_pct: 0, profit_factor: 0, max_dd: 0, sharpe: 0, status: "pending" as const,
     }));
@@ -556,7 +557,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
               disabled={comparing}
               className="px-3 py-1.5 rounded-lg text-[10px] font-bold transition bg-purple-500/70 hover:bg-purple-500 text-white"
             >
-              {comparing ? "⏳ Running…" : "🔍 Compare 10"}
+              {comparing ? "⏳ Running…" : favSymbols.length > 0 ? `⭐ Compare ${favSymbols.length}` : "🔍 Compare 10"}
             </button>
             <button
               onClick={() => onApply(editing)}
@@ -593,7 +594,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                      editing.strategy_type === "vpb_v2" ? "V2" : "🚀"}
                   </div>
                   <div>
-                    <h2 className="text-base font-black text-white tracking-tight">Compare 10 Stocks</h2>
+                    <h2 className="text-base font-black text-white tracking-tight">{favSymbols.length > 0 ? `Compare ${favSymbols.length} Favorites` : "Compare 10 Stocks"}</h2>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
                         editing.strategy_type === "mtf" ? "bg-amber-500/20 text-amber-300" :

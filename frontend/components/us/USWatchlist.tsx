@@ -41,6 +41,8 @@ type Props = {
   activeSymbol: string;
   onSelectSymbol: (sym: string, name: string) => void;
   stockTags?: StockTag[];
+  favSymbols: string[];
+  onToggleFav: (symbol: string, name: string) => void;
 };
 
 // ── Collapsible Section ────────────────────────────────────
@@ -75,8 +77,31 @@ function Section({
   );
 }
 
-export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = [] }: Props) {
+export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = [], favSymbols, onToggleFav }: Props) {
+  // Build watchlist from favSymbols (DB-backed) — fall back to defaults if empty
   const [items, setItems] = useState<WatchlistItem[]>(INITIAL_WATCHLIST);
+
+  // Sync items whenever favSymbols changes
+  useEffect(() => {
+    const syms = favSymbols.length > 0 ? favSymbols : INITIAL_WATCHLIST.map((i) => i.symbol);
+    setItems((prev) => {
+      const newItems: WatchlistItem[] = syms.map((sym) => {
+        const existing = prev.find((p) => p.symbol === sym);
+        if (existing) return existing;
+        const stock = US_STOCKS.find((s) => s.symbol === sym);
+        return {
+          symbol: sym,
+          name: stock?.name ?? sym,
+          sector: stock?.sector ?? "Other",
+          cap: stock?.cap ?? "L",
+          price: 0,
+          change_pct: 0,
+          signal: "—" as const,
+        };
+      });
+      return newItems;
+    });
+  }, [favSymbols]);
   const [sectorFilter, setSectorFilter] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -263,6 +288,17 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                   : "border-l-transparent hover:bg-slate-800/50"
               }`}
             >
+              {/* Fav star */}
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); onToggleFav(item.symbol, item.name); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onToggleFav(item.symbol, item.name); } }}
+                className="shrink-0 text-[12px] hover:scale-125 transition-transform cursor-pointer"
+              >
+                {favSymbols.includes(item.symbol) ? "⭐" : "☆"}
+              </span>
+
               {/* Symbol + Name + Tags */}
               <div className="flex flex-col min-w-0 flex-1">
                 <span className={`text-[11px] font-bold leading-tight ${active ? "text-blue-300" : "text-slate-200"}`}>
