@@ -526,7 +526,23 @@ export default function USDashboard() {
         {/* ── CENTER (Chart + Bottom Panel) — desktop or mobile-selected ── */}
         <div className={`${
           mobilePanel === "chart" ? "flex" : "hidden"
-        } lg:flex lg:w-2/5 flex-col overflow-hidden`}>
+        } lg:flex lg:w-2/5 flex-col overflow-hidden relative`}>
+          {/* Loading overlay with progress bar */}
+          {btLoading && (
+            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-slate-950/70 backdrop-blur-[2px]">
+              <div className="flex flex-col items-center gap-3 w-48">
+                <div className="relative w-10 h-10">
+                  <div className="absolute inset-0 rounded-full border-2 border-blue-500/20" />
+                  <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-blue-400 animate-spin" />
+                </div>
+                <div className="text-[11px] font-bold text-blue-400 tracking-wide">Running backtest…</div>
+                <div className="text-[9px] text-slate-500">{selectedSymbol} · {activePreset?.strategy_type ?? strategy}</div>
+                <div className="w-full h-1.5 rounded-full bg-slate-800/80 overflow-hidden mt-1">
+                  <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-cyan-400 animate-[progress_2s_ease-in-out_infinite]" style={{ width: "100%", animation: "progress 2s ease-in-out infinite" }} />
+                </div>
+              </div>
+            </div>
+          )}
           {/* Chart — 40% height */}
           <div className="h-[40%] min-h-[160px] shrink-0">
             <USMainChart
