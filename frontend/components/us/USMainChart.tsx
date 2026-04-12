@@ -25,7 +25,49 @@ const parseTS = (s: string): number => {
   return Math.floor(ms / 1000);
 };
 
-type Overlay = "ema_fast" | "ema_slow" | "vwap" | "halftrend";
+/** Aggregate 1H candles by grouping key */
+function aggregateCandles(
+  candles: US1HCandle[],
+  keyFn: (time: string) => string,
+): US1HCandle[] {
+  const groups = new Map<string, US1HCandle[]>();
+  for (const c of candles) {
+    const key = keyFn(c.time);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(c);
+  }
+  const result: US1HCandle[] = [];
+  for (const [key, bars] of groups) {
+    const last = bars[bars.length - 1];
+    result.push({
+      time: key + "T00:00:00",
+      open: bars[0].open,
+      high: Math.max(...bars.map((b) => b.high)),
+      low: Math.min(...bars.map((b) => b.low)),
+      close: last.close,
+      volume: bars.reduce((s, b) => s + b.volume, 0),
+      ema_fast: last.ema_fast,
+      ema_slow: last.ema_slow,
+      rsi: last.rsi,
+      macd_hist: last.macd_hist,
+      st_dir: last.st_dir,
+      st_line: last.st_line,
+      signal: bars.some((b) => b.signal !== 0) ? 1 : 0,
+    });
+  }
+  return result;
+}
+
+/** Get ISO week Monday date string for a given date */
+function weekMonday(dateStr: string): string {
+  const d = new Date(dateStr);
+  const day = d.getUTCDay();
+  const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1);
+  const mon = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), diff));
+  return mon.toISOString().slice(0, 10);
+}
+
+type Overlay = "ema_fast" | "ema_slow" | "vwap" | "halftrend" | "w_supertrend";
 type Indicator = "rsi" | "macd" | "volume";
 
 type Props = {
@@ -53,13 +95,27 @@ export default function USMainChart({
   // Trade markers toggle (default off)
   const [markersOn, setMarkersOn] = useState(showMarkers);
 
+  // Weekly SuperTrend overlay toggle
+  const [wSuperTrendOn, setWSuperTrendOn] = useState(false);
+
+  // Chart timeframe (bar size)
+  type ChartTF = "1H" | "1D" | "1W";
+  const [chartTF, setChartTF] = useState<ChartTF>("1H");
+
   // Replay controls
   const [replayIdx, setReplayIdx] = useState(0);
   const [replayPlaying, setReplayPlaying] = useState(false);
   const replayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const visibleCandles =
+  const baseCandles =
     mode === "Replay" ? candles.slice(0, replayIdx + 1) : candles;
+
+  const visibleCandles =
+    chartTF === "1D"
+      ? aggregateCandles(baseCandles, (t) => t.slice(0, 10))
+      : chartTF === "1W"
+        ? aggregateCandles(baseCandles, (t) => weekMonday(t))
+        : baseCandles;
 
   // ── Build chart ────────────────────────────────────────
   useEffect(() => {
@@ -180,6 +236,68 @@ export default function USMainChart({
       }
     }
 
+    // ── Weekly SuperTrend overlay ──
+    if (wSuperTrendOn) {
+      // Background shading: full-height green/red tint based on ST direction
+      const bgData = visibleCandles
+        .map((c, i) => {
+          if (c.st_dir == null) return null;
+          return {
+            time: cData[i].time,
+            value: 1,
+            color: c.st_dir === 1 ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",
+          };
+        })
+        .filter(Boolean) as { time: UTCTimestamp; value: number; color: string }[];
+      if (bgData.length > 0) {
+        const bgSeries = chart.addSeries(HistogramSeries, {
+          priceScaleId: "st_bg",
+          lastValueVisible: false,
+          priceLineVisible: false,
+        });
+        chart.priceScale("st_bg").applyOptions({
+          scaleMargins: { top: 0, bottom: 0 },
+          visible: false,
+        });
+        bgSeries.setData(bgData);
+      }
+
+      // SuperTrend line
+      const stUp: { time: UTCTimestamp; value: number }[] = [];
+      const stDn: { time: UTCTimestamp; value: number }[] = [];
+      for (let i = 0; i < visibleCandles.length; i++) {
+        const c = visibleCandles[i];
+        if (c.st_line == null || c.st_dir == null) continue;
+        const pt = { time: cData[i].time, value: c.st_line };
+        if (c.st_dir === 1) stUp.push(pt);
+        else stDn.push(pt);
+      }
+      if (stUp.length > 0) {
+        chart
+          .addSeries(LineSeries, {
+            color: "#10b981",
+            lineWidth: 2,
+            lineStyle: 2,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+          })
+          .setData(stUp);
+      }
+      if (stDn.length > 0) {
+        chart
+          .addSeries(LineSeries, {
+            color: "#ef4444",
+            lineWidth: 2,
+            lineStyle: 2,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+          })
+          .setData(stDn);
+      }
+    }
+
     // ── Volume ──
     if (indicators.has("volume")) {
       const volSeries = chart.addSeries(HistogramSeries, {
@@ -237,7 +355,7 @@ export default function USMainChart({
       createSeriesMarkers(candleSeries, markers as any);
     }
 
-    // ── Focus time (scroll to trade) ──
+    // ── Focus time or default visible range ──
     if (focusTime) {
       const ft = toLocal(focusTime);
       const idx = cData.findIndex((c) => (c.time as number) >= (ft as number));
@@ -245,6 +363,16 @@ export default function USMainChart({
         chart.timeScale().setVisibleLogicalRange({
           from: idx - 75,
           to: idx + 75,
+        });
+      }
+    } else {
+      // Show last N bars (100 for 1H, 60 for 1D, 30 for 1W)
+      const defaultBars: Record<string, number> = { "1H": 100, "1D": 60, "1W": 30 };
+      const maxBars = defaultBars[chartTF] ?? 100;
+      if (cData.length > maxBars) {
+        chart.timeScale().setVisibleLogicalRange({
+          from: cData.length - maxBars,
+          to: cData.length - 1,
         });
       }
     }
@@ -260,7 +388,7 @@ export default function USMainChart({
       ro.disconnect();
       chart.remove();
     };
-  }, [visibleCandles, trades, overlays, indicators, focusTime, markersOn]);
+  }, [visibleCandles, trades, overlays, indicators, focusTime, markersOn, wSuperTrendOn, chartTF]);
 
   // ── Replay controls ──
   useEffect(() => {
@@ -317,6 +445,36 @@ export default function USMainChart({
         >
           {markersOn ? "⚑ Trades" : "⚐ Trades"}
         </button>
+
+        {/* Weekly SuperTrend toggle */}
+        <button
+          onClick={() => setWSuperTrendOn((v) => !v)}
+          className={`text-[10px] px-2 py-0.5 rounded border transition font-medium ${
+            wSuperTrendOn
+              ? "border-amber-500/50 bg-amber-500/15 text-amber-400"
+              : "border-slate-700 text-slate-600 hover:text-slate-400 hover:border-slate-600"
+          }`}
+        >
+          {wSuperTrendOn ? "⚡ W.ST" : "⚡ W.ST"}
+        </button>
+
+
+        {/* Timeframe (bar size) */}
+        <div className="flex items-center gap-0.5 ml-1">
+          {(["1H", "1D", "1W"] as const).map((tf) => (
+            <button
+              key={tf}
+              onClick={() => setChartTF(tf)}
+              className={`text-[9px] px-1.5 py-0.5 rounded transition font-bold ${
+                chartTF === tf
+                  ? "bg-blue-500/20 text-blue-400 border border-blue-500/40"
+                  : "text-slate-600 hover:text-slate-400 border border-transparent"
+              }`}
+            >
+              {tf}
+            </button>
+          ))}
+        </div>
 
         {mode === "Replay" && candles.length > 0 && (
           <div className="flex items-center gap-1.5 sm:gap-2 ml-auto flex-wrap">

@@ -1631,6 +1631,7 @@ export type US1HCandle = {
   rsi?: number | null;
   macd_hist?: number | null;
   st_dir?: number | null;
+  st_line?: number | null;
   signal: number;
 };
 

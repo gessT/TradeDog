@@ -50,7 +50,7 @@ export default function USDashboard() {
   const [btLoading, setBtLoading] = useState(false);
 
   // ── Chart overlay toggles ──────────────────────────────
-  type Overlay = "ema_fast" | "ema_slow" | "vwap" | "halftrend";
+  type Overlay = "ema_fast" | "ema_slow" | "vwap" | "halftrend" | "w_supertrend";
   type Indicator = "rsi" | "macd" | "volume";
   const [overlays] = useState<Set<Overlay>>(() => new Set<Overlay>(["ema_fast", "ema_slow"]));
   const [indicators] = useState<Set<Indicator>>(() => new Set<Indicator>(["volume"]));
@@ -543,8 +543,8 @@ export default function USDashboard() {
               </div>
             </div>
           )}
-          {/* Chart — 40% height */}
-          <div className="h-[40%] min-h-[160px] shrink-0">
+          {/* Chart — 60% height */}
+          <div className="h-[60%] min-h-[240px] shrink-0">
             <USMainChart
               candles={btData?.candles ?? []}
               trades={btData?.trades ?? []}

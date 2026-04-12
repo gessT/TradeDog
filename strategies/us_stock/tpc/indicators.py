@@ -36,12 +36,13 @@ def rsi(close: pd.Series, period: int = 14) -> pd.Series:
 
 
 def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    """ATR using Wilder's RMA (alpha=1/period) — matches PineScript ta.atr()."""
     prev_close = close.shift(1)
     tr = pd.concat(
         [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
         axis=1,
     ).max(axis=1)
-    return tr.ewm(span=period, adjust=False).mean()
+    return tr.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -1,15 +1,15 @@
 """
-TPC Backtester — Bar-by-bar on 1H with multi-TF context
-==========================================================
+TPC Backtester — Weekly SuperTrend on 1H bars
+================================================
+Simple: buy on Weekly ST bullish flip, sell on ST bearish flip.
+
 Features:
-  - Weekly + Daily + 1H multi-timeframe data loading
-  - ATR-based stop loss (2 × ATR on 1H)
-  - Dual take-profit: 50% at 1.5R, rest at 3R
+  - Weekly + 1H data (no daily needed)
+  - ATR-based stop loss
+  - Dual take-profit: TP1 partial, TP2 full
   - ATR trailing stop after TP1
-  - Exit on weekly SuperTrend flip / daily HT flip / EMA200 breakdown
-  - Max hold period
+  - Exit on weekly SuperTrend flip to bearish
   - Position sizing: risk% of equity
-  - One entry per trend cycle
 """
 from __future__ import annotations
 
@@ -104,30 +104,23 @@ class TPCBacktester:
         full_params = {**DEFAULT_TPC_PARAMS, **(params or {})}
         strategy = TPCStrategy(full_params)
 
-        # ── Load data ──
+        # ── Load data (only weekly + 1H needed) ──
         if df_weekly is None:
             df_weekly = load_yfinance(symbol, interval="1wk", period="5y")
-        if df_daily is None:
-            df_daily = load_yfinance(symbol, interval="1d", period="5y")
         if df_1h is None:
             df_1h = load_yfinance(symbol, interval="1h", period="730d")
 
         logger.info(
-            "Weekly: %d bars, Daily: %d bars, 1H: %d bars",
-            len(df_weekly), len(df_daily), len(df_1h),
+            "Weekly: %d bars, 1H: %d bars",
+            len(df_weekly), len(df_1h),
         )
 
         # ── Compute indicators ──
         df_weekly = strategy.compute_weekly(df_weekly.copy())
-        df_daily = strategy.compute_daily(df_daily.copy())
-
-        # Merge weekly → daily
-        df_daily = strategy.merge_weekly_into_daily(df_daily, df_weekly)
-
         df_1h = strategy.compute_1h(df_1h.copy())
 
-        # Merge daily (with weekly embedded) → 1H
-        df_1h = strategy.merge_daily_into_1h(df_1h, df_daily)
+        # Merge weekly → 1H directly (skip daily)
+        df_1h = strategy.merge_weekly_into_1h(df_1h, df_weekly)
 
         # ── Generate signals ──
         signals = strategy.generate_signals(df_1h, disabled=disabled_conditions)
@@ -233,29 +226,14 @@ class TPCBacktester:
 
                 # ── Check daily/weekly exit signals ──
                 if exit_price is None:
-                    # Weekly SuperTrend flip
-                    if params.get("exit_on_w_st_flip", True):
-                        w_st = bar.get("w_st_dir") if "w_st_dir" in bar.index else np.nan
-                        if not np.isnan(w_st) and int(w_st) == -1:
-                            exit_price = close_price
-                            reason = "W_ST_FLIP"
-
-                    # Daily HalfTrend flip
-                    if exit_price is None and params.get("exit_on_d_ht_flip", True):
-                        d_ht = bar.get("d_ht_dir") if "d_ht_dir" in bar.index else np.nan
-                        if not np.isnan(d_ht) and int(d_ht) == 1:  # 1 = down
-                            exit_price = close_price
-                            reason = "HT_FLIP"
-
-                    # EMA200 breakdown
-                    if exit_price is None and params.get("exit_on_ema200", True):
-                        d_ema = bar.get("d_ema200") if "d_ema200" in bar.index else np.nan
-                        if not np.isnan(d_ema) and close_price < d_ema:
-                            exit_price = close_price
-                            reason = "EMA200"
+                    # Weekly SuperTrend flip to bearish → hard exit
+                    w_st = bar.get("w_st_dir") if "w_st_dir" in bar.index else np.nan
+                    if not np.isnan(w_st) and int(w_st) == -1:
+                        exit_price = close_price
+                        reason = "W_ST_FLIP"
 
                 # ── Max hold period ──
-                if exit_price is None and bars_held >= params.get("max_hold_bars", 120):
+                if exit_price is None and bars_held >= params.get("max_hold_bars", 999):
                     exit_price = close_price
                     reason = "MAX_HOLD"
 
@@ -301,12 +279,8 @@ class TPCBacktester:
                     equity_curve.append(equity)
                     continue
 
-                # SL from strategy (swing low) or ATR-based
-                signal_sl = float(prev.get("signal_sl", np.nan))
-                if not np.isnan(signal_sl) and signal_sl < entry_price:
-                    sl_price = signal_sl
-                else:
-                    sl_price = entry_price - params["atr_sl_mult"] * atr_val
+                # SL: ATR-based
+                sl_price = entry_price - params["atr_sl_mult"] * atr_val
 
                 if sl_price >= entry_price:
                     sl_price = entry_price - 0.5 * atr_val

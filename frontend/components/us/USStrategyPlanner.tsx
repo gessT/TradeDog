@@ -91,7 +91,7 @@ const STRATEGY_DEFAULTS: Record<StrategyType, string[]> = {
   vpb_v3:      ["daily_trend", "accum", "breakout", "vol_surge", "rsi", "h_ema_trend", "candle_quality", "session"],
   vpr:         ["vwap_bias", "vol_profile", "rsi_momentum", "bullish_candle", "session"],
   mtf:         ["st_trend", "ht_trend", "ht_reconfirm", "sma_trend", "ema_alignment", "rsi_filter", "bullish_candle"],
-  tpc:         ["w_st_trend", "d_ema200", "d_adx", "d_ht_pullback", "h_pullback_zone", "h_volume", "h_candle", "h_rsi", "h_ema_trend", "volatility"],
+  tpc:         ["w_st_trend"],
 };
 
 // Backend only understands per-strategy conditions — filter to only send relevant keys

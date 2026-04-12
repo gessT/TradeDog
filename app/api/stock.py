@@ -1509,6 +1509,7 @@ class US1HCandle(BaseModel):
     rsi: _Opt[float] = None
     macd_hist: _Opt[float] = None
     st_dir: _Opt[int] = None
+    st_line: _Opt[float] = None
     signal: int = 0
 
 
@@ -2521,11 +2522,7 @@ async def us_stock_backtest_tpc(
 
     _disabled: set[str] = set()
     if disabled_conditions:
-        _valid = {
-            "w_st_trend", "d_ema200", "d_adx", "d_ht_pullback",
-            "h_pullback_zone", "h_volume", "h_candle", "h_rsi",
-            "h_ema_trend", "volatility",
-        }
+        _valid = {"w_st_trend"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
 
     def _run():
@@ -2534,9 +2531,8 @@ async def us_stock_backtest_tpc(
         from strategies.us_stock.tpc.strategy import TPCStrategy
         from strategies.us_stock.tpc.config import DEFAULT_TPC_PARAMS, RISK_PER_TRADE as TPC_RISK
 
-        # Load all three timeframes
+        # Load weekly + 1H only (no daily needed)
         df_weekly = load_yfinance(symbol=symbol, interval="1wk", period="5y")
-        df_daily = load_yfinance(symbol=symbol, interval="1d", period="5y")
         df_1h = load_yfinance(symbol=symbol, interval="1h", period=period)
 
         if df_1h.empty or len(df_1h) < 50:
@@ -2549,10 +2545,6 @@ async def us_stock_backtest_tpc(
         param_overrides: dict = {}
         if w_st_mult is not None:
             param_overrides["w_st_mult"] = w_st_mult
-        if d_adx_min is not None:
-            param_overrides["d_adx_min"] = d_adx_min
-        if pullback_atr_dist is not None:
-            param_overrides["pullback_atr_dist"] = pullback_atr_dist
         if tp1_r_mult is not None:
             param_overrides["tp1_r_mult"] = tp1_r_mult
         if tp2_r_mult is not None:
@@ -2568,16 +2560,14 @@ async def us_stock_backtest_tpc(
             symbol=symbol, period=period,
             params=param_overrides,
             disabled_conditions=_disabled or None,
-            df_weekly=df_weekly, df_daily=df_daily, df_1h=df_1h,
+            df_weekly=df_weekly, df_1h=df_1h,
         )
 
         # Build candles with indicators for chart
         strategy = TPCStrategy(full_params)
         df_w = strategy.compute_weekly(df_weekly[["open", "high", "low", "close", "volume"]].copy())
-        df_d = strategy.compute_daily(df_daily[["open", "high", "low", "close", "volume"]].copy())
-        df_d = strategy.merge_weekly_into_daily(df_d, df_w)
         df_h = strategy.compute_1h(df_1h[["open", "high", "low", "close", "volume"]].copy())
-        df_h = strategy.merge_daily_into_1h(df_h, df_d)
+        df_h = strategy.merge_weekly_into_1h(df_h, df_w)
         signals = strategy.generate_signals(df_h, disabled=_disabled or None)
 
         display_start: _Opt[str] = None
@@ -2610,6 +2600,7 @@ async def us_stock_backtest_tpc(
                 rsi=round(float(row["h_rsi"]), 1) if not _isnan(row.get("h_rsi")) else None,
                 macd_hist=None,
                 st_dir=int(row["w_st_dir"]) if not _isnan(row.get("w_st_dir")) else None,
+                st_line=round(float(row["w_st_line"]), 2) if not _isnan(row.get("w_st_line")) else None,
                 signal=int(row.get("signal", 0)),
             ))
 
