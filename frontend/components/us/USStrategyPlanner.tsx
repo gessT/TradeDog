@@ -148,6 +148,7 @@ type Props = {
 
 export default function USStrategyPlanner({ activePreset, onApply, onPresetsChanged, onTagSaved, favSymbols = [], allTags = [] }: Props) {
   const [presets, setPresets] = useState<StrategyPreset[]>([]);
+  const [showStocksFor, setShowStocksFor] = useState<string | null>(null);
   const [editing, setEditing] = useState<StrategyPreset>({ ...EMPTY_PRESET });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -404,9 +405,23 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                   <div className="flex items-center gap-1 mt-1">
                     <span className="text-[7px] text-slate-600">{condCount} conditions</span>
                     {tagCount > 0 && (
-                      <span className="text-[7px] px-1 py-px rounded bg-blue-500/15 text-blue-400 font-bold">{tagCount} 🏷</span>
+                      <span
+                        onClick={(e) => { e.stopPropagation(); setShowStocksFor(showStocksFor === st.key ? null : st.key); }}
+                        className="text-[7px] px-1 py-px rounded bg-blue-500/15 text-blue-400 font-bold cursor-pointer hover:bg-blue-500/25 transition"
+                      >{tagCount} 🏷</span>
                     )}
                   </div>
+                  {/* Tagged stocks popover */}
+                  {showStocksFor === st.key && tagCount > 0 && (
+                    <div className="mt-1 p-1.5 rounded-md bg-slate-800/80 border border-slate-700/50">
+                      <div className="text-[7px] text-slate-500 mb-1">Stocks using {st.label}</div>
+                      <div className="flex flex-wrap gap-0.5">
+                        {allTags.filter((t) => t.strategy_type === st.key).map((t) => (
+                          <span key={t.id} className="text-[8px] px-1 py-0.5 rounded bg-slate-700/60 text-blue-300 font-semibold">{t.symbol}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {/* Clone button */}
                   <span
                     onClick={(e) => {

@@ -240,12 +240,13 @@ export default function USMainChart({
     // ── Focus time (scroll to trade) ──
     if (focusTime) {
       const ft = toLocal(focusTime);
-      const windowBars = 40;
-      const barSec = 3600;
-      chart.timeScale().setVisibleRange({
-        from: (ft - windowBars * barSec) as UTCTimestamp,
-        to: (ft + windowBars * barSec) as UTCTimestamp,
-      });
+      const idx = cData.findIndex((c) => (c.time as number) >= (ft as number));
+      if (idx >= 0) {
+        chart.timeScale().setVisibleLogicalRange({
+          from: idx - 75,
+          to: idx + 75,
+        });
+      }
     }
 
     // ── Resize observer ──
