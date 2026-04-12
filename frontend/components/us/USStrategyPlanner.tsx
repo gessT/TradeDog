@@ -18,69 +18,92 @@ const STRATEGY_TYPES: { key: StrategyType; label: string; desc: string }[] = [
   { key: "mtf", label: "MTF", desc: "Daily ST+HT → 4H entry" },
 ];
 
-const CONDITIONS_BREAKOUT = [
-  { key: "ema_trend", label: "EMA Trend", icon: "📈", desc: "Price above slow EMA" },
-  { key: "ema_slope", label: "EMA Slope", icon: "📐", desc: "Fast EMA rising" },
-  { key: "pullback", label: "Pullback", icon: "↩", desc: "Retraced to EMA zone" },
-  { key: "breakout", label: "Breakout", icon: "🚀", desc: "New swing high" },
-  { key: "supertrend", label: "Supertrend", icon: "⚡", desc: "ST direction up" },
-  { key: "macd_momentum", label: "MACD", icon: "📊", desc: "Histogram positive" },
-  { key: "rsi_momentum", label: "RSI", icon: "🎯", desc: "RSI in buy zone" },
-  { key: "volume_spike", label: "Volume", icon: "📶", desc: "Above avg volume" },
-  { key: "atr_range", label: "ATR Range", icon: "📏", desc: "Min volatility" },
-] as const;
+// ═══════════════════════════════════════════════════════════════════════
+// UNIFIED CONDITION POOL — grouped by category
+// Each condition belongs to a group. Each strategy picks its defaults.
+// ═══════════════════════════════════════════════════════════════════════
 
-const CONDITIONS_VPB = [
-  { key: "ema_alignment", label: "EMA Alignment", icon: "📈", desc: "Triple EMA aligned" },
-  { key: "ema_slope", label: "EMA Slope", icon: "📐", desc: "EMA rising (not flat)" },
-  { key: "ema_trend", label: "EMA Trend", icon: "📊", desc: "Close above fast EMA" },
-  { key: "vol_ramp", label: "Vol Ramp", icon: "📶", desc: "Consecutive vol increase" },
-  { key: "vol_spike", label: "Vol Spike", icon: "🔊", desc: "Volume > avg × mult" },
-  { key: "body_strength", label: "Body Strength", icon: "💪", desc: "Strong candle body" },
-  { key: "close_near_high", label: "Close Near High", icon: "🎯", desc: "Close in top range" },
-  { key: "bullish_candle", label: "Bullish Candle", icon: "🟢", desc: "Close > Open" },
-  { key: "session", label: "Session Filter", icon: "🕐", desc: "Skip open/close" },
-] as const;
+type ConditionDef = { key: string; label: string; icon: string; desc: string; group: string };
 
-const CONDITIONS_VPB3 = [
-  { key: "daily_trend", label: "Daily Trend", icon: "📈", desc: "Daily EMA20 > EMA50" },
-  { key: "accum", label: "Accumulation", icon: "🔋", desc: "量缩价稳 low vol + tight range" },
-  { key: "breakout", label: "1H Breakout", icon: "🚀", desc: "Close > N-bar high" },
-  { key: "vol_surge", label: "Vol Surge", icon: "📶", desc: "量增 volume > avg × mult" },
-  { key: "rsi", label: "RSI Filter", icon: "🎯", desc: "RSI in 40-72 zone" },
-  { key: "h_ema_trend", label: "1H EMA", icon: "📊", desc: "Close > EMA20 on 1H" },
-  { key: "candle_quality", label: "Candle Quality", icon: "🟢", desc: "Bullish + strong body" },
-  { key: "session", label: "Session Filter", icon: "🕐", desc: "Skip first/last 30min" },
-] as const;
+const ALL_CONDITIONS: ConditionDef[] = [
+  // ── Trend (Daily) ──
+  { key: "daily_trend",   label: "Daily Trend",     icon: "📈", desc: "Daily EMA20 > EMA50",              group: "Daily" },
+  { key: "st_trend",      label: "Daily SuperTrend", icon: "⚡", desc: "Daily ST bullish",                group: "Daily" },
+  { key: "ht_trend",      label: "Daily HalfTrend", icon: "📈", desc: "Daily HT uptrend",                group: "Daily" },
+  { key: "ht_reconfirm",  label: "HT Re-confirm",  icon: "🔄", desc: "HT flips back up + daily bullish", group: "Daily" },
+  { key: "sma_trend",     label: "Daily SMA50",     icon: "📊", desc: "Daily close > SMA50",              group: "Daily" },
 
-const CONDITIONS_VPR = [
-  { key: "vwap_bias", label: "VWAP Bias", icon: "📈", desc: "Price above session VWAP" },
-  { key: "vol_profile", label: "Vol Profile", icon: "📊", desc: "Above POC or near HVN" },
-  { key: "rsi_momentum", label: "RSI Momentum", icon: "🎯", desc: "RSI in zone & rising" },
-  { key: "bullish_candle", label: "Bullish Candle", icon: "🟢", desc: "Close > Open" },
-  { key: "session", label: "Session Filter", icon: "🕐", desc: "Skip off-hours" },
-] as const;
+  // ── Trend (Intraday) ──
+  { key: "ema_trend",     label: "EMA Trend",       icon: "📈", desc: "Price above slow EMA",             group: "Trend" },
+  { key: "ema_slope",     label: "EMA Slope",       icon: "📐", desc: "Fast EMA rising (not flat)",       group: "Trend" },
+  { key: "ema_alignment", label: "EMA Alignment",   icon: "📀", desc: "Triple EMA aligned / 4H EMA9>21", group: "Trend" },
+  { key: "h_ema_trend",   label: "1H EMA",          icon: "📊", desc: "Close > EMA20 on 1H",             group: "Trend" },
+  { key: "supertrend",    label: "SuperTrend",      icon: "⚡", desc: "Intraday ST direction up",         group: "Trend" },
 
-const CONDITIONS_MTF = [
-  { key: "st_trend", label: "SuperTrend", icon: "⚡", desc: "Daily ST bullish" },
-  { key: "ht_trend", label: "HalfTrend", icon: "📈", desc: "Daily HT uptrend" },
-  { key: "ht_reconfirm", label: "HT Re-confirm", icon: "🔄", desc: "After HT flips back up, wait for daily bullish candle" },
-  { key: "sma_trend", label: "SMA Filter", icon: "📊", desc: "Daily close > SMA50" },
-  { key: "ema_alignment", label: "EMA Align", icon: "📀", desc: "4H EMA9 > EMA21" },
-  { key: "rsi_filter", label: "RSI Filter", icon: "🎯", desc: "4H RSI 40–70" },
-  { key: "bullish_candle", label: "Bullish Candle", icon: "🟢", desc: "4H close > open" },
-] as const;
+  // ── Entry ──
+  { key: "pullback",      label: "Pullback",        icon: "↩",  desc: "Retraced to EMA zone",            group: "Entry" },
+  { key: "breakout",      label: "Breakout",        icon: "🚀", desc: "New swing high / N-bar high",     group: "Entry" },
+  { key: "accum",         label: "Accumulation",    icon: "🔋", desc: "量缩价稳 low vol + tight range",    group: "Entry" },
+  { key: "vwap_bias",     label: "VWAP Bias",       icon: "📈", desc: "Price above session VWAP",         group: "Entry" },
+  { key: "vol_profile",   label: "Vol Profile",     icon: "📊", desc: "Above POC or near HVN",           group: "Entry" },
 
+  // ── Momentum ──
+  { key: "macd_momentum", label: "MACD",            icon: "📊", desc: "Histogram positive",              group: "Momentum" },
+  { key: "rsi_momentum",  label: "RSI Momentum",    icon: "🎯", desc: "RSI in buy zone & rising",        group: "Momentum" },
+  { key: "rsi",           label: "RSI Filter",      icon: "🎯", desc: "RSI in 40-72 zone",               group: "Momentum" },
+  { key: "rsi_filter",    label: "RSI 4H",          icon: "🎯", desc: "4H RSI 40–70",                    group: "Momentum" },
+
+  // ── Volume ──
+  { key: "volume_spike",  label: "Volume Spike",    icon: "📶", desc: "Above avg volume",                group: "Volume" },
+  { key: "vol_spike",     label: "Vol Spike ×",     icon: "🔊", desc: "Volume > avg × mult",             group: "Volume" },
+  { key: "vol_ramp",      label: "Vol Ramp",        icon: "📶", desc: "Consecutive vol increase",        group: "Volume" },
+  { key: "vol_surge",     label: "Vol Surge",       icon: "📶", desc: "量增 volume > avg × mult",         group: "Volume" },
+
+  // ── Candle / Price ──
+  { key: "bullish_candle", label: "Bullish Candle", icon: "🟢", desc: "Close > Open",                    group: "Candle" },
+  { key: "body_strength", label: "Body Strength",   icon: "💪", desc: "Strong candle body ratio",        group: "Candle" },
+  { key: "close_near_high", label: "Close Near High", icon: "🎯", desc: "Close in top range",            group: "Candle" },
+  { key: "candle_quality", label: "Candle Quality", icon: "🟢", desc: "Bullish + strong body",           group: "Candle" },
+
+  // ── Filter ──
+  { key: "atr_range",     label: "ATR Range",       icon: "📏", desc: "Min volatility threshold",        group: "Filter" },
+  { key: "session",       label: "Session Filter",  icon: "🕐", desc: "Skip open/close hours",           group: "Filter" },
+];
+
+const CONDITION_GROUPS = ["Daily", "Trend", "Entry", "Momentum", "Volume", "Candle", "Filter"] as const;
+
+// Which conditions each base strategy uses by default
+const STRATEGY_DEFAULTS: Record<StrategyType, string[]> = {
+  breakout_1h: ["ema_trend", "ema_slope", "pullback", "breakout", "supertrend", "macd_momentum", "rsi_momentum", "volume_spike", "atr_range"],
+  vpb_v2:      ["ema_alignment", "ema_slope", "ema_trend", "vol_ramp", "vol_spike", "body_strength", "close_near_high", "bullish_candle", "session"],
+  vpb_v3:      ["daily_trend", "accum", "breakout", "vol_surge", "rsi", "h_ema_trend", "candle_quality", "session"],
+  vpr:         ["vwap_bias", "vol_profile", "rsi_momentum", "bullish_candle", "session"],
+  mtf:         ["st_trend", "ht_trend", "ht_reconfirm", "sma_trend", "ema_alignment", "rsi_filter", "bullish_candle"],
+};
+
+// Backend only understands per-strategy conditions — filter to only send relevant keys
 function getConditionsForType(t: StrategyType) {
-  if (t === "breakout_1h") return CONDITIONS_BREAKOUT;
-  if (t === "vpb_v3") return CONDITIONS_VPB3;
-  if (t === "vpr") return CONDITIONS_VPR;
-  if (t === "mtf") return CONDITIONS_MTF;
-  return CONDITIONS_VPB;
+  return ALL_CONDITIONS.filter((c) => STRATEGY_DEFAULTS[t].includes(c.key));
+}
+
+// For display: show ALL conditions so user can see the full pool
+function getAllConditionsGrouped() {
+  return CONDITION_GROUPS.map((g) => ({
+    group: g,
+    conditions: ALL_CONDITIONS.filter((c) => c.group === g),
+  })).filter((g) => g.conditions.length > 0);
 }
 
 function getAllOn(t: StrategyType): Record<string, boolean> {
-  return Object.fromEntries(getConditionsForType(t).map((c) => [c.key, true]));
+  return Object.fromEntries(STRATEGY_DEFAULTS[t].map((k) => [k, true]));
+}
+
+function getDefaultConditions(t: StrategyType): Record<string, boolean> {
+  // All conditions in pool, but only strategy defaults are ON
+  const all: Record<string, boolean> = {};
+  for (const c of ALL_CONDITIONS) all[c.key] = false;
+  for (const k of STRATEGY_DEFAULTS[t]) all[k] = true;
+  return all;
 }
 
 export type StrategyPreset = {
@@ -120,9 +143,10 @@ type Props = {
   onPresetsChanged: (presets: StrategyPreset[]) => void;
   onTagSaved?: () => void;
   favSymbols?: string[];
+  allTags?: { id: number; symbol: string; strategy_type: string }[];
 };
 
-export default function USStrategyPlanner({ activePreset, onApply, onPresetsChanged, onTagSaved, favSymbols = [] }: Props) {
+export default function USStrategyPlanner({ activePreset, onApply, onPresetsChanged, onTagSaved, favSymbols = [], allTags = [] }: Props) {
   const [presets, setPresets] = useState<StrategyPreset[]>([]);
   const [editing, setEditing] = useState<StrategyPreset>({ ...EMPTY_PRESET });
   const [saving, setSaving] = useState(false);
@@ -134,6 +158,9 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
   const [comparing, setComparing] = useState(false);
   const [compareRows, setCompareRows] = useState<CompareRow[]>([]);
   const [compareSector, setCompareSector] = useState<string>("FAVS");
+
+  // ── Delete confirmation dialog state ────────────────
+  const [deleteDialog, setDeleteDialog] = useState<{ id: number; name: string; strategyType: string; affectedTags: { id: number; symbol: string }[] } | null>(null);
 
   // ── Load saved presets ──────────────────────────────
   const fetchPresets = useCallback(async () => {
@@ -161,7 +188,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
     setEditing((p) => ({
       ...p,
       strategy_type: t,
-      conditions: { ...getAllOn(t) },
+      conditions: getDefaultConditions(t),
       // Reset params to defaults per strategy type
       ...(t === "vpb_v2" ? { atr_sl_mult: 1.0, atr_tp_mult: 1.0, period: "2y" } :
           t === "vpr" ? { atr_sl_mult: 1.3, atr_tp_mult: 1.8, period: "2y" } :
@@ -170,7 +197,18 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
     }));
   };
 
-  const currentConditions = getConditionsForType(editing.strategy_type ?? "breakout_1h");
+  // Show only conditions relevant to the selected strategy type
+  const strategyConditionKeys = STRATEGY_DEFAULTS[editing.strategy_type ?? "breakout_1h"];
+  const currentConditions = ALL_CONDITIONS.filter((c) => strategyConditionKeys.includes(c.key));
+  // All conditions grouped — for custom strategies, show full pool
+  const allGrouped = getAllConditionsGrouped();
+  // For base: only show strategy defaults grouped
+  const groupedConditions = editing.name.trim()
+    ? allGrouped
+    : CONDITION_GROUPS.map((g) => ({
+        group: g,
+        conditions: currentConditions.filter((c) => c.group === g),
+      })).filter((g) => g.conditions.length > 0);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -194,13 +232,37 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
     finally { setSaving(false); }
   };
 
-  const handleDelete = async (id: number, name: string) => {
+  const handleDelete = async (id: number, name: string, strategyType: string) => {
+    // Check if any tags use this strategy
+    const affected = allTags.filter((t) => t.strategy_type === strategyType);
+    if (affected.length > 0) {
+      setDeleteDialog({ id, name, strategyType, affectedTags: affected });
+      return;
+    }
+    // No tags — delete directly
     try {
       await fetch(`http://127.0.0.1:8000/stock/us-strategy-presets/${id}`, { method: "DELETE" });
       await fetchPresets();
       if (activePreset?.name === name) onApply({ ...EMPTY_PRESET, name: "breakout_v2" });
       showToast(`Deleted "${name}"`);
     } catch { /* offline */ }
+  };
+
+  const handleForceDelete = async () => {
+    if (!deleteDialog) return;
+    try {
+      // Remove all affected tags first
+      for (const tag of deleteDialog.affectedTags) {
+        await fetch(`http://127.0.0.1:8000/stock/us-stock-tags/${tag.id}`, { method: "DELETE" });
+      }
+      // Then delete the preset
+      await fetch(`http://127.0.0.1:8000/stock/us-strategy-presets/${deleteDialog.id}`, { method: "DELETE" });
+      await fetchPresets();
+      onTagSaved?.();
+      if (activePreset?.name === deleteDialog.name) onApply({ ...EMPTY_PRESET, name: "breakout_v2" });
+      showToast(`Deleted "${deleteDialog.name}" + ${deleteDialog.affectedTags.length} tags`);
+    } catch { /* offline */ }
+    setDeleteDialog(null);
   };
 
   // ── Compare across 10 hot-pick stocks ───────────────
@@ -296,9 +358,78 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
       )}
 
       <div className="flex-1 overflow-y-auto">
-        {/* ── Saved Strategies (horizontal scrollable cards) ── */}
+        {/* ── Base Strategies (built-in, locked conditions) ── */}
+        <div className="px-2.5 pt-2 pb-1">
+          <div className="text-[8px] text-slate-600 uppercase tracking-widest mb-1.5 px-0.5">Base Strategies</div>
+          <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+            {STRATEGY_TYPES.map((st) => {
+              const active = (editing.strategy_type ?? "breakout_1h") === st.key && !editing.name;
+              const condCount = STRATEGY_DEFAULTS[st.key].length;
+              const tagCount = allTags.filter((t) => t.strategy_type === st.key).length;
+              // Show which groups this strategy touches
+              const groups = [...new Set(ALL_CONDITIONS.filter((c) => STRATEGY_DEFAULTS[st.key].includes(c.key)).map((c) => c.group))];
+              return (
+                <button
+                  key={st.key}
+                  onClick={() => {
+                    handleStrategyTypeChange(st.key);
+                    setEditing((p) => ({ ...p, name: "" }));
+                    onApply({ ...EMPTY_PRESET, strategy_type: st.key, conditions: getDefaultConditions(st.key),
+                      ...(st.key === "vpb_v2" ? { atr_sl_mult: 1.0, atr_tp_mult: 1.0, period: "2y" } :
+                          st.key === "vpr" ? { atr_sl_mult: 1.3, atr_tp_mult: 1.8, period: "2y" } :
+                          st.key === "mtf" ? { atr_sl_mult: 2.0, atr_tp_mult: 3.0, period: "2y" } :
+                          st.key === "vpb_v3" ? { atr_sl_mult: 1.0, atr_tp_mult: 1.0, period: "2y" } :
+                          {}),
+                    });
+                  }}
+                  className={`group relative shrink-0 w-[110px] p-2 rounded-lg border text-left transition-all ${
+                    active
+                      ? st.key === "mtf" ? "border-amber-500/50 bg-gradient-to-b from-amber-500/10 to-amber-500/5 ring-1 ring-amber-500/20" :
+                        st.key === "vpr" ? "border-cyan-500/50 bg-gradient-to-b from-cyan-500/10 to-cyan-500/5 ring-1 ring-cyan-500/20" :
+                        st.key === "vpb_v3" ? "border-emerald-500/50 bg-gradient-to-b from-emerald-500/10 to-emerald-500/5 ring-1 ring-emerald-500/20" :
+                        st.key === "vpb_v2" ? "border-purple-500/50 bg-gradient-to-b from-purple-500/10 to-purple-500/5 ring-1 ring-purple-500/20" :
+                        "border-blue-500/50 bg-gradient-to-b from-blue-500/10 to-blue-500/5 ring-1 ring-blue-500/20"
+                      : "border-slate-800/50 bg-slate-900/40 hover:border-slate-700 hover:bg-slate-800/30"
+                  }`}
+                >
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] font-bold text-slate-200">{st.label}</span>
+                  </div>
+                  <div className="text-[7px] text-slate-500 mt-0.5">{st.desc}</div>
+                  <div className="flex flex-wrap gap-0.5 mt-1">
+                    {groups.map((g) => (
+                      <span key={g} className="text-[6px] px-1 py-px rounded bg-slate-800/60 text-slate-500">{g}</span>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1 mt-1">
+                    <span className="text-[7px] text-slate-600">{condCount} conditions</span>
+                    {tagCount > 0 && (
+                      <span className="text-[7px] px-1 py-px rounded bg-blue-500/15 text-blue-400 font-bold">{tagCount} 🏷</span>
+                    )}
+                  </div>
+                  {/* Clone button */}
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleStrategyTypeChange(st.key);
+                      setEditing((p) => ({ ...p, name: st.label + " Custom" }));
+                    }}
+                    className="mt-1 block text-center text-[7px] text-slate-600 hover:text-blue-400 cursor-pointer transition"
+                  >
+                    + Clone
+                  </span>
+                  {active && (
+                    <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-blue-400 border-2 border-slate-950 shadow" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── User Saved Strategies ── */}
         {presets.length > 0 && (
-          <div className="px-2.5 pt-2 pb-1">
+          <div className="px-2.5 pt-1 pb-1">
             <div className="text-[8px] text-slate-600 uppercase tracking-widest mb-1.5 px-0.5">My Strategies</div>
             <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
               {presets.map((p) => {
@@ -321,7 +452,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                   >
                     {/* Delete button */}
                     <span
-                      onClick={(e) => { e.stopPropagation(); p.id && handleDelete(p.id, p.name); }}
+                      onClick={(e) => { e.stopPropagation(); p.id && handleDelete(p.id, p.name, p.strategy_type); }}
                       className="absolute top-1 right-1.5 text-[9px] text-slate-700 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition cursor-pointer"
                     >
                       ×
@@ -348,7 +479,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                       <div className="flex-1 h-1 rounded-full bg-slate-800 overflow-hidden">
                         <div
                           className={`h-full rounded-full transition-all ${active ? "bg-blue-400" : "bg-slate-600"}`}
-                          style={{ width: `${(onCount / getConditionsForType((p as StrategyPreset).strategy_type ?? "breakout_1h").length) * 100}%` }}
+                          style={{ width: `${(onCount / STRATEGY_DEFAULTS[(p as StrategyPreset).strategy_type ?? "breakout_1h"].length) * 100}%` }}
                         />
                       </div>
                     </div>
@@ -387,6 +518,16 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                     {active && (
                       <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-blue-400 border-2 border-slate-950 shadow" />
                     )}
+                    {/* Clone button */}
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditing({ ...p, id: undefined, name: p.name + " Copy" });
+                      }}
+                      className="absolute bottom-1 right-1.5 text-[7px] text-slate-700 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition cursor-pointer"
+                    >
+                      Clone
+                    </span>}
                   </button>
                 );
               })}
@@ -405,7 +546,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
               type="text"
               value={editing.name}
               onChange={(e) => setEditing((p) => ({ ...p, name: e.target.value }))}
-              placeholder="Strategy name…"
+              placeholder="Name to create custom strategy…"
               className="flex-1 px-2.5 py-1.5 text-[11px] bg-slate-800/50 border border-slate-700/50 rounded-lg text-slate-200 placeholder-slate-600 outline-none focus:border-blue-500/50 transition"
             />
             <button
@@ -417,9 +558,10 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
             </button>
           </div>
 
-          {/* Strategy Type Selector */}
+          {/* Strategy Type Selector — only when creating/editing custom strategy */}
+          {editing.name.trim() && (
           <div>
-            <div className="text-[8px] text-slate-600 uppercase tracking-widest mb-1.5">Strategy Type</div>
+            <div className="text-[8px] text-slate-600 uppercase tracking-widest mb-1.5">Based On</div>
             <div className="flex gap-1">
               {STRATEGY_TYPES.map((st) => {
                 const active = (editing.strategy_type ?? "breakout_1h") === st.key;
@@ -444,11 +586,15 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
               })}
             </div>
           </div>
+          )}
 
-          {/* Conditions */}
+          {/* Conditions — grouped by category */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[8px] text-slate-600 uppercase tracking-widest">Entry Conditions</span>
+              <span className="text-[8px] text-slate-600 uppercase tracking-widest">
+                Entry Conditions {!editing.name.trim() && <span className="text-slate-700 ml-1">🔒 Default</span>}
+              </span>
+              {editing.name.trim() && (
               <div className="flex items-center gap-2">
                 <span className="text-[9px] tabular-nums text-blue-400 font-medium">{enabledCount}/{totalConditions}</span>
                 <button
@@ -460,30 +606,47 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                   className="text-[8px] text-slate-600 hover:text-rose-400 transition"
                 >None</button>
               </div>
+              )}
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {currentConditions.map((c) => {
-                const on = editing.conditions[c.key] ?? true;
-                return (
-                  <button
-                    key={c.key}
-                    onClick={() => toggleCondition(c.key)}
-                    className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border transition-all cursor-pointer ${
-                      on
-                        ? "border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/15"
-                        : "border-slate-700/50 bg-slate-900/30 hover:bg-slate-800/40"
-                    }`}
-                  >
-                    <span className="text-[10px]">{c.icon}</span>
-                    <span className={`text-[9px] font-semibold whitespace-nowrap ${on ? "text-slate-200" : "text-slate-600"}`}>
-                      {c.label}
-                    </span>
-                    <div className={`w-5 h-3 rounded-full p-0.5 transition-colors shrink-0 ${on ? "bg-emerald-500" : "bg-slate-700"}`}>
-                      <div className={`w-2 h-2 rounded-full bg-white shadow transition-transform ${on ? "translate-x-2" : "translate-x-0"}`} />
-                    </div>
-                  </button>
-                );
-              })}
+            <div className="space-y-1.5">
+              {groupedConditions.map((g) => (
+                <div key={g.group}>
+                  <div className="text-[7px] text-slate-600 uppercase tracking-wider mb-1 px-0.5">{g.group}</div>
+                  <div className="flex flex-wrap gap-1">
+                    {g.conditions.map((c) => {
+                      const on = editing.conditions[c.key] ?? false;
+                      const isBase = !editing.name.trim();
+                      const isDefault = STRATEGY_DEFAULTS[editing.strategy_type ?? "breakout_1h"].includes(c.key);
+                      return (
+                        <button
+                          key={c.key}
+                          onClick={() => !isBase && toggleCondition(c.key)}
+                          disabled={isBase}
+                          title={c.desc}
+                          className={`flex items-center gap-1 px-1.5 py-1 rounded-md border transition-all text-[9px] ${
+                            isBase ? "cursor-default" : "cursor-pointer"
+                          } ${
+                            on
+                              ? "border-emerald-500/30 bg-emerald-500/10"
+                              : "border-slate-700/40 bg-slate-900/20"
+                          } ${!isBase && on ? "hover:bg-emerald-500/15" : ""} ${!isBase && !on ? "hover:bg-slate-800/40" : ""}`}
+                        >
+                          <span className="text-[9px]">{c.icon}</span>
+                          <span className={`font-semibold whitespace-nowrap ${on ? "text-slate-200" : "text-slate-600"}`}>
+                            {c.label}
+                          </span>
+                          {isBase && isDefault && <span className="text-[7px] text-emerald-500">✓</span>}
+                          {!isBase && (
+                            <div className={`w-4 h-2.5 rounded-full p-0.5 transition-colors shrink-0 ${on ? "bg-emerald-500" : "bg-slate-700"}`}>
+                              <div className={`w-1.5 h-1.5 rounded-full bg-white shadow transition-transform ${on ? "translate-x-1.5" : "translate-x-0"}`} />
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -587,6 +750,43 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
           </div>
         </div>
       </div>
+
+      {/* ═══ DELETE CONFIRMATION DIALOG ═══ */}
+      {deleteDialog && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setDeleteDialog(null)}>
+          <div className="w-full max-w-sm bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-800/60">
+              <div className="text-[13px] font-bold text-slate-200">Delete "{deleteDialog.name}"?</div>
+              <div className="text-[10px] text-slate-500 mt-1">
+                This strategy has <span className="text-amber-400 font-bold">{deleteDialog.affectedTags.length}</span> stock tag{deleteDialog.affectedTags.length > 1 ? "s" : ""} using it.
+              </div>
+            </div>
+            <div className="px-5 py-3">
+              <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-2">Affected stocks</div>
+              <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                {deleteDialog.affectedTags.map((t) => (
+                  <span key={t.id} className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700/50 text-[9px] font-semibold text-slate-300">{t.symbol}</span>
+                ))}
+              </div>
+              <div className="text-[9px] text-rose-400/80 mt-2">All tags will be removed before deleting this strategy.</div>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-800/40">
+              <button
+                onClick={() => setDeleteDialog(null)}
+                className="px-3 py-1.5 rounded-lg text-[10px] font-bold bg-slate-700 hover:bg-slate-600 text-slate-300 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleForceDelete}
+                className="px-3 py-1.5 rounded-lg text-[10px] font-bold bg-rose-500/80 hover:bg-rose-500 text-white transition active:scale-95"
+              >
+                Remove Tags & Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ COMPARE DIALOG — MODERN FULL-WIDTH ═══ */}
       {compareOpen && (

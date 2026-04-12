@@ -584,6 +584,7 @@ export default function USDashboard() {
               onPresetsChanged={handlePresetsChanged}
               onTagSaved={fetchTags}
               favSymbols={favSymbols}
+              allTags={stockTags}
             />
           )}
         </aside>
