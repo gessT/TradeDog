@@ -29,4 +29,9 @@ DEFAULT_TPC_PARAMS: dict = {
     "h_ema_slow":        50,
     "h_rsi_period":      14,
     "h_atr_period":      14,
+
+    # ── HalfTrend ────────────────────────────────────
+    "ht_amplitude":       5,
+    "ht_channel_deviation": 2.0,
+    "ht_price_gap":       10.0,   # Max $ distance from HT line to enter
 }

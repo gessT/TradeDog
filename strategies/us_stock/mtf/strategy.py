@@ -59,7 +59,7 @@ class MTFStrategy:
         df_d["st_line"] = st_line
         df_d["st_dir"] = st_dir
 
-        ht_line, ht_dir = halftrend(
+        ht_line, ht_dir, ht_high, ht_low = halftrend(
             df_d["high"], df_d["low"], df_d["close"],
             amplitude=p["ht_amplitude"],
             channel_deviation=p["ht_channel_dev"],
@@ -67,6 +67,8 @@ class MTFStrategy:
         )
         df_d["ht_line"] = ht_line
         df_d["ht_dir"] = ht_dir
+        df_d["ht_high"] = ht_high
+        df_d["ht_low"] = ht_low
 
         df_d["sma_slow"] = sma(df_d["close"], p["sma_slow"])
 

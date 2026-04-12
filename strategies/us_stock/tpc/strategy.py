@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from .config import DEFAULT_TPC_PARAMS
-from .indicators import ema, rsi, atr, supertrend
+from .indicators import ema, rsi, atr, supertrend, halftrend
 
 
 class TPCStrategy:
@@ -22,6 +22,7 @@ class TPCStrategy:
 
     DISABLEABLE: set[str] = {
         "w_st_trend",       # Weekly SuperTrend must be bullish
+        "ht_trend",         # 1H HalfTrend must be bullish (up)
     }
 
     def __init__(self, params: dict | None = None):
@@ -55,6 +56,36 @@ class TPCStrategy:
         df_1h["h_ema_slow"] = ema(df_1h["close"], p["h_ema_slow"])
         df_1h["h_rsi"] = rsi(df_1h["close"], p["h_rsi_period"])
         df_1h["h_atr"] = atr(df_1h["high"], df_1h["low"], df_1h["close"], p["h_atr_period"])
+        return df_1h
+
+    # ═══════════════════════════════════════════════════════
+    # Daily HalfTrend (matches PineScript — HT on daily bars)
+    # ═══════════════════════════════════════════════════════
+
+    def compute_daily(self, df_d: pd.DataFrame) -> pd.DataFrame:
+        """Compute HalfTrend on daily OHLCV — matches TradingView."""
+        p = self.p
+        df_d = df_d.copy()
+        ht_line, ht_dir, ht_high, ht_low = halftrend(
+            df_d["high"], df_d["low"], df_d["close"],
+            amplitude=p["ht_amplitude"],
+            channel_deviation=p["ht_channel_deviation"],
+            atr_length=100,
+        )
+        df_d["ht_line"] = ht_line
+        df_d["ht_dir"] = ht_dir
+        df_d["ht_high"] = ht_high
+        df_d["ht_low"] = ht_low
+        return df_d
+
+    @staticmethod
+    def merge_daily_into_1h(df_1h: pd.DataFrame, df_d: pd.DataFrame) -> pd.DataFrame:
+        """Forward-fill daily HalfTrend into 1H bars."""
+        daily_cols = ["ht_line", "ht_dir", "ht_high", "ht_low"]
+        available = [c for c in daily_cols if c in df_d.columns]
+        daily_reindexed = df_d[available].reindex(df_1h.index, method="ffill")
+        for col in available:
+            df_1h[col] = daily_reindexed[col]
         return df_1h
 
     # ═══════════════════════════════════════════════════════
@@ -103,7 +134,11 @@ class TPCStrategy:
         signals = pd.Series(0, index=df.index)
 
         w_st_dir = df["w_st_dir"].values if "w_st_dir" in df else np.ones(n)
+        ht_dir = df["ht_dir"].values if "ht_dir" in df else np.zeros(n)
+        ht_line = df["ht_line"].values if "ht_line" in df else np.full(n, np.nan)
+        closes = df["close"].values
         h_atr = df["h_atr"].values if "h_atr" in df else np.ones(n)
+        ht_price_gap = self.p.get("ht_price_gap", 10.0)
 
         prev_w_st = -1  # Start as bearish so first bullish flip triggers
         in_position = False
@@ -125,6 +160,14 @@ class TPCStrategy:
             if "w_st_trend" not in off:
                 if cur_st == 1 and prev_w_st != 1 and not in_position:
                     if not np.isnan(h_atr[i]) and h_atr[i] > 0:
+                        # HalfTrend filter: 1H HT must be bullish (dir=0) + within price gap
+                        if "ht_trend" not in off:
+                            if ht_dir[i] != 0:
+                                prev_w_st = cur_st
+                                continue
+                            if not np.isnan(ht_line[i]) and abs(closes[i] - ht_line[i]) > ht_price_gap:
+                                prev_w_st = cur_st
+                                continue
                         signals.iloc[i] = 1
                         in_position = True
 

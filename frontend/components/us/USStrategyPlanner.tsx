@@ -86,12 +86,12 @@ const CONDITION_GROUPS = ["Daily", "Trend", "Entry", "Momentum", "Volume", "Cand
 
 // Which conditions each base strategy uses by default
 const STRATEGY_DEFAULTS: Record<StrategyType, string[]> = {
-  breakout_1h: ["ema_trend", "ema_slope", "pullback", "breakout", "supertrend", "macd_momentum", "rsi_momentum", "volume_spike", "atr_range"],
+  breakout_1h: ["ema_trend", "ema_slope", "pullback", "breakout", "supertrend", "ht_trend", "macd_momentum", "rsi_momentum", "volume_spike", "atr_range"],
   vpb_v2:      ["ema_alignment", "ema_slope", "ema_trend", "vol_ramp", "vol_spike", "body_strength", "close_near_high", "bullish_candle", "session"],
   vpb_v3:      ["daily_trend", "accum", "breakout", "vol_surge", "rsi", "h_ema_trend", "candle_quality", "session"],
   vpr:         ["vwap_bias", "vol_profile", "rsi_momentum", "bullish_candle", "session"],
   mtf:         ["st_trend", "ht_trend", "ht_reconfirm", "sma_trend", "ema_alignment", "rsi_filter", "bullish_candle"],
-  tpc:         ["w_st_trend"],
+  tpc:         ["w_st_trend", "ht_trend"],
 };
 
 // Backend only understands per-strategy conditions — filter to only send relevant keys

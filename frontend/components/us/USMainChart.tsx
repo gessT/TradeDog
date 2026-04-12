@@ -10,7 +10,6 @@ import {
   type IChartApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { halfTrend } from "../../utils/indicators";
 import { SGT_OFFSET_SEC, toSGT } from "../../utils/time";
 import type { US1HCandle, US1HTrade } from "../../services/api";
 
@@ -52,6 +51,10 @@ function aggregateCandles(
       macd_hist: last.macd_hist,
       st_dir: last.st_dir,
       st_line: last.st_line,
+      ht_line: last.ht_line,
+      ht_dir: last.ht_dir,
+      ht_high: last.ht_high,
+      ht_low: last.ht_low,
       signal: bars.some((b) => b.signal !== 0) ? 1 : 0,
     });
   }
@@ -97,6 +100,12 @@ export default function USMainChart({
 
   // Weekly SuperTrend overlay toggle
   const [wSuperTrendOn, setWSuperTrendOn] = useState(false);
+
+  // HalfTrend overlay toggle
+  const [htOn, setHtOn] = useState(false);
+
+  // EMA lines toggle
+  const [emaOn, setEmaOn] = useState(false);
 
   // Chart timeframe (bar size)
   type ChartTF = "1H" | "1D" | "1W";
@@ -164,75 +173,81 @@ export default function USMainChart({
     candleSeries.setData(cData);
 
     // ── Overlays ──
-    if (overlays.has("ema_fast")) {
-      const data = visibleCandles
+    if (emaOn) {
+      const emaFastData = visibleCandles
         .filter((c) => c.ema_fast != null)
         .map((c) => ({ time: toLocal(parseTS(c.time)), value: c.ema_fast! }));
-      if (data.length > 0) {
+      if (emaFastData.length > 0) {
         const s = chart.addSeries(LineSeries, {
           color: "#38bdf8",
           lineWidth: 1,
           lastValueVisible: false,
           priceLineVisible: false,
         });
-        s.setData(data);
+        s.setData(emaFastData);
       }
-    }
 
-    if (overlays.has("ema_slow")) {
-      const data = visibleCandles
+      const emaSlowData = visibleCandles
         .filter((c) => c.ema_slow != null)
         .map((c) => ({ time: toLocal(parseTS(c.time)), value: c.ema_slow! }));
-      if (data.length > 0) {
+      if (emaSlowData.length > 0) {
         const s = chart.addSeries(LineSeries, {
           color: "#a78bfa",
           lineWidth: 1,
           lastValueVisible: false,
           priceLineVisible: false,
         });
-        s.setData(data);
+        s.setData(emaSlowData);
       }
     }
 
-    if (overlays.has("halftrend")) {
-      const htInput = visibleCandles.map((c) => ({
-        time: parseTS(c.time) as UTCTimestamp,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      }));
-      const htPoints = halfTrend(htInput, 2);
-      const htUp: { time: UTCTimestamp; value: number }[] = [];
-      const htDn: { time: UTCTimestamp; value: number }[] = [];
-      for (let i = 0; i < htPoints.length && i < cData.length; i++) {
-        const pt = htPoints[i];
-        if (!pt) continue;
-        const d = { time: cData[i].time, value: pt.value };
-        if (pt.trend === 0) htUp.push(d);
-        else htDn.push(d);
+    if (htOn) {
+      // Single continuous line with per-point color (like TradingView HalfTrend)
+      const htData: { time: UTCTimestamp; value: number; color: string }[] = [];
+      const htHighData: { time: UTCTimestamp; value: number; color: string }[] = [];
+      const htLowData: { time: UTCTimestamp; value: number; color: string }[] = [];
+      for (let i = 0; i < visibleCandles.length; i++) {
+        const c = visibleCandles[i];
+        if (c.ht_line == null || c.ht_dir == null) continue;
+        const clr = c.ht_dir === 0 ? "#3b82f6" : "#ef4444";  // blue up, red down
+        htData.push({ time: cData[i].time, value: c.ht_line, color: clr });
+        if (c.ht_high != null) {
+          const bandClr = c.ht_dir === 0 ? "rgba(59,130,246,0.25)" : "rgba(239,68,68,0.25)";
+          htHighData.push({ time: cData[i].time, value: c.ht_high, color: bandClr });
+          htLowData.push({ time: cData[i].time, value: c.ht_low!, color: bandClr });
+        }
       }
-      if (htUp.length > 0) {
-        chart
-          .addSeries(LineSeries, {
-            color: "#10b981",
-            lineWidth: 2,
-            lastValueVisible: false,
-            priceLineVisible: false,
-            crosshairMarkerVisible: false,
-          })
-          .setData(htUp);
+      // Channel bands (upper/lower)
+      if (htHighData.length > 0) {
+        const htHighSeries = chart.addSeries(LineSeries, {
+          lineWidth: 1,
+          lineStyle: 2,  // dashed
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+          pointMarkersVisible: false,
+        });
+        htHighSeries.setData(htHighData);
+        const htLowSeries = chart.addSeries(LineSeries, {
+          lineWidth: 1,
+          lineStyle: 2,  // dashed
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+          pointMarkersVisible: false,
+        });
+        htLowSeries.setData(htLowData);
       }
-      if (htDn.length > 0) {
-        chart
-          .addSeries(LineSeries, {
-            color: "#ef4444",
-            lineWidth: 2,
-            lastValueVisible: false,
-            priceLineVisible: false,
-            crosshairMarkerVisible: false,
-          })
-          .setData(htDn);
+      // Main HT line
+      if (htData.length > 0) {
+        const htSeries = chart.addSeries(LineSeries, {
+          lineWidth: 2,
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+          pointMarkersVisible: false,
+        });
+        htSeries.setData(htData);
       }
     }
 
@@ -353,7 +368,7 @@ export default function USMainChart({
       ro.disconnect();
       chart.remove();
     };
-  }, [visibleCandles, trades, overlays, indicators, focusTime, markersOn, wSuperTrendOn, chartTF]);
+  }, [visibleCandles, trades, overlays, indicators, focusTime, markersOn, wSuperTrendOn, htOn, emaOn, chartTF]);
 
   // ── Replay controls ──
   useEffect(() => {
@@ -422,6 +437,34 @@ export default function USMainChart({
           }`}
         >
           {wSuperTrendOn ? "⚡ W.ST" : "⚡ W.ST"}
+        </button>
+        )}
+
+        {/* HalfTrend toggle — only show if candles have ht_line data */}
+        {candles.some((c) => c.ht_line != null) && (
+        <button
+          onClick={() => setHtOn((v) => !v)}
+          className={`text-[10px] px-2 py-0.5 rounded border transition font-medium ${
+            htOn
+              ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-400"
+              : "border-slate-700 text-slate-600 hover:text-slate-400 hover:border-slate-600"
+          }`}
+        >
+          {htOn ? "📈 HT" : "📈 HT"}
+        </button>
+        )}
+
+        {/* EMA lines toggle — only show if candles have ema data */}
+        {candles.some((c) => c.ema_fast != null) && (
+        <button
+          onClick={() => setEmaOn((v) => !v)}
+          className={`text-[10px] px-2 py-0.5 rounded border transition font-medium ${
+            emaOn
+              ? "border-blue-500/50 bg-blue-500/15 text-blue-400"
+              : "border-slate-700 text-slate-600 hover:text-slate-400 hover:border-slate-600"
+          }`}
+        >
+          {emaOn ? "📊 EMA" : "📊 EMA"}
         </button>
         )}
 

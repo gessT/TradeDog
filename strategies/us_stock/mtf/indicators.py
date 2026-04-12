@@ -105,15 +105,31 @@ def halftrend(
     amplitude: int = 5,
     channel_deviation: float = 2.0,
     atr_length: int = 100,
-) -> tuple[pd.Series, pd.Series]:
-    """Return (ht_line, ht_dir).  ht_dir: 0 = up, 1 = down."""
+) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
+    """Return (ht_line, ht_dir, ht_high, ht_low).
+    ht_dir: 0 = up, 1 = down.
+    ht_high/ht_low: channel bands (ht_line ± channel_deviation * atr/2).
+    """
     highs = high.values
     lows = low.values
     closes = close.values
     n = len(closes)
 
+    # Compute ATR(atr_length) for channel bands
+    prev_c = np.empty(n, dtype=np.float64)
+    prev_c[0] = closes[0]
+    prev_c[1:] = closes[:-1]
+    tr = np.maximum(highs - lows, np.maximum(np.abs(highs - prev_c), np.abs(lows - prev_c)))
+    atr_arr = np.full(n, np.nan, dtype=np.float64)
+    atr_arr[0] = tr[0]
+    alpha = 1.0 / atr_length
+    for i in range(1, n):
+        atr_arr[i] = alpha * tr[i] + (1 - alpha) * atr_arr[i - 1]
+
     trend_arr = np.zeros(n, dtype=np.int8)
     ht_arr = np.full(n, np.nan, dtype=np.float64)
+    ht_high_arr = np.full(n, np.nan, dtype=np.float64)
+    ht_low_arr = np.full(n, np.nan, dtype=np.float64)
 
     next_trend = 0
     max_low = lows[0]
@@ -147,20 +163,29 @@ def halftrend(
 
         trend_arr[i] = cur_trend
 
+        atr2 = atr_arr[i] / 2.0 if not np.isnan(atr_arr[i]) else 0.0
+        dev = channel_deviation * atr2
+
         if cur_trend == 0:  # uptrend
             if trend_arr[i - 1] != 0:
                 up_val = down_val if not math.isnan(down_val) else max_low
             else:
                 up_val = max(max_low, up_val)
             ht_arr[i] = up_val
+            ht_high_arr[i] = up_val + dev
+            ht_low_arr[i] = up_val - dev
         else:  # downtrend
             if trend_arr[i - 1] != 1:
                 down_val = up_val if not math.isnan(up_val) else min_high
             else:
                 down_val = min(min_high, down_val)
             ht_arr[i] = down_val
+            ht_high_arr[i] = down_val + dev
+            ht_low_arr[i] = down_val - dev
 
     return (
         pd.Series(ht_arr, index=close.index, name="ht_line"),
         pd.Series(trend_arr, index=close.index, name="ht_dir"),
+        pd.Series(ht_high_arr, index=close.index, name="ht_high"),
+        pd.Series(ht_low_arr, index=close.index, name="ht_low"),
     )

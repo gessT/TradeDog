@@ -10,6 +10,7 @@ import pandas as pd
 
 from strategies.futures import indicators as ind
 from strategies.us_stock import indicators_1h as ind1h
+from strategies.us_stock.mtf.indicators import halftrend as compute_halftrend
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -59,6 +60,10 @@ DEFAULT_1H_PARAMS: dict = {
     "htf_ema_period": 999,
     # Cooldown
     "cooldown_bars": 0,
+    # HalfTrend
+    "ht_amplitude": 5,
+    "ht_channel_deviation": 2.0,
+    "ht_price_gap": 10.0,
 }
 
 
@@ -139,6 +144,32 @@ class USStrategy1H:
 
         return df
 
+    def compute_daily_ht(self, df_daily: pd.DataFrame) -> pd.DataFrame:
+        """Compute HalfTrend on daily bars (matches TradingView)."""
+        p = self.p
+        df_daily = df_daily.copy()
+        ht_line, ht_dir, ht_high, ht_low = compute_halftrend(
+            df_daily["high"], df_daily["low"], df_daily["close"],
+            amplitude=p["ht_amplitude"],
+            channel_deviation=p["ht_channel_deviation"],
+            atr_length=100,
+        )
+        df_daily["ht_line"] = ht_line
+        df_daily["ht_dir"] = ht_dir
+        df_daily["ht_high"] = ht_high
+        df_daily["ht_low"] = ht_low
+        return df_daily
+
+    @staticmethod
+    def merge_daily_ht(df: pd.DataFrame, df_daily: pd.DataFrame) -> pd.DataFrame:
+        """Forward-fill daily HalfTrend into 1H bars."""
+        daily_cols = ["ht_line", "ht_dir", "ht_high", "ht_low"]
+        available = [c for c in daily_cols if c in df_daily.columns]
+        daily_reindexed = df_daily[available].reindex(df.index, method="ffill")
+        for col in available:
+            df[col] = daily_reindexed[col]
+        return df
+
     def generate_signals(self, df: pd.DataFrame, disabled: set[str] | None = None) -> pd.Series:
         """Generate entry signals: +1 = CALL, -1 = PUT, 0 = no signal."""
         p = self.p
@@ -170,6 +201,10 @@ class USStrategy1H:
             call_entry_parts.append(df["breakout"] == 1)
         call_entry = _or_group(call_entry_parts)
         call_st = _true if "supertrend" in off else (df["st_dir"] == 1)
+        ht_gap = p.get("ht_price_gap", 10.0)
+        call_ht = _true if "ht_trend" in off else (
+            (df["ht_dir"] == 0) & ((df["close"] - df["ht_line"]).abs() <= ht_gap)
+        )  # 0 = bullish + within price gap
         call_mom_parts: list = []
         if "macd_momentum" not in off:
             call_mom_parts.append(df["macd_mom"] == 1)
@@ -178,7 +213,7 @@ class USStrategy1H:
         call_mom = _or_group(call_mom_parts)
         htf_ema_period = p.get("htf_ema_period", 999)
         call_htf = df["htf_trend"] == 1 if htf_ema_period < 500 else True
-        call_signal = call_trend & call_slope & call_entry & call_st & call_mom & filters
+        call_signal = call_trend & call_slope & call_entry & call_st & call_ht & call_mom & filters
         if htf_ema_period < 500:
             call_signal = call_signal & call_htf
 
@@ -192,13 +227,16 @@ class USStrategy1H:
             put_entry_parts.append(df["breakout_low"] == 1)
         put_entry = _or_group(put_entry_parts)
         put_st = _true if "supertrend" in off else (df["st_dir"] == -1)
+        put_ht = _true if "ht_trend" in off else (
+            (df["ht_dir"] == 1) & ((df["close"] - df["ht_line"]).abs() <= ht_gap)
+        )  # 1 = bearish + within price gap
         put_mom_parts: list = []
         if "macd_momentum" not in off:
             put_mom_parts.append(df["macd_mom_bear"] == 1)
         if "rsi_momentum" not in off:
             put_mom_parts.append(df["rsi_falling"] == 1)
         put_mom = _or_group(put_mom_parts)
-        put_signal = put_trend & put_slope & put_entry & put_st & put_mom & filters
+        put_signal = put_trend & put_slope & put_entry & put_st & put_ht & put_mom & filters
 
         # Combine
         signal = pd.Series(0, index=df.index, dtype=int)

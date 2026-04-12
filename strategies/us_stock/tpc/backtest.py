@@ -104,23 +104,27 @@ class TPCBacktester:
         full_params = {**DEFAULT_TPC_PARAMS, **(params or {})}
         strategy = TPCStrategy(full_params)
 
-        # ── Load data (only weekly + 1H needed) ──
+        # ── Load data (weekly + daily + 1H needed) ──
         if df_weekly is None:
             df_weekly = load_yfinance(symbol, interval="1wk", period="5y")
+        if df_daily is None:
+            df_daily = load_yfinance(symbol, interval="1d", period="2y")
         if df_1h is None:
             df_1h = load_yfinance(symbol, interval="1h", period="730d")
 
         logger.info(
-            "Weekly: %d bars, 1H: %d bars",
-            len(df_weekly), len(df_1h),
+            "Weekly: %d bars, Daily: %d bars, 1H: %d bars",
+            len(df_weekly), len(df_daily), len(df_1h),
         )
 
         # ── Compute indicators ──
         df_weekly = strategy.compute_weekly(df_weekly.copy())
+        df_daily = strategy.compute_daily(df_daily[["open", "high", "low", "close", "volume"]].copy())
         df_1h = strategy.compute_1h(df_1h.copy())
 
-        # Merge weekly → 1H directly (skip daily)
+        # Merge weekly + daily → 1H
         df_1h = strategy.merge_weekly_into_1h(df_1h, df_weekly)
+        df_1h = strategy.merge_daily_into_1h(df_1h, df_daily)
 
         # ── Generate signals ──
         signals = strategy.generate_signals(df_1h, disabled=disabled_conditions)

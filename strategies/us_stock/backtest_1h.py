@@ -97,6 +97,17 @@ class Backtester1H:
         df_ind = strategy.compute_indicators(
             df[["open", "high", "low", "close", "volume"]].copy()
         )
+
+        # Compute daily HalfTrend and merge into 1H bars
+        from strategies.futures.data_loader import load_yfinance as _load_yf
+        # Aggregate 1H→daily for HT computation
+        df_daily_agg = df[["open", "high", "low", "close", "volume"]].resample("1D").agg(
+            {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+        ).dropna()
+        if len(df_daily_agg) > 10:
+            df_daily_ht = strategy.compute_daily_ht(df_daily_agg)
+            df_ind = strategy.merge_daily_ht(df_ind, df_daily_ht)
+
         signals = strategy.generate_signals(df_ind, disabled=disabled_conditions)
 
         if oos_split > 0:

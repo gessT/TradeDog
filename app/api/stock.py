@@ -1510,6 +1510,10 @@ class US1HCandle(BaseModel):
     macd_hist: _Opt[float] = None
     st_dir: _Opt[int] = None
     st_line: _Opt[float] = None
+    ht_line: _Opt[float] = None
+    ht_dir: _Opt[int] = None
+    ht_high: _Opt[float] = None
+    ht_low: _Opt[float] = None
     signal: int = 0
 
 
@@ -1795,7 +1799,7 @@ async def us_stock_backtest_1h(
     _disabled: set[str] = set()
     if disabled_conditions:
         _valid = {"ema_trend", "ema_slope", "pullback", "breakout", "supertrend",
-                  "macd_momentum", "rsi_momentum", "volume_spike", "atr_range", "session_ok", "adx_ok"}
+                  "macd_momentum", "rsi_momentum", "volume_spike", "atr_range", "session_ok", "adx_ok", "ht_trend"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
 
     def _run():
@@ -1872,6 +1876,13 @@ async def us_stock_backtest_1h(
         df_ind = strategy.compute_indicators(
             df[["open", "high", "low", "close", "volume"]].copy()
         )
+
+        # Compute daily HalfTrend and merge into 1H bars
+        df_daily = load_yfinance(symbol=symbol, interval="1d", period="2y")
+        if not df_daily.empty:
+            df_daily_ht = strategy.compute_daily_ht(df_daily[["open", "high", "low", "close", "volume"]].copy())
+            df_ind = strategy.merge_daily_ht(df_ind, df_daily_ht)
+
         signals = strategy.generate_signals(df_ind)
         if display_start:
             ts = pd.Timestamp(display_start, tz=df_ind.index.tz)
@@ -1893,6 +1904,10 @@ async def us_stock_backtest_1h(
                 rsi=round(float(row["rsi"]), 1) if not _isnan(row.get("rsi")) else None,
                 macd_hist=round(float(row["macd_hist"]), 4) if not _isnan(row.get("macd_hist")) else None,
                 st_dir=int(row["st_dir"]) if not _isnan(row.get("st_dir")) else None,
+                ht_line=round(float(row["ht_line"]), 2) if not _isnan(row.get("ht_line")) else None,
+                ht_dir=int(row["ht_dir"]) if not _isnan(row.get("ht_dir")) else None,
+                ht_high=round(float(row["ht_high"]), 2) if not _isnan(row.get("ht_high")) else None,
+                ht_low=round(float(row["ht_low"]), 2) if not _isnan(row.get("ht_low")) else None,
                 signal=int(row.get("signal", 0)),
             ))
 
@@ -2533,7 +2548,7 @@ async def us_stock_backtest_tpc(
 
     _disabled: set[str] = set()
     if disabled_conditions:
-        _valid = {"w_st_trend"}
+        _valid = {"w_st_trend", "ht_trend"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
 
     def _run():
@@ -2542,8 +2557,9 @@ async def us_stock_backtest_tpc(
         from strategies.us_stock.tpc.strategy import TPCStrategy
         from strategies.us_stock.tpc.config import DEFAULT_TPC_PARAMS, RISK_PER_TRADE as TPC_RISK
 
-        # Load weekly + 1H only (no daily needed)
+        # Load weekly + daily + 1H data
         df_weekly = load_yfinance(symbol=symbol, interval="1wk", period="5y")
+        df_daily = load_yfinance(symbol=symbol, interval="1d", period="2y")
         df_1h = load_yfinance(symbol=symbol, interval="1h", period=period)
 
         if df_1h.empty or len(df_1h) < 50:
@@ -2571,14 +2587,16 @@ async def us_stock_backtest_tpc(
             symbol=symbol, period=period,
             params=param_overrides,
             disabled_conditions=_disabled or None,
-            df_weekly=df_weekly, df_1h=df_1h,
+            df_weekly=df_weekly, df_daily=df_daily, df_1h=df_1h,
         )
 
         # Build candles with indicators for chart
         strategy = TPCStrategy(full_params)
         df_w = strategy.compute_weekly(df_weekly[["open", "high", "low", "close", "volume"]].copy())
+        df_d = strategy.compute_daily(df_daily[["open", "high", "low", "close", "volume"]].copy())
         df_h = strategy.compute_1h(df_1h[["open", "high", "low", "close", "volume"]].copy())
         df_h = strategy.merge_weekly_into_1h(df_h, df_w)
+        df_h = strategy.merge_daily_into_1h(df_h, df_d)
         signals = strategy.generate_signals(df_h, disabled=_disabled or None)
 
         display_start: _Opt[str] = None
@@ -2612,6 +2630,10 @@ async def us_stock_backtest_tpc(
                 macd_hist=None,
                 st_dir=int(row["w_st_dir"]) if not _isnan(row.get("w_st_dir")) else None,
                 st_line=round(float(row["w_st_line"]), 2) if not _isnan(row.get("w_st_line")) else None,
+                ht_line=round(float(row["ht_line"]), 2) if not _isnan(row.get("ht_line")) else None,
+                ht_dir=int(row["ht_dir"]) if not _isnan(row.get("ht_dir")) else None,
+                ht_high=round(float(row["ht_high"]), 2) if not _isnan(row.get("ht_high")) else None,
+                ht_low=round(float(row["ht_low"]), 2) if not _isnan(row.get("ht_low")) else None,
                 signal=int(row.get("signal", 0)),
             ))
 

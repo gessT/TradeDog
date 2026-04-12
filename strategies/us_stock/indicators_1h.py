@@ -21,3 +21,4 @@ from strategies.futures.indicators_5min import (           # noqa: F401
 
 # Re-export everything so callers can import from here
 from strategies.futures.indicators_5min import adx, higher_tf_trend, market_structure  # noqa: F401
+from strategies.us_stock.mtf.indicators import halftrend  # noqa: F401
