@@ -546,16 +546,29 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                     {active && (
                       <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-blue-400 border-2 border-slate-950 shadow" />
                     )}
-                    {/* Clone button */}
-                    <span
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditing({ ...p, id: undefined, name: p.name + " Copy" });
-                      }}
-                      className="absolute bottom-1 right-1.5 text-[7px] text-slate-700 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition cursor-pointer"
-                    >
-                      Clone
-                    </span>}
+                    {/* Clone + Edit buttons */}
+                    <div className="absolute bottom-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+                      <span
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditing({ ...p });
+                          showToast(`Editing "${p.name}"`);
+                        }}
+                        className="text-[7px] px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700/40 text-slate-400 hover:text-blue-400 hover:border-blue-500/40 cursor-pointer transition"
+                      >
+                        ✏ Edit
+                      </span>
+                      <span
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditing({ ...p, id: undefined, name: p.name + " Copy" });
+                          showToast(`Cloned "${p.name}" → edit & save`);
+                        }}
+                        className="text-[7px] px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700/40 text-slate-400 hover:text-blue-400 hover:border-blue-500/40 cursor-pointer transition"
+                      >
+                        ⧉ Clone
+                      </span>
+                    </div>
                   </button>
                 );
               })}
@@ -568,6 +581,28 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
 
         {/* ── Editor ── */}
         <div className="px-2.5 pt-2 pb-3 space-y-2.5">
+          {/* Edit mode indicator */}
+          {editing.id ? (
+            <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
+              <span className="text-[9px] font-bold text-blue-400">✏ Editing</span>
+              <span className="text-[9px] text-blue-300/70 truncate">{editing.name}</span>
+              <div className="flex-1" />
+              <span
+                onClick={() => { setEditing({ ...EMPTY_PRESET }); showToast("Cleared editor"); }}
+                className="text-[8px] text-slate-500 hover:text-rose-400 cursor-pointer transition"
+              >✕ Clear</span>
+            </div>
+          ) : editing.name.trim() ? (
+            <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+              <span className="text-[9px] font-bold text-emerald-400">+ New Strategy</span>
+              <span className="text-[9px] text-emerald-300/70 truncate">{editing.name}</span>
+              <div className="flex-1" />
+              <span
+                onClick={() => { setEditing({ ...EMPTY_PRESET }); showToast("Cleared editor"); }}
+                className="text-[8px] text-slate-500 hover:text-rose-400 cursor-pointer transition"
+              >✕ Clear</span>
+            </div>
+          ) : null}
           {/* Name + Save row */}
           <div className="flex gap-1.5">
             <input
@@ -577,12 +612,27 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
               placeholder="Name to create custom strategy…"
               className="flex-1 px-2.5 py-1.5 text-[11px] bg-slate-800/50 border border-slate-700/50 rounded-lg text-slate-200 placeholder-slate-600 outline-none focus:border-blue-500/50 transition"
             />
+            {editing.id && (
+              <button
+                onClick={() => {
+                  setEditing((p) => ({ ...p, id: undefined, name: p.name ? p.name + " Copy" : "" }));
+                  showToast("Cloned — rename & save as new");
+                }}
+                className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold bg-slate-700/80 hover:bg-slate-600 text-slate-300 border border-slate-600/50 transition shrink-0"
+              >
+                ⧉ Clone
+              </button>
+            )}
             <button
               onClick={handleSave}
               disabled={!editing.name.trim() || saving}
-              className="px-3 py-1.5 rounded-lg text-[10px] font-bold bg-emerald-500/80 hover:bg-emerald-500 text-white transition disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition disabled:opacity-30 disabled:cursor-not-allowed shrink-0 ${
+                editing.id
+                  ? "bg-blue-500/80 hover:bg-blue-500 text-white"
+                  : "bg-emerald-500/80 hover:bg-emerald-500 text-white"
+              }`}
             >
-              {saving ? "…" : "Save"}
+              {saving ? "…" : editing.id ? "Update" : "Save"}
             </button>
           </div>
 
