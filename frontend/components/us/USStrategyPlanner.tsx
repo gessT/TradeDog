@@ -1,20 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { fetchUS1HBacktest, fetchVPBBacktest, fetchVPRBacktest } from "../../services/api";
+import { fetchUS1HBacktest, fetchVPBBacktest, fetchVPRBacktest, fetchMTFBacktest } from "../../services/api";
 import { US_DEFAULT_SYMBOLS } from "../../constants/usStocks";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Strategy Planner — Modern unified view
 // ═══════════════════════════════════════════════════════════════════════
 
-type StrategyType = "breakout_1h" | "vpb_v2" | "vpb_v3" | "vpr";
+type StrategyType = "breakout_1h" | "vpb_v2" | "vpb_v3" | "vpr" | "mtf";
 
 const STRATEGY_TYPES: { key: StrategyType; label: string; desc: string }[] = [
   { key: "breakout_1h", label: "Breakout 1H", desc: "EMA/MACD/RSI breakout" },
   { key: "vpb_v2", label: "VPB v2", desc: "High WR two-step retest" },
   { key: "vpb_v3", label: "VPB v3 量价", desc: "Multi-TF volume-price" },
   { key: "vpr", label: "VPR", desc: "VWAP+VolProfile+RSI" },
+  { key: "mtf", label: "MTF", desc: "Daily ST+HT → 4H entry" },
 ];
 
 const CONDITIONS_BREAKOUT = [
@@ -60,10 +61,21 @@ const CONDITIONS_VPR = [
   { key: "session", label: "Session Filter", icon: "🕐", desc: "Skip off-hours" },
 ] as const;
 
+const CONDITIONS_MTF = [
+  { key: "st_trend", label: "SuperTrend", icon: "⚡", desc: "Daily ST bullish" },
+  { key: "ht_trend", label: "HalfTrend", icon: "📈", desc: "Daily HT uptrend" },
+  { key: "ht_reconfirm", label: "HT Re-confirm", icon: "🔄", desc: "After HT flips back up, wait for daily bullish candle" },
+  { key: "sma_trend", label: "SMA Filter", icon: "📊", desc: "Daily close > SMA50" },
+  { key: "ema_alignment", label: "EMA Align", icon: "📀", desc: "4H EMA9 > EMA21" },
+  { key: "rsi_filter", label: "RSI Filter", icon: "🎯", desc: "4H RSI 40–70" },
+  { key: "bullish_candle", label: "Bullish Candle", icon: "🟢", desc: "4H close > open" },
+] as const;
+
 function getConditionsForType(t: StrategyType) {
   if (t === "breakout_1h") return CONDITIONS_BREAKOUT;
   if (t === "vpb_v3") return CONDITIONS_VPB3;
   if (t === "vpr") return CONDITIONS_VPR;
+  if (t === "mtf") return CONDITIONS_MTF;
   return CONDITIONS_VPB;
 }
 
@@ -106,16 +118,17 @@ type Props = {
   activePreset: StrategyPreset | null;
   onApply: (preset: StrategyPreset) => void;
   onPresetsChanged: (presets: StrategyPreset[]) => void;
+  onTagSaved?: () => void;
 };
 
-export default function USStrategyPlanner({ activePreset, onApply, onPresetsChanged }: Props) {
+export default function USStrategyPlanner({ activePreset, onApply, onPresetsChanged, onTagSaved }: Props) {
   const [presets, setPresets] = useState<StrategyPreset[]>([]);
   const [editing, setEditing] = useState<StrategyPreset>({ ...EMPTY_PRESET });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   // ── Compare stocks state ────────────────────────────
-  type CompareRow = { symbol: string; win_rate: number; total_trades: number; return_pct: number; profit_factor: number; max_dd: number; sharpe: number; status: "pending" | "done" | "error" };
+  type CompareRow = { symbol: string; win_rate: number; total_trades: number; return_pct: number; profit_factor: number; max_dd: number; sharpe: number; status: "pending" | "done" | "error"; saved?: boolean };
   const [compareOpen, setCompareOpen] = useState(false);
   const [comparing, setComparing] = useState(false);
   const [compareRows, setCompareRows] = useState<CompareRow[]>([]);
@@ -150,6 +163,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
       // Reset params to defaults per strategy type
       ...(t === "vpb_v2" ? { atr_sl_mult: 1.0, atr_tp_mult: 1.0, period: "2y" } :
           t === "vpr" ? { atr_sl_mult: 1.3, atr_tp_mult: 1.8, period: "2y" } :
+          t === "mtf" ? { atr_sl_mult: 2.0, atr_tp_mult: 3.0, period: "2y" } :
           { atr_sl_mult: 3.0, atr_tp_mult: 2.5 }),
     }));
   };
@@ -204,7 +218,14 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
     const promises = symbols.map(async (sym, idx) => {
       try {
         let data;
-        if (stratType === "vpr") {
+        if (stratType === "mtf") {
+          data = await fetchMTFBacktest(
+            sym, editing.period,
+            disabledConditions.length > 0 ? disabledConditions : undefined,
+            { atr_sl_mult: editing.atr_sl_mult, tp2_r_mult: editing.atr_tp_mult },
+            editing.capital,
+          );
+        } else if (stratType === "vpr") {
           data = await fetchVPRBacktest(
             sym, editing.period,
             disabledConditions.length > 0 ? disabledConditions : undefined,
@@ -255,6 +276,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
   const totalConditions = currentConditions.length;
   const isVPB = (editing.strategy_type ?? "breakout_1h") !== "breakout_1h";
   const isVPR = editing.strategy_type === "vpr";
+  const isMTF = editing.strategy_type === "mtf";
   const isModified = activePreset && (
     JSON.stringify(editing.conditions) !== JSON.stringify(activePreset.conditions) ||
     editing.strategy_type !== activePreset.strategy_type
@@ -305,12 +327,14 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                     </div>
                     <div className="flex items-center gap-1 mt-0.5">
                       <span className={`text-[7px] px-1 py-0.5 rounded font-bold uppercase tracking-wider ${
+                        (p as StrategyPreset).strategy_type === "mtf" ? "bg-amber-500/20 text-amber-300" :
                         (p as StrategyPreset).strategy_type === "vpr" ? "bg-cyan-500/20 text-cyan-300" :
                         (p as StrategyPreset).strategy_type === "vpb_v3" ? "bg-emerald-500/20 text-emerald-300" :
                         (p as StrategyPreset).strategy_type === "vpb_v2" ? "bg-purple-500/20 text-purple-300" :
                         "bg-blue-500/20 text-blue-300"
                       }`}>
-                        {(p as StrategyPreset).strategy_type === "vpr" ? "VPR" :
+                        {(p as StrategyPreset).strategy_type === "mtf" ? "MTF" :
+                         (p as StrategyPreset).strategy_type === "vpr" ? "VPR" :
                          (p as StrategyPreset).strategy_type === "vpb_v3" ? "VPB v3 量价" :
                          (p as StrategyPreset).strategy_type === "vpb_v2" ? "VPB v2" : "1H"}
                       </span>
@@ -401,7 +425,8 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                     onClick={() => handleStrategyTypeChange(st.key)}
                     className={`flex-1 px-2 py-1.5 rounded-lg border text-center transition-all ${
                       active
-                        ? st.key === "vpr" ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300" :
+                        ? st.key === "mtf" ? "border-amber-500/50 bg-amber-500/10 text-amber-300" :
+                          st.key === "vpr" ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300" :
                           st.key === "vpb_v3" ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300" :
                           st.key === "vpb_v2" ? "border-purple-500/50 bg-purple-500/10 text-purple-300" :
                           "border-blue-500/50 bg-blue-500/10 text-blue-300"
@@ -473,7 +498,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
             </div>
             <div className="bg-slate-900/40 rounded-lg p-2 border border-slate-800/30">
               <div className="text-[7px] text-slate-600 uppercase tracking-wider mb-0.5">
-                {isVPR ? "SL ATR×" : isVPB ? "Min SL" : "Stop Loss"}
+                {isMTF ? "SL ATR×" : isVPR ? "SL ATR×" : isVPB ? "Min SL" : "Stop Loss"}
               </div>
               <div className="flex items-baseline gap-0.5">
                 <input
@@ -488,7 +513,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
             </div>
             <div className="bg-slate-900/40 rounded-lg p-2 border border-slate-800/30">
               <div className="text-[7px] text-slate-600 uppercase tracking-wider mb-0.5">
-                {isVPR ? "TP2 R-mult" : isVPB ? "TP R-mult" : "Take Profit"}
+                {isMTF ? "TP2 R-mult" : isVPR ? "TP2 R-mult" : isVPB ? "TP R-mult" : "Take Profit"}
               </div>
               <div className="flex items-baseline gap-0.5">
                 <input
@@ -547,80 +572,285 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
         </div>
       </div>
 
-      {/* ═══ COMPARE DIALOG ═══ */}
+      {/* ═══ COMPARE DIALOG — MODERN FULL-WIDTH ═══ */}
       {compareOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => !comparing && setCompareOpen(false)}>
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-[90vw] max-w-[640px] max-h-[80vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800">
-              <div>
-                <h2 className="text-sm font-bold text-white">Strategy Comparison</h2>
-                <p className="text-[10px] text-slate-500 mt-0.5">
-                  {STRATEGY_TYPES.find((s) => s.key === editing.strategy_type)?.label ?? editing.strategy_type} · {editing.period} · ${editing.capital.toLocaleString()}
-                </p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md" onClick={() => !comparing && setCompareOpen(false)}>
+          <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-700/60 rounded-3xl shadow-2xl shadow-black/50 w-[95vw] max-w-[900px] max-h-[88vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            {/* ── Header ── */}
+            <div className="px-6 py-4 border-b border-slate-800/60 bg-gradient-to-r from-slate-900 to-slate-900/80">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg font-black ${
+                    editing.strategy_type === "mtf" ? "bg-amber-500/20 text-amber-400" :
+                    editing.strategy_type === "vpr" ? "bg-cyan-500/20 text-cyan-400" :
+                    editing.strategy_type === "vpb_v3" ? "bg-emerald-500/20 text-emerald-400" :
+                    editing.strategy_type === "vpb_v2" ? "bg-purple-500/20 text-purple-400" :
+                    "bg-blue-500/20 text-blue-400"
+                  }`}>
+                    {editing.strategy_type === "mtf" ? "⚡" :
+                     editing.strategy_type === "vpr" ? "📊" :
+                     editing.strategy_type === "vpb_v3" ? "量" :
+                     editing.strategy_type === "vpb_v2" ? "V2" : "🚀"}
+                  </div>
+                  <div>
+                    <h2 className="text-base font-black text-white tracking-tight">Compare 10 Stocks</h2>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                        editing.strategy_type === "mtf" ? "bg-amber-500/20 text-amber-300" :
+                        editing.strategy_type === "vpr" ? "bg-cyan-500/20 text-cyan-300" :
+                        editing.strategy_type === "vpb_v3" ? "bg-emerald-500/20 text-emerald-300" :
+                        editing.strategy_type === "vpb_v2" ? "bg-purple-500/20 text-purple-300" :
+                        "bg-blue-500/20 text-blue-300"
+                      }`}>
+                        {STRATEGY_TYPES.find((s) => s.key === editing.strategy_type)?.label ?? editing.strategy_type}
+                      </span>
+                      <span className="text-[10px] text-slate-500">{editing.period}</span>
+                      <span className="text-[10px] text-slate-600">·</span>
+                      <span className="text-[10px] text-slate-500">${editing.capital.toLocaleString()}</span>
+                      <span className="text-[10px] text-slate-600">·</span>
+                      <span className="text-[10px] text-slate-500">SL {editing.atr_sl_mult}× / TP {editing.atr_tp_mult}×</span>
+                    </div>
+                  </div>
+                </div>
+                <button onClick={() => !comparing && setCompareOpen(false)} className="w-8 h-8 rounded-lg bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition text-sm">✕</button>
               </div>
-              <button onClick={() => !comparing && setCompareOpen(false)} className="text-slate-500 hover:text-white text-lg leading-none">✕</button>
+
+              {/* ── Summary Stats (after all loaded) ── */}
+              {!comparing && compareRows.filter((r) => r.status === "done").length > 0 && (() => {
+                const done = compareRows.filter((r) => r.status === "done");
+                const avgWR = done.reduce((s, r) => s + r.win_rate, 0) / done.length;
+                const avgReturn = done.reduce((s, r) => s + r.return_pct, 0) / done.length;
+                const bestStock = done.reduce((best, r) => r.return_pct > best.return_pct ? r : best, done[0]);
+                const profitable = done.filter((r) => r.return_pct > 0).length;
+                return (
+                  <div className="grid grid-cols-4 gap-3 mt-3">
+                    <div className="bg-slate-800/40 rounded-xl px-3 py-2 border border-slate-700/30">
+                      <div className="text-[8px] text-slate-500 uppercase tracking-wider">Avg Win Rate</div>
+                      <div className={`text-lg font-black tabular-nums ${avgWR >= 50 ? "text-emerald-400" : "text-amber-400"}`}>{avgWR.toFixed(1)}%</div>
+                    </div>
+                    <div className="bg-slate-800/40 rounded-xl px-3 py-2 border border-slate-700/30">
+                      <div className="text-[8px] text-slate-500 uppercase tracking-wider">Avg Return</div>
+                      <div className={`text-lg font-black tabular-nums ${avgReturn >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{avgReturn >= 0 ? "+" : ""}{avgReturn.toFixed(1)}%</div>
+                    </div>
+                    <div className="bg-slate-800/40 rounded-xl px-3 py-2 border border-slate-700/30">
+                      <div className="text-[8px] text-slate-500 uppercase tracking-wider">Best Stock</div>
+                      <div className="text-lg font-black text-white">{bestStock.symbol}</div>
+                      <div className="text-[9px] text-emerald-400/80">+{bestStock.return_pct.toFixed(1)}%</div>
+                    </div>
+                    <div className="bg-slate-800/40 rounded-xl px-3 py-2 border border-slate-700/30">
+                      <div className="text-[8px] text-slate-500 uppercase tracking-wider">Profitable</div>
+                      <div className="text-lg font-black text-white">{profitable}<span className="text-sm text-slate-500">/{done.length}</span></div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
-            {/* Table */}
-            <div className="overflow-auto max-h-[60vh]">
-              <table className="w-full text-[11px]">
-                <thead className="sticky top-0 bg-slate-900 border-b border-slate-800">
-                  <tr className="text-slate-500 uppercase tracking-wider">
-                    <th className="text-left pl-5 py-2 font-semibold">Stock</th>
-                    <th className="text-right px-2 py-2 font-semibold">Win Rate</th>
-                    <th className="text-right px-2 py-2 font-semibold">Trades</th>
-                    <th className="text-right px-2 py-2 font-semibold">Return</th>
-                    <th className="text-right px-2 py-2 font-semibold">PF</th>
-                    <th className="text-right px-2 py-2 font-semibold">DD</th>
-                    <th className="text-right pr-5 py-2 font-semibold">Sharpe</th>
+            {/* ── Table ── */}
+            <div className="overflow-auto max-h-[55vh]">
+              <table className="w-full">
+                <thead className="sticky top-0 bg-slate-900/95 backdrop-blur-sm z-10">
+                  <tr className="text-[9px] text-slate-500 uppercase tracking-wider border-b border-slate-800/60">
+                    <th className="text-left pl-6 py-2.5 font-bold w-8">#</th>
+                    <th className="text-left py-2.5 font-bold">Stock</th>
+                    <th className="text-right px-3 py-2.5 font-bold">Win Rate</th>
+                    <th className="text-right px-3 py-2.5 font-bold">Trades</th>
+                    <th className="text-right px-3 py-2.5 font-bold">Return</th>
+                    <th className="text-right px-3 py-2.5 font-bold">P.Factor</th>
+                    <th className="text-right px-3 py-2.5 font-bold">Max DD</th>
+                    <th className="text-right px-3 py-2.5 font-bold">Sharpe</th>
+                    <th className="text-center px-3 py-2.5 font-bold">Grade</th>
+                    <th className="text-center px-3 pr-6 py-2.5 font-bold w-20">Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {[...compareRows].sort((a, b) => b.win_rate - a.win_rate).map((row) => (
-                    <tr key={row.symbol} className="border-b border-slate-800/40 hover:bg-slate-800/30 transition">
-                      <td className="pl-5 py-2 font-bold text-white">{row.symbol}</td>
-                      {row.status === "pending" ? (
-                        <td colSpan={6} className="text-center text-slate-600 py-2">
-                          <span className="animate-pulse">loading…</span>
+                  {[...compareRows].sort((a, b) => {
+                    if (a.status !== "done" && b.status === "done") return 1;
+                    if (a.status === "done" && b.status !== "done") return -1;
+                    // Score-based sort: WR*0.3 + Return*0.25 + PF*0.2 + Sharpe*0.15 - DD*0.1
+                    const scoreA = a.win_rate * 0.3 + a.return_pct * 0.25 + a.profit_factor * 20 + a.sharpe * 15 - Math.abs(a.max_dd) * 0.1;
+                    const scoreB = b.win_rate * 0.3 + b.return_pct * 0.25 + b.profit_factor * 20 + b.sharpe * 15 - Math.abs(b.max_dd) * 0.1;
+                    return scoreB - scoreA;
+                  }).map((row, idx) => {
+                    // Grade calculation
+                    const score = row.status === "done"
+                      ? (row.win_rate >= 55 ? 2 : row.win_rate >= 45 ? 1 : 0)
+                        + (row.return_pct > 10 ? 2 : row.return_pct > 0 ? 1 : 0)
+                        + (row.profit_factor >= 1.5 ? 2 : row.profit_factor >= 1.0 ? 1 : 0)
+                        + (row.sharpe >= 1.0 ? 2 : row.sharpe >= 0.5 ? 1 : 0)
+                        + (Math.abs(row.max_dd) < 10 ? 1 : 0)
+                      : 0;
+                    const grade = score >= 8 ? "A+" : score >= 7 ? "A" : score >= 5 ? "B" : score >= 3 ? "C" : "D";
+                    const gradeColor = grade.startsWith("A") ? "text-emerald-400 bg-emerald-500/15 border-emerald-500/30" :
+                      grade === "B" ? "text-blue-400 bg-blue-500/15 border-blue-500/30" :
+                      grade === "C" ? "text-amber-400 bg-amber-500/15 border-amber-500/30" :
+                      "text-rose-400 bg-rose-500/15 border-rose-500/30";
+
+                    return (
+                      <tr key={row.symbol} className={`border-b border-slate-800/30 transition-colors ${
+                        row.status === "done" && idx === 0 ? "bg-gradient-to-r from-emerald-500/5 to-transparent" :
+                        "hover:bg-slate-800/20"
+                      }`}>
+                        {/* Rank */}
+                        <td className="pl-6 py-3">
+                          {row.status === "done" ? (
+                            <span className={`text-[11px] font-black tabular-nums ${
+                              idx === 0 ? "text-amber-400" : idx === 1 ? "text-slate-300" : idx === 2 ? "text-amber-600" : "text-slate-600"
+                            }`}>
+                              {idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `${idx + 1}`}
+                            </span>
+                          ) : <span className="text-slate-700 text-[11px]">—</span>}
                         </td>
-                      ) : row.status === "error" ? (
-                        <td colSpan={6} className="text-center text-red-400/70 py-2">failed</td>
-                      ) : (
-                        <>
-                          <td className={`text-right px-2 py-2 font-bold ${row.win_rate >= 60 ? "text-emerald-400" : row.win_rate >= 50 ? "text-yellow-400" : "text-red-400"}`}>
-                            {row.win_rate.toFixed(1)}%
+
+                        {/* Stock */}
+                        <td className="py-3">
+                          <span className="text-[12px] font-black text-white">{row.symbol}</span>
+                        </td>
+
+                        {row.status === "pending" ? (
+                          <td colSpan={8} className="text-center py-3">
+                            <div className="flex items-center justify-center gap-2">
+                              <div className="flex gap-0.5">
+                                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+                                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: "150ms" }} />
+                                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+                              </div>
+                              <span className="text-[10px] text-slate-500">Backtesting…</span>
+                            </div>
                           </td>
-                          <td className="text-right px-2 py-2 text-slate-300">{row.total_trades}</td>
-                          <td className={`text-right px-2 py-2 font-semibold ${row.return_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                            {row.return_pct >= 0 ? "+" : ""}{row.return_pct.toFixed(1)}%
+                        ) : row.status === "error" ? (
+                          <td colSpan={8} className="text-center py-3">
+                            <span className="text-[10px] text-red-400/70 bg-red-500/10 px-3 py-1 rounded-full">✕ Failed</span>
                           </td>
-                          <td className={`text-right px-2 py-2 ${row.profit_factor >= 1.5 ? "text-emerald-400" : row.profit_factor >= 1.0 ? "text-slate-300" : "text-red-400"}`}>
-                            {row.profit_factor.toFixed(2)}
-                          </td>
-                          <td className="text-right px-2 py-2 text-rose-400">
-                            {row.max_dd.toFixed(1)}%
-                          </td>
-                          <td className={`text-right pr-5 py-2 ${row.sharpe >= 1.0 ? "text-emerald-400" : "text-slate-400"}`}>
-                            {row.sharpe.toFixed(2)}
-                          </td>
-                        </>
-                      )}
-                    </tr>
-                  ))}
+                        ) : (
+                          <>
+                            {/* Win Rate with bar */}
+                            <td className="text-right px-3 py-3">
+                              <div className="flex flex-col items-end gap-0.5">
+                                <span className={`text-[12px] font-black tabular-nums ${
+                                  row.win_rate >= 60 ? "text-emerald-400" : row.win_rate >= 50 ? "text-amber-400" : "text-rose-400"
+                                }`}>
+                                  {row.win_rate.toFixed(1)}%
+                                </span>
+                                <div className="w-14 h-1 rounded-full bg-slate-800 overflow-hidden">
+                                  <div className={`h-full rounded-full transition-all duration-700 ${
+                                    row.win_rate >= 60 ? "bg-emerald-500" : row.win_rate >= 50 ? "bg-amber-500" : "bg-rose-500"
+                                  }`} style={{ width: `${Math.min(row.win_rate, 100)}%` }} />
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Trades */}
+                            <td className="text-right px-3 py-3">
+                              <span className="text-[12px] font-bold text-slate-300 tabular-nums">{row.total_trades}</span>
+                            </td>
+
+                            {/* Return */}
+                            <td className="text-right px-3 py-3">
+                              <span className={`text-[12px] font-black tabular-nums ${
+                                row.return_pct >= 10 ? "text-emerald-400" : row.return_pct >= 0 ? "text-emerald-400/70" : "text-rose-400"
+                              }`}>
+                                {row.return_pct >= 0 ? "+" : ""}{row.return_pct.toFixed(1)}%
+                              </span>
+                            </td>
+
+                            {/* Profit Factor */}
+                            <td className="text-right px-3 py-3">
+                              <span className={`text-[12px] font-bold tabular-nums ${
+                                row.profit_factor >= 2.0 ? "text-emerald-400" : row.profit_factor >= 1.0 ? "text-slate-300" : "text-rose-400"
+                              }`}>
+                                {row.profit_factor.toFixed(2)}
+                              </span>
+                            </td>
+
+                            {/* Max Drawdown */}
+                            <td className="text-right px-3 py-3">
+                              <span className={`text-[12px] font-bold tabular-nums ${
+                                Math.abs(row.max_dd) < 5 ? "text-emerald-400/70" : Math.abs(row.max_dd) < 15 ? "text-amber-400" : "text-rose-400"
+                              }`}>
+                                -{Math.abs(row.max_dd).toFixed(1)}%
+                              </span>
+                            </td>
+
+                            {/* Sharpe */}
+                            <td className="text-right px-3 py-3">
+                              <span className={`text-[12px] font-bold tabular-nums ${
+                                row.sharpe >= 1.5 ? "text-emerald-400" : row.sharpe >= 0.5 ? "text-slate-300" : "text-rose-400"
+                              }`}>
+                                {row.sharpe.toFixed(2)}
+                              </span>
+                            </td>
+
+                            {/* Grade */}
+                            <td className="text-center px-3 py-3">
+                              <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg border text-[11px] font-black ${gradeColor}`}>
+                                {grade}
+                              </span>
+                            </td>
+
+                            {/* Tag Action */}
+                            <td className="text-center px-3 pr-6 py-3">
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await fetch("http://127.0.0.1:8000/stock/us-stock-tags", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({
+                                        symbol: row.symbol,
+                                        strategy_type: editing.strategy_type,
+                                        strategy_name: editing.name || null,
+                                        period: editing.period,
+                                        capital: editing.capital,
+                                        win_rate: row.win_rate,
+                                        return_pct: row.return_pct,
+                                        profit_factor: row.profit_factor,
+                                        max_dd_pct: row.max_dd,
+                                        sharpe: row.sharpe,
+                                        total_trades: row.total_trades,
+                                      }),
+                                    });
+                                    setCompareRows((prev) =>
+                                      prev.map((r) => r.symbol === row.symbol ? { ...r, saved: true } : r)
+                                    );
+                                    onTagSaved?.();
+                                  } catch { /* offline */ }
+                                }}
+                                disabled={row.saved}
+                                className={`px-3 py-1.5 rounded-lg text-[9px] font-bold tracking-wide transition-all ${
+                                  row.saved
+                                    ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 cursor-default"
+                                    : "bg-blue-500/80 hover:bg-blue-400 text-white shadow-sm hover:shadow-blue-500/20 active:scale-95"
+                                }`}
+                              >
+                                {row.saved ? "✓ Saved" : "🏷 Tag"}
+                              </button>
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
 
-            {/* Footer */}
-            <div className="px-5 py-2 border-t border-slate-800 flex items-center justify-between">
-              <span className="text-[10px] text-slate-600">
-                {comparing ? `Running… ${compareRows.filter((r) => r.status === "done").length}/${compareRows.length}` : `${compareRows.filter((r) => r.status === "done").length} stocks compared`}
-              </span>
+            {/* ── Footer ── */}
+            <div className="px-6 py-3 border-t border-slate-800/60 bg-slate-900/80 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {comparing ? (
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+                    <span className="text-[11px] text-blue-400 font-medium">Running {compareRows.filter((r) => r.status === "done").length}/{compareRows.length}…</span>
+                  </div>
+                ) : (
+                  <span className="text-[11px] text-slate-500">{compareRows.filter((r) => r.status === "done").length} stocks compared</span>
+                )}
+              </div>
               <button
                 onClick={() => setCompareOpen(false)}
                 disabled={comparing}
-                className="px-3 py-1 rounded text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40"
+                className="px-4 py-1.5 rounded-lg text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/50 transition disabled:opacity-40"
               >
                 Close
               </button>

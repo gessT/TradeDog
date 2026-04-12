@@ -77,3 +77,25 @@ class USStrategyPreset(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+
+class USStockStrategyTag(Base):
+    """Tag a stock with a strategy + backtest metrics (1 stock → many strategies)."""
+    __tablename__ = "us_stock_strategy_tags"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    strategy_type: Mapped[str] = mapped_column(String(16), nullable=False)  # breakout_1h|vpb_v2|vpb_v3|vpr|mtf
+    strategy_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # preset name if any
+    period: Mapped[str] = mapped_column(String(8), default="2y")
+    capital: Mapped[float] = mapped_column(Float, default=5000.0)
+
+    # Backtest snapshot
+    win_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    return_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    profit_factor: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_dd_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    sharpe: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    total_trades: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    tagged_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())

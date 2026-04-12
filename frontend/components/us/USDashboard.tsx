@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { fetchUS1HBacktest, fetchVPBBacktest, fetchVPRBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
+import { fetchUS1HBacktest, fetchVPBBacktest, fetchVPRBacktest, fetchMTFBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
 import USTopBar from "./USTopBar";
 import USWatchlist from "./USWatchlist";
 import USMainChart from "./USMainChart";
@@ -32,7 +32,7 @@ export default function USDashboard() {
   // ── Core state ──────────────────────────────────────────
   const [selectedSymbol, setSelectedSymbol] = useState("AAPL");
   const [selectedName, setSelectedName] = useState("Apple");
-  const [strategy, setStrategy] = useState("breakout_v2");
+  const [strategy, setStrategy] = useState("breakout_1h");
   const [timeframe, setTimeframe] = useState("1h");
   const [mode, setMode] = useState<Mode>("Backtest");
   const [tradingActive, setTradingActive] = useState(false);
@@ -62,6 +62,17 @@ export default function USDashboard() {
   const [activePreset, setActivePreset] = useState<StrategyPreset | null>(null);
   const [rightTab, setRightTab] = useState<"orders" | "strategy">("orders");
   const [savedPresets, setSavedPresets] = useState<StrategyPreset[]>([]);
+
+  // ── Stock strategy tags ────────────────────────────────
+  type StockTag = { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null };
+  const [stockTags, setStockTags] = useState<StockTag[]>([]);
+  const fetchTags = useCallback(async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/stock/us-stock-tags");
+      if (res.ok) setStockTags(await res.json());
+    } catch { /* offline */ }
+  }, []);
+  useEffect(() => { fetchTags(); }, [fetchTags]);
 
   // Called by StrategyPlanner whenever presets list changes (save/delete)
   const handlePresetsChanged = useCallback((presets: StrategyPreset[]) => {
@@ -93,7 +104,18 @@ export default function USDashboard() {
 
       let data: US1HBacktestResponse;
 
-      if (stratType === "vpr") {
+      if (stratType === "mtf") {
+        data = await fetchMTFBacktest(
+          selectedSymbol,
+          activePreset?.period ?? "2y",
+          disabledConditions,
+          {
+            atr_sl_mult: activePreset?.atr_sl_mult,
+            tp2_r_mult: activePreset?.atr_tp_mult,
+          },
+          activePreset?.capital ?? 5000,
+        );
+      } else if (stratType === "vpr") {
         data = await fetchVPRBacktest(
           selectedSymbol,
           activePreset?.period ?? "2y",
@@ -252,6 +274,7 @@ export default function USDashboard() {
               handleSymbolChange(sym, name);
               setMobilePanel("chart");
             }}
+            stockTags={stockTags}
           />
         </aside>
 
@@ -323,6 +346,7 @@ export default function USDashboard() {
               activePreset={activePreset}
               onApply={handlePresetApply}
               onPresetsChanged={handlePresetsChanged}
+              onTagSaved={fetchTags}
             />
           )}
         </aside>

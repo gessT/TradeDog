@@ -8,10 +8,11 @@ import { US_STOCKS } from "../../constants/usStocks";
 // ═══════════════════════════════════════════════════════════════════════
 
 const DEFAULT_STRATEGIES = [
-  { id: "breakout_v2", label: "Breakout V2" },
-  { id: "pullback", label: "Pullback" },
-  { id: "ema_cross", label: "EMA Cross" },
-  { id: "momentum", label: "Momentum" },
+  { id: "breakout_1h", label: "Breakout 1H" },
+  { id: "vpb_v2", label: "VPB v2" },
+  { id: "vpb_v3", label: "VPB v3 量价" },
+  { id: "vpr", label: "VPR" },
+  { id: "mtf", label: "MTF" },
 ];
 
 const TIMEFRAMES = [

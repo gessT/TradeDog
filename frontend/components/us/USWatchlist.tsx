@@ -35,9 +35,12 @@ const NEWS_ITEMS = [
   { time: "07:15", tag: "SECTOR", title: "Semis rally on AI demand", impact: "low" as const },
 ];
 
+type StockTag = { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null };
+
 type Props = {
   activeSymbol: string;
   onSelectSymbol: (sym: string, name: string) => void;
+  stockTags?: StockTag[];
 };
 
 // ── Collapsible Section ────────────────────────────────────
@@ -72,7 +75,7 @@ function Section({
   );
 }
 
-export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
+export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = [] }: Props) {
   const [items, setItems] = useState<WatchlistItem[]>(INITIAL_WATCHLIST);
   const [sectorFilter, setSectorFilter] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
@@ -260,12 +263,30 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol }: Props) {
                   : "border-l-transparent hover:bg-slate-800/50"
               }`}
             >
-              {/* Symbol + Name */}
+              {/* Symbol + Name + Tags */}
               <div className="flex flex-col min-w-0 flex-1">
                 <span className={`text-[11px] font-bold leading-tight ${active ? "text-blue-300" : "text-slate-200"}`}>
                   {item.symbol}
                 </span>
                 <span className="text-[9px] text-slate-500 truncate leading-tight">{item.name}</span>
+                {stockTags.filter((t) => t.symbol === item.symbol).length > 0 && (
+                  <div className="flex gap-0.5 mt-0.5 flex-wrap">
+                    {stockTags.filter((t) => t.symbol === item.symbol).map((tag) => (
+                      <span
+                        key={tag.id}
+                        className={`text-[7px] px-1 py-[1px] rounded font-bold uppercase tracking-wider ${
+                          tag.strategy_type === "mtf" ? "bg-amber-500/20 text-amber-400" :
+                          tag.strategy_type === "vpr" ? "bg-cyan-500/20 text-cyan-400" :
+                          tag.strategy_type === "vpb_v3" ? "bg-emerald-500/20 text-emerald-400" :
+                          tag.strategy_type === "vpb_v2" ? "bg-purple-500/20 text-purple-400" :
+                          "bg-blue-500/20 text-blue-400"
+                        }`}
+                      >
+                        {tag.strategy_type === "vpb_v3" ? "v3" : tag.strategy_type}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Price + Change stacked */}
