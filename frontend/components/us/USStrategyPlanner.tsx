@@ -8,7 +8,7 @@ import { US_DEFAULT_SYMBOLS, US_SECTORS, US_STOCKS_BY_SECTOR } from "../../const
 // Strategy Planner — Modern unified view
 // ═══════════════════════════════════════════════════════════════════════
 
-type StrategyType = "breakout_1h" | "vpb_v2" | "vpb_v3" | "vpr" | "mtf";
+type StrategyType = "breakout_1h" | "vpb_v2" | "vpb_v3" | "vpr" | "mtf" | "tpc";
 
 const STRATEGY_TYPES: { key: StrategyType; label: string; desc: string }[] = [
   { key: "breakout_1h", label: "Breakout 1H", desc: "EMA/MACD/RSI breakout" },
@@ -16,6 +16,7 @@ const STRATEGY_TYPES: { key: StrategyType; label: string; desc: string }[] = [
   { key: "vpb_v3", label: "VPB v3 量价", desc: "Multi-TF volume-price" },
   { key: "vpr", label: "VPR", desc: "VWAP+VolProfile+RSI" },
   { key: "mtf", label: "MTF", desc: "Daily ST+HT → 4H entry" },
+  { key: "tpc", label: "TPC 趋势回调", desc: "Weekly ST+HT pullback" },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -68,9 +69,20 @@ const ALL_CONDITIONS: ConditionDef[] = [
   // ── Filter ──
   { key: "atr_range",     label: "ATR Range",       icon: "📏", desc: "Min volatility threshold",        group: "Filter" },
   { key: "session",       label: "Session Filter",  icon: "🕐", desc: "Skip open/close hours",           group: "Filter" },
+  { key: "volatility",    label: "Volatility",      icon: "🌊", desc: "Min ATR% of price",               group: "Filter" },
+
+  // ── Weekly ──
+  { key: "w_st_trend",    label: "Weekly SuperTrend", icon: "⚡", desc: "Weekly ST bullish",              group: "Weekly" },
+  { key: "d_ema200",      label: "EMA 200",         icon: "📈", desc: "Daily close > EMA200",            group: "Weekly" },
+  { key: "d_adx",         label: "ADX Trend",       icon: "🎯", desc: "ADX > 20 (trending)",             group: "Weekly" },
+  { key: "d_ht_pullback", label: "HT Pullback",     icon: "↩",  desc: "HalfTrend pullback continuation", group: "Weekly" },
+  { key: "h_pullback_zone", label: "Pullback Zone", icon: "🟢", desc: "Price near EMA50 support",       group: "Weekly" },
+  { key: "h_volume",      label: "1H Volume",       icon: "📶", desc: "Volume > avg × mult",              group: "Weekly" },
+  { key: "h_candle",      label: "1H Candle",       icon: "🟢", desc: "Strong bullish candle",            group: "Weekly" },
+  { key: "h_rsi",         label: "1H RSI",          icon: "🎯", desc: "RSI 35-65 zone",                  group: "Weekly" },
 ];
 
-const CONDITION_GROUPS = ["Daily", "Trend", "Entry", "Momentum", "Volume", "Candle", "Filter"] as const;
+const CONDITION_GROUPS = ["Daily", "Trend", "Entry", "Momentum", "Volume", "Candle", "Filter", "Weekly"] as const;
 
 // Which conditions each base strategy uses by default
 const STRATEGY_DEFAULTS: Record<StrategyType, string[]> = {
@@ -79,6 +91,7 @@ const STRATEGY_DEFAULTS: Record<StrategyType, string[]> = {
   vpb_v3:      ["daily_trend", "accum", "breakout", "vol_surge", "rsi", "h_ema_trend", "candle_quality", "session"],
   vpr:         ["vwap_bias", "vol_profile", "rsi_momentum", "bullish_candle", "session"],
   mtf:         ["st_trend", "ht_trend", "ht_reconfirm", "sma_trend", "ema_alignment", "rsi_filter", "bullish_candle"],
+  tpc:         ["w_st_trend", "d_ema200", "d_adx", "d_ht_pullback", "h_pullback_zone", "h_volume", "h_candle", "h_rsi", "h_ema_trend", "volatility"],
 };
 
 // Backend only understands per-strategy conditions — filter to only send relevant keys

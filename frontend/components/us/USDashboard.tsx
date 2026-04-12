@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { fetchUS1HBacktest, fetchVPBBacktest, fetchVPRBacktest, fetchMTFBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
+import { fetchUS1HBacktest, fetchVPBBacktest, fetchVPRBacktest, fetchMTFBacktest, fetchTPCBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
 import USTopBar from "./USTopBar";
 import USWatchlist from "./USWatchlist";
 import USMainChart from "./USMainChart";
@@ -133,11 +133,22 @@ export default function USDashboard() {
             .map(([k]) => k)
         : undefined;
 
-      const stratType = activePreset?.strategy_type ?? "breakout_1h";
+      const stratType = activePreset?.strategy_type ?? strategy;
 
       let data: US1HBacktestResponse;
 
-      if (stratType === "mtf") {
+      if (stratType === "tpc") {
+        data = await fetchTPCBacktest(
+          selectedSymbol,
+          activePreset?.period ?? "2y",
+          disabledConditions,
+          {
+            atr_sl_mult: activePreset?.atr_sl_mult,
+            tp1_r_mult: activePreset?.atr_tp_mult,
+          },
+          activePreset?.capital ?? 5000,
+        );
+      } else if (stratType === "mtf") {
         data = await fetchMTFBacktest(
           selectedSymbol,
           activePreset?.period ?? "2y",
@@ -226,12 +237,12 @@ export default function USDashboard() {
     } finally {
       setBtLoading(false);
     }
-  }, [selectedSymbol, activePreset, handlePresetsChanged]);
+  }, [selectedSymbol, strategy, activePreset, handlePresetsChanged]);
 
-  // Auto-run on symbol or preset change
+  // Auto-run on symbol, strategy, or preset change
   useEffect(() => {
     runBacktest();
-  }, [selectedSymbol, activePreset]);
+  }, [selectedSymbol, strategy, activePreset]);
 
   // ── Handlers ───────────────────────────────────────────
   const handleSymbolChange = useCallback((sym: string, name: string) => {
@@ -256,6 +267,7 @@ export default function USDashboard() {
     { key: "vpb_v3", label: "VPB v3 量价" },
     { key: "vpr", label: "VPR" },
     { key: "mtf", label: "MTF" },
+    { key: "tpc", label: "TPC 趋势回调" },
   ] as const;
 
   type TestAllRow = { key: string; label: string; win_rate: number; total_trades: number; return_pct: number; profit_factor: number; max_dd: number; sharpe: number; status: "pending" | "running" | "done" | "error"; saved?: boolean };
@@ -277,7 +289,9 @@ export default function USDashboard() {
       setTestAllRows((prev) => { const n = [...prev]; n[idx] = { ...n[idx], status: "running" }; return n; });
       try {
         let data: US1HBacktestResponse;
-        if (strat.key === "mtf") {
+        if (strat.key === "tpc") {
+          data = await fetchTPCBacktest(selectedSymbol, period, undefined, {}, capital);
+        } else if (strat.key === "mtf") {
           data = await fetchMTFBacktest(selectedSymbol, period, undefined, {}, capital);
         } else if (strat.key === "vpr") {
           data = await fetchVPRBacktest(selectedSymbol, period, undefined, {}, capital);
@@ -534,7 +548,7 @@ export default function USDashboard() {
               loading={btLoading}
               symbol={selectedSymbol}
               strategyLabel={(() => {
-                const LABELS: Record<string, string> = { breakout_1h: "Breakout 1H", vpb_v2: "VPB v2", vpb_v3: "VPB v3 量价", vpr: "VPR", mtf: "MTF" };
+                const LABELS: Record<string, string> = { breakout_1h: "Breakout 1H", vpb_v2: "VPB v2", vpb_v3: "VPB v3 量价", vpr: "VPR", mtf: "MTF", tpc: "TPC 趋势回调" };
                 const st = activePreset?.strategy_type ?? "breakout_1h";
                 return activePreset?.name && !LABELS[activePreset.name] ? activePreset.name : LABELS[st] ?? st;
               })()}

@@ -12,6 +12,7 @@ const DEFAULT_STRATEGIES = [
   { id: "vpb_v3", label: "VPB v3 量价" },
   { id: "vpr", label: "VPR" },
   { id: "mtf", label: "MTF" },
+  { id: "tpc", label: "TPC 趋势回调" },
 ];
 
 const MODES = ["Live", "Backtest", "Replay"] as const;
