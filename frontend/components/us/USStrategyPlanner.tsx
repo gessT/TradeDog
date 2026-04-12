@@ -461,26 +461,25 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                 >None</button>
               </div>
             </div>
-            <div className="space-y-0.5">
+            <div className="flex flex-wrap gap-1.5">
               {currentConditions.map((c) => {
                 const on = editing.conditions[c.key] ?? true;
                 return (
                   <button
                     key={c.key}
                     onClick={() => toggleCondition(c.key)}
-                    className={`w-full flex items-center gap-2 px-2.5 py-[7px] rounded-lg border transition-all ${
+                    className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border transition-all cursor-pointer ${
                       on
-                        ? "border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10"
-                        : "border-transparent bg-slate-900/30 hover:bg-slate-800/40"
+                        ? "border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/15"
+                        : "border-slate-700/50 bg-slate-900/30 hover:bg-slate-800/40"
                     }`}
                   >
-                    <span className="text-[11px] w-5 shrink-0">{c.icon}</span>
-                    <span className={`text-[10px] font-semibold flex-1 text-left ${on ? "text-slate-200" : "text-slate-600"}`}>
+                    <span className="text-[10px]">{c.icon}</span>
+                    <span className={`text-[9px] font-semibold whitespace-nowrap ${on ? "text-slate-200" : "text-slate-600"}`}>
                       {c.label}
                     </span>
-                    <span className={`text-[8px] ${on ? "text-slate-500" : "text-slate-700"}`}>{c.desc}</span>
-                    <div className={`w-7 h-4 rounded-full p-0.5 transition-colors shrink-0 ${on ? "bg-emerald-500" : "bg-slate-700"}`}>
-                      <div className={`w-3 h-3 rounded-full bg-white shadow transition-transform ${on ? "translate-x-3" : "translate-x-0"}`} />
+                    <div className={`w-5 h-3 rounded-full p-0.5 transition-colors shrink-0 ${on ? "bg-emerald-500" : "bg-slate-700"}`}>
+                      <div className={`w-2 h-2 rounded-full bg-white shadow transition-transform ${on ? "translate-x-2" : "translate-x-0"}`} />
                     </div>
                   </button>
                 );

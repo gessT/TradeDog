@@ -121,16 +121,15 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
   const displayList = (() => {
     const q = searchQuery.toLowerCase();
 
-    if (viewMode === "favs") {
-      // Show watchlist items (favs or defaults)
+    if (!q && viewMode === "favs") {
+      // No search query + favs mode — show watchlist items only
       return items.filter((i) => {
         if (sectorFilter !== "ALL" && i.sector !== sectorFilter) return false;
-        if (q) return i.symbol.toLowerCase().includes(q) || i.name.toLowerCase().includes(q);
         return true;
       });
     }
 
-    // "all" mode — browse all 200+ stocks
+    // Search always searches ALL stocks; "all" mode also shows all
     return US_STOCKS.filter((s) => {
       if (sectorFilter !== "ALL" && s.sector !== sectorFilter) return false;
       if (q) return s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q);

@@ -21,6 +21,7 @@ type Props = {
   onRunBacktest: () => void;
   loading: boolean;
   symbol: string;
+  strategyLabel?: string;
 };
 
 // ── Performance Metrics Grid ─────────────────────────────
@@ -266,6 +267,7 @@ export default function USBottomPanel({
   onRunBacktest,
   loading,
   symbol,
+  strategyLabel = "Backtest",
 }: Props) {
   const [tab, setTab] = useState<Tab>("Backtest");
   const [tradeFilter, setTradeFilter] = useState<"ALL" | "WIN" | "LOSS">("ALL");
@@ -297,7 +299,7 @@ export default function USBottomPanel({
             disabled={loading}
             className="ml-auto mr-3 text-[9px] px-2.5 py-0.5 rounded border border-blue-500/60 bg-blue-500/15 text-blue-400 hover:bg-blue-500/30 disabled:opacity-40 transition font-medium"
           >
-            {loading ? "Running…" : "▶ Run Backtest"}
+            {loading ? "Running…" : `▶ ${symbol} · ${strategyLabel}`}
           </button>
         )}
 
@@ -337,7 +339,7 @@ export default function USBottomPanel({
                   disabled={loading}
                   className="text-[10px] px-4 py-1.5 rounded-lg border border-blue-500/60 bg-blue-500/15 text-blue-400 hover:bg-blue-500/30 disabled:opacity-40 transition font-medium"
                 >
-                  {loading ? "Running…" : `▶ Run ${symbol} 1H Backtest`}
+                  {loading ? "Running…" : `▶ Run ${symbol} · ${strategyLabel}`}
                 </button>
               </div>
             ) : (
