@@ -1194,7 +1194,7 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles, interval: intervalProp = "5m", onIntervalChange }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>>; interval?: string; onIntervalChange?: (v: string) => void }>) {
+export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles, interval: intervalProp = "5m", onIntervalChange, onSlTpChange }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>>; interval?: string; onIntervalChange?: (v: string) => void; onSlTpChange?: (sl: number, tp: number) => void }>) {
   const [showExam, setShowExam] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1244,6 +1244,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     setSlMult(risk.sl);
     setTpMult(risk.tp);
   }, [symbol]);
+
+  // Notify parent of SL/TP changes instantly
+  useEffect(() => { onSlTpChange?.(slMult, tpMult); }, [slMult, tpMult, onSlTpChange]);
 
   const [conditionsOpen, setConditionsOpen] = useState(false);
 

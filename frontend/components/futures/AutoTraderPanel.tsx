@@ -14,7 +14,6 @@ import {
   autoTraderClearDbTrades,
   autoTraderUpdateConfig,
   load5MinConditionPresets,
-  loadStrategyConfig,
   type AutoTraderSnapshot,
   type AutoTraderTrade,
   type ConditionPreset,
@@ -49,9 +48,11 @@ type Props = {
   symbol?: string;
   conditionToggles?: Record<string, boolean>;
   interval?: string;
+  slMult?: number;
+  tpMult?: number;
 };
 
-export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, interval = "5m" }: Props) {
+export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, interval = "5m", slMult = 4.0, tpMult = 3.0 }: Props) {
   const { price: livePrice } = useLivePrice();
   const [snap, setSnap] = useState<AutoTraderSnapshot | null>(null);
   const [trades, setTrades] = useState<AutoTraderTrade[]>([]);
@@ -60,15 +61,12 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [presets, setPresets] = useState<ConditionPreset[]>([]);
   const [selectedPreset, setSelectedPreset] = useState<string>("__current__");
-  const [slMult, setSlMult] = useState(4.0);
-  const [tpMult, setTpMult] = useState(3.0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const lastBarRef = useRef("");
-  const logEndRef = useRef<HTMLDivElement | null>(null);
 
   const pushLog = useCallback((msg: string, type: LogEntry["type"] = "info") => {
-    setLogs((prev) => [...prev.slice(-80), { ts: ts(), msg, type }]);
+    setLogs((prev) => [{ ts: ts(), msg, type }, ...prev.slice(0, 80)]);
   }, []);
 
   // ── Fetch initial state ─────────────────────────────────────
@@ -88,15 +86,11 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
       setPresets(p);
       if (p.length > 0) setSelectedPreset(p[0].name);
     }).catch(() => {});
-    loadStrategyConfig(symbol).then((cfg) => {
-      if (cfg.sl_mult != null) setSlMult(cfg.sl_mult);
-      if (cfg.tp_mult != null) setTpMult(cfg.tp_mult);
-    }).catch(() => {});
+
     autoTraderGetDbTrades(symbol).then(setTrades).catch(() => {});
   }, [symbol]);
 
-  // scroll log to bottom
-  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs]);
+
 
   // ── Tick polling (every 10s when started) ───────────────────
   useEffect(() => {
@@ -421,11 +415,48 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
         {/* ── Activity Log tab ── */}
         {tab === "log" && (
           <div className="p-2 space-y-px font-mono text-[10px]">
-            {logs.length === 0 && (
-              <div className="text-white/15 text-center py-6 text-[11px]">No activity yet — start the auto-trader</div>
+            {/* Scanning indicator */}
+            {snap?.started && snap.state === "IDLE" && (
+              <div className="relative mb-2 px-3 py-2 rounded-lg bg-emerald-500/[0.04] ring-1 ring-emerald-500/10 overflow-hidden">
+                <div className="at-scan-sweep" />
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+                  </span>
+                  <span className="text-emerald-400/70 text-[10px] tracking-wide">Scanning for signals</span>
+                  <span className="at-scan-dots text-emerald-400/40" />
+                </div>
+              </div>
+            )}
+            {snap?.started && snap.state === "IN_TRADE" && (
+              <div className="relative mb-2 px-3 py-2 rounded-lg bg-violet-500/[0.04] ring-1 ring-violet-500/10 overflow-hidden">
+                <div className="at-scan-sweep-violet" />
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-60" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-violet-400" />
+                  </span>
+                  <span className="text-violet-400/70 text-[10px] tracking-wide">Monitoring position</span>
+                </div>
+              </div>
+            )}
+            {snap?.started && snap.state === "COOLDOWN" && (
+              <div className="mb-2 px-3 py-2 rounded-lg bg-amber-500/[0.04] ring-1 ring-amber-500/10">
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-60" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-400" />
+                  </span>
+                  <span className="text-amber-400/70 text-[10px] tracking-wide">Cooling down</span>
+                </div>
+              </div>
+            )}
+            {logs.length === 0 && !snap?.started && (
+              <div className="text-white/15 text-center py-6 text-[11px]">No activity yet - start the auto-trader</div>
             )}
             {logs.map((l, i) => (
-              <div key={i} className="flex gap-2 px-2 py-1 rounded hover:bg-white/[0.02]">
+              <div key={l.ts + i} className={`flex gap-2 px-2 py-1 rounded hover:bg-white/[0.02] ${i === 0 && snap?.started ? "at-log-entry" : ""}`}>
                 <span className="text-white/15 shrink-0">{new Date(l.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
                 <span className={
                   l.type === "entry" ? "text-violet-400" :
@@ -438,7 +469,6 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
                 <span className="text-white/50 break-all">{l.msg}</span>
               </div>
             ))}
-            <div ref={logEndRef} />
           </div>
         )}
 
@@ -504,6 +534,48 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
         {/* ── Config tab ── */}
         {tab === "config" && snap && <ConfigPanel snap={snap} symbol={symbol} onUpdate={refreshState} onLog={pushLog} />}
       </div>
+
+      {/* ── Animations ── */}
+      <style>{`
+        @keyframes at-sweep {
+          0% { transform: translateX(-100%); opacity: 0; }
+          50% { opacity: 1; }
+          100% { transform: translateX(200%); opacity: 0; }
+        }
+        @keyframes at-fade-in {
+          from { opacity: 0; transform: translateY(-4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes at-dots {
+          0% { content: ''; }
+          25% { content: '.'; }
+          50% { content: '..'; }
+          75% { content: '...'; }
+        }
+        .at-scan-sweep::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          width: 40%;
+          background: linear-gradient(90deg, transparent, rgba(52,211,153,0.08), transparent);
+          animation: at-sweep 2.5s ease-in-out infinite;
+        }
+        .at-scan-sweep-violet::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          width: 40%;
+          background: linear-gradient(90deg, transparent, rgba(167,139,250,0.08), transparent);
+          animation: at-sweep 3s ease-in-out infinite;
+        }
+        .at-scan-dots::after {
+          content: '';
+          animation: at-dots 1.5s steps(1) infinite;
+        }
+        .at-log-entry {
+          animation: at-fade-in 0.3s ease-out;
+        }
+      `}</style>
     </div>
   );
 }

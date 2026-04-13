@@ -117,6 +117,14 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
   // ── Shared interval (used by both backtest & auto-trader) ──
   const [interval, setInterval_] = useState("5m");
 
+  // ── Shared SL/TP multipliers (synced from backtest → auto-trader) ──
+  const [slMult, setSlMult] = useState(4.0);
+  const [tpMult, setTpMult] = useState(3.0);
+  const handleSlTpChange = useCallback((sl: number, tp: number) => {
+    setSlMult(sl);
+    setTpMult(tp);
+  }, []);
+
   // ── Collapsible columns ──────────────────────────────────────
   const [col1Open, setCol1Open] = useState(true);
   const [col2Open, setCol2Open] = useState(true);
@@ -210,7 +218,7 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M15 19l-7-7 7-7"/></svg>
           Strategy
         </button>
-        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} onTradesUpdate={setBacktestTrades} onDirectExecute={() => setTradeExecutedTick((n) => n + 1)} tradeExecutedTick={tradeExecutedTick} symbol={selectedSymbol} symbolName={selectedName} conditionToggles={conditionToggles} setConditionToggles={setConditionToggles} interval={interval} onIntervalChange={setInterval_} />
+        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} onTradesUpdate={setBacktestTrades} onDirectExecute={() => setTradeExecutedTick((n) => n + 1)} tradeExecutedTick={tradeExecutedTick} symbol={selectedSymbol} symbolName={selectedName} conditionToggles={conditionToggles} setConditionToggles={setConditionToggles} interval={interval} onIntervalChange={setInterval_} onSlTpChange={handleSlTpChange} />
       </section>
       )}
 
@@ -229,7 +237,7 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
           Trader
         </button>
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <AutoTraderPanel symbol={selectedSymbol} conditionToggles={conditionToggles} interval={interval} />
+          <AutoTraderPanel symbol={selectedSymbol} conditionToggles={conditionToggles} interval={interval} slMult={slMult} tpMult={tpMult} />
         </div>
         <button onClick={() => setTigerOpen((v) => !v)} className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-slate-600 hover:text-slate-300 uppercase tracking-widest font-bold bg-slate-950/60 hover:bg-slate-900/80 border-y border-slate-800/40 transition-colors shrink-0 w-full">
           <svg className={`w-3 h-3 transition-transform ${tigerOpen ? "" : "rotate-180"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M19 9l-7 7-7-7"/></svg>
