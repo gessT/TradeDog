@@ -81,7 +81,10 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
 
   // ── Load presets + strategy config ──────────────────────────────
   useEffect(() => {
-    load5MinConditionPresets(symbol).then(setPresets).catch(() => {});
+    load5MinConditionPresets(symbol).then((p) => {
+      setPresets(p);
+      if (p.length > 0) setSelectedPreset(p[0].name);
+    }).catch(() => {});
     loadStrategyConfig(symbol).then((cfg) => {
       if (cfg.sl_mult != null) setSlMult(cfg.sl_mult);
       if (cfg.tp_mult != null) setTpMult(cfg.tp_mult);
