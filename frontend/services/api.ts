@@ -1928,6 +1928,16 @@ export async function autoTraderGetTrades(symbol = "MGC"): Promise<AutoTraderTra
   return res.json();
 }
 
+export async function autoTraderGetDbTrades(symbol = "MGC"): Promise<AutoTraderTrade[]> {
+  const res = await fetch(_at("db-trades", symbol), { cache: "no-store" });
+  return res.json();
+}
+
+export async function autoTraderClearDbTrades(symbol = "MGC"): Promise<{ deleted: number }> {
+  const res = await fetch(_at("db-trades", symbol), { method: "DELETE" });
+  return res.json();
+}
+
 export async function autoTraderGetPaperSummary(symbol = "MGC"): Promise<Record<string, unknown>> {
   const res = await fetch(_at("paper-summary", symbol), { cache: "no-store" });
   return res.json();

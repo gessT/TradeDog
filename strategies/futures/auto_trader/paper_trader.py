@@ -156,6 +156,42 @@ class PaperTrader:
                         self.symbol, t.direction, sim_exit, reason, t.pnl)
             return t
 
+    def seed_position(
+        self,
+        direction: str,
+        entry_price: float,
+        stop_loss: float,
+        take_profit: float,
+        qty: int = 1,
+        entry_time: str = "",
+        bar_time: str = "",
+        strength: int = 0,
+    ) -> Optional[PaperTrade]:
+        """Seed an existing open position (e.g. from backtest)."""
+        with self._lock:
+            if self._open_trade is not None:
+                return None
+
+            trade = PaperTrade(
+                id=self._next_id,
+                direction=direction,
+                entry_price=round(entry_price, 2),
+                raw_entry_price=entry_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                qty=qty,
+                entry_time=entry_time or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                bar_time=bar_time,
+                strength=strength,
+            )
+            self._next_id += 1
+            self._open_trade = trade
+            self._trades.append(trade)
+
+            logger.info("[%s] PAPER SEED: %s %dx @ %.2f (from backtest)",
+                        self.symbol, direction, qty, entry_price)
+            return trade
+
     def close_position(self, live_price: float) -> Optional[PaperTrade]:
         """Force close at current price."""
         return self.execute_exit(live_price, reason="MANUAL")

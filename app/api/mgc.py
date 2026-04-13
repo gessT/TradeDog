@@ -3841,6 +3841,7 @@ class AutoTraderConfigPayload(BaseModel):
     risk_per_trade: Optional[float] = None
     max_qty: Optional[int] = None
     disabled_conditions: Optional[list[str]] = None
+    strategy_preset: Optional[str] = None
 
 
 class AutoTraderTickPayload(BaseModel):
@@ -3866,11 +3867,47 @@ class AutoTraderExitPayload(BaseModel):
 async def auto_trader_start(
     payload: AutoTraderStartPayload,
     symbol: str = Query("MGC"),
+    period: str = Query("7d"),
 ):
-    """Start auto-trader in paper or live mode."""
+    """Start auto-trader in paper or live mode.
+
+    Auto-syncs backtest open position: if the backtest shows a holding
+    trade, the paper trader inherits it. Once SL/TP hits, normal signal
+    flow resumes.
+    """
     from strategies.futures.auto_trader import get_auto_trader
     trader = get_auto_trader(symbol)
-    return trader.start(payload.mode)
+    result = trader.start(payload.mode)
+
+    # Sync backtest open position into paper trader
+    if payload.mode == "paper":
+        try:
+            open_pos = await run_in_threadpool(_get_backtest_open_position, symbol, period, trader)
+            if open_pos:
+                trader.sync_backtest_position(open_pos)
+                result = trader._snap()  # refresh snapshot after sync
+        except Exception as e:
+            logger.warning("Failed to sync backtest position: %s", e)
+
+    return result
+
+
+def _get_backtest_open_position(symbol: str, period: str, trader) -> dict | None:
+    """Run a quick backtest to detect any open position."""
+    from strategies.futures.backtest_5min import Backtester5Min
+    from strategies.futures.data_loader import load_yfinance_5min
+
+    yf_symbol = f"{symbol}=F"
+    _period_map = {"1d": "5d", "3d": "5d", "7d": "14d", "14d": "30d", "30d": "60d"}
+    fetch_period = _period_map.get(period, "14d")
+    df = load_yfinance_5min(yf_symbol, period=fetch_period)
+    if df is None or len(df) < 50:
+        return None
+
+    disabled = list(trader._disabled_conditions) if trader._disabled_conditions else None
+    bt = Backtester5Min()
+    params = {"atr_sl_mult": trader._sl_mult, "atr_tp_mult": trader._tp_mult}
+    return bt.get_live_position(df, params=params, disabled_conditions=set(disabled) if disabled else None)
 
 
 @router.post("/auto-trader/stop")
@@ -4049,3 +4086,55 @@ async def auto_trader_exit(
         } if trade else None,
         **trader.get_full_state(),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Paper Trade DB persistence
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/auto-trader/db-trades")
+async def auto_trader_db_trades(symbol: str = Query("MGC")):
+    """Return all paper/live trades saved in the database."""
+    from app.db.database import SessionLocal
+    from app.models.paper_trade import PaperTrade
+
+    with SessionLocal() as db:
+        rows = db.query(PaperTrade).filter(
+            PaperTrade.symbol == symbol,
+        ).order_by(PaperTrade.id.desc()).all()
+        return [
+            {
+                "id": r.id,
+                "symbol": r.symbol,
+                "direction": r.direction,
+                "entry_price": r.entry_price,
+                "exit_price": r.exit_price,
+                "stop_loss": r.stop_loss,
+                "take_profit": r.take_profit,
+                "qty": r.qty,
+                "pnl": r.pnl,
+                "exit_reason": r.exit_reason,
+                "entry_time": r.entry_time,
+                "exit_time": r.exit_time,
+                "bar_time": r.bar_time,
+                "strength": r.strength,
+                "slippage": r.slippage,
+                "is_paper": r.is_paper,
+                "strategy_preset": r.strategy_preset,
+                "mode": r.mode,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+
+
+@router.delete("/auto-trader/db-trades")
+async def auto_trader_clear_db_trades(symbol: str = Query("MGC")):
+    """Delete all saved paper/live trades for a symbol."""
+    from app.db.database import SessionLocal
+    from app.models.paper_trade import PaperTrade
+
+    with SessionLocal() as db:
+        count = db.query(PaperTrade).filter(PaperTrade.symbol == symbol).delete()
+        db.commit()
+        return {"deleted": count}

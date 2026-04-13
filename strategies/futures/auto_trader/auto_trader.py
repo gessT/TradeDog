@@ -75,6 +75,38 @@ class FuturesAutoTrader:
         self._disabled_conditions: set[str] = set()
         self._sl_mult: float = 4.0
         self._tp_mult: float = 3.0
+        self._strategy_preset: str = ""
+
+    def _persist_trade(self, trade: TradeRecord) -> None:
+        """Save a completed trade to the database."""
+        try:
+            from app.db.database import SessionLocal
+            from app.models.paper_trade import PaperTrade as PaperTradeModel
+
+            with SessionLocal() as db:
+                row = PaperTradeModel(
+                    symbol=self.symbol,
+                    direction=trade.direction,
+                    entry_price=trade.entry_price,
+                    exit_price=trade.exit_price,
+                    stop_loss=trade.stop_loss,
+                    take_profit=trade.take_profit,
+                    qty=trade.qty,
+                    pnl=trade.pnl,
+                    exit_reason=trade.exit_reason,
+                    entry_time=trade.entry_time,
+                    exit_time=trade.exit_time,
+                    bar_time=trade.bar_time,
+                    strength=trade.strength,
+                    slippage=trade.slippage,
+                    is_paper=trade.is_paper,
+                    strategy_preset=self._strategy_preset,
+                    mode=self._machine.mode,
+                )
+                db.add(row)
+                db.commit()
+        except Exception as e:
+            logger.warning("Failed to persist trade to DB: %s", e)
 
     # ═══════════════════════════════════════════════════════════════
     # Main tick loop
@@ -156,6 +188,8 @@ class FuturesAutoTrader:
                         CONTRACT_SIZE, 0.0, is_paper=True,
                     )
                     self._risk.record_trade_result(paper_trade.pnl)
+                    if trade:
+                        self._persist_trade(trade)
                     return TickResult(
                         action="EXIT",
                         message=f"PAPER {exit_reason} @ ${paper_trade.exit_price:.2f} pnl=${paper_trade.pnl:.2f}",
@@ -172,6 +206,7 @@ class FuturesAutoTrader:
                 trade = self._machine.on_exit(live_price, exit_reason, CONTRACT_SIZE)
                 if trade:
                     self._risk.record_trade_result(trade.pnl)
+                    self._persist_trade(trade)
                 return TickResult(
                     action="EXIT",
                     message=f"Broker closed: {exit_reason} @ ${live_price:.2f}",
@@ -186,6 +221,7 @@ class FuturesAutoTrader:
                 trade = self._machine.on_exit(live_price, exit_reason, CONTRACT_SIZE)
                 if trade:
                     self._risk.record_trade_result(trade.pnl)
+                    self._persist_trade(trade)
                 return TickResult(
                     action="EXIT",
                     message=f"{exit_reason} HIT @ ${live_price:.2f}",
@@ -316,6 +352,7 @@ class FuturesAutoTrader:
         trade = self._machine.on_exit(exit_price, reason, CONTRACT_SIZE)
         if trade:
             self._risk.record_trade_result(trade.pnl)
+            self._persist_trade(trade)
         return trade
 
     def emergency_stop(self, live_price: float = 0.0) -> dict:
@@ -324,7 +361,9 @@ class FuturesAutoTrader:
         if self._machine.mode == "paper" and self._paper.has_position:
             trade = self._paper.close_position(live_price)
             if trade:
-                self._machine.on_exit(trade.exit_price, "EMERGENCY", CONTRACT_SIZE, is_paper=True)
+                rec = self._machine.on_exit(trade.exit_price, "EMERGENCY", CONTRACT_SIZE, is_paper=True)
+                if rec:
+                    self._persist_trade(rec)
                 result["paper_closed"] = True
                 result["paper_pnl"] = trade.pnl
         self._machine.emergency_stop()
@@ -337,6 +376,49 @@ class FuturesAutoTrader:
     def start(self, mode: str = "paper") -> dict:
         self._machine.start(mode)
         return self._snap()
+
+    def sync_backtest_position(self, pos: dict) -> bool:
+        """Seed paper trader with an open position from backtest.
+
+        Called right after start(). Once SL/TP hits, normal flow
+        resumes (COOLDOWN → IDLE → wait for next signal).
+        """
+        if not pos or self._machine.state != TradingState.IDLE:
+            return False
+
+        direction = pos.get("direction", "CALL")
+        entry_price = pos.get("entry_price", 0)
+        sl = pos.get("sl", 0)
+        tp = pos.get("tp", 0)
+        qty = pos.get("qty", 1)
+        entry_time = pos.get("entry_time", "")
+        bar_time = pos.get("bar_time", "")
+
+        if entry_price <= 0 or sl <= 0 or tp <= 0:
+            return False
+
+        paper_trade = self._paper.seed_position(
+            direction=direction,
+            entry_price=entry_price,
+            stop_loss=sl,
+            take_profit=tp,
+            qty=qty,
+            entry_time=entry_time,
+            bar_time=bar_time,
+        )
+        if paper_trade is None:
+            return False
+
+        self._machine.on_entry_filled(
+            entry_price=paper_trade.entry_price,
+            sl=paper_trade.stop_loss,
+            tp=paper_trade.take_profit,
+            qty=paper_trade.qty,
+            direction=paper_trade.direction,
+        )
+        logger.info("[%s] Synced backtest position: %s @ %.2f SL=%.2f TP=%.2f",
+                    self.symbol, direction, entry_price, sl, tp)
+        return True
 
     def stop(self) -> dict:
         self._machine.stop()
@@ -358,6 +440,7 @@ class FuturesAutoTrader:
         disabled_conditions: Optional[set[str]] = None,
         sl_mult: Optional[float] = None,
         tp_mult: Optional[float] = None,
+        strategy_preset: Optional[str] = None,
         **kwargs,
     ) -> dict:
         if disabled_conditions is not None:
@@ -366,6 +449,8 @@ class FuturesAutoTrader:
             self._sl_mult = sl_mult
         if tp_mult is not None:
             self._tp_mult = tp_mult
+        if strategy_preset is not None:
+            self._strategy_preset = strategy_preset
 
         # Split kwargs between machine and risk engine
         machine_keys = {"cooldown_secs", "min_strength", "max_consec_losses", "daily_limit", "daily_loss_limit"}

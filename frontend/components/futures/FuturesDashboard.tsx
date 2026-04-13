@@ -83,6 +83,14 @@ export default function FuturesDashboard() {
     setSelectedIcon(icon);
   }, []);
 
+  // ── Collapsible columns ──────────────────────────────────────
+  const [col1Open, setCol1Open] = useState(true);
+  const [col2Open, setCol2Open] = useState(true);
+  const [col3Open, setCol3Open] = useState(true);
+
+  const visibleCount = [col1Open, col2Open, col3Open].filter(Boolean).length;
+  const colWidth = visibleCount === 3 ? "md:w-1/3" : visibleCount === 2 ? "md:w-1/2" : "md:w-full";
+
   return (
     <LivePriceProvider symbol={selectedSymbol}>
     <div className="flex flex-1 overflow-hidden">
@@ -90,14 +98,25 @@ export default function FuturesDashboard() {
       {/* ═══════════════════════════════════════════════════════════════ */}
       {/* COL 1 — Commodity Cards + Live Chart                          */}
       {/* ═══════════════════════════════════════════════════════════════ */}
-      <section className="hidden md:flex md:w-1/3 flex-col overflow-hidden border-r border-slate-800/60">
+      {!col1Open && (
+        <button onClick={() => setCol1Open(true)} className="hidden md:flex items-center px-0.5 bg-slate-900/80 border-r border-slate-800/60 hover:bg-slate-800/80 transition-colors group" title="Show Chart">
+          <span className="text-[9px] text-slate-500 group-hover:text-slate-300 [writing-mode:vertical-lr] rotate-180 tracking-widest font-bold uppercase">Chart</span>
+        </button>
+      )}
+      {col1Open && (
+      <section className={`hidden md:flex ${colWidth} flex-col overflow-hidden border-r border-slate-800/60 transition-all`}>
+        {/* Collapse button */}
+        <button onClick={() => setCol1Open(false)} className="flex items-center gap-1 px-2 py-0.5 text-[8px] text-slate-600 hover:text-slate-300 uppercase tracking-widest font-bold bg-slate-950/60 hover:bg-slate-900/80 border-b border-slate-800/40 transition-colors shrink-0">
+          <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M15 19l-7-7 7-7"/></svg>
+          Chart
+        </button>
         {/* Commodity selector cards */}
         <div className="shrink-0 border-b border-slate-800/60 bg-slate-950/80">
           <CommodityCards selected={selectedSymbol} onSelect={handleCommoditySelect} />
         </div>
 
         {/* Live chart */}
-        <div className="h-1/2 min-h-0">
+        <div className="flex-1 min-h-0">
           <MGCLiveChart
             symbol={selectedSymbol}
             symbolName={selectedName}
@@ -108,22 +127,45 @@ export default function FuturesDashboard() {
           />
         </div>
       </section>
+      )}
 
       {/* ═══════════════════════════════════════════════════════════════ */}
       {/* COL 2 — 5min Strategy Workspace                              */}
       {/* ═══════════════════════════════════════════════════════════════ */}
-      <section className="w-full md:w-1/3 overflow-y-auto border-r border-slate-800/60">
+      {!col2Open && (
+        <button onClick={() => setCol2Open(true)} className="hidden md:flex items-center px-0.5 bg-slate-900/80 border-r border-slate-800/60 hover:bg-slate-800/80 transition-colors group" title="Show Strategy">
+          <span className="text-[9px] text-slate-500 group-hover:text-slate-300 [writing-mode:vertical-lr] rotate-180 tracking-widest font-bold uppercase">Strategy</span>
+        </button>
+      )}
+      {col2Open && (
+      <section className={`w-full ${colWidth} overflow-y-auto border-r border-slate-800/60 transition-all`}>
+        <button onClick={() => setCol2Open(false)} className="flex items-center gap-1 px-2 py-0.5 text-[8px] text-slate-600 hover:text-slate-300 uppercase tracking-widest font-bold bg-slate-950/60 hover:bg-slate-900/80 border-b border-slate-800/40 transition-colors w-full">
+          <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M15 19l-7-7 7-7"/></svg>
+          Strategy
+        </button>
         <Strategy5MinPanel onTradeClick={handleTradeClick5Min} onTradesUpdate={setBacktestTrades} onDirectExecute={() => setTradeExecutedTick((n) => n + 1)} tradeExecutedTick={tradeExecutedTick} symbol={selectedSymbol} symbolName={selectedName} conditionToggles={conditionToggles} setConditionToggles={setConditionToggles} />
       </section>
+      )}
 
       {/* ═══════════════════════════════════════════════════════════════ */}
       {/* COL 3 — Account / Trade panel                                */}
       {/* ═══════════════════════════════════════════════════════════════ */}
-      <section className="hidden md:flex md:w-1/3 flex-col overflow-y-auto bg-slate-900/40">
+      {!col3Open && (
+        <button onClick={() => setCol3Open(true)} className="hidden md:flex items-center px-0.5 bg-slate-900/80 hover:bg-slate-800/80 transition-colors group" title="Show Trader">
+          <span className="text-[9px] text-slate-500 group-hover:text-slate-300 [writing-mode:vertical-lr] rotate-180 tracking-widest font-bold uppercase">Trader</span>
+        </button>
+      )}
+      {col3Open && (
+      <section className={`hidden md:flex ${colWidth} flex-col overflow-y-auto bg-slate-900/40 transition-all`}>
+        <button onClick={() => setCol3Open(false)} className="flex items-center gap-1 px-2 py-0.5 text-[8px] text-slate-600 hover:text-slate-300 uppercase tracking-widest font-bold bg-slate-950/60 hover:bg-slate-900/80 border-b border-slate-800/40 transition-colors shrink-0">
+          <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M15 19l-7-7 7-7"/></svg>
+          Trader
+        </button>
         <AutoTraderPanel symbol={selectedSymbol} conditionToggles={conditionToggles} />
         <div className="border-t border-slate-800/60" />
         <ScanTradePanel tradeExecutedTick={tradeExecutedTick} />
       </section>
+      )}
 
     </div>
     </LivePriceProvider>

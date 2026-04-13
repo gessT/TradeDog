@@ -10,7 +10,8 @@ import {
   autoTraderUnblock,
   autoTraderGetState,
   autoTraderTick,
-  autoTraderGetTrades,
+  autoTraderGetDbTrades,
+  autoTraderClearDbTrades,
   autoTraderUpdateConfig,
   load5MinConditionPresets,
   loadStrategyConfig,
@@ -79,7 +80,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
 
   useEffect(() => { refreshState(); }, [refreshState]);
 
-  // ── Load presets + strategy config ──────────────────────────────
+  // ── Load presets + strategy config + DB trades ──────────────────
   useEffect(() => {
     load5MinConditionPresets(symbol).then((p) => {
       setPresets(p);
@@ -89,6 +90,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
       if (cfg.sl_mult != null) setSlMult(cfg.sl_mult);
       if (cfg.tp_mult != null) setTpMult(cfg.tp_mult);
     }).catch(() => {});
+    autoTraderGetDbTrades(symbol).then(setTrades).catch(() => {});
   }, [symbol]);
 
   // scroll log to bottom
@@ -123,7 +125,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
           pushLog(result.message || "Entry filled", "entry");
         } else if (result.action === "EXIT") {
           pushLog(result.message || "Position exited", "exit");
-          const t = await autoTraderGetTrades(symbol);
+          const t = await autoTraderGetDbTrades(symbol);
           setTrades(t);
         } else if (result.action === "BLOCKED") {
           pushLog(result.message || "BLOCKED", "error");
@@ -155,8 +157,8 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
   const handleStart = async (m: "paper" | "live") => {
     // sync selected strategy conditions + SL/TP multipliers to backend
     const disabled = getDisabledConditions();
-    await autoTraderUpdateConfig({ disabled_conditions: disabled, sl_mult: slMult, tp_mult: tpMult }, symbol).catch(() => {});
     const label = selectedPreset === "__current__" ? "Current Strategy" : selectedPreset;
+    await autoTraderUpdateConfig({ disabled_conditions: disabled, sl_mult: slMult, tp_mult: tpMult, strategy_preset: label }, symbol).catch(() => {});
     const s = await autoTraderStart(m, symbol).catch(() => null);
     if (s) { setSnap(s); setMode(m); pushLog(`Started ${m.toUpperCase()} | ${label} | SL=${slMult}x TP=${tpMult}x`, "info"); }
   };
@@ -166,7 +168,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
   };
   const handleReset = async () => {
     const s = await autoTraderReset(symbol).catch(() => null);
-    if (s) { setSnap(s); setMode("off"); setTrades([]); setLogs([]); pushLog("Full reset", "warn"); }
+    if (s) { setSnap(s); setMode("off"); setLogs([]); pushLog("Full reset", "warn"); }
   };
   const handleEmergency = async () => {
     await autoTraderEmergencyStop(livePrice || 0, symbol).catch(() => null);
@@ -363,10 +365,10 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
       {/* ═══ Tab bar ═══ */}
       <div className="flex border-t border-white/5">
         {(["status", "log", "trades", "config"] as Tab[]).map((t) => (
-          <button key={t} onClick={() => { setTab(t); if (t === "trades") autoTraderGetTrades(symbol).then(setTrades).catch(() => {}); }}
+          <button key={t} onClick={() => { setTab(t); if (t === "trades") autoTraderGetDbTrades(symbol).then(setTrades).catch(() => {}); }}
             className={`flex-1 py-2 text-[10px] uppercase tracking-widest font-semibold transition-colors
               ${tab === t ? "text-white/80 bg-white/[0.04] border-b-2 border-violet-400/60" : "text-white/25 hover:text-white/40"}`}>
-            {t === "log" ? `Log (${logs.length})` : t === "trades" ? `Trades (${snap?.trade_count ?? 0})` : t}
+            {t === "log" ? `Log (${logs.length})` : t === "trades" ? `Trades (${trades.length})` : t}
           </button>
         ))}
       </div>
@@ -419,10 +421,36 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
         {/* ── Trades tab ── */}
         {tab === "trades" && (
           <div className="p-2 space-y-1">
+            {trades.length > 0 && (() => {
+              const totalPnl = trades.reduce((s, t) => s + t.pnl, 0);
+              const wins = trades.filter(t => t.pnl > 0).length;
+              const wr = trades.length > 0 ? (wins / trades.length * 100) : 0;
+              return (
+                <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-white/[0.03] ring-1 ring-white/[0.06] mb-1">
+                  <div className="flex items-center gap-3 text-[10px]">
+                    <span className="text-white/30">{trades.length} trades</span>
+                    <span className={`font-bold ${totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
+                    </span>
+                    <span className="text-white/30">WR {wr.toFixed(0)}%</span>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!confirm("Clear all saved trade history?")) return;
+                      await autoTraderClearDbTrades(symbol).catch(() => {});
+                      setTrades([]);
+                    }}
+                    className="px-2 py-0.5 rounded text-[9px] font-bold text-red-400/60 hover:text-red-300 hover:bg-red-500/10 ring-1 ring-red-500/15 transition-all"
+                  >
+                    Clear
+                  </button>
+                </div>
+              );
+            })()}
             {trades.length === 0 && (
               <div className="text-white/15 text-center py-6 text-[11px]">No trades yet</div>
             )}
-            {trades.slice().reverse().map((t, i) => (
+            {trades.map((t, i) => (
               <div key={i}
                 className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
                 <span className={`text-[11px] font-black ${t.direction === "CALL" ? "text-emerald-400" : "text-red-400"}`}>
@@ -437,7 +465,8 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
                     <span>{t.exit_reason}</span>
                     <span>str {t.strength}</span>
                     {t.slippage > 0 && <span>slip ${t.slippage.toFixed(2)}</span>}
-                    <span>{t.exit_time?.slice(5, 16)}</span>
+                    {(t as Record<string, unknown>).strategy_preset ? <span className="text-violet-400/50">{String((t as Record<string, unknown>).strategy_preset)}</span> : null}
+                    <span>{t.entry_time?.slice(0, 16)}</span>
                   </div>
                 </div>
                 <span className={`font-mono text-xs font-bold shrink-0 ${t.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
