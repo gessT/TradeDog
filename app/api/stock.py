@@ -1784,7 +1784,7 @@ def delete_stock_tag(tag_id: int, db: Session = Depends(get_db)):
 @router.get("/backtest_1h")
 async def us_stock_backtest_1h(
     symbol: _Ann[str, Query()] = "AAPL",
-    period: _Ann[str, Query()] = "2y",
+    period: _Ann[str, Query()] = "1y",
     capital: _Ann[float, Query()] = 5000.0,
     oos_split: _Ann[float, Query(ge=0, le=0.5)] = 0.3,
     atr_sl_mult: _Ann[float, Query(ge=0.5, le=10.0)] = 3.0,
@@ -1807,13 +1807,9 @@ async def us_stock_backtest_1h(
         from strategies.us_stock.backtest_1h import Backtester1H
         from strategies.us_stock.strategy_1h import USStrategy1H, DEFAULT_1H_PARAMS
 
-        # yfinance: 1h data max 730d
-        effective_period = period
         _period_days_map = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
-        if period not in _period_days_map and period != "max":
-            effective_period = "2y"
 
-        df = load_yfinance(symbol=symbol, interval="1h", period=effective_period)
+        df = load_yfinance(symbol=symbol, interval="1h", period=period)
         if df.empty or len(df) < 20:
             raise ValueError(f"Not enough 1h data for {symbol}.")
 
@@ -1878,7 +1874,7 @@ async def us_stock_backtest_1h(
         )
 
         # Compute daily HalfTrend and merge into 1H bars
-        df_daily = load_yfinance(symbol=symbol, interval="1d", period="2y")
+        df_daily = load_yfinance(symbol=symbol, interval="1d", period="5y")
         if not df_daily.empty:
             df_daily_ht = strategy.compute_daily_ht(df_daily[["open", "high", "low", "close", "volume"]].copy())
             df_ind = strategy.merge_daily_ht(df_ind, df_daily_ht)
@@ -1961,7 +1957,7 @@ async def us_stock_backtest_1h(
 @router.get("/backtest_vpb")
 async def us_stock_backtest_vpb(
     symbol: _Ann[str, Query()] = "AAPL",
-    period: _Ann[str, Query()] = "2y",
+    period: _Ann[str, Query()] = "1y",
     version: _Ann[str, Query()] = "v2",
     capital: _Ann[float, Query()] = 5000.0,
     disabled_conditions: _Ann[_Opt[str], Query()] = None,
@@ -2185,7 +2181,7 @@ async def us_stock_backtest_vpb(
 @router.get("/backtest_vpr")
 async def us_stock_backtest_vpr(
     symbol: _Ann[str, Query()] = "AAPL",
-    period: _Ann[str, Query()] = "2y",
+    period: _Ann[str, Query()] = "1y",
     capital: _Ann[float, Query()] = 5000.0,
     disabled_conditions: _Ann[_Opt[str], Query()] = None,
     atr_sl_mult: _Ann[_Opt[float], Query()] = None,
@@ -2349,7 +2345,7 @@ async def us_stock_backtest_vpr(
 @router.get("/backtest_mtf")
 async def us_stock_backtest_mtf(
     symbol: _Ann[str, Query()] = "AAPL",
-    period: _Ann[str, Query()] = "2y",
+    period: _Ann[str, Query()] = "1y",
     capital: _Ann[float, Query()] = 5000.0,
     disabled_conditions: _Ann[_Opt[str], Query()] = None,
     atr_sl_mult: _Ann[_Opt[float], Query()] = None,
@@ -2530,7 +2526,7 @@ async def us_stock_backtest_mtf(
 @router.get("/backtest_tpc")
 async def us_stock_backtest_tpc(
     symbol: _Ann[str, Query()] = "AAPL",
-    period: _Ann[str, Query()] = "2y",
+    period: _Ann[str, Query()] = "1y",
     capital: _Ann[float, Query()] = 5000.0,
     disabled_conditions: _Ann[_Opt[str], Query()] = None,
     # TPC param overrides
@@ -2559,7 +2555,7 @@ async def us_stock_backtest_tpc(
 
         # Load weekly + daily + 1H data
         df_weekly = load_yfinance(symbol=symbol, interval="1wk", period="5y")
-        df_daily = load_yfinance(symbol=symbol, interval="1d", period="2y")
+        df_daily = load_yfinance(symbol=symbol, interval="1d", period="5y")
         df_1h = load_yfinance(symbol=symbol, interval="1h", period=period)
 
         if df_1h.empty or len(df_1h) < 50:

@@ -1688,7 +1688,7 @@ export type US1HBacktestResponse = {
 
 export async function fetchUS1HBacktest(
   symbol: string = "AAPL",
-  period: string = "2y",
+  period: string = "1y",
   oos_split: number = 0.3,
   atr_sl_mult: number = 3.0,
   atr_tp_mult: number = 2.5,
@@ -1713,7 +1713,7 @@ export async function fetchUS1HBacktest(
 
 export async function fetchVPBBacktest(
   symbol: string = "AAPL",
-  period: string = "2y",
+  period: string = "1y",
   version: string = "v2",
   disabledConditions?: string[],
   params?: Record<string, unknown>,
@@ -1736,7 +1736,7 @@ export async function fetchVPBBacktest(
 
 export async function fetchVPRBacktest(
   symbol: string = "AAPL",
-  period: string = "2y",
+  period: string = "1y",
   disabledConditions?: string[],
   params?: Record<string, unknown>,
   capital: number = 5000,
@@ -1758,7 +1758,7 @@ export async function fetchVPRBacktest(
 
 export async function fetchMTFBacktest(
   symbol: string = "AAPL",
-  period: string = "2y",
+  period: string = "1y",
   disabledConditions?: string[],
   params?: Record<string, unknown>,
   capital: number = 5000,
@@ -1781,7 +1781,7 @@ export async function fetchMTFBacktest(
 // ── TPC (Trend-Pullback-Continuation) backtest ─────────────────────
 export async function fetchTPCBacktest(
   symbol: string = "AAPL",
-  period: string = "2y",
+  period: string = "1y",
   disabledConditions?: string[],
   params?: Record<string, unknown>,
   capital: number = 5000,

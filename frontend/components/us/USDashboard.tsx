@@ -49,6 +49,18 @@ export default function USDashboard() {
   const [btData, setBtData] = useState<US1HBacktestResponse | null>(null);
   const [btLoading, setBtLoading] = useState(false);
 
+  // ── Backtest period (global, persisted in localStorage) ──
+  const [backtestPeriod, setBacktestPeriod] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("bt_period") || "2y";
+    }
+    return "2y";
+  });
+  const handlePeriodChange = useCallback((p: string) => {
+    setBacktestPeriod(p);
+    if (typeof window !== "undefined") localStorage.setItem("bt_period", p);
+  }, []);
+
   // ── Chart overlay toggles ──────────────────────────────
   type Overlay = "ema_fast" | "ema_slow" | "vwap" | "halftrend" | "w_supertrend";
   type Indicator = "rsi" | "macd" | "volume";
@@ -140,7 +152,7 @@ export default function USDashboard() {
       if (stratType === "tpc") {
         data = await fetchTPCBacktest(
           selectedSymbol,
-          activePreset?.period ?? "2y",
+          backtestPeriod,
           disabledConditions,
           {
             atr_sl_mult: activePreset?.atr_sl_mult,
@@ -151,7 +163,7 @@ export default function USDashboard() {
       } else if (stratType === "mtf") {
         data = await fetchMTFBacktest(
           selectedSymbol,
-          activePreset?.period ?? "2y",
+          backtestPeriod,
           disabledConditions,
           {
             atr_sl_mult: activePreset?.atr_sl_mult,
@@ -162,7 +174,7 @@ export default function USDashboard() {
       } else if (stratType === "vpr") {
         data = await fetchVPRBacktest(
           selectedSymbol,
-          activePreset?.period ?? "2y",
+          backtestPeriod,
           disabledConditions,
           {
             atr_sl_mult: activePreset?.atr_sl_mult,
@@ -173,7 +185,7 @@ export default function USDashboard() {
       } else if (stratType === "vpb_v2" || stratType === "vpb_v3") {
         data = await fetchVPBBacktest(
           selectedSymbol,
-          activePreset?.period ?? "2y",
+          backtestPeriod,
           stratType === "vpb_v3" ? "v3" : "v2",
           disabledConditions,
           {
@@ -185,7 +197,7 @@ export default function USDashboard() {
       } else {
         data = await fetchUS1HBacktest(
           selectedSymbol,
-          activePreset?.period ?? "1y",
+          backtestPeriod,
           0.3,
           activePreset?.atr_sl_mult ?? 3,
           activePreset?.atr_tp_mult ?? 2.5,
@@ -237,18 +249,24 @@ export default function USDashboard() {
     } finally {
       setBtLoading(false);
     }
-  }, [selectedSymbol, strategy, activePreset, handlePresetsChanged]);
+  }, [selectedSymbol, strategy, activePreset, handlePresetsChanged, backtestPeriod]);
 
   // Auto-run on symbol, strategy, or preset change
   useEffect(() => {
     runBacktest();
-  }, [selectedSymbol, strategy, activePreset]);
+  }, [runBacktest]);
 
   // ── Handlers ───────────────────────────────────────────
   const handleSymbolChange = useCallback((sym: string, name: string) => {
     setSelectedSymbol(sym);
     setSelectedName(name);
-  }, []);
+    // Default to the first tagged strategy for this stock
+    const tags = stockTags.filter((t) => t.symbol === sym);
+    if (tags.length > 0) {
+      setStrategy(tags[0].strategy_type);
+      setActivePreset(null);
+    }
+  }, [stockTags]);
 
   const handleTradeClick = useCallback((t: US1HTrade) => {
     const ts = Math.floor(new Date(t.entry_time).getTime() / 1000);
@@ -278,7 +296,7 @@ export default function USDashboard() {
   const runTestAll = useCallback(async () => {
     setTestAllOpen(true);
     setTestAllRunning(true);
-    const period = activePreset?.period ?? "2y";
+    const period = backtestPeriod;
     const capital = activePreset?.capital ?? 5000;
     const initial: TestAllRow[] = STRATEGY_DEFS.map((s) => ({
       key: s.key, label: s.label, win_rate: 0, total_trades: 0, return_pct: 0, profit_factor: 0, max_dd: 0, sharpe: 0, status: "pending" as const,
@@ -308,7 +326,7 @@ export default function USDashboard() {
     });
     await Promise.all(promises);
     setTestAllRunning(false);
-  }, [selectedSymbol, activePreset]);
+  }, [selectedSymbol, activePreset, backtestPeriod]);
 
   const saveTestAllTag = useCallback(async (row: TestAllRow) => {
     try {
@@ -319,7 +337,7 @@ export default function USDashboard() {
           symbol: selectedSymbol,
           strategy_type: row.key,
           strategy_name: row.label,
-          period: activePreset?.period ?? "2y",
+          period: backtestPeriod,
           capital: activePreset?.capital ?? 5000,
           win_rate: row.win_rate,
           return_pct: row.return_pct,
@@ -492,6 +510,8 @@ export default function USDashboard() {
         onTestAll={runTestAll}
         onApplyStrategy={applyStrategy}
         stockTags={stockTags.filter((t) => t.symbol === selectedSymbol)}
+        period={backtestPeriod}
+        onPeriodChange={handlePeriodChange}
       />
 
       {/* ═══ MOBILE PANEL TABS (visible < lg) ═══ */}

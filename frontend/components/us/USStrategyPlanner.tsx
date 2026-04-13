@@ -212,9 +212,9 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
       strategy_type: t,
       conditions: getDefaultConditions(t),
       // Reset params to defaults per strategy type
-      ...(t === "vpb_v2" ? { atr_sl_mult: 1.0, atr_tp_mult: 1.0, period: "2y" } :
-          t === "vpr" ? { atr_sl_mult: 1.3, atr_tp_mult: 1.8, period: "2y" } :
-          t === "mtf" ? { atr_sl_mult: 2.0, atr_tp_mult: 3.0, period: "2y" } :
+      ...(t === "vpb_v2" ? { atr_sl_mult: 1.0, atr_tp_mult: 1.0, period: "1y" } :
+          t === "vpr" ? { atr_sl_mult: 1.3, atr_tp_mult: 1.8, period: "1y" } :
+          t === "mtf" ? { atr_sl_mult: 2.0, atr_tp_mult: 3.0, period: "1y" } :
           { atr_sl_mult: 3.0, atr_tp_mult: 2.5 }),
     }));
   };
@@ -397,10 +397,10 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                     handleStrategyTypeChange(st.key);
                     setEditing((p) => ({ ...p, name: "" }));
                     onApply({ ...EMPTY_PRESET, strategy_type: st.key, conditions: getDefaultConditions(st.key),
-                      ...(st.key === "vpb_v2" ? { atr_sl_mult: 1.0, atr_tp_mult: 1.0, period: "2y" } :
-                          st.key === "vpr" ? { atr_sl_mult: 1.3, atr_tp_mult: 1.8, period: "2y" } :
-                          st.key === "mtf" ? { atr_sl_mult: 2.0, atr_tp_mult: 3.0, period: "2y" } :
-                          st.key === "vpb_v3" ? { atr_sl_mult: 1.0, atr_tp_mult: 1.0, period: "2y" } :
+                      ...(st.key === "vpb_v2" ? { atr_sl_mult: 1.0, atr_tp_mult: 1.0, period: "1y" } :
+                          st.key === "vpr" ? { atr_sl_mult: 1.3, atr_tp_mult: 1.8, period: "1y" } :
+                          st.key === "mtf" ? { atr_sl_mult: 2.0, atr_tp_mult: 3.0, period: "1y" } :
+                          st.key === "vpb_v3" ? { atr_sl_mult: 1.0, atr_tp_mult: 1.0, period: "1y" } :
                           {}),
                     });
                   }}
@@ -865,7 +865,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                 onChange={(e) => setEditing((p) => ({ ...p, period: e.target.value }))}
                 className="w-full text-[12px] font-bold bg-transparent text-slate-200 outline-none cursor-pointer"
               >
-                {["1mo", "3mo", "6mo", "1y", "2y"].map((p) => (
+                {["1mo", "3mo", "6mo", "1y", "2y", "3y", "5y"].map((p) => (
                   <option key={p} value={p} className="bg-slate-900">{p}</option>
                 ))}
               </select>

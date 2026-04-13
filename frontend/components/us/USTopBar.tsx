@@ -44,6 +44,8 @@ type Props = {
   onTestAll?: () => void;
   onApplyStrategy?: (strategyName: string) => void;
   stockTags?: StockTag[];
+  period: string;
+  onPeriodChange: (p: string) => void;
 };
 
 export default function USTopBar({
@@ -64,7 +66,15 @@ export default function USTopBar({
   onTestAll,
   onApplyStrategy,
   stockTags = [],
+  period,
+  onPeriodChange,
 }: Props) {
+  const PERIODS = [
+    { value: "3mo", label: "3M" },
+    { value: "6mo", label: "6M" },
+    { value: "1y", label: "1Y" },
+    { value: "2y", label: "2Y" },
+  ];
   const up = change >= 0;
   const [applyOpen, setApplyOpen] = useState(false);
 
@@ -194,6 +204,23 @@ export default function USTopBar({
             </optgroup>
           )}
         </select>
+
+        {/* ── Period ─────────────────────────────────── */}
+        <div className="flex items-center rounded-md border border-slate-700/60 overflow-hidden shrink-0">
+          {PERIODS.map((p) => (
+            <button
+              key={p.value}
+              onClick={() => onPeriodChange(p.value)}
+              className={`px-1.5 py-1 text-[9px] font-bold tracking-wide transition ${
+                period === p.value
+                  ? "bg-sky-500 text-white"
+                  : "text-slate-500 hover:text-slate-200 hover:bg-slate-800"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
 
         {/* ── Mode ───────────────────────────────────── */}
         <div className="flex items-center rounded-md border border-slate-700/60 overflow-hidden shrink-0">
