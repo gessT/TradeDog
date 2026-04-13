@@ -1795,6 +1795,7 @@ async def mgc_backtest_5min(
     daily_loss_limit: Annotated[float, Query(ge=0, le=5000)] = 0.0,
     skip_hours: Annotated[Optional[str], Query()] = None,
     max_loss_per_trade: Annotated[float, Query(ge=0, le=2000)] = 0.0,
+    interval: Annotated[str, Query()] = "5m",
 ) -> MGC5MinBacktestResponse:
     """Run 5-minute strategy backtest with out-of-sample validation.
 
@@ -1819,9 +1820,12 @@ async def mgc_backtest_5min(
         from strategies.futures.backtest_5min import Backtester5Min
         from strategies.futures.strategy_5min import MGCStrategy5Min, DEFAULT_5MIN_PARAMS
 
-        # Always load 60d so indicators are fully warmed up
+        # Always load max history so indicators are fully warmed up
         # (EMA, RSI, MACD, Supertrend need history to stabilize)
-        df = load_yfinance(symbol=symbol, interval="5m", period="60d")
+        # yfinance limits: 1m=7d, 2m=60d, 5m=60d, 15m=60d
+        _max_period = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d"}
+        fetch_period = _max_period.get(interval, "60d")
+        df = load_yfinance(symbol=symbol, interval=interval, period=fetch_period)
 
         if df.empty or len(df) < 20:
             raise ValueError("Not enough 5m data from yfinance.")
@@ -1994,7 +1998,7 @@ async def mgc_backtest_5min(
 
     return MGC5MinBacktestResponse(
         symbol=symbol,
-        interval="5m",
+        interval=interval,
         period=period,
         candles=candles,
         trades=trades,
@@ -3081,11 +3085,12 @@ async def reset_daily_pnl(symbol: str = Query("MGC")):
 
 
 class StrategyConfigPayload(BaseModel):
-    period: str = "3d"
-    sl_mult: float = 4.0
-    tp_mult: float = 3.0
-    risk_filters: dict[str, bool] = {}
+    period: str | None = None
+    sl_mult: float | None = None
+    tp_mult: float | None = None
+    risk_filters: dict[str, bool] | None = None
     active_preset: str | None = None
+    layout: dict[str, bool] | None = None
 
 
 @router.get("/strategy_config")
@@ -3120,13 +3125,30 @@ def save_strategy_config(
     from app.db.database import engine
 
     sym = f"{symbol.upper()}_5MIN"
-    config = json.dumps({
+    new_fields = {k: v for k, v in {
         "period": payload.period,
         "sl_mult": payload.sl_mult,
         "tp_mult": payload.tp_mult,
         "risk_filters": payload.risk_filters,
         "active_preset": payload.active_preset,
-    })
+        "layout": payload.layout,
+    }.items() if v is not None}
+
+    # Merge with existing config so partial saves don't wipe fields
+    existing = {}
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT config_json FROM strategy_configs WHERE symbol = :sym"),
+            {"sym": sym},
+        ).fetchone()
+    if row:
+        try:
+            existing = json.loads(row[0])
+        except Exception:
+            pass
+    merged = {**existing, **new_fields}
+    config = json.dumps(merged)
+
     with engine.begin() as conn:
         conn.execute(
             text("""
@@ -3868,6 +3890,7 @@ async def auto_trader_start(
     payload: AutoTraderStartPayload,
     symbol: str = Query("MGC"),
     period: str = Query("7d"),
+    interval: str = Query("5m"),
 ):
     """Start auto-trader in paper or live mode.
 
@@ -3877,12 +3900,18 @@ async def auto_trader_start(
     """
     from strategies.futures.auto_trader import get_auto_trader
     trader = get_auto_trader(symbol)
+
+    # Auto-set cooldown to match bar interval
+    _interval_secs = {"1m": 60, "2m": 120, "5m": 300, "15m": 900}
+    cooldown = _interval_secs.get(interval, 300)
+    trader.update_config(cooldown_secs=cooldown)
+
     result = trader.start(payload.mode)
 
     # Sync backtest open position into paper trader
     if payload.mode == "paper":
         try:
-            open_pos = await run_in_threadpool(_get_backtest_open_position, symbol, period, trader)
+            open_pos = await run_in_threadpool(_get_backtest_open_position, symbol, period, trader, interval)
             if open_pos:
                 trader.sync_backtest_position(open_pos)
                 result = trader._snap()  # refresh snapshot after sync
@@ -3892,15 +3921,18 @@ async def auto_trader_start(
     return result
 
 
-def _get_backtest_open_position(symbol: str, period: str, trader) -> dict | None:
+def _get_backtest_open_position(symbol: str, period: str, trader, interval: str = "5m") -> dict | None:
     """Run a quick backtest to detect any open position."""
     from strategies.futures.backtest_5min import Backtester5Min
-    from strategies.futures.data_loader import load_yfinance_5min
 
     yf_symbol = f"{symbol}=F"
     _period_map = {"1d": "5d", "3d": "5d", "7d": "14d", "14d": "30d", "30d": "60d"}
+    _max_period = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d"}
     fetch_period = _period_map.get(period, "14d")
-    df = load_yfinance_5min(yf_symbol, period=fetch_period)
+    max_allowed = _max_period.get(interval, "60d")
+    if int(fetch_period.replace("d", "")) > int(max_allowed.replace("d", "")):
+        fetch_period = max_allowed
+    df = load_yfinance(symbol=yf_symbol, interval=interval, period=fetch_period)
     if df is None or len(df) < 50:
         return None
 
@@ -3958,10 +3990,11 @@ async def auto_trader_tick(
     payload: AutoTraderTickPayload,
     symbol: str = Query("MGC"),
     period: str = Query("7d"),
+    interval: str = Query("5m"),
 ):
     """Process one tick — called by frontend every 10s + at bar close.
 
-    If is_bar_close=True, loads latest 5min data and scans for signals.
+    If is_bar_close=True, loads latest data and scans for signals.
     """
     from strategies.futures.auto_trader import get_auto_trader
     trader = get_auto_trader(symbol)
@@ -3969,7 +4002,7 @@ async def auto_trader_tick(
     df_5m = None
     if payload.is_bar_close:
         df_5m = await run_in_threadpool(
-            _load_5min_data_for_tick, symbol, period
+            _load_5min_data_for_tick, symbol, period, interval
         )
 
     result = trader.tick(
@@ -3988,18 +4021,23 @@ async def auto_trader_tick(
     }
 
 
-def _load_5min_data_for_tick(symbol: str, period: str) -> "pd.DataFrame | None":
-    """Load 5min data for signal scanning during tick."""
+def _load_5min_data_for_tick(symbol: str, period: str, interval: str = "5m") -> "pd.DataFrame | None":
+    """Load data for signal scanning during tick."""
     import pandas as pd
     try:
-        from strategies.futures.data_loader import load_yfinance_5min
         _period_map = {"1d": "5d", "3d": "5d", "7d": "14d", "14d": "30d", "30d": "60d"}
+        # yfinance limits: 1m max 7d
+        _max_period = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d"}
         fetch_period = _period_map.get(period, "14d")
-        df = load_yfinance_5min(symbol, period=fetch_period)
+        max_allowed = _max_period.get(interval, "60d")
+        # Clamp to yfinance limit
+        if int(fetch_period.replace("d", "")) > int(max_allowed.replace("d", "")):
+            fetch_period = max_allowed
+        df = load_yfinance(symbol=f"{symbol}=F", interval=interval, period=fetch_period)
         if df is not None and len(df) > 50:
             return df
     except Exception as e:
-        logger.error("Failed to load 5min data for tick: %s", e)
+        logger.error("Failed to load %s data for tick: %s", interval, e)
     return None
 
 

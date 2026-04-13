@@ -48,9 +48,10 @@ function ts() { return Date.now(); }
 type Props = {
   symbol?: string;
   conditionToggles?: Record<string, boolean>;
+  interval?: string;
 };
 
-export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Props) {
+export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, interval = "5m" }: Props) {
   const { price: livePrice } = useLivePrice();
   const [snap, setSnap] = useState<AutoTraderSnapshot | null>(null);
   const [trades, setTrades] = useState<AutoTraderTrade[]>([]);
@@ -62,6 +63,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
   const [slMult, setSlMult] = useState(4.0);
   const [tpMult, setTpMult] = useState(3.0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
   const lastBarRef = useRef("");
   const logEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -108,12 +110,13 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
       if (!livePrice) return;
       const now = new Date();
       const min = now.getMinutes();
-      const barKey = `${now.getHours()}:${min - (min % 5)}`;
-      const isBarClose = barKey !== lastBarRef.current && min % 5 === 0;
+      const intervalMins = interval === "1m" ? 1 : interval === "2m" ? 2 : interval === "15m" ? 15 : 5;
+      const barKey = `${now.getHours()}:${min - (min % intervalMins)}`;
+      const isBarClose = barKey !== lastBarRef.current && min % intervalMins === 0;
       if (isBarClose) lastBarRef.current = barKey;
 
       try {
-        const result = await autoTraderTick(livePrice, isBarClose, 0, symbol);
+        const result = await autoTraderTick(livePrice, isBarClose, 0, symbol, "7d", interval);
         if (result.snapshot) setSnap(result.snapshot as AutoTraderSnapshot);
 
         // Log detail
@@ -159,7 +162,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
     const disabled = getDisabledConditions();
     const label = selectedPreset === "__current__" ? "Current Strategy" : selectedPreset;
     await autoTraderUpdateConfig({ disabled_conditions: disabled, sl_mult: slMult, tp_mult: tpMult, strategy_preset: label }, symbol).catch(() => {});
-    const s = await autoTraderStart(m, symbol).catch(() => null);
+    const s = await autoTraderStart(m, symbol, interval).catch(() => null);
     if (s) { setSnap(s); setMode(m); pushLog(`Started ${m.toUpperCase()} | ${label} | SL=${slMult}x TP=${tpMult}x`, "info"); }
   };
   const handleStop = async () => {
@@ -189,7 +192,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
     : null;
 
   return (
-    <div className={`bg-gradient-to-b ${STATE_BG[state] ?? STATE_BG.IDLE} backdrop-blur-sm`}>
+    <div className={`h-full flex flex-col bg-gradient-to-b ${STATE_BG[state] ?? STATE_BG.IDLE} backdrop-blur-sm`}>
 
       {/* ═══ Header bar ═══ */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
@@ -229,9 +232,16 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
         </div>
       )}
 
-      {/* ═══ Strategy selector ═══ */}
+      {/* ═══ Strategy selector (collapsible) ═══ */}
       {!started && (
-        <div className="px-4 pt-3">
+        <>
+        <button onClick={() => setConfigOpen((v) => !v)} className="flex items-center gap-1 px-4 py-1 text-[9px] text-white/25 hover:text-white/50 uppercase tracking-widest font-bold hover:bg-white/[0.02] transition-colors w-full">
+          <svg className={`w-2.5 h-2.5 transition-transform ${configOpen ? "" : "-rotate-90"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M19 9l-7 7-7-7"/></svg>
+          Config
+          {!configOpen && <span className="ml-2 text-[8px] text-violet-400/40 normal-case tracking-normal font-normal">{selectedPreset === "__current__" ? "Current" : selectedPreset} · SL {slMult}x · TP {tpMult}x</span>}
+        </button>
+        {configOpen && (
+        <div className="px-4 pt-1 pb-2">
           <div className="flex items-center gap-2">
             <span className="text-[10px] uppercase tracking-widest text-white/20 font-medium shrink-0">Strategy</span>
             <div className="relative flex-1">
@@ -273,6 +283,8 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
             </div>
           )}
         </div>
+        )}
+        </>
       )}
 
       {/* ═══ Controls ═══ */}
@@ -290,6 +302,18 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
                 bg-gradient-to-r from-violet-600/20 to-blue-500/10 hover:from-violet-600/30 hover:to-blue-500/20
                 text-violet-300 ring-1 ring-violet-500/20 hover:ring-violet-500/40 transition-all">
               Live Trade
+            </button>
+            <button onClick={async () => {
+                if (!confirm("Clear all paper trades & reset paper account?")) return;
+                await autoTraderClearDbTrades(symbol).catch(() => {});
+                const s = await autoTraderReset(symbol).catch(() => null);
+                if (s) { setSnap(s); setMode("off"); }
+                setTrades([]);
+                setLogs([]);
+                pushLog("Paper account reset", "warn");
+              }} title="Reset Paper Account"
+              className="px-3 py-2 rounded-xl text-[11px] text-red-400/50 hover:text-red-300 bg-white/5 hover:bg-red-500/10 ring-1 ring-white/5 hover:ring-red-500/20 transition-all">
+              🗑
             </button>
           </div>
         ) : (
@@ -374,7 +398,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
       </div>
 
       {/* ═══ Tab content ═══ */}
-      <div className="min-h-[120px] max-h-[220px] overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
 
         {/* ── Status tab ── */}
         {tab === "status" && snap && (

@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import FuturesDashboard from "../components/futures/FuturesDashboard";
+import type { FuturesDashboardHandle, LayoutState } from "../components/futures/FuturesDashboard";
 import KLSEDashboard from "../components/klse/KLSEDashboard";
 import USDashboard from "../components/us/USDashboard";
 
@@ -18,6 +19,8 @@ export default function Page() {
   const [defaultTab, setDefaultTab] = useState<Tab>("US");
   const [visited, setVisited] = useState<Set<string>>(() => new Set(["US"]));
   const [configOpen, setConfigOpen] = useState(false);
+  const futuresRef = useRef<FuturesDashboardHandle>(null);
+  const [futuresLayout, setFuturesLayout] = useState<LayoutState>({ col1: true, col2: true, col3: true, tiger: true });
 
   // Restore saved default tab after hydration
   useEffect(() => {
@@ -137,8 +140,37 @@ export default function Page() {
                 })}
               </div>
 
+              {/* Layout toggles (Futures only) */}
+              {mode === "FUTURES" && (
+                <div className="px-3 py-2 border-t border-slate-800/60">
+                  <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1.5">Layout Panels</div>
+                  {([
+                    { key: "col1" as const, label: "Chart", icon: "📊" },
+                    { key: "col2" as const, label: "Strategy", icon: "🧪" },
+                    { key: "col3" as const, label: "Trader", icon: "🤖" },
+                    { key: "tiger" as const, label: "Tiger Account", icon: "🐯" },
+                  ]).map((item) => (
+                    <button
+                      key={item.key}
+                      onClick={() => {
+                        const next = !futuresLayout[item.key];
+                        setFuturesLayout((prev) => ({ ...prev, [item.key]: next }));
+                        futuresRef.current?.setLayout(item.key, next);
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition mb-0.5 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200"
+                    >
+                      <span className="text-sm">{item.icon}</span>
+                      <span className="text-[11px] font-semibold flex-1">{item.label}</span>
+                      <span className={`w-7 h-4 rounded-full relative transition-colors ${futuresLayout[item.key] ? "bg-emerald-500/40" : "bg-slate-700"}`}>
+                        <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${futuresLayout[item.key] ? "left-3.5 bg-emerald-400" : "left-0.5 bg-slate-500"}`} />
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <div className="px-3 py-2 border-t border-slate-800/40">
-                <div className="text-[8px] text-slate-600 text-center">Settings saved to browser</div>
+                <div className="text-[8px] text-slate-600 text-center">Settings saved automatically</div>
               </div>
             </div>
           )}
@@ -147,7 +179,7 @@ export default function Page() {
 
       {/* Lazy mount: only render a tab after first visit, then keep it mounted */}
       <div className={`flex-1 overflow-hidden ${mode === "FUTURES" ? "flex" : "hidden"}`}>
-        {visited.has("FUTURES") && <FuturesDashboard />}
+        {visited.has("FUTURES") && <FuturesDashboard ref={futuresRef} onLayoutChange={setFuturesLayout} />}
       </div>
       <div className={`flex-1 overflow-hidden ${mode === "MY" ? "flex" : "hidden"}`}>
         {visited.has("MY") && <KLSEDashboard />}

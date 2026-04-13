@@ -1194,7 +1194,7 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
+export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles, interval: intervalProp = "5m", onIntervalChange }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>>; interval?: string; onIntervalChange?: (v: string) => void }>) {
   const [showExam, setShowExam] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1218,6 +1218,13 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const [btData, setBtData] = useState<MGC5MinBacktestResponse | null>(null);
   const [zoomTrade, setZoomTrade] = useState<MGC5MinTrade | null>(null);
   const [period, setPeriod] = useState("3d");
+  const [interval, setInterval_] = useState(intervalProp);
+  const handleIntervalChange = (v: string) => {
+    setInterval_(v);
+    onIntervalChange?.(v);
+    // 1m data limited to 7d max — clamp period
+    if (v === "1m" && parseInt(period) > 7) setPeriod("3d");
+  };
   const [slMult, setSlMult] = useState(defaultRisk.sl);
   const [tpMult, setTpMult] = useState(defaultRisk.tp);
 
@@ -1344,7 +1351,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       const disabled = CONDITION_DEFS
         .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
         .map((d) => d.key);
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade, interval);
       setBtData(res);
       onTradesUpdate?.(res.trades);
       setHasRunBacktest(true);
@@ -1357,7 +1364,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     } finally {
       setLoading(false);
     }
-  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, riskFilters, configKey]);
+  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, riskFilters, configKey, interval]);
 
   // ── Trigger backtest after optimizer apply (so new state is used) ──
   useEffect(() => {
@@ -1472,7 +1479,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     const doRun = async () => {
       if (!autoTradingRef.current) return;
       try {
-        const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, fmtDate(new Date()) || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade);
+        const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, fmtDate(new Date()) || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade, interval);
         if (!autoTradingRef.current) return;
         setBtData(res);
         onTradesUpdate?.(res.trades);
@@ -1550,7 +1557,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
 
     slTpHitRef.current = true;
     const reason = hitTP ? "TP" : "SL";
-    setExitStatus(`${reason} HIT @ $${livePrice.toFixed(2)} — re-running…`);
 
     // Immediately re-run backtest
     (async () => {
@@ -1561,7 +1567,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         const disabled = CONDITION_DEFS
           .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
           .map((d) => d.key);
-        const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade);
+        const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade, interval);
         setBtData(res);
         onTradesUpdate?.(res.trades);
         try { sessionStorage.setItem("bt5min_cache", JSON.stringify({ configKey, data: res })); } catch { /* */ }
@@ -1656,7 +1662,17 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="text-sm font-bold text-slate-100 tracking-tight">{symbolName}</span>
-                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700/50 text-slate-400 uppercase tracking-wider">5min</span>
+                <select
+                  value={interval}
+                  onChange={(e) => handleIntervalChange(e.target.value)}
+                  className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700/50 text-slate-400 uppercase tracking-wider appearance-none cursor-pointer hover:border-cyan-600/50 focus:outline-none focus:border-cyan-600/50 transition-colors"
+                  style={{ colorScheme: "dark" }}
+                >
+                  <option value="1m">1min</option>
+                  <option value="2m">2min</option>
+                  <option value="5m">5min</option>
+                  <option value="15m">15min</option>
+                </select>
               </div>
               <div className="text-[9px] text-slate-500 -mt-0.5">{symbol}=F · Futures</div>
             </div>
@@ -1699,13 +1715,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       {error && (
         <div className="mx-3 mt-2 rounded-lg border border-rose-800/60 bg-rose-950/30 px-3 py-2 text-[11px] text-rose-300">
           {error}
-        </div>
-      )}
-
-      {/* ── Exit + re-entry status ──────────────────── */}
-      {exitStatus && (
-        <div className="mx-3 mt-2 rounded-lg border border-amber-500/40 bg-amber-950/20 px-3 py-2 text-[10px] text-amber-400 font-bold animate-pulse">
-          ⚡ {exitStatus}
         </div>
       )}
 
@@ -1999,7 +2008,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
           {/* Controls */}
           <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-800/40">
             <div className="flex gap-0.5">
-              {["1d", "3d", "7d", "30d", "60d"].map((p) => (
+              {(interval === "1m" ? ["1d", "2d", "3d", "5d", "7d"] : ["1d", "3d", "7d", "30d", "60d"]).map((p) => (
                 <button
                   key={p}
                   onClick={() => setPeriod(p)}

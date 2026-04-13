@@ -1066,6 +1066,7 @@ export type StrategyConfig = {
   tp_mult?: number;
   risk_filters?: Record<string, boolean>;
   active_preset?: string;
+  layout?: Record<string, boolean>;
 };
 
 export async function loadStrategyConfig(symbol: string = "MGC"): Promise<StrategyConfig> {
@@ -1208,8 +1209,9 @@ export async function fetchMGC5MinBacktest(
   dailyLossLimit: number = 0,
   skipHours?: number[],
   maxLossPerTrade: number = 0,
+  interval: string = "5m",
 ): Promise<MGC5MinBacktestResponse> {
-  let url = `${API_BASE}/mgc/backtest_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  let url = `${API_BASE}/mgc/backtest_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}&interval=${encodeURIComponent(interval)}`;
   if (date_from) url += `&date_from=${date_from}`;
   if (date_to) url += `&date_to=${date_to}`;
   if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
@@ -1880,8 +1882,8 @@ export type AutoTraderFullState = AutoTraderSnapshot & {
 const _at = (path: string, symbol: string = "MGC") =>
   `${API_BASE}/mgc/auto-trader/${path}?symbol=${encodeURIComponent(symbol)}`;
 
-export async function autoTraderStart(mode: "paper" | "live", symbol = "MGC"): Promise<AutoTraderSnapshot> {
-  const res = await fetch(_at("start", symbol), {
+export async function autoTraderStart(mode: "paper" | "live", symbol = "MGC", interval = "5m"): Promise<AutoTraderSnapshot> {
+  const res = await fetch(`${_at("start", symbol)}&interval=${interval}`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mode }),
   });
@@ -1914,9 +1916,9 @@ export async function autoTraderGetState(symbol = "MGC"): Promise<AutoTraderFull
 }
 
 export async function autoTraderTick(
-  livePrice: number, isBarClose: boolean, tigerQty = 0, symbol = "MGC", period = "7d",
+  livePrice: number, isBarClose: boolean, tigerQty = 0, symbol = "MGC", period = "7d", interval = "5m",
 ): Promise<AutoTraderTickResult> {
-  const res = await fetch(`${_at("tick", symbol)}&period=${period}`, {
+  const res = await fetch(`${_at("tick", symbol)}&period=${period}&interval=${interval}`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ live_price: livePrice, is_bar_close: isBarClose, tiger_qty: tigerQty }),
   });
