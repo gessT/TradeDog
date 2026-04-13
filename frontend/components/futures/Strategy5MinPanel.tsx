@@ -485,6 +485,65 @@ const DEFAULT_CONDITION_TOGGLES: Record<string, boolean> = Object.fromEntries(
   CONDITION_DEFS.map((d) => [d.key, d.group === "5m"])
 );
 
+// ── Built-in strategy presets (locked, cannot be deleted) ────────────
+export type BuiltInPreset = {
+  name: string;
+  toggles: Record<string, boolean>;
+  interval: string;
+  sl: number;
+  tp: number;
+  desc: string;
+};
+
+export const BUILT_IN_PRESETS: BuiltInPreset[] = [
+  {
+    name: "⚡ Scalper 1m",
+    desc: "Ultra-fast 1m scalp — trend + breakout + MACD, tight SL, 2:1 R:R",
+    interval: "1m",
+    sl: 1,
+    tp: 2,
+    toggles: {
+      ema_trend: true,
+      ema_slope: true,
+      pullback: false,
+      breakout: true,
+      supertrend: true,
+      macd_momentum: true,
+      rsi_momentum: false,
+      volume_spike: false,
+      atr_range: false,
+      session_ok: false,
+      adx_ok: false,
+      smc_bos: false,
+      smc_ob: false,
+      smc_fvg: false,
+    },
+  },
+  {
+    name: "⚡ Scalper 2m",
+    desc: "Fast 2m scalp — trend + momentum, slightly wider stops",
+    interval: "2m",
+    sl: 2,
+    tp: 3,
+    toggles: {
+      ema_trend: true,
+      ema_slope: true,
+      pullback: true,
+      breakout: true,
+      supertrend: true,
+      macd_momentum: true,
+      rsi_momentum: false,
+      volume_spike: false,
+      atr_range: false,
+      session_ok: false,
+      adx_ok: false,
+      smc_bos: false,
+      smc_ob: false,
+      smc_fvg: false,
+    },
+  },
+];
+
 /** Compute next candle close time for a given interval (minutes). Returns ms epoch. */
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1957,6 +2016,43 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                       </button>
                     </div>
                   )}
+                  {/* Built-in locked presets */}
+                  <div className="space-y-1 mb-2">
+                    {BUILT_IN_PRESETS.map((bp) => {
+                      const enabledCount = Object.values(bp.toggles).filter(Boolean).length;
+                      const total = Object.keys(bp.toggles).length;
+                      const isActive = activePreset === bp.name;
+                      return (
+                        <div key={bp.name} className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => {
+                              setConditionToggles((prev) => ({ ...prev, ...bp.toggles }));
+                              setActivePreset(bp.name);
+                              setSlMult(bp.sl);
+                              setTpMult(bp.tp);
+                              handleIntervalChange(bp.interval);
+                              setConditionsOpen(false);
+                              setPendingOptRun(true);
+                            }}
+                            className={`flex-1 flex items-center gap-1.5 px-2 py-1.5 rounded text-left text-[9px] border transition ${
+                              isActive
+                                ? "border-amber-500/50 bg-amber-950/30 ring-1 ring-amber-500/20"
+                                : "border-amber-800/20 bg-amber-950/10 hover:bg-amber-950/20"
+                            }`}
+                          >
+                            {isActive && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />}
+                            <span className={`font-bold truncate ${isActive ? "text-amber-300" : "text-amber-400/70"}`}>{bp.name}</span>
+                            <span className="text-[7px] text-amber-500/40 ml-auto flex items-center gap-1">
+                              {bp.interval} · SL{bp.sl}× TP{bp.tp}× · {enabledCount}/{total}
+                              <svg className="w-2.5 h-2.5 text-amber-500/30" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd"/></svg>
+                            </span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* User presets */}
                   {presets.length > 0 && (
                     <div className="space-y-1">
                       {presets.map((p) => {

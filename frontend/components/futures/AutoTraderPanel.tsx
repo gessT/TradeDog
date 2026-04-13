@@ -18,6 +18,7 @@ import {
   type AutoTraderTrade,
   type ConditionPreset,
 } from "../../services/api";
+import { BUILT_IN_PRESETS } from "./Strategy5MinPanel";
 
 type Mode = "off" | "paper" | "live";
 type LogEntry = { ts: number; msg: string; type: "info" | "signal" | "entry" | "exit" | "warn" | "error" };
@@ -44,6 +45,40 @@ const STATE_LABEL: Record<string, string> = {
 
 function ts() { return Date.now(); }
 
+// ── Notification sounds (Web Audio API) ──────────────────────
+function playTone(freq: number, duration: number, type: OscillatorType = "sine", vol = 0.3) {
+  try {
+    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(vol, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + duration);
+  } catch { /* audio not available */ }
+}
+
+function notifySignal() {
+  // Two ascending tones — "ding ding"
+  playTone(880, 0.15, "sine", 0.25);
+  setTimeout(() => playTone(1100, 0.2, "sine", 0.3), 160);
+}
+function notifyEntry() {
+  // Three quick ascending tones — "confirmed"
+  playTone(660, 0.12, "sine", 0.2);
+  setTimeout(() => playTone(880, 0.12, "sine", 0.25), 130);
+  setTimeout(() => playTone(1320, 0.25, "sine", 0.3), 260);
+}
+function notifyExit() {
+  // Two descending tones — "closed"
+  playTone(880, 0.15, "triangle", 0.25);
+  setTimeout(() => playTone(550, 0.3, "triangle", 0.2), 170);
+}
+
 type Props = {
   symbol?: string;
   conditionToggles?: Record<string, boolean>;
@@ -61,6 +96,8 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [presets, setPresets] = useState<ConditionPreset[]>([]);
   const [selectedPreset, setSelectedPreset] = useState<string>("__current__");
+  const [starting, setStarting] = useState(false);
+  const [launchFlash, setLaunchFlash] = useState<string | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const lastBarRef = useRef("");
@@ -118,10 +155,13 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
           pushLog(result.message || "Bar close — scanned, no signal");
         } else if (result.action === "SIGNAL") {
           pushLog(`Signal: ${result.signal?.direction} @ $${result.signal?.entry_price} (qty=${result.risk?.qty})`, "signal");
+          notifySignal();
         } else if (result.action === "ENTRY") {
           pushLog(result.message || "Entry filled", "entry");
+          notifyEntry();
         } else if (result.action === "EXIT") {
           pushLog(result.message || "Position exited", "exit");
+          notifyExit();
           const t = await autoTraderGetDbTrades(symbol);
           setTrades(t);
         } else if (result.action === "BLOCKED") {
@@ -144,20 +184,32 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
     if (selectedPreset === "__current__" && conditionToggles) {
       toggles = conditionToggles;
     } else {
-      const p = presets.find((x) => x.name === selectedPreset);
-      if (p) toggles = p.toggles;
+      const bp = BUILT_IN_PRESETS.find((x) => x.name === selectedPreset);
+      if (bp) { toggles = bp.toggles; }
+      else { const p = presets.find((x) => x.name === selectedPreset); if (p) toggles = p.toggles; }
     }
     return Object.entries(toggles).filter(([, v]) => !v).map(([k]) => k);
   }, [selectedPreset, conditionToggles, presets]);
 
   // ── Controls ────────────────────────────────────────────────
   const handleStart = async (m: "paper" | "live") => {
+    setStarting(true);
     // sync selected strategy conditions + SL/TP multipliers to backend
     const disabled = getDisabledConditions();
+    const bp = BUILT_IN_PRESETS.find((x) => x.name === selectedPreset);
+    const useSl = bp ? bp.sl : slMult;
+    const useTp = bp ? bp.tp : tpMult;
+    const useInterval = bp ? bp.interval : interval;
     const label = selectedPreset === "__current__" ? "Current Strategy" : selectedPreset;
-    await autoTraderUpdateConfig({ disabled_conditions: disabled, sl_mult: slMult, tp_mult: tpMult, strategy_preset: label }, symbol).catch(() => {});
-    const s = await autoTraderStart(m, symbol, interval).catch(() => null);
-    if (s) { setSnap(s); setMode(m); pushLog(`Started ${m.toUpperCase()} | ${label} | SL=${slMult}x TP=${tpMult}x`, "info"); }
+    await autoTraderUpdateConfig({ disabled_conditions: disabled, sl_mult: useSl, tp_mult: useTp, strategy_preset: label }, symbol).catch(() => {});
+    const s = await autoTraderStart(m, symbol, useInterval).catch(() => null);
+    setStarting(false);
+    if (s) {
+      setSnap(s); setMode(m);
+      pushLog(`Started ${m.toUpperCase()} | ${label} | SL=${useSl}x TP=${useTp}x`, "info");
+      setLaunchFlash(m);
+      setTimeout(() => setLaunchFlash(null), 3000);
+    }
   };
   const handleStop = async () => {
     const s = await autoTraderStop(symbol).catch(() => null);
@@ -186,10 +238,27 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
     : null;
 
   return (
-    <div className={`h-full flex flex-col bg-gradient-to-b ${STATE_BG[state] ?? STATE_BG.IDLE} backdrop-blur-sm`}>
+    <div className={`h-full flex flex-col backdrop-blur-sm relative ${
+      started && mode === "live"
+        ? "bg-gradient-to-b from-red-950/40 via-slate-950/80 to-slate-950"
+        : started && mode === "paper"
+          ? "bg-gradient-to-b from-emerald-950/20 via-slate-950/80 to-slate-950"
+          : `bg-gradient-to-b ${STATE_BG[state] ?? STATE_BG.IDLE}`
+    }`}>
+
+      {/* ═══ Mode edge stripe ═══ */}
+      {started && (
+        <div className={`h-1 w-full shrink-0 ${
+          mode === "live"
+            ? "bg-gradient-to-r from-red-500 via-red-600 to-red-500 at-live-stripe"
+            : "bg-gradient-to-r from-emerald-500/60 via-emerald-400/40 to-emerald-500/60"
+        }`} />
+      )}
 
       {/* ═══ Header bar ═══ */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+      <div className={`flex items-center justify-between px-4 py-3 border-b ${
+        started && mode === "live" ? "border-red-500/20" : "border-white/5"
+      }`}>
         <div className="flex items-center gap-2.5 min-w-0">
           <div className={`w-2 h-2 rounded-full shadow-lg shrink-0 ${STATE_DOT[state]}`} />
           <span className="text-[13px] font-semibold tracking-tight text-white/90 shrink-0">
@@ -207,10 +276,18 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
         </div>
 
         {/* mode pill */}
-        {started && (
-          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase shrink-0
-            ${mode === "paper" ? "bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/25" : "bg-red-500/15 text-red-400 ring-1 ring-red-500/25"}`}>
-            {mode}
+        {started && mode === "paper" && (
+          <span className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-bold tracking-wide uppercase shrink-0
+            bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/25">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            Paper
+          </span>
+        )}
+        {started && mode === "live" && (
+          <span className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-extrabold tracking-wider uppercase shrink-0
+            bg-red-500/20 text-red-400 ring-2 ring-red-500/40 animate-pulse">
+            <span className="w-2 h-2 rounded-full bg-red-500 shadow-lg shadow-red-500/50" />
+            ⚠ LIVE
           </span>
         )}
       </div>
@@ -247,6 +324,9 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
                 style={{ colorScheme: "dark" }}
               >
                 <option value="__current__" className="bg-[#1a1d25] text-white/70">Current (Backtest Panel)</option>
+                {BUILT_IN_PRESETS.map((bp) => (
+                  <option key={bp.name} value={bp.name} className="bg-[#1a1d25] text-amber-300">🔒 {bp.name} ({bp.interval})</option>
+                ))}
                 {presets.map((p) => (
                   <option key={p.name} value={p.name} className="bg-[#1a1d25] text-white/70">{p.name}</option>
                 ))}
@@ -259,12 +339,17 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
           {selectedPreset !== "__current__" && (
             <div className="mt-1.5 flex flex-wrap gap-1">
               {(() => {
-                const p = presets.find((x) => x.name === selectedPreset);
+                const bp = BUILT_IN_PRESETS.find((x) => x.name === selectedPreset);
+                const p = bp || presets.find((x) => x.name === selectedPreset);
                 if (!p) return null;
-                const disabled = Object.entries(p.toggles).filter(([, v]) => !v).map(([k]) => k);
-                const enabled = Object.entries(p.toggles).filter(([, v]) => v).map(([k]) => k);
+                const toggles = bp ? bp.toggles : (p as { toggles: Record<string, boolean> }).toggles;
+                const disabled = Object.entries(toggles).filter(([, v]) => !v).map(([k]) => k);
+                const enabled = Object.entries(toggles).filter(([, v]) => v).map(([k]) => k);
                 return (
                   <>
+                    {bp && (
+                      <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/10 text-amber-400/60 ring-1 ring-amber-500/10">{bp.interval} · SL{bp.sl}× TP{bp.tp}×</span>
+                    )}
                     {enabled.map((k) => (
                       <span key={k} className="px-1.5 py-0.5 rounded text-[8px] bg-emerald-500/10 text-emerald-400/60 ring-1 ring-emerald-500/10">{k.replace(/_/g, " ")}</span>
                     ))}
@@ -281,21 +366,80 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
         </>
       )}
 
+      {/* ═══ LIVE warning banner ═══ */}
+      {started && mode === "live" && !launchFlash && (
+        <div className="mx-3 mt-2 flex items-center gap-2 rounded-lg bg-red-500/10 ring-1 ring-red-500/20 px-3 py-1.5">
+          <span className="text-red-500 text-[11px]">⚠</span>
+          <span className="text-[10px] text-red-400/70 font-medium">LIVE MODE — Real money at risk</span>
+        </div>
+      )}
+
+      {/* ═══ Launch flash banner ═══ */}
+      {launchFlash && (
+        <div className={`mx-3 mt-2 at-launch-banner rounded-xl overflow-hidden ring-1 ${
+          launchFlash === "paper"
+            ? "bg-gradient-to-r from-emerald-600/20 via-emerald-500/10 to-transparent ring-emerald-500/25"
+            : "bg-gradient-to-r from-red-600/30 via-red-500/15 to-transparent ring-red-500/30"
+        }`}>
+          <div className="flex items-center gap-3 px-4 py-3">
+            <span className="relative flex h-3 w-3">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                launchFlash === "paper" ? "bg-emerald-400" : "bg-red-400"
+              }`} />
+              <span className={`relative inline-flex rounded-full h-3 w-3 ${
+                launchFlash === "paper" ? "bg-emerald-400" : "bg-red-400"
+              }`} />
+            </span>
+            <div>
+              <p className={`text-[12px] font-bold tracking-wide ${
+                launchFlash === "paper" ? "text-emerald-300" : "text-red-300"
+              }`}>
+                {launchFlash === "paper" ? "Paper Trading Started" : "⚠ LIVE Trading Started"}
+              </p>
+              <p className={`text-[9px] mt-0.5 ${
+                launchFlash === "paper" ? "text-white/30" : "text-red-400/50"
+              }`}>
+                {selectedPreset === "__current__" ? "Current Strategy" : selectedPreset} · {launchFlash === "paper" ? "Scanning for signals..." : "Real money — be careful!"}
+              </p>
+            </div>
+          </div>
+          <div className={`h-0.5 at-launch-progress ${
+            launchFlash === "paper" ? "bg-emerald-400/40" : "bg-red-400/60"
+          }`} />
+        </div>
+      )}
+
       {/* ═══ Controls ═══ */}
       <div className="px-4 py-3 space-y-2.5">
         {!started ? (
           <div className="flex gap-2">
             <button onClick={() => handleStart("paper")}
-              className="flex-1 py-2 rounded-xl text-[11px] font-bold tracking-wide
-                bg-gradient-to-r from-emerald-600/20 to-emerald-500/10 hover:from-emerald-600/30 hover:to-emerald-500/20
-                text-emerald-400 ring-1 ring-emerald-500/20 hover:ring-emerald-500/40 transition-all">
-              Paper Trade
+              disabled={starting}
+              className={`flex-1 py-2 rounded-xl text-[11px] font-bold tracking-wide transition-all ${
+                starting
+                  ? "bg-emerald-600/10 text-emerald-400/50 ring-1 ring-emerald-500/10 cursor-wait"
+                  : "bg-gradient-to-r from-emerald-600/20 to-emerald-500/10 hover:from-emerald-600/30 hover:to-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/20 hover:ring-emerald-500/40 active:scale-95"
+              }`}>
+              {starting ? (
+                <span className="flex items-center justify-center gap-1.5">
+                  <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  Starting...
+                </span>
+              ) : "Paper Trade"}
             </button>
             <button onClick={() => handleStart("live")}
-              className="flex-1 py-2 rounded-xl text-[11px] font-bold tracking-wide
-                bg-gradient-to-r from-violet-600/20 to-blue-500/10 hover:from-violet-600/30 hover:to-blue-500/20
-                text-violet-300 ring-1 ring-violet-500/20 hover:ring-violet-500/40 transition-all">
-              Live Trade
+              disabled={starting}
+              className={`flex-1 py-2.5 rounded-xl text-[11px] font-extrabold tracking-wider transition-all ${
+                starting
+                  ? "bg-red-600/10 text-red-300/50 ring-1 ring-red-500/10 cursor-wait"
+                  : "bg-gradient-to-r from-red-600/30 to-red-500/20 hover:from-red-600/50 hover:to-red-500/30 text-red-300 ring-2 ring-red-500/30 hover:ring-red-500/50 active:scale-95"
+              }`}>
+              {starting ? (
+                <span className="flex items-center justify-center gap-1.5">
+                  <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  Starting...
+                </span>
+              ) : "⚠ Live Trade"}
             </button>
             <button onClick={async () => {
                 if (!confirm("Clear all paper trades & reset paper account?")) return;
@@ -574,6 +718,27 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
         }
         .at-log-entry {
           animation: at-fade-in 0.3s ease-out;
+        }
+        @keyframes at-launch-in {
+          from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes at-progress {
+          from { width: 100%; }
+          to { width: 0%; }
+        }
+        .at-launch-banner {
+          animation: at-launch-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .at-launch-progress {
+          animation: at-progress 3s linear forwards;
+        }
+        @keyframes at-live-pulse {
+          0%, 100% { opacity: 0.7; }
+          50% { opacity: 1; }
+        }
+        .at-live-stripe {
+          animation: at-live-pulse 2s ease-in-out infinite;
         }
       `}</style>
     </div>
