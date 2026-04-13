@@ -689,14 +689,15 @@ class Backtester5Min:
             bar = df_ind.iloc[i]
             prev = df_ind.iloc[i - 1]
             bar_date = str(bar.name.date()) if hasattr(bar.name, "date") else str(bar.name)[:10]
+            is_last_bar = (i == len(df_ind) - 1)
 
             if bar_date != prev_bar_date:
                 prev_bar_date = bar_date
                 consec_losses = 0
                 daily_counts[bar_date] = daily_counts.get(bar_date, 0)
 
-            # EOD close on day change
-            if position is not None:
+            # EOD close on day change (skip on last bar to preserve live position)
+            if position is not None and not is_last_bar:
                 prev_date = str(prev.name.date()) if hasattr(prev.name, "date") else str(prev.name)[:10]
                 if bar_date != prev_date:
                     d = position["direction"]

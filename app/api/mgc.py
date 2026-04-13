@@ -1947,29 +1947,34 @@ async def mgc_backtest_5min(
             for t in filtered_trades
         ]
 
-        return candles, trades, result.equity_curve, metrics, result.params, filtered_daily
+        return candles, trades, result.equity_curve, metrics, result.params, filtered_daily, df, custom_params
 
     try:
-        candles, trades, eq_curve, metrics, params, daily_pnl = await run_in_threadpool(_run)
+        candles, trades, eq_curve, metrics, params, daily_pnl, raw_df, bt_params = await run_in_threadpool(_run)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as exc:
         logger.exception("5min backtest failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
-    # ── Detect open position from the last EOD trade ─────────────────
-    # The backtester force-closes any open position at data end as "EOD".
-    # If the very last trade (unfiltered or filtered) is EOD, it means
-    # the position is still live → convert it to "OPEN".
+    # ── Detect open position ─────────────────────────────────────────
+    # Use get_live_position() with the SAME dataframe for consistency.
     open_pos = None
-    if trades:
-        # Only convert if the very last trade is EOD (position still open at end of data)
-        last_eod_idx = None
-        if trades[-1].reason == "EOD":
-            last_eod_idx = len(trades) - 1
 
-        if last_eod_idx is not None:
-            t = trades[last_eod_idx]
+    try:
+        def _get_live_pos():
+            from strategies.futures.backtest_5min import Backtester5Min
+            bt2 = Backtester5Min(capital=capital)
+            return bt2.get_live_position(raw_df, params=bt_params, disabled_conditions=_disabled or None)
+        open_pos = await run_in_threadpool(_get_live_pos)
+    except Exception as e:
+        logger.warning("get_live_position failed, using EOD heuristic: %s", e)
+
+    # Fallback: EOD heuristic + relabel last EOD trade as OPEN
+    if trades and trades[-1].reason == "EOD":
+        last_eod_idx = len(trades) - 1
+        t = trades[last_eod_idx]
+        if open_pos is None:
             open_pos = {
                 "direction": t.direction or "CALL",
                 "entry_price": t.entry_price,
@@ -1979,22 +1984,22 @@ async def mgc_backtest_5min(
                 "signal_type": t.signal_type,
                 "bar_time": t.entry_time,
             }
-            trades[last_eod_idx] = MGC5MinTrade(
-                entry_time=t.entry_time,
-                exit_time=t.exit_time,
-                entry_price=t.entry_price,
-                exit_price=t.exit_price,
-                qty=t.qty,
-                pnl=t.pnl,
-                pnl_pct=t.pnl_pct,
-                reason="OPEN",
-                signal_type=t.signal_type,
-                direction=t.direction,
-                mae=t.mae,
-                mkt_structure=t.mkt_structure,
-                sl=t.sl,
-                tp=t.tp,
-            )
+        trades[last_eod_idx] = MGC5MinTrade(
+            entry_time=t.entry_time,
+            exit_time=t.exit_time,
+            entry_price=t.entry_price,
+            exit_price=t.exit_price,
+            qty=t.qty,
+            pnl=t.pnl,
+            pnl_pct=t.pnl_pct,
+            reason="OPEN",
+            signal_type=t.signal_type,
+            direction=t.direction,
+            mae=t.mae,
+            mkt_structure=t.mkt_structure,
+            sl=t.sl,
+            tp=t.tp,
+        )
 
     return MGC5MinBacktestResponse(
         symbol=symbol,
@@ -3901,10 +3906,11 @@ async def auto_trader_start(
     from strategies.futures.auto_trader import get_auto_trader
     trader = get_auto_trader(symbol)
 
-    # Auto-set cooldown to match bar interval
-    _interval_secs = {"1m": 60, "2m": 120, "5m": 300, "15m": 900}
-    cooldown = _interval_secs.get(interval, 300)
-    trader.update_config(cooldown_secs=cooldown)
+    # Auto-set cooldown to match bar interval (only if user hasn't configured it)
+    if not trader._machine._cooldown_user_set:
+        _interval_secs = {"1m": 60, "2m": 120, "5m": 300, "15m": 900}
+        cooldown = _interval_secs.get(interval, 300)
+        trader.update_config(cooldown_secs=cooldown, _user_set=False)
 
     result = trader.start(payload.mode)
 
@@ -4005,12 +4011,52 @@ async def auto_trader_tick(
             _load_5min_data_for_tick, symbol, period, interval
         )
 
+    # For live mode, fetch actual Tiger position for broker-sync
+    tiger_qty = payload.tiger_qty
+    if trader._machine.mode == "live" and trader._machine.state == "IN_TRADE":
+        tiger_qty = await run_in_threadpool(_get_tiger_position, symbol)
+
     result = trader.tick(
         live_price=payload.live_price,
         df_5m=df_5m,
         is_bar_close=payload.is_bar_close,
-        tiger_qty=payload.tiger_qty,
+        tiger_qty=tiger_qty,
     )
+
+    # ── Live mode: auto-execute Tiger bracket order on SIGNAL ──
+    if result.action == "SIGNAL" and trader._machine.mode == "live" and result.risk:
+        try:
+            tiger_result = await run_in_threadpool(
+                _auto_trader_execute_tiger,
+                symbol,
+                result.signal or {},
+                result.risk,
+                payload.live_price,
+            )
+            if tiger_result["executed"]:
+                # Notify auto-trader of live fill
+                trader.on_live_entry_filled(
+                    entry_price=tiger_result["entry_price"],
+                    sl=tiger_result["sl"],
+                    tp=tiger_result["tp"],
+                    qty=tiger_result["qty"],
+                    direction=tiger_result["direction"],
+                )
+                result.action = "ENTRY"
+                result.message = f"Live entry: {tiger_result['direction']} @ ${tiger_result['entry_price']:.2f} qty={tiger_result['qty']} | SL=${tiger_result['sl']:.2f} TP=${tiger_result['tp']:.2f}"
+                result.snapshot = trader._snap()
+                logger.info("[%s] Auto-trader live bracket order placed: %s", symbol, tiger_result["reason"])
+            else:
+                result.message = f"Signal found but Tiger order failed: {tiger_result['reason']}"
+                trader._machine.cancel_signal()
+                result.snapshot = trader._snap()
+                logger.error("[%s] Auto-trader Tiger order failed: %s", symbol, tiger_result["reason"])
+        except Exception as e:
+            logger.exception("[%s] Auto-trader live execution error", symbol)
+            result.message = f"Signal found but execution error: {e}"
+            trader._machine.cancel_signal()
+            result.snapshot = trader._snap()
+
     return {
         "action": result.action,
         "signal": result.signal,
@@ -4039,6 +4085,103 @@ def _load_5min_data_for_tick(symbol: str, period: str, interval: str = "5m") -> 
     except Exception as e:
         logger.error("Failed to load %s data for tick: %s", interval, e)
     return None
+
+
+def _auto_trader_execute_tiger(
+    symbol: str,
+    signal: dict,
+    risk: dict,
+    live_price: float,
+) -> dict:
+    """Place a Tiger bracket order (entry + SL/TP) for auto-trader live mode.
+
+    Returns dict with executed, entry_price, sl, tp, qty, direction, reason.
+    """
+    from strategies.futures.tiger_execution import TigerTrader
+
+    commodity = _COMMODITY_SYMBOLS.get(symbol, _COMMODITY_SYMBOLS["MGC"])
+    tiger_sym = commodity["tiger"]
+    tick_size = commodity["tick"]
+
+    direction = signal.get("direction", "CALL")
+    entry_price = signal.get("entry_price", 0)
+    sl_raw = risk.get("sl", 0)
+    tp_raw = risk.get("tp", 0)
+    qty = int(risk.get("qty", 1))
+    side = "BUY" if direction == "CALL" else "SELL"
+
+    # Round SL/TP to tick size
+    sl_price = round(round(sl_raw / tick_size) * tick_size, 6)
+    tp_price = round(round(tp_raw / tick_size) * tick_size, 6)
+
+    fail = {
+        "executed": False, "entry_price": entry_price,
+        "sl": sl_price, "tp": tp_price, "qty": qty,
+        "direction": direction, "reason": "",
+    }
+
+    if entry_price <= 0 or sl_price <= 0 or tp_price <= 0:
+        fail["reason"] = f"Invalid prices: entry={entry_price} sl={sl_price} tp={tp_price}"
+        return fail
+
+    try:
+        trader = TigerTrader()
+        trader.connect()
+    except Exception as exc:
+        fail["reason"] = f"Tiger connection failed: {exc}"
+        return fail
+
+    try:
+        current_px = _tiger_live_price(symbol) or live_price or entry_price
+        bracket = trader.place_bracket_order(
+            symbol=tiger_sym,
+            qty=qty,
+            side=side,
+            stop_loss_price=sl_price,
+            take_profit_price=tp_price,
+            limit_price=None,
+            current_price=current_px,
+        )
+    except Exception as exc:
+        fail["reason"] = f"Bracket order error: {exc}"
+        return fail
+
+    if bracket.entry and bracket.entry.status != "FAILED":
+        sl_ok = bracket.stop_loss is not None and bracket.stop_loss.status != "FAILED"
+        tp_ok = bracket.take_profit is not None and bracket.take_profit.status != "FAILED"
+
+        parts = [f"Entry {bracket.entry.order_id} {side}"]
+        if bracket.stop_loss:
+            parts.append(f"SL {bracket.stop_loss.order_id} @ ${sl_price:.2f}")
+        if bracket.take_profit:
+            parts.append(f"TP {bracket.take_profit.order_id} @ ${tp_price:.2f}")
+
+        if not sl_ok or not tp_ok:
+            # SL/TP failed — cancel entry for safety
+            logger.error(
+                "[%s] Auto-trader FAIL-SAFE: SL=%s TP=%s — cancelling entry %s",
+                symbol, sl_ok, tp_ok, bracket.entry.order_id,
+            )
+            try:
+                trader.cancel_order(bracket.entry.order_id)
+            except Exception:
+                logger.exception("Failed to cancel entry order %s", bracket.entry.order_id)
+            fail["reason"] = f"OCO not confirmed (SL={sl_ok}, TP={tp_ok}) — entry cancelled"
+            return fail
+
+        return {
+            "executed": True,
+            "entry_price": entry_price,
+            "sl": sl_price,
+            "tp": tp_price,
+            "qty": qty,
+            "direction": direction,
+            "reason": " | ".join(parts),
+        }
+
+    entry_status = bracket.entry.status if bracket.entry else "NO_ENTRY"
+    fail["reason"] = f"Tiger order failed ({entry_status})"
+    return fail
 
 
 @router.get("/auto-trader/trades")

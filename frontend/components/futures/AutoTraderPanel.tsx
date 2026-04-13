@@ -176,7 +176,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
     tickRef.current = setInterval(doTick, 10_000);
     doTick();
     return () => { if (tickRef.current) clearInterval(tickRef.current); };
-  }, [snap?.started, livePrice, symbol, pushLog]);
+  }, [snap?.started, livePrice, symbol, interval, pushLog]);
 
   // ── Resolve disabled conditions from selected preset ──────
   const getDisabledConditions = useCallback((): string[] => {
@@ -645,8 +645,33 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
                 </div>
               );
             })()}
-            {trades.length === 0 && (
+            {trades.length === 0 && !snap?.position && (
               <div className="text-white/15 text-center py-6 text-[11px]">No trades yet</div>
+            )}
+            {/* Open position */}
+            {snap?.position && (
+              <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-violet-500/[0.06] ring-1 ring-violet-500/20 mb-1">
+                <span className={`text-[11px] font-black ${snap.position.direction === "CALL" ? "text-emerald-400" : "text-red-400"}`}>
+                  {snap.position.direction === "CALL" ? "↗" : "↘"}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] text-white/60 font-mono">${snap.position.entry_price.toFixed(2)}</span>
+                    <span className="text-[8px] px-1 py-px rounded bg-violet-500/20 text-violet-300 ring-1 ring-violet-500/30 font-bold">OPEN</span>
+                    <span className="text-[9px] text-white/20">×{snap.position.qty}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[9px] text-white/20 mt-0.5">
+                    <span className="text-red-400/60">SL ${snap.position.stop_loss.toFixed(2)}</span>
+                    <span className="text-emerald-400/60">TP ${snap.position.take_profit.toFixed(2)}</span>
+                    <span>{snap.position.entry_time?.slice(0, 16)}</span>
+                  </div>
+                </div>
+                {unrealizedPnl !== null && (
+                  <span className={`font-mono text-xs font-bold shrink-0 ${unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl.toFixed(2)}
+                  </span>
+                )}
+              </div>
             )}
             {trades.map((t, i) => (
               <div key={i}

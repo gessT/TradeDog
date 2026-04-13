@@ -100,3 +100,29 @@ class USStockStrategyTag(Base):
     total_trades: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     tagged_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+
+class FuturesTraderConfig(Base):
+    """Persisted auto-trader configuration for futures (shared by paper & live)."""
+    __tablename__ = "futures_trader_configs"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True, index=True)
+
+    # Scanner
+    sl_mult: Mapped[float] = mapped_column(Float, default=4.0)
+    tp_mult: Mapped[float] = mapped_column(Float, default=3.0)
+    disabled_conditions: Mapped[str] = mapped_column(Text, default="")  # comma-separated
+    strategy_preset: Mapped[str] = mapped_column(String(64), default="")
+
+    # State machine
+    cooldown_secs: Mapped[float] = mapped_column(Float, default=300.0)
+    min_strength: Mapped[int] = mapped_column(Integer, default=3)
+    max_consec_losses: Mapped[int] = mapped_column(Integer, default=3)
+    daily_limit: Mapped[int] = mapped_column(Integer, default=10)
+    daily_loss_limit: Mapped[float] = mapped_column(Float, default=350.0)
+
+    # Risk engine
+    risk_per_trade: Mapped[float] = mapped_column(Float, default=0.01)
+    max_qty: Mapped[int] = mapped_column(Integer, default=5)
+
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())

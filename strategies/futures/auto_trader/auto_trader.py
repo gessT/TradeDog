@@ -77,6 +77,69 @@ class FuturesAutoTrader:
         self._tp_mult: float = 3.0
         self._strategy_preset: str = ""
 
+        # Load persisted config from DB
+        self._load_config_from_db()
+
+    def _load_config_from_db(self) -> None:
+        """Load saved configuration from database on startup."""
+        try:
+            from app.db.database import SessionLocal
+            from app.models.condition_preference import FuturesTraderConfig
+            with SessionLocal() as db:
+                row = db.query(FuturesTraderConfig).filter_by(symbol=self.symbol).first()
+                if row:
+                    self._sl_mult = row.sl_mult
+                    self._tp_mult = row.tp_mult
+                    self._strategy_preset = row.strategy_preset or ""
+                    if row.disabled_conditions:
+                        self._disabled_conditions = set(row.disabled_conditions.split(","))
+                    else:
+                        self._disabled_conditions = set()
+                    self._machine.update_config(
+                        cooldown_secs=row.cooldown_secs,
+                        min_strength=row.min_strength,
+                        max_consec_losses=row.max_consec_losses,
+                        daily_limit=row.daily_limit,
+                        daily_loss_limit=row.daily_loss_limit,
+                        _user_set=True,
+                    )
+                    self._risk.update_config(
+                        risk_per_trade=row.risk_per_trade,
+                        max_qty=row.max_qty,
+                    )
+                    logger.info("[%s] Loaded config from DB: sl=%.1f tp=%.1f cooldown=%.0f max_qty=%d",
+                                self.symbol, row.sl_mult, row.tp_mult, row.cooldown_secs, row.max_qty)
+        except Exception as e:
+            logger.warning("[%s] Failed to load config from DB: %s", self.symbol, e)
+
+    def save_config_to_db(self) -> None:
+        """Persist current configuration to database."""
+        try:
+            from app.db.database import SessionLocal
+            from app.models.condition_preference import FuturesTraderConfig
+            machine_cfg = self._machine.snapshot().config
+            risk_cfg = self._risk.get_config()
+            with SessionLocal() as db:
+                row = db.query(FuturesTraderConfig).filter_by(symbol=self.symbol).first()
+                if not row:
+                    row = FuturesTraderConfig(symbol=self.symbol)
+                    db.add(row)
+                row.sl_mult = self._sl_mult
+                row.tp_mult = self._tp_mult
+                row.strategy_preset = self._strategy_preset
+                row.disabled_conditions = ",".join(sorted(self._disabled_conditions)) if self._disabled_conditions else ""
+                row.cooldown_secs = machine_cfg["cooldown_secs"]
+                row.min_strength = machine_cfg["min_strength"]
+                row.max_consec_losses = machine_cfg["max_consec_losses"]
+                row.daily_limit = machine_cfg["daily_limit"]
+                row.daily_loss_limit = machine_cfg["daily_loss_limit"]
+                row.risk_per_trade = risk_cfg["risk_per_trade"]
+                row.max_qty = risk_cfg["max_qty"]
+                db.commit()
+                logger.info("[%s] Config saved to DB", self.symbol)
+        except Exception as e:
+            logger.warning("[%s] Failed to save config to DB: %s", self.symbol, e)
+
     def _persist_trade(self, trade: TradeRecord) -> None:
         """Save a completed trade to the database."""
         try:
@@ -455,14 +518,19 @@ class FuturesAutoTrader:
         # Split kwargs between machine and risk engine
         machine_keys = {"cooldown_secs", "min_strength", "max_consec_losses", "daily_limit", "daily_loss_limit"}
         risk_keys = {"risk_per_trade", "max_qty", "min_risk_reward", "max_daily_trades"}
+        passthrough_keys = {"_user_set"}
 
-        machine_kwargs = {k: v for k, v in kwargs.items() if k in machine_keys}
+        machine_kwargs = {k: v for k, v in kwargs.items() if k in machine_keys | passthrough_keys}
         risk_kwargs = {k: v for k, v in kwargs.items() if k in risk_keys}
 
         if machine_kwargs:
             self._machine.update_config(**machine_kwargs)
         if risk_kwargs:
             self._risk.update_config(**risk_kwargs)
+
+        # Persist to DB (skip for internal auto-set calls like interval-based cooldown)
+        if kwargs.get("_user_set", True):
+            self.save_config_to_db()
 
         return {
             "scanner": {

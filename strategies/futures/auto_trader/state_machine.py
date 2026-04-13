@@ -126,6 +126,7 @@ class TradingStateMachine:
         # Cooldown
         self._cooldown_end: float = 0.0
         self._cooldown_secs: float = 60.0
+        self._cooldown_user_set: bool = False
 
         # Trade history
         self._trades: list[TradeRecord] = []
@@ -481,6 +482,7 @@ class TradingStateMachine:
         with self._lock:
             if "cooldown_secs" in kwargs:
                 self._cooldown_secs = max(0, float(kwargs["cooldown_secs"]))
+                self._cooldown_user_set = kwargs.get("_user_set", True)
             if "min_strength" in kwargs:
                 self._min_strength = max(1, min(10, int(kwargs["min_strength"])))
             if "max_consec_losses" in kwargs:
