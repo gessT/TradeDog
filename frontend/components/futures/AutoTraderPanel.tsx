@@ -13,6 +13,7 @@ import {
   autoTraderGetTrades,
   autoTraderUpdateConfig,
   load5MinConditionPresets,
+  loadStrategyConfig,
   type AutoTraderSnapshot,
   type AutoTraderTrade,
   type ConditionPreset,
@@ -57,6 +58,8 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [presets, setPresets] = useState<ConditionPreset[]>([]);
   const [selectedPreset, setSelectedPreset] = useState<string>("__current__");
+  const [slMult, setSlMult] = useState(4.0);
+  const [tpMult, setTpMult] = useState(3.0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastBarRef = useRef("");
   const logEndRef = useRef<HTMLDivElement | null>(null);
@@ -76,9 +79,13 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
 
   useEffect(() => { refreshState(); }, [refreshState]);
 
-  // ── Load presets ────────────────────────────────────────────
+  // ── Load presets + strategy config ──────────────────────────────
   useEffect(() => {
     load5MinConditionPresets(symbol).then(setPresets).catch(() => {});
+    loadStrategyConfig(symbol).then((cfg) => {
+      if (cfg.sl_mult != null) setSlMult(cfg.sl_mult);
+      if (cfg.tp_mult != null) setTpMult(cfg.tp_mult);
+    }).catch(() => {});
   }, [symbol]);
 
   // scroll log to bottom
@@ -143,12 +150,12 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
 
   // ── Controls ────────────────────────────────────────────────
   const handleStart = async (m: "paper" | "live") => {
-    // sync selected strategy conditions to backend
+    // sync selected strategy conditions + SL/TP multipliers to backend
     const disabled = getDisabledConditions();
-    await autoTraderUpdateConfig({ disabled_conditions: disabled }, symbol).catch(() => {});
+    await autoTraderUpdateConfig({ disabled_conditions: disabled, sl_mult: slMult, tp_mult: tpMult }, symbol).catch(() => {});
     const label = selectedPreset === "__current__" ? "Current Strategy" : selectedPreset;
     const s = await autoTraderStart(m, symbol).catch(() => null);
-    if (s) { setSnap(s); setMode(m); pushLog(`Started ${m.toUpperCase()} — ${label}`, "info"); }
+    if (s) { setSnap(s); setMode(m); pushLog(`Started ${m.toUpperCase()} | ${label} | SL=${slMult}x TP=${tpMult}x`, "info"); }
   };
   const handleStop = async () => {
     const s = await autoTraderStop(symbol).catch(() => null);
@@ -319,6 +326,9 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
             <div className="flex-1 h-px bg-gradient-to-r from-red-500/30 via-white/10 to-emerald-500/30 rounded" />
             <span className="text-emerald-400/70">TP {snap.position.take_profit.toFixed(2)}</span>
           </div>
+          <div className="text-[9px] text-white/15 text-center">
+            SL {slMult}x ATR | TP {tpMult}x ATR
+          </div>
 
           {/* Unrealized P&L */}
           {unrealizedPnl !== null && (
@@ -367,6 +377,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles }: Pr
             <Row label="State" value={state} />
             <Row label="Mode" value={started ? mode.toUpperCase() : "OFF"} />
             <Row label="Strategy" value={selectedPreset === "__current__" ? "Current" : selectedPreset} />
+            <Row label="SL / TP Factor" value={`${slMult}x ATR / ${tpMult}x ATR`} valueColor="text-violet-400" />
             <Row label="Signal" value={snap.signal ? `${snap.signal.direction} ${snap.signal.signal_type} str=${snap.signal.strength}` : "—"} />
             <Row label="Daily Trades" value={`${snap.daily_trades} / ${snap.config.daily_limit}`} />
             <Row label="Daily P&L" value={`$${snap.daily_pnl.toFixed(2)} / -$${snap.config.daily_loss_limit}`}
