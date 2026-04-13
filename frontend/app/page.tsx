@@ -13,16 +13,28 @@ const TABS: { key: Tab; label: string; icon: string; color: string; activeColor:
   { key: "US", label: "US Stocks", icon: "🇺🇸", color: "text-blue-400", activeColor: "border-blue-400 bg-blue-500/5" },
 ];
 
-function getDefaultTab(): Tab {
-  if (typeof window === "undefined") return "US";
-  return (localStorage.getItem("tradedog_default_tab") as Tab) || "US";
-}
-
 export default function Page() {
-  const [defaultTab] = useState<Tab>(getDefaultTab);
-  const [mode, setMode] = useState<Tab>(defaultTab);
-  const [visited, setVisited] = useState<Set<string>>(() => new Set([defaultTab]));
+  const [mode, setMode] = useState<Tab>("US");
+  const [defaultTab, setDefaultTab] = useState<Tab>("US");
+  const [visited, setVisited] = useState<Set<string>>(() => new Set(["US"]));
   const [configOpen, setConfigOpen] = useState(false);
+
+  // Restore saved default tab after hydration
+  useEffect(() => {
+    const saved = localStorage.getItem("tradedog_default_tab") as Tab | null;
+    if (saved) {
+      setDefaultTab(saved);
+      if (saved !== "US") {
+        setMode(saved);
+        setVisited((prev) => {
+          if (prev.has(saved)) return prev;
+          const next = new Set(prev);
+          next.add(saved);
+          return next;
+        });
+      }
+    }
+  }, []);
 
   const switchTab = useCallback((tab: Tab) => {
     setMode(tab);
@@ -36,6 +48,7 @@ export default function Page() {
 
   const setDefaultDashboard = useCallback((tab: Tab) => {
     localStorage.setItem("tradedog_default_tab", tab);
+    setDefaultTab(tab);
     setConfigOpen(false);
   }, []);
 
@@ -64,7 +77,7 @@ export default function Page() {
           >
             <span className="mr-1">{tab.icon}</span>
             {tab.label}
-            {getDefaultTab() === tab.key && (
+            {defaultTab === tab.key && (
               <span className="ml-1 text-[8px] text-slate-500 align-top">●</span>
             )}
           </button>
@@ -103,7 +116,7 @@ export default function Page() {
               <div className="px-3 py-2">
                 <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1.5">Default Dashboard</div>
                 {TABS.map((tab) => {
-                  const isDefault = getDefaultTab() === tab.key;
+                  const isDefault = defaultTab === tab.key;
                   return (
                     <button
                       key={tab.key}

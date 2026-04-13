@@ -50,15 +50,14 @@ export default function USDashboard() {
   const [btLoading, setBtLoading] = useState(false);
 
   // ── Backtest period (global, persisted in localStorage) ──
-  const [backtestPeriod, setBacktestPeriod] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("bt_period") || "2y";
-    }
-    return "2y";
-  });
+  const [backtestPeriod, setBacktestPeriod] = useState<string>("2y");
+  useEffect(() => {
+    const saved = localStorage.getItem("bt_period");
+    if (saved && saved !== backtestPeriod) setBacktestPeriod(saved);
+  }, []);
   const handlePeriodChange = useCallback((p: string) => {
     setBacktestPeriod(p);
-    if (typeof window !== "undefined") localStorage.setItem("bt_period", p);
+    localStorage.setItem("bt_period", p);
   }, []);
 
   // ── Chart overlay toggles ──────────────────────────────
