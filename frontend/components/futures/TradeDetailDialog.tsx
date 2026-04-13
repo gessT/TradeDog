@@ -211,25 +211,25 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
       }
     }
 
-    // ── HalfTrend overlay ──
+    // ── HalfTrend overlay (single continuous line with per-point color) ──
     if (showHT) {
-      const htUpData: { time: UTCTimestamp; value: number }[] = [];
-      const htDownData: { time: UTCTimestamp; value: number }[] = [];
+      const htData: { time: UTCTimestamp; value: number; color: string }[] = [];
       for (let i = 0; i < ohlc.length && i < slice.length; i++) {
         const c = slice[i];
         if (c.ht_line != null && c.ht_dir != null) {
-          if (c.ht_dir === 0) {
-            htUpData.push({ time: ohlc[i].time, value: c.ht_line });
-          } else {
-            htDownData.push({ time: ohlc[i].time, value: c.ht_line });
-          }
+          const clr = c.ht_dir === 0 ? "#3b82f6" : "#ef4444";  // blue up, red down
+          htData.push({ time: ohlc[i].time, value: c.ht_line, color: clr });
         }
       }
-      if (htUpData.length > 0) {
-        chart.addSeries(LineSeries, { color: "#4ade80", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false }).setData(htUpData);
-      }
-      if (htDownData.length > 0) {
-        chart.addSeries(LineSeries, { color: "#f87171", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false }).setData(htDownData);
+      if (htData.length > 0) {
+        const htSeries = chart.addSeries(LineSeries, {
+          lineWidth: 2,
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+          pointMarkersVisible: false,
+        });
+        htSeries.setData(htData);
       }
     }
 

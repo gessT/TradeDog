@@ -13,12 +13,10 @@ import {
   autoTraderGetDbTrades,
   autoTraderClearDbTrades,
   autoTraderUpdateConfig,
-  load5MinConditionPresets,
   type AutoTraderSnapshot,
   type AutoTraderTrade,
-  type ConditionPreset,
 } from "../../services/api";
-import { BUILT_IN_PRESETS } from "./Strategy5MinPanel";
+import type { LockedTradingConfig } from "./Strategy5MinPanel";
 
 type Mode = "off" | "paper" | "live";
 type LogEntry = { ts: number; msg: string; type: "info" | "signal" | "entry" | "exit" | "warn" | "error" };
@@ -81,25 +79,23 @@ function notifyExit() {
 
 type Props = {
   symbol?: string;
-  conditionToggles?: Record<string, boolean>;
-  interval?: string;
-  slMult?: number;
-  tpMult?: number;
+  lockedConfig?: LockedTradingConfig | null;
 };
 
-export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, interval = "5m", slMult = 4.0, tpMult = 3.0 }: Props) {
+export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props) {
   const { price: livePrice } = useLivePrice();
   const [snap, setSnap] = useState<AutoTraderSnapshot | null>(null);
   const [trades, setTrades] = useState<AutoTraderTrade[]>([]);
   const [mode, setMode] = useState<Mode>("off");
   const [tab, setTab] = useState<Tab>("status");
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [presets, setPresets] = useState<ConditionPreset[]>([]);
-  const [selectedPreset, setSelectedPreset] = useState<string>("__current__");
   const [starting, setStarting] = useState(false);
   const [launchFlash, setLaunchFlash] = useState<string | null>(null);
+  // Snapshot the locked config when trading actually starts — so subsequent backtests don't affect it
+  const [runningConfig, setRunningConfig] = useState<LockedTradingConfig | null>(null);
+  // Use runningConfig while trading, lockedConfig otherwise
+  const activeConfig = runningConfig ?? lockedConfig ?? null;
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [configOpen, setConfigOpen] = useState(false);
   const lastBarRef = useRef("");
 
   const pushLog = useCallback((msg: string, type: LogEntry["type"] = "info") => {
@@ -117,13 +113,8 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
 
   useEffect(() => { refreshState(); }, [refreshState]);
 
-  // ── Load presets + strategy config + DB trades ──────────────────
+  // ── Load DB trades ──────────────────
   useEffect(() => {
-    load5MinConditionPresets(symbol).then((p) => {
-      setPresets(p);
-      if (p.length > 0) setSelectedPreset(p[0].name);
-    }).catch(() => {});
-
     autoTraderGetDbTrades(symbol).then(setTrades).catch(() => {});
   }, [symbol]);
 
@@ -141,13 +132,14 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
       if (!livePrice) return;
       const now = new Date();
       const min = now.getMinutes();
-      const intervalMins = interval === "1m" ? 1 : interval === "2m" ? 2 : interval === "15m" ? 15 : 5;
+      const tickInterval = activeConfig?.interval ?? "5m";
+      const intervalMins = tickInterval === "1m" ? 1 : tickInterval === "2m" ? 2 : tickInterval === "15m" ? 15 : 5;
       const barKey = `${now.getHours()}:${min - (min % intervalMins)}`;
       const isBarClose = barKey !== lastBarRef.current && min % intervalMins === 0;
       if (isBarClose) lastBarRef.current = barKey;
 
       try {
-        const result = await autoTraderTick(livePrice, isBarClose, 0, symbol, "7d", interval);
+        const result = await autoTraderTick(livePrice, isBarClose, 0, symbol, "7d", tickInterval);
         if (result.snapshot) setSnap(result.snapshot as AutoTraderSnapshot);
 
         // Log detail
@@ -176,48 +168,34 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
     tickRef.current = setInterval(doTick, 10_000);
     doTick();
     return () => { if (tickRef.current) clearInterval(tickRef.current); };
-  }, [snap?.started, livePrice, symbol, interval, pushLog]);
-
-  // ── Resolve disabled conditions from selected preset ──────
-  const getDisabledConditions = useCallback((): string[] => {
-    let toggles: Record<string, boolean> = {};
-    if (selectedPreset === "__current__" && conditionToggles) {
-      toggles = conditionToggles;
-    } else {
-      const bp = BUILT_IN_PRESETS.find((x) => x.name === selectedPreset);
-      if (bp) { toggles = bp.toggles; }
-      else { const p = presets.find((x) => x.name === selectedPreset); if (p) toggles = p.toggles; }
-    }
-    return Object.entries(toggles).filter(([, v]) => !v).map(([k]) => k);
-  }, [selectedPreset, conditionToggles, presets]);
+  }, [snap?.started, livePrice, symbol, activeConfig?.interval, pushLog]);
 
   // ── Controls ────────────────────────────────────────────────
   const handleStart = async (m: "paper" | "live") => {
+    if (!lockedConfig) return;
     setStarting(true);
-    // sync selected strategy conditions + SL/TP multipliers to backend
-    const disabled = getDisabledConditions();
-    const bp = BUILT_IN_PRESETS.find((x) => x.name === selectedPreset);
-    const useSl = bp ? bp.sl : slMult;
-    const useTp = bp ? bp.tp : tpMult;
-    const useInterval = bp ? bp.interval : interval;
-    const label = selectedPreset === "__current__" ? "Current Strategy" : selectedPreset;
-    await autoTraderUpdateConfig({ disabled_conditions: disabled, sl_mult: useSl, tp_mult: useTp, strategy_preset: label }, symbol).catch(() => {});
-    const s = await autoTraderStart(m, symbol, useInterval).catch(() => null);
+    // Snapshot the config at start time — subsequent backtests won't affect it
+    setRunningConfig({ ...lockedConfig });
+    // Compute disabled conditions from locked config toggles
+    const disabled = Object.entries(lockedConfig.conditionToggles).filter(([, v]) => !v).map(([k]) => k);
+    const label = lockedConfig.preset ?? "Custom";
+    await autoTraderUpdateConfig({ disabled_conditions: disabled, sl_mult: lockedConfig.slMult, tp_mult: lockedConfig.tpMult, strategy_preset: label }, symbol).catch(() => {});
+    const s = await autoTraderStart(m, symbol, lockedConfig.interval).catch(() => null);
     setStarting(false);
     if (s) {
       setSnap(s); setMode(m);
-      pushLog(`Started ${m.toUpperCase()} | ${label} | SL=${useSl}x TP=${useTp}x`, "info");
+      pushLog(`Started ${m.toUpperCase()} | ${label} | SL=${lockedConfig.slMult}x TP=${lockedConfig.tpMult}x`, "info");
       setLaunchFlash(m);
       setTimeout(() => setLaunchFlash(null), 3000);
     }
   };
   const handleStop = async () => {
     const s = await autoTraderStop(symbol).catch(() => null);
-    if (s) { setSnap(s); setMode("off"); pushLog("Stopped", "warn"); }
+    if (s) { setSnap(s); setMode("off"); setRunningConfig(null); pushLog("Stopped", "warn"); }
   };
   const handleReset = async () => {
     const s = await autoTraderReset(symbol).catch(() => null);
-    if (s) { setSnap(s); setMode("off"); setLogs([]); pushLog("Full reset", "warn"); }
+    if (s) { setSnap(s); setMode("off"); setRunningConfig(null); setLogs([]); pushLog("Full reset", "warn"); }
   };
   const handleEmergency = async () => {
     await autoTraderEmergencyStop(livePrice || 0, symbol).catch(() => null);
@@ -265,8 +243,8 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
             Auto-Trader
           </span>
           {started && (
-            <span className="text-[10px] text-violet-400/70 truncate" title={selectedPreset === "__current__" ? "Current Strategy" : selectedPreset}>
-              · {selectedPreset === "__current__" ? "Current" : selectedPreset}
+            <span className="text-[10px] text-violet-400/70 truncate" title={activeConfig?.preset ?? "Custom"}>
+              · {activeConfig?.preset ?? "Custom"}
             </span>
           )}
           <span className="text-[10px] font-medium text-white/30 uppercase tracking-widest shrink-0">
@@ -303,67 +281,71 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
         </div>
       )}
 
-      {/* ═══ Strategy selector (collapsible) ═══ */}
-      {!started && (
-        <>
-        <button onClick={() => setConfigOpen((v) => !v)} className="flex items-center gap-1 px-4 py-1 text-[9px] text-white/25 hover:text-white/50 uppercase tracking-widest font-bold hover:bg-white/[0.02] transition-colors w-full">
-          <svg className={`w-2.5 h-2.5 transition-transform ${configOpen ? "" : "-rotate-90"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M19 9l-7 7-7-7"/></svg>
-          Config
-          {!configOpen && <span className="ml-2 text-[8px] text-violet-400/40 normal-case tracking-normal font-normal">{selectedPreset === "__current__" ? "Current" : selectedPreset} · SL {slMult}x · TP {tpMult}x</span>}
-        </button>
-        {configOpen && (
-        <div className="px-4 pt-1 pb-2">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-widest text-white/20 font-medium shrink-0">Strategy</span>
-            <div className="relative flex-1">
-              <select
-                value={selectedPreset}
-                onChange={(e) => setSelectedPreset(e.target.value)}
-                className="w-full bg-[#1a1d25] ring-1 ring-white/[0.08] rounded-lg pl-3 pr-7 py-1.5 text-[11px] text-white/70
-                  hover:ring-white/15 focus:ring-violet-500/40 focus:outline-none transition-all appearance-none cursor-pointer"
-                style={{ colorScheme: "dark" }}
-              >
-                <option value="__current__" className="bg-[#1a1d25] text-white/70">Current (Backtest Panel)</option>
-                {BUILT_IN_PRESETS.map((bp) => (
-                  <option key={bp.name} value={bp.name} className="bg-[#1a1d25] text-amber-300">🔒 {bp.name} ({bp.interval})</option>
-                ))}
-                {presets.map((p) => (
-                  <option key={p.name} value={p.name} className="bg-[#1a1d25] text-white/70">{p.name}</option>
-                ))}
-              </select>
-              <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-white/25" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-              </svg>
+      {/* ═══ Strategy STATUS — backtest metrics from locked config ═══ */}
+      {activeConfig ? (
+        <div className="mx-3 mt-3 rounded-xl ring-1 ring-violet-500/15 bg-violet-500/[0.03] overflow-hidden">
+          <div className="px-3 py-2 flex items-center justify-between border-b border-violet-500/10">
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] uppercase tracking-widest text-violet-400/60 font-bold">Strategy</span>
+              <span className="text-[10px] text-violet-300 font-bold truncate">{activeConfig.preset ?? "Custom"}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[8px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 ring-1 ring-slate-700/50 font-bold">{activeConfig.interval}</span>
+              <span className="text-[8px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15 font-bold">SL {activeConfig.slMult}×</span>
+              <span className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15 font-bold">TP {activeConfig.tpMult}×</span>
             </div>
           </div>
-          {selectedPreset !== "__current__" && (
-            <div className="mt-1.5 flex flex-wrap gap-1">
-              {(() => {
-                const bp = BUILT_IN_PRESETS.find((x) => x.name === selectedPreset);
-                const p = bp || presets.find((x) => x.name === selectedPreset);
-                if (!p) return null;
-                const toggles = bp ? bp.toggles : (p as { toggles: Record<string, boolean> }).toggles;
-                const disabled = Object.entries(toggles).filter(([, v]) => !v).map(([k]) => k);
-                const enabled = Object.entries(toggles).filter(([, v]) => v).map(([k]) => k);
-                return (
-                  <>
-                    {bp && (
-                      <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/10 text-amber-400/60 ring-1 ring-amber-500/10">{bp.interval} · SL{bp.sl}× TP{bp.tp}×</span>
-                    )}
-                    {enabled.map((k) => (
-                      <span key={k} className="px-1.5 py-0.5 rounded text-[8px] bg-emerald-500/10 text-emerald-400/60 ring-1 ring-emerald-500/10">{k.replace(/_/g, " ")}</span>
-                    ))}
-                    {disabled.map((k) => (
-                      <span key={k} className="px-1.5 py-0.5 rounded text-[8px] bg-white/[0.02] text-white/15 line-through">{k.replace(/_/g, " ")}</span>
-                    ))}
-                  </>
-                );
-              })()}
+          <div className="grid grid-cols-4 gap-px">
+            {[
+              { label: "Win Rate", value: `${activeConfig.metrics.win_rate.toFixed(1)}%`, color: activeConfig.metrics.win_rate >= 55 ? "text-emerald-400" : activeConfig.metrics.win_rate >= 45 ? "text-amber-400" : "text-rose-400" },
+              { label: "Return", value: `${activeConfig.metrics.total_return_pct >= 0 ? "+" : ""}${activeConfig.metrics.total_return_pct.toFixed(2)}%`, color: activeConfig.metrics.total_return_pct >= 0 ? "text-emerald-400" : "text-rose-400" },
+              { label: "Sharpe", value: activeConfig.metrics.sharpe_ratio.toFixed(2), color: activeConfig.metrics.sharpe_ratio >= 1 ? "text-emerald-400" : "text-white/60" },
+              { label: "PF", value: activeConfig.metrics.profit_factor.toFixed(2), color: activeConfig.metrics.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400" },
+            ].map((s, i) => (
+              <div key={i} className="bg-white/[0.02] py-1.5 text-center">
+                <div className="text-[7px] uppercase tracking-widest text-white/20 font-medium">{s.label}</div>
+                <div className={`text-[11px] font-bold mt-0.5 ${s.color}`}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-4 gap-px">
+            {[
+              { label: "Trades", value: String(activeConfig.metrics.total_trades), color: "text-white/60" },
+              { label: "W/L", value: `${activeConfig.metrics.winners}/${activeConfig.metrics.losers}`, color: "text-white/60" },
+              { label: "Max DD", value: `${activeConfig.metrics.max_drawdown_pct.toFixed(1)}%`, color: "text-rose-400" },
+              { label: "R:R", value: `1:${activeConfig.metrics.risk_reward_ratio.toFixed(2)}`, color: "text-cyan-400" },
+            ].map((s, i) => (
+              <div key={i} className="bg-white/[0.01] py-1.5 text-center">
+                <div className="text-[7px] uppercase tracking-widest text-white/20 font-medium">{s.label}</div>
+                <div className={`text-[11px] font-bold mt-0.5 ${s.color}`}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+          {/* Enabled conditions pills */}
+          <div className="px-3 py-2 flex flex-wrap gap-1 border-t border-violet-500/10">
+            {Object.entries(activeConfig.conditionToggles).filter(([, v]) => v).map(([k]) => (
+              <span key={k} className="px-1.5 py-0.5 rounded text-[7px] bg-emerald-500/10 text-emerald-400/70 ring-1 ring-emerald-500/10 font-bold">
+                {k.replace(/_/g, " ")}
+              </span>
+            ))}
+          </div>
+          {runningConfig && (
+            <div className="px-3 py-1 border-t border-violet-500/10 text-[8px] text-violet-400/40 text-center">
+              Locked at {new Date(runningConfig.lockedAt).toLocaleTimeString()} — backtest changes won&apos;t affect running trader
             </div>
           )}
         </div>
-        )}
-        </>
+      ) : (
+        <div className="mx-3 mt-3 rounded-xl ring-1 ring-slate-700/30 bg-slate-800/30 px-4 py-6 text-center">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mx-auto mb-2 text-slate-600">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg>
+          <div className="text-[11px] text-slate-500 font-bold mb-1">No Strategy Loaded</div>
+          <div className="text-[9px] text-slate-600 leading-relaxed">
+            Run a backtest in the Strategy panel first.<br />
+            The latest config &amp; results will appear here.
+          </div>
+        </div>
       )}
 
       {/* ═══ LIVE warning banner ═══ */}
@@ -399,7 +381,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
               <p className={`text-[9px] mt-0.5 ${
                 launchFlash === "paper" ? "text-white/30" : "text-red-400/50"
               }`}>
-                {selectedPreset === "__current__" ? "Current Strategy" : selectedPreset} · {launchFlash === "paper" ? "Scanning for signals..." : "Real money — be careful!"}
+                {activeConfig?.preset ?? "Custom"} · {launchFlash === "paper" ? "Scanning for signals..." : "Real money — be careful!"}
               </p>
             </div>
           </div>
@@ -412,6 +394,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
       {/* ═══ Controls ═══ */}
       <div className="px-4 py-3 space-y-2.5">
         {!started ? (
+          activeConfig ? (
           <div className="flex gap-2">
             <button onClick={() => handleStart("paper")}
               disabled={starting}
@@ -445,7 +428,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
                 if (!confirm("Clear all paper trades & reset paper account?")) return;
                 await autoTraderClearDbTrades(symbol).catch(() => {});
                 const s = await autoTraderReset(symbol).catch(() => null);
-                if (s) { setSnap(s); setMode("off"); }
+                if (s) { setSnap(s); setMode("off"); setRunningConfig(null); }
                 setTrades([]);
                 setLogs([]);
                 pushLog("Paper account reset", "warn");
@@ -454,6 +437,11 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
               🗑
             </button>
           </div>
+          ) : (
+            <div className="text-center text-[10px] text-slate-600 py-2">
+              Run a backtest first to enable trading
+            </div>
+          )
         ) : (
           <div className="flex gap-2">
             <button onClick={handleStop}
@@ -502,7 +490,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
             <span className="text-emerald-400/70">TP {snap.position.take_profit.toFixed(2)}</span>
           </div>
           <div className="text-[9px] text-white/15 text-center">
-            SL {slMult}x ATR | TP {tpMult}x ATR
+            SL {activeConfig?.slMult ?? 0}x ATR | TP {activeConfig?.tpMult ?? 0}x ATR
           </div>
 
           {/* Unrealized P&L */}
@@ -547,20 +535,89 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
       <div className="flex-1 min-h-0 overflow-y-auto">
 
         {/* ── Status tab ── */}
-        {tab === "status" && snap && (
-          <div className="p-4 space-y-2 text-[11px]">
-            <Row label="State" value={state} />
-            <Row label="Mode" value={started ? mode.toUpperCase() : "OFF"} />
-            <Row label="Strategy" value={selectedPreset === "__current__" ? "Current" : selectedPreset} />
-            <Row label="SL / TP Factor" value={`${slMult}x ATR / ${tpMult}x ATR`} valueColor="text-violet-400" />
-            <Row label="Signal" value={snap.signal ? `${snap.signal.direction} ${snap.signal.signal_type} str=${snap.signal.strength}` : "—"} />
-            <Row label="Daily Trades" value={`${snap.daily_trades} / ${snap.config.daily_limit}`} />
-            <Row label="Daily P&L" value={`$${snap.daily_pnl.toFixed(2)} / -$${snap.config.daily_loss_limit}`}
-              valueColor={snap.daily_pnl >= 0 ? "text-emerald-400" : "text-red-400"} />
-            <Row label="Consec. Losses" value={`${snap.consecutive_losses} / ${snap.config.max_consec_losses}`}
-              valueColor={snap.consecutive_losses > 0 ? "text-amber-400" : undefined} />
-            <Row label="Cooldown" value={`${snap.config.cooldown_secs}s`} />
-            <Row label="Min Strength" value={`${snap.config.min_strength}/10`} />
+        {tab === "status" && (
+          <div className="p-3 space-y-3">
+
+            {/* ── Backtest Results Card ── */}
+            {activeConfig ? (
+              <div className="rounded-xl ring-1 ring-cyan-500/15 bg-gradient-to-b from-cyan-950/20 to-slate-950/80 overflow-hidden">
+                <div className="px-3 py-2 flex items-center justify-between border-b border-cyan-500/10">
+                  <span className="text-[9px] uppercase tracking-widest text-cyan-400/60 font-bold">Backtest Results</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[8px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 ring-1 ring-slate-700/50 font-bold">{activeConfig.interval}</span>
+                    <span className="text-[8px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-300 ring-1 ring-violet-500/20 font-bold">{activeConfig.preset ?? "Custom"}</span>
+                  </div>
+                </div>
+
+                {/* Hero: Win Rate + ROI */}
+                <div className="grid grid-cols-2 gap-px">
+                  <div className="bg-white/[0.02] px-4 py-3 text-center">
+                    <div className="text-[8px] uppercase tracking-widest text-white/25 font-medium mb-1">Win Rate</div>
+                    <div className={`text-2xl font-black tabular-nums tracking-tight ${activeConfig.metrics.win_rate >= 55 ? "text-emerald-400" : activeConfig.metrics.win_rate >= 45 ? "text-amber-400" : "text-rose-400"}`}>
+                      {activeConfig.metrics.win_rate.toFixed(1)}%
+                    </div>
+                    <div className="text-[9px] text-white/25 mt-0.5">{activeConfig.metrics.winners}W / {activeConfig.metrics.losers}L</div>
+                  </div>
+                  <div className="bg-white/[0.02] px-4 py-3 text-center">
+                    <div className="text-[8px] uppercase tracking-widest text-white/25 font-medium mb-1">ROI</div>
+                    <div className={`text-2xl font-black tabular-nums tracking-tight ${activeConfig.metrics.total_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {activeConfig.metrics.total_return_pct >= 0 ? "+" : ""}{activeConfig.metrics.total_return_pct.toFixed(1)}%
+                    </div>
+                    <div className="text-[9px] text-white/25 mt-0.5">{activeConfig.metrics.total_trades} trades</div>
+                  </div>
+                </div>
+
+                {/* Secondary metrics cards */}
+                <div className="grid grid-cols-4 gap-px border-t border-white/[0.04]">
+                  <div className="bg-white/[0.015] py-2 text-center">
+                    <div className="text-[7px] uppercase tracking-widest text-white/20">Sharpe</div>
+                    <div className={`text-xs font-bold mt-0.5 ${activeConfig.metrics.sharpe_ratio >= 1 ? "text-emerald-400" : activeConfig.metrics.sharpe_ratio >= 0.5 ? "text-amber-400" : "text-white/50"}`}>{activeConfig.metrics.sharpe_ratio.toFixed(2)}</div>
+                  </div>
+                  <div className="bg-white/[0.015] py-2 text-center">
+                    <div className="text-[7px] uppercase tracking-widest text-white/20">Profit F.</div>
+                    <div className={`text-xs font-bold mt-0.5 ${activeConfig.metrics.profit_factor >= 1.5 ? "text-emerald-400" : activeConfig.metrics.profit_factor >= 1 ? "text-amber-400" : "text-rose-400"}`}>{activeConfig.metrics.profit_factor.toFixed(2)}</div>
+                  </div>
+                  <div className="bg-white/[0.015] py-2 text-center">
+                    <div className="text-[7px] uppercase tracking-widest text-white/20">Max DD</div>
+                    <div className="text-xs font-bold mt-0.5 text-rose-400">{activeConfig.metrics.max_drawdown_pct.toFixed(1)}%</div>
+                  </div>
+                  <div className="bg-white/[0.015] py-2 text-center">
+                    <div className="text-[7px] uppercase tracking-widest text-white/20">R:R</div>
+                    <div className="text-xs font-bold mt-0.5 text-cyan-400">1:{activeConfig.metrics.risk_reward_ratio.toFixed(1)}</div>
+                  </div>
+                </div>
+
+                {/* SL / TP config */}
+                <div className="flex items-center justify-center gap-3 py-2 border-t border-white/[0.04]">
+                  <span className="text-[9px] px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-400/80 ring-1 ring-rose-500/15 font-bold">SL {activeConfig.slMult}× ATR</span>
+                  <span className="text-[9px] px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400/80 ring-1 ring-emerald-500/15 font-bold">TP {activeConfig.tpMult}× ATR</span>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl ring-1 ring-slate-700/30 bg-slate-800/20 px-4 py-5 text-center">
+                <div className="text-[10px] text-slate-600">No backtest results — run a backtest first</div>
+              </div>
+            )}
+
+            {/* ── Live Session Card ── */}
+            {snap && (
+              <div className="rounded-xl ring-1 ring-white/[0.06] bg-white/[0.02] overflow-hidden">
+                <div className="px-3 py-1.5 border-b border-white/[0.04]">
+                  <span className="text-[9px] uppercase tracking-widest text-white/25 font-bold">Live Session</span>
+                </div>
+                <div className="p-3 space-y-2 text-[11px]">
+                  <Row label="State" value={STATE_LABEL[state] ?? state} />
+                  <Row label="Mode" value={started ? mode.toUpperCase() : "OFF"} />
+                  {snap.signal && <Row label="Signal" value={`${snap.signal.direction} ${snap.signal.signal_type} str=${snap.signal.strength}`} valueColor="text-cyan-400" />}
+                  <Row label="Daily Trades" value={`${snap.daily_trades} / ${snap.config.daily_limit}`} />
+                  <Row label="Daily P&L" value={`$${snap.daily_pnl.toFixed(2)} / -$${snap.config.daily_loss_limit}`}
+                    valueColor={snap.daily_pnl >= 0 ? "text-emerald-400" : "text-red-400"} />
+                  <Row label="Consec. Losses" value={`${snap.consecutive_losses} / ${snap.config.max_consec_losses}`}
+                    valueColor={snap.consecutive_losses > 0 ? "text-amber-400" : undefined} />
+                  <Row label="Cooldown" value={`${snap.config.cooldown_secs}s`} />
+                </div>
+              </div>
+            )}
           </div>
         )}
 

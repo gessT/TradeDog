@@ -13,7 +13,7 @@ import {
 import CommodityCards from "./CommodityCards";
 import MGCLiveChart from "./MGCLiveChart";
 import ScanTradePanel from "./ScanTradePanel";
-import Strategy5MinPanel from "./Strategy5MinPanel";
+import Strategy5MinPanel, { type LockedTradingConfig } from "./Strategy5MinPanel";
 import AutoTraderPanel from "./AutoTraderPanel";
 import { LivePriceProvider } from "../../hooks/useLivePrice";
 
@@ -126,6 +126,12 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
     setTpMult(tp);
   }, []);
 
+  // ── Locked config from last backtest (gates trading) ──
+  const [lockedConfig, setLockedConfig] = useState<LockedTradingConfig | null>(null);
+  const handleConfigLock = useCallback((config: LockedTradingConfig) => {
+    setLockedConfig(config);
+  }, []);
+
   // ── Collapsible columns ──────────────────────────────────────
   const [col1Open, setCol1Open] = useState(true);
   const [col2Open, setCol2Open] = useState(true);
@@ -219,7 +225,7 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M15 19l-7-7 7-7"/></svg>
           Strategy
         </button>
-        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} onTradesUpdate={setBacktestTrades} onDirectExecute={() => setTradeExecutedTick((n) => n + 1)} tradeExecutedTick={tradeExecutedTick} symbol={selectedSymbol} symbolName={selectedName} conditionToggles={conditionToggles} setConditionToggles={setConditionToggles} interval={interval} onIntervalChange={setInterval_} onSlTpChange={handleSlTpChange} />
+        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} onTradesUpdate={setBacktestTrades} onDirectExecute={() => setTradeExecutedTick((n) => n + 1)} tradeExecutedTick={tradeExecutedTick} symbol={selectedSymbol} symbolName={selectedName} conditionToggles={conditionToggles} setConditionToggles={setConditionToggles} interval={interval} onIntervalChange={setInterval_} onSlTpChange={handleSlTpChange} onConfigLock={handleConfigLock} />
       </section>
       )}
 
@@ -238,7 +244,7 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
           Trader
         </button>
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <AutoTraderPanel symbol={selectedSymbol} conditionToggles={conditionToggles} interval={interval} slMult={slMult} tpMult={tpMult} />
+          <AutoTraderPanel symbol={selectedSymbol} lockedConfig={lockedConfig} />
         </div>
         <button onClick={() => setTigerOpen((v) => !v)} className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-slate-600 hover:text-slate-300 uppercase tracking-widest font-bold bg-slate-950/60 hover:bg-slate-900/80 border-y border-slate-800/40 transition-colors shrink-0 w-full">
           <svg className={`w-3 h-3 transition-transform ${tigerOpen ? "" : "rotate-180"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M19 9l-7 7-7-7"/></svg>
