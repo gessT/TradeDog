@@ -337,7 +337,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
       </div>
 
       {/* ═══ Position card ═══ */}
-      {snap?.position && (
+      {started && snap?.position && (
         <div className="mx-4 mb-3 rounded-xl bg-white/[0.03] ring-1 ring-white/[0.06] p-3 space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -370,7 +370,7 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
       )}
 
       {/* ═══ Daily stats ═══ */}
-      {snap && (
+      {started && snap && (
         <div className="grid grid-cols-4 gap-px mx-4 mb-3 rounded-xl overflow-hidden ring-1 ring-white/[0.06]">
           {[
             { label: "Trades", value: String(snap.daily_trades), color: "text-white/70" },
