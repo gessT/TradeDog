@@ -457,6 +457,7 @@ const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m
   { key: "atr_range", label: "ATR Range", group: "5m", desc: "ATR is within acceptable range — not too flat (no movement) or too volatile (choppy)." },
   { key: "session_ok", label: "Session Hours", group: "5m", desc: "Current time is within active trading hours (US market session)." },
   { key: "adx_ok", label: "ADX Filter", group: "5m", desc: "ADX is above threshold, confirming the market is trending (not ranging)." },
+  { key: "halftrend", label: "HalfTrend", group: "5m", desc: "HalfTrend indicator direction is aligned with signal — uptrend for CALL, downtrend for PUT." },
   // Smart Money Concepts
   { key: "smc_bos", label: "Break of Structure", group: "smc", desc: "Recent BOS detected — price broke a swing high (bullish) or swing low (bearish), confirming trend continuation." },
   { key: "smc_ob", label: "Order Block", group: "smc", desc: "Price is in an institutional Order Block zone — the last opposing candle before an impulsive move (demand/supply zone)." },

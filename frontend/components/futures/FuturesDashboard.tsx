@@ -20,6 +20,7 @@ import { LivePriceProvider } from "../../hooks/useLivePrice";
 const CONDITION_KEYS: (keyof Scan5MinConditions)[] = [
   "ema_trend", "ema_slope", "pullback", "breakout", "supertrend",
   "macd_momentum", "rsi_momentum", "volume_spike", "atr_range", "session_ok", "adx_ok",
+  "halftrend",
 ];
 const DEFAULT_TOGGLES: Record<string, boolean> = Object.fromEntries(
   CONDITION_KEYS.map((k) => [k, true])

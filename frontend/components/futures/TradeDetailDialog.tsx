@@ -102,6 +102,7 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
   const [showEMA, setShowEMA] = useState(false);
   const [showSMA, setShowSMA] = useState(true);
   const [smaPeriod, setSmaPeriod] = useState(28);
+  const [showHT, setShowHT] = useState(true);
 
   // Close on Escape
   useEffect(() => {
@@ -210,6 +211,28 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
       }
     }
 
+    // ── HalfTrend overlay ──
+    if (showHT) {
+      const htUpData: { time: UTCTimestamp; value: number }[] = [];
+      const htDownData: { time: UTCTimestamp; value: number }[] = [];
+      for (let i = 0; i < ohlc.length && i < slice.length; i++) {
+        const c = slice[i];
+        if (c.ht_line != null && c.ht_dir != null) {
+          if (c.ht_dir === 0) {
+            htUpData.push({ time: ohlc[i].time, value: c.ht_line });
+          } else {
+            htDownData.push({ time: ohlc[i].time, value: c.ht_line });
+          }
+        }
+      }
+      if (htUpData.length > 0) {
+        chart.addSeries(LineSeries, { color: "#4ade80", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false }).setData(htUpData);
+      }
+      if (htDownData.length > 0) {
+        chart.addSeries(LineSeries, { color: "#f87171", lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false }).setData(htDownData);
+      }
+    }
+
     // SL / TP price lines
     const isCall = trade.direction === "CALL";
     candleSeries.createPriceLine({ price: trade.entry_price, color: "#a78bfa", lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: `▶ ENTRY  $${n(trade.entry_price).toFixed(2)}` });
@@ -280,6 +303,10 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
       const adxVal = c.adx != null ? c.adx.toFixed(1) : "—";
       const adxColor = (c.adx ?? 0) >= 25 ? "#4ade80" : (c.adx ?? 0) >= 15 ? "#fbbf24" : "#f87171";
       const smaVal = c.sma_28 != null ? `$${c.sma_28.toFixed(2)}` : "—";
+      const htDir = c.ht_dir;
+      const htLabel = htDir === 0 ? "▲ Up" : htDir === 1 ? "▼ Down" : "—";
+      const htColor = htDir === 0 ? "#4ade80" : htDir === 1 ? "#f87171" : "#94a3b8";
+      const htLineVal = c.ht_line != null ? `$${c.ht_line.toFixed(2)}` : "";
       const pxChange = c.close - c.open;
       const barColor = pxChange >= 0 ? "#4ade80" : "#f87171";
 
@@ -293,6 +320,7 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
           <span style="color:#64748b">RSI</span><span style="color:${rsiColor};font-weight:700">${rsiVal}</span>
           <span style="color:#64748b">MACD</span><span style="color:${macdColor};font-weight:700">${macdVal}</span>
           <span style="color:#64748b">ADX</span><span style="color:${adxColor};font-weight:700">${adxVal}</span>
+          <span style="color:#64748b">HalfTrend</span><span style="color:${htColor};font-weight:700">${htLabel} ${htLineVal}</span>
           <span style="color:#64748b">SMA 28</span><span style="color:#e879f9;font-weight:700">${smaVal}</span>
           <span style="color:#64748b">Vol</span><span style="color:#94a3b8;font-weight:700">${c.volume.toLocaleString()}</span>
         </div>`;
@@ -315,7 +343,7 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
     });
     ro.observe(el);
     return () => { ro.disconnect(); try { chart.remove(); } catch { /* lw-charts cleanup */ } chartRef.current = null; };
-  }, [candles, trade, showEMA, showSMA, smaPeriod]);
+  }, [candles, trade, showEMA, showSMA, smaPeriod, showHT]);
 
   const isOpenTrade = trade.reason === "OPEN";
   const win = trade.pnl >= 0;
@@ -436,6 +464,12 @@ export default function TradeDetailDialog({ candles, trade, onClose }: Readonly<
             onClick={() => setShowEMA((v) => !v)}
             className={`px-2 py-0.5 text-[10px] font-bold rounded transition ${showEMA ? "bg-cyan-600 text-white" : "bg-slate-800 text-slate-500 hover:text-slate-200"}`}
           >EMA</button>
+
+          {/* HalfTrend toggle */}
+          <button
+            onClick={() => setShowHT((v) => !v)}
+            className={`px-2 py-0.5 text-[10px] font-bold rounded transition ${showHT ? "bg-emerald-600 text-white" : "bg-slate-800 text-slate-500 hover:text-slate-200"}`}
+          >HalfTrend</button>
 
           {/* SMA toggle + period */}
           <div className="flex items-center gap-1.5">

@@ -1720,6 +1720,8 @@ class MGC5MinCandle(BaseModel):
     mkt_structure: Optional[int] = None
     sma_28: Optional[float] = None
     adx: Optional[float] = None
+    ht_dir: Optional[int] = None
+    ht_line: Optional[float] = None
 
 
 class MGC5MinTrade(BaseModel):
@@ -1807,7 +1809,7 @@ async def mgc_backtest_5min(
     if disabled_conditions:
         _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
                   "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok",
-                  "smc_ob","smc_fvg","smc_bos"}
+                  "halftrend","smc_ob","smc_fvg","smc_bos"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
 
     # Parse skip_hours from comma-separated string (e.g. "4,16")
@@ -1925,6 +1927,8 @@ async def mgc_backtest_5min(
                 mkt_structure=int(row["mkt_structure"]) if not _isnan(row.get("mkt_structure")) else None,
                 sma_28=round(float(row["sma_28"]), 2) if not _isnan(row.get("sma_28")) else None,
                 adx=round(float(row["adx"]), 1) if not _isnan(row.get("adx")) else None,
+                ht_dir=int(row["ht_dir"]) if not _isnan(row.get("ht_dir")) else None,
+                ht_line=round(float(row["ht_line"]), 2) if not _isnan(row.get("ht_line")) else None,
             ))
 
         trades = [
@@ -2053,6 +2057,7 @@ class Scan5MinConditions(BaseModel):
     atr_range: bool = False
     session_ok: bool = False
     adx_ok: bool = False
+    halftrend: bool = False
     htf_15m_trend: bool = False
     htf_15m_supertrend: bool = False
     htf_1h_trend: bool = False
@@ -2086,7 +2091,7 @@ async def mgc_scan_5min(
     if disabled_conditions:
         _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
                   "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok",
-                  "smc_ob","smc_fvg","smc_bos"}
+                  "halftrend","smc_ob","smc_fvg","smc_bos"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid} or None
 
     def _run():
@@ -2155,6 +2160,7 @@ async def mgc_scan_5min(
             supertrend=c.supertrend, macd_momentum=c.macd_momentum,
             rsi_momentum=c.rsi_momentum, volume_spike=c.volume_spike,
             atr_range=c.atr_range, session_ok=c.session_ok, adx_ok=c.adx_ok,
+            halftrend=c.halftrend,
             htf_15m_trend=c.htf_15m_trend, htf_15m_supertrend=c.htf_15m_supertrend,
             htf_1h_trend=c.htf_1h_trend, htf_1h_supertrend=c.htf_1h_supertrend,
             mkt_structure=c.mkt_structure,
@@ -2190,7 +2196,7 @@ async def mgc_scan_5min_live(
     if disabled_conditions:
         _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
                   "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok",
-                  "smc_ob","smc_fvg","smc_bos"}
+                  "halftrend","smc_ob","smc_fvg","smc_bos"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid} or None
 
     def _run():
@@ -2283,6 +2289,7 @@ async def mgc_scan_5min_live(
             supertrend=c.supertrend, macd_momentum=c.macd_momentum,
             rsi_momentum=c.rsi_momentum, volume_spike=c.volume_spike,
             atr_range=c.atr_range, session_ok=c.session_ok, adx_ok=c.adx_ok,
+            halftrend=c.halftrend,
             htf_15m_trend=c.htf_15m_trend, htf_15m_supertrend=c.htf_15m_supertrend,
             htf_1h_trend=c.htf_1h_trend, htf_1h_supertrend=c.htf_1h_supertrend,
             mkt_structure=c.mkt_structure,
@@ -2838,7 +2845,7 @@ async def mgc_trade_log_5min(
 _VALID_5MIN_CONDITIONS = {
     "ema_trend", "ema_slope", "pullback", "breakout", "supertrend",
     "macd_momentum", "rsi_momentum", "volume_spike", "atr_range",
-    "session_ok", "adx_ok",
+    "session_ok", "adx_ok", "halftrend",
     "htf_15m_trend", "htf_15m_supertrend", "htf_1h_trend", "htf_1h_supertrend",
 }
 
@@ -3233,6 +3240,7 @@ async def optimize_5min_conditions(
             "smc_ob",
             "smc_fvg",
             "smc_bos",
+            "halftrend",
         ]
 
         results = []

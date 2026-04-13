@@ -122,6 +122,7 @@ class TradingStateMachine:
         self._position_qty: int = 0
         self._position_direction: str = ""
         self._position_entry_time: str = ""
+        self._entry_fill_ts: float = 0.0  # time.time() when entry filled
 
         # Cooldown
         self._cooldown_end: float = 0.0
@@ -312,6 +313,7 @@ class TradingStateMachine:
             self._position_qty = qty
             self._position_direction = direction
             self._position_entry_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            self._entry_fill_ts = time.time()
             self._daily_count += 1
             logger.info("[%s] IDLE → IN_TRADE: %s %dx @ %.2f | SL=%.2f TP=%.2f",
                         self.symbol, direction, qty, entry_price, sl, tp)

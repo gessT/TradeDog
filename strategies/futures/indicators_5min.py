@@ -6,6 +6,7 @@ Uses existing EMA/RSI/ATR/Supertrend from indicators.py.
 """
 from __future__ import annotations
 
+import math
 import numpy as np
 import pandas as pd
 
@@ -565,3 +566,89 @@ def smc_break_of_structure(
             result[i] = last_bos_dir
 
     return pd.Series(result, index=close.index)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# HalfTrend
+# ═══════════════════════════════════════════════════════════════════════
+
+def halftrend(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    amplitude: int = 5,
+    channel_deviation: float = 2.0,
+    atr_length: int = 100,
+) -> tuple[pd.Series, pd.Series]:
+    """Return (ht_line, ht_dir).
+
+    ht_dir: 0 = uptrend (bullish), 1 = downtrend (bearish).
+    Same algorithm as US stock / KLSE HalfTrend (Pine Script port).
+    """
+    highs = high.values
+    lows = low.values
+    closes = close.values
+    n = len(closes)
+
+    # ATR via RMA (Wilder's smoothing)
+    prev_c = np.empty(n, dtype=np.float64)
+    prev_c[0] = closes[0]
+    prev_c[1:] = closes[:-1]
+    tr = np.maximum(highs - lows, np.maximum(np.abs(highs - prev_c), np.abs(lows - prev_c)))
+    atr_arr = np.full(n, np.nan, dtype=np.float64)
+    atr_arr[0] = tr[0]
+    alpha = 1.0 / atr_length
+    for i in range(1, n):
+        atr_arr[i] = alpha * tr[i] + (1 - alpha) * atr_arr[i - 1]
+
+    trend_arr = np.zeros(n, dtype=np.int8)
+    ht_arr = np.full(n, np.nan, dtype=np.float64)
+
+    next_trend = 0
+    max_low = lows[0]
+    min_high = highs[0]
+    up_val = lows[0]
+    down_val = highs[0]
+    ht_arr[0] = up_val
+
+    for i in range(1, n):
+        start = max(0, i - amplitude + 1)
+        high_price = highs[start: i + 1].max()
+        low_price = lows[start: i + 1].min()
+        high_ma = highs[start: i + 1].mean()
+        low_ma = lows[start: i + 1].mean()
+
+        cur_trend = trend_arr[i - 1]
+
+        if next_trend == 1:
+            max_low = max(low_price, max_low)
+            if high_ma < max_low and closes[i] < lows[i - 1]:
+                cur_trend = 1
+                next_trend = 0
+                min_high = high_price
+        else:
+            min_high = min(high_price, min_high)
+            if low_ma > min_high and closes[i] > highs[i - 1]:
+                cur_trend = 0
+                next_trend = 1
+                max_low = low_price
+
+        trend_arr[i] = cur_trend
+
+        if cur_trend == 0:  # uptrend
+            if trend_arr[i - 1] != 0:
+                up_val = down_val if not math.isnan(down_val) else max_low
+            else:
+                up_val = max(max_low, up_val)
+            ht_arr[i] = up_val
+        else:  # downtrend
+            if trend_arr[i - 1] != 1:
+                down_val = up_val if not math.isnan(up_val) else min_high
+            else:
+                down_val = min(min_high, down_val)
+            ht_arr[i] = down_val
+
+    return (
+        pd.Series(ht_arr, index=close.index, name="ht_line"),
+        pd.Series(trend_arr, index=close.index, name="ht_dir"),
+    )

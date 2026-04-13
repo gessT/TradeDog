@@ -80,6 +80,10 @@ DEFAULT_5MIN_PARAMS: dict = {
     "htf_ema_period": 999,
     # Cooldown OFF
     "cooldown_bars": 0,
+    # HalfTrend — trend filter (same as US stock dashboard)
+    "ht_amplitude": 5,
+    "ht_channel_deviation": 2.0,
+    "ht_atr_length": 100,
 }
 
 
@@ -178,6 +182,14 @@ class MGCStrategy5Min:
         df["sma_28"] = ind.sma(c, 28)
         df["sma_28_slope"] = df["sma_28"].diff(3)  # 3-bar slope
 
+        # HalfTrend — trend direction filter
+        df["ht_line"], df["ht_dir"] = ind5.halftrend(
+            df["high"], df["low"], c,
+            amplitude=p["ht_amplitude"],
+            channel_deviation=p["ht_channel_deviation"],
+            atr_length=p["ht_atr_length"],
+        )
+
         # ── Smart Money Concepts (SMC) ──────────────────────────
         df["smc_ob"] = ind5.smc_order_blocks(
             df["open"], df["high"], df["low"], c, lookback=10,
@@ -274,8 +286,9 @@ class MGCStrategy5Min:
         call_mom = _or_group(call_mom_parts)
         htf_ema_period = p.get("htf_ema_period", 999)
         call_htf = df["htf_trend"] == 1 if htf_ema_period < 500 else True
+        call_ht = _true if "halftrend" in off else (df["ht_dir"] == 0)  # HalfTrend bullish
 
-        call_signal = call_trend & call_slope & call_entry & call_st & call_mom & filters & call_bos & smc_entry_call
+        call_signal = call_trend & call_slope & call_entry & call_st & call_mom & filters & call_bos & smc_entry_call & call_ht
         if htf_ema_period < 500:
             call_signal = call_signal & call_htf
 
@@ -297,8 +310,9 @@ class MGCStrategy5Min:
         if "rsi_momentum" not in off:
             put_mom_parts.append(df["rsi_falling"] == 1)
         put_mom = _or_group(put_mom_parts)
+        put_ht = _true if "halftrend" in off else (df["ht_dir"] == 1)  # HalfTrend bearish
 
-        put_signal = put_trend & put_slope & put_entry & put_st & put_mom & filters & put_bos & smc_entry_put
+        put_signal = put_trend & put_slope & put_entry & put_st & put_mom & filters & put_bos & smc_entry_put & put_ht
 
         # ── Combine: +1 = CALL, -1 = PUT ──────────────────────
         signal = pd.Series(0, index=df.index, dtype=int)

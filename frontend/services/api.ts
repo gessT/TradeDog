@@ -968,6 +968,8 @@ export type MGC5MinCandle = {
   mkt_structure: number | null;
   sma_28: number | null;
   adx: number | null;
+  ht_dir: number | null;
+  ht_line: number | null;
 };
 
 export type MGC5MinTrade = {
@@ -1326,6 +1328,7 @@ export type Scan5MinConditions = {
   atr_range: boolean;
   session_ok: boolean;
   adx_ok: boolean;
+  halftrend: boolean;
   smc_ob: boolean;
   smc_fvg: boolean;
   smc_bos: boolean;

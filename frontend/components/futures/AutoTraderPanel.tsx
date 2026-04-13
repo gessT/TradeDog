@@ -476,13 +476,21 @@ export default function AutoTraderPanel({ symbol = "MGC", conditionToggles, inte
 
       {/* ═══ Position card ═══ */}
       {started && snap?.position && (
-        <div className="mx-4 mb-3 rounded-xl bg-white/[0.03] ring-1 ring-white/[0.06] p-3 space-y-2">
+        <div className={`mx-4 mb-3 rounded-xl p-3 space-y-2 ${
+          mode === "live"
+            ? "bg-red-500/[0.04] ring-1 ring-red-500/20"
+            : "bg-white/[0.03] ring-1 ring-white/[0.06]"
+        }`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className={`text-sm font-black tracking-tight ${snap.position.direction === "CALL" ? "text-emerald-400" : "text-red-400"}`}>
                 {snap.position.direction === "CALL" ? "↗ LONG" : "↘ SHORT"}
               </span>
               <span className="text-[10px] text-white/20 font-mono">×{snap.position.qty}</span>
+              {mode === "live"
+                ? <span className="text-[8px] px-1.5 py-px rounded bg-red-500/15 text-red-400 ring-1 ring-red-500/25 font-bold">LIVE</span>
+                : <span className="text-[8px] px-1.5 py-px rounded bg-emerald-500/10 text-emerald-400/60 ring-1 ring-emerald-500/15 font-bold">PAPER</span>
+              }
             </div>
             <span className="font-mono text-xs text-white/50">${snap.position.entry_price.toFixed(2)}</span>
           </div>

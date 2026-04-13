@@ -263,7 +263,10 @@ class FuturesAutoTrader:
         # Live mode: check state machine SL/TP + broker sync
         elif mode == "live":
             # Sync: broker closed position externally
-            if tiger_qty == 0 and self._machine.state == TradingState.IN_TRADE:
+            # Grace period: skip broker sync for 30s after entry to allow order fill
+            import time as _time
+            secs_since_entry = _time.time() - self._machine._entry_fill_ts
+            if tiger_qty == 0 and self._machine.state == TradingState.IN_TRADE and secs_since_entry > 30:
                 exit_reason = self._machine.check_exit(live_price) or "BROKER_CLOSE"
                 self._exec_engine.sync_with_broker(0, live_price, CONTRACT_SIZE)
                 trade = self._machine.on_exit(live_price, exit_reason, CONTRACT_SIZE)

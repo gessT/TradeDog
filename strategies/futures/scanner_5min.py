@@ -37,6 +37,7 @@ class ScanResult5Min:
     ema_slow: float
     macd_hist: float
     supertrend_dir: int     # 1 = bullish, -1 = bearish
+    halftrend_dir: int      # 0 = uptrend, 1 = downtrend
     volume_ratio: float
     bar_time: str
     # Signal freshness — only trade on first bar where signal appears
@@ -184,7 +185,14 @@ def scan_5min(
     score += vol_pts
     detail["volume"] = {"pts": vol_pts, "ratio": round(vol_ratio, 2)}
 
-    strength = max(1, min(10, score))
+    # 6. HalfTrend confirmation (0-2)
+    ht_dir = int(bar.get("ht_dir", -1))
+    ht_aligned = (direction == "CALL" and ht_dir == 0) or (direction == "PUT" and ht_dir == 1)
+    ht_pts = 2 if ht_aligned else 0
+    score += ht_pts
+    detail["halftrend"] = {"pts": ht_pts, "dir": ht_dir}
+
+    strength = max(1, min(12, score))
 
     return ScanResult5Min(
         found=has_signal,
@@ -202,6 +210,7 @@ def scan_5min(
         ema_slow=round(ema_s, 2),
         macd_hist=round(macd_h, 4),
         supertrend_dir=st_dir,
+        halftrend_dir=ht_dir,
         volume_ratio=round(vol_ratio, 2),
         bar_time=bar_time,
         is_fresh=is_fresh,
@@ -382,6 +391,8 @@ class ConditionStatus:
     htf_15m_supertrend: bool  # 15m supertrend aligned
     htf_1h_trend: bool    # 1h EMA trend aligned
     htf_1h_supertrend: bool   # 1h supertrend aligned
+    # HalfTrend
+    halftrend: bool = False   # HalfTrend direction aligned with bias
     # Market Structure (HH/HL/LH/LL)
     mkt_structure: int = 0    # 1=BULL(HH+HL), -1=BEAR(LH+LL), 0=SIDEWAYS
 
@@ -449,6 +460,7 @@ def scan_5min_mtf(
         htf_15m_supertrend=False,
         htf_1h_trend=False,
         htf_1h_supertrend=False,
+        halftrend=((int(bar.get("ht_dir", -1)) == 0) if is_call else (int(bar.get("ht_dir", -1)) == 1)),
         mkt_structure=int(bar.get("mkt_structure", 0)),
     )
 
@@ -489,6 +501,8 @@ def scan_5min_mtf(
         core.append(cond.session_ok)
     if "adx_ok" not in off:
         core.append(cond.adx_ok)
+    if "halftrend" not in off:
+        core.append(cond.halftrend)
     conditions_met = sum(core)
 
     # Normal scan for the full signal result
