@@ -69,10 +69,13 @@ def scan_5min(
     )
     signals = strategy.generate_signals(df_ind, disabled=disabled)
 
-    # Use second-to-last bar (last completed bar)
+    # Use second-to-last bar (last completed bar) for signal
     bar_idx = -2 if len(df_ind) >= 2 else -1
     bar = df_ind.iloc[bar_idx]
-    current_price = float(df_ind["close"].iloc[-1])
+    # Entry at current bar's OPEN — matches backtest logic
+    # (backtest enters at next bar's open after signal)
+    entry_bar = df_ind.iloc[-1]
+    current_price = float(entry_bar["open"])
     bar_time = str(df_ind.index[bar_idx])
 
     sig_val = int(signals.iloc[bar_idx])

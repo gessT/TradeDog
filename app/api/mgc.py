@@ -1849,11 +1849,18 @@ async def mgc_backtest_5min(
                 display_start = cutoff.strftime("%Y-%m-%d")
 
         # ── Filter trades to display window ─────────────────────
-        # Return ALL trades — frontend filters by period client-side
-        filtered_trades = result.trades
+        if display_start:
+            filtered_trades = [t for t in result.trades if str(t.entry_time) >= display_start]
+        else:
+            filtered_trades = result.trades
 
-        # ── Return ALL daily_pnl (frontend filters by period) ──
-        filtered_daily = result.daily_pnl
+        # ── Filter daily_pnl to display window ─────────────────
+        if display_start and isinstance(result.daily_pnl, list):
+            filtered_daily = [d for d in result.daily_pnl if str(d.get("date", d.get("day", ""))) >= display_start]
+        elif display_start and isinstance(result.daily_pnl, dict):
+            filtered_daily = {k: v for k, v in result.daily_pnl.items() if str(k) >= display_start}
+        else:
+            filtered_daily = result.daily_pnl
 
         # ── Recompute metrics for the display window ────────────
         display_wins = [t for t in filtered_trades if t.pnl > 0]
@@ -3813,3 +3820,232 @@ def delete_position_tag(symbol: str) -> dict[str, str]:
             {"sym": symbol},
         )
     return {"status": "ok"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Auto-Trader v2 — 4-Layer Production Trading System
+# ═══════════════════════════════════════════════════════════════════════
+
+class AutoTraderStartPayload(BaseModel):
+    mode: str = "paper"  # "paper" | "live"
+
+
+class AutoTraderConfigPayload(BaseModel):
+    cooldown_secs: Optional[float] = None
+    min_strength: Optional[int] = None
+    max_consec_losses: Optional[int] = None
+    daily_limit: Optional[int] = None
+    daily_loss_limit: Optional[float] = None
+    sl_mult: Optional[float] = None
+    tp_mult: Optional[float] = None
+    risk_per_trade: Optional[float] = None
+    max_qty: Optional[int] = None
+    disabled_conditions: Optional[list[str]] = None
+
+
+class AutoTraderTickPayload(BaseModel):
+    live_price: float = 0.0
+    is_bar_close: bool = False
+    tiger_qty: int = 0
+
+
+class AutoTraderEntryPayload(BaseModel):
+    entry_price: float
+    sl: float
+    tp: float
+    qty: int
+    direction: str
+
+
+class AutoTraderExitPayload(BaseModel):
+    exit_price: float
+    reason: str = "TP"
+
+
+@router.post("/auto-trader/start")
+async def auto_trader_start(
+    payload: AutoTraderStartPayload,
+    symbol: str = Query("MGC"),
+):
+    """Start auto-trader in paper or live mode."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader.start(payload.mode)
+
+
+@router.post("/auto-trader/stop")
+async def auto_trader_stop(symbol: str = Query("MGC")):
+    """Stop auto-trader (keeps position if in trade)."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader.stop()
+
+
+@router.post("/auto-trader/reset")
+async def auto_trader_reset(symbol: str = Query("MGC")):
+    """Full reset — clears state, paper trades, risk counters."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader.reset()
+
+
+@router.post("/auto-trader/emergency-stop")
+async def auto_trader_emergency_stop(
+    symbol: str = Query("MGC"),
+    live_price: float = Query(0.0),
+):
+    """Emergency stop — close paper position + halt everything."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader.emergency_stop(live_price)
+
+
+@router.post("/auto-trader/unblock")
+async def auto_trader_unblock(symbol: str = Query("MGC")):
+    """Manually unblock after risk limit hit."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader.unblock()
+
+
+@router.get("/auto-trader/state")
+async def auto_trader_state(symbol: str = Query("MGC")):
+    """Full state — machine + risk + paper summary."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader.get_full_state()
+
+
+@router.post("/auto-trader/tick")
+async def auto_trader_tick(
+    payload: AutoTraderTickPayload,
+    symbol: str = Query("MGC"),
+    period: str = Query("7d"),
+):
+    """Process one tick — called by frontend every 10s + at bar close.
+
+    If is_bar_close=True, loads latest 5min data and scans for signals.
+    """
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+
+    df_5m = None
+    if payload.is_bar_close:
+        df_5m = await run_in_threadpool(
+            _load_5min_data_for_tick, symbol, period
+        )
+
+    result = trader.tick(
+        live_price=payload.live_price,
+        df_5m=df_5m,
+        is_bar_close=payload.is_bar_close,
+        tiger_qty=payload.tiger_qty,
+    )
+    return {
+        "action": result.action,
+        "signal": result.signal,
+        "trade": result.trade,
+        "risk": result.risk,
+        "message": result.message,
+        "snapshot": result.snapshot,
+    }
+
+
+def _load_5min_data_for_tick(symbol: str, period: str) -> "pd.DataFrame | None":
+    """Load 5min data for signal scanning during tick."""
+    import pandas as pd
+    try:
+        from strategies.futures.data_loader import load_yfinance_5min
+        _period_map = {"1d": "5d", "3d": "5d", "7d": "14d", "14d": "30d", "30d": "60d"}
+        fetch_period = _period_map.get(period, "14d")
+        df = load_yfinance_5min(symbol, period=fetch_period)
+        if df is not None and len(df) > 50:
+            return df
+    except Exception as e:
+        logger.error("Failed to load 5min data for tick: %s", e)
+    return None
+
+
+@router.get("/auto-trader/trades")
+async def auto_trader_trades(symbol: str = Query("MGC")):
+    """Return all trade records (paper + live)."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return [
+        {
+            "direction": t.direction,
+            "entry_price": t.entry_price,
+            "exit_price": t.exit_price,
+            "stop_loss": t.stop_loss,
+            "take_profit": t.take_profit,
+            "qty": t.qty,
+            "pnl": t.pnl,
+            "exit_reason": t.exit_reason,
+            "entry_time": t.entry_time,
+            "exit_time": t.exit_time,
+            "strength": t.strength,
+            "slippage": t.slippage,
+            "is_paper": t.is_paper,
+        }
+        for t in trader.trades
+    ]
+
+
+@router.get("/auto-trader/paper-summary")
+async def auto_trader_paper_summary(symbol: str = Query("MGC")):
+    """Paper trading P&L summary."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader._paper.get_summary()
+
+
+@router.post("/auto-trader/config")
+async def auto_trader_config(
+    payload: AutoTraderConfigPayload,
+    symbol: str = Query("MGC"),
+):
+    """Update auto-trader config (scanner, risk, state machine)."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    kwargs = {k: v for k, v in payload.model_dump().items() if v is not None and k not in ("disabled_conditions",)}
+    disabled = set(payload.disabled_conditions) if payload.disabled_conditions else None
+    return trader.update_config(disabled_conditions=disabled, **kwargs)
+
+
+@router.post("/auto-trader/entry-filled")
+async def auto_trader_entry_filled(
+    payload: AutoTraderEntryPayload,
+    symbol: str = Query("MGC"),
+):
+    """Notify auto-trader that a live order filled."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    trader.on_live_entry_filled(
+        entry_price=payload.entry_price,
+        sl=payload.sl,
+        tp=payload.tp,
+        qty=payload.qty,
+        direction=payload.direction,
+    )
+    return trader.get_full_state()
+
+
+@router.post("/auto-trader/exit")
+async def auto_trader_exit(
+    payload: AutoTraderExitPayload,
+    symbol: str = Query("MGC"),
+):
+    """Notify auto-trader that a live position exited."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    trade = trader.on_live_exit(payload.exit_price, payload.reason)
+    return {
+        "trade": {
+            "direction": trade.direction,
+            "entry_price": trade.entry_price,
+            "exit_price": trade.exit_price,
+            "pnl": trade.pnl,
+            "exit_reason": trade.exit_reason,
+        } if trade else None,
+        **trader.get_full_state(),
+    }

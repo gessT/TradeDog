@@ -1367,25 +1367,11 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     }
   }, [pendingOptRun, runBacktest]);
 
-  // ── Restore cached backtest on mount, or auto-run fresh ──
+  // ── No auto-run on mount — user must click Start Backtest ──
   const initialRunDone = useRef(false);
   useEffect(() => {
     if (!configLoaded) return;
-    if (initialRunDone.current) return;
-    // Try cache first for instant display
-    try {
-      const raw = sessionStorage.getItem("bt5min_cache");
-      if (raw) {
-        const cached = JSON.parse(raw);
-        if (cached.configKey === configKey) {
-          setBtData(cached.data);
-          onTradesUpdate?.(cached.data.trades);
-        }
-      }
-    } catch { /* corrupt cache — ignore */ }
-    // Always run a fresh backtest on landing for up-to-date data
     initialRunDone.current = true;
-    runBacktest();
   }, [configLoaded]);
 
   // ── Auto re-run backtest after trade executed (from scanner) ──
@@ -2069,11 +2055,15 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
           {/* Idle state */}
           {!btData && !loading && (
             <div className="flex items-center justify-center min-h-[300px]">
-              <div className="text-center space-y-2">
+              <div className="text-center space-y-3">
                 <p className="text-4xl">🎯</p>
-                <p className="text-sm text-slate-400">Click <span className="text-cyan-400 font-bold">🎯 Run 5min</span> to backtest</p>
-                <p className="text-[10px] text-slate-600">EMA20/50 · MACD · RSI · Supertrend · Volume</p>
-                <p className="text-[9px] text-slate-700">SL 1×ATR · TP 2×ATR · 70/30 OOS split</p>
+                <button
+                  onClick={runBacktest}
+                  className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white font-bold text-sm shadow-lg shadow-cyan-900/40 transition-all hover:scale-105 active:scale-95"
+                >
+                  ▶ Start Backtest
+                </button>
+                <p className="text-[10px] text-slate-500">{period} · SL {slMult}× · TP {tpMult}× · EMA · MACD · RSI · Supertrend</p>
               </div>
             </div>
           )}
@@ -2084,7 +2074,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               <div className="flex flex-col items-center gap-3">
                 <div className="w-7 h-7 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
                 <span className="text-[11px] text-cyan-400 font-bold">Running backtest…</span>
-                <span className="text-[9px] text-slate-600">Fetching 60d data & simulating trades</span>
+                <span className="text-[9px] text-slate-600">Fetching {period} data & simulating trades</span>
               </div>
             </div>
           )}
@@ -2354,6 +2344,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                             <span className="text-[8px] text-slate-600">{fmtDateTime(pos.entry_time)}</span>
                           </div>
                           <div className="flex items-center gap-1.5">
+                            {/* Sync & Auto buttons hidden — use Auto-Trader panel instead
                             <button
                               onClick={(e) => { e.stopPropagation(); handleSync(); }}
                               disabled={syncing || autoTrading}
@@ -2377,6 +2368,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                             >
                               {autoTrading ? "● Auto ON" : "⚡ Auto"}
                             </button>
+                            */}
                           </div>
                           {syncStatus && (
                             <div className="text-[8px] font-bold text-orange-400 animate-pulse truncate">{syncStatus}</div>

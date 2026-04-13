@@ -13,6 +13,7 @@ import CommodityCards from "./CommodityCards";
 import MGCLiveChart from "./MGCLiveChart";
 import ScanTradePanel from "./ScanTradePanel";
 import Strategy5MinPanel from "./Strategy5MinPanel";
+import AutoTraderPanel from "./AutoTraderPanel";
 import { LivePriceProvider } from "../../hooks/useLivePrice";
 
 const CONDITION_KEYS: (keyof Scan5MinConditions)[] = [
@@ -119,6 +120,8 @@ export default function FuturesDashboard() {
       {/* COL 3 — Account / Trade panel                                */}
       {/* ═══════════════════════════════════════════════════════════════ */}
       <section className="hidden md:flex md:w-1/3 flex-col overflow-y-auto bg-slate-900/40">
+        <AutoTraderPanel symbol={selectedSymbol} conditionToggles={conditionToggles} />
+        <div className="border-t border-slate-800/60" />
         <ScanTradePanel tradeExecutedTick={tradeExecutedTick} />
       </section>
 
