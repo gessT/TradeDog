@@ -8,9 +8,10 @@ import { US_DEFAULT_SYMBOLS, US_SECTORS, US_STOCKS_BY_SECTOR } from "../../const
 // Strategy Planner — Modern unified view
 // ═══════════════════════════════════════════════════════════════════════
 
-type StrategyType = "breakout_1h" | "vpb_v2" | "vpb_v3" | "vpr" | "mtf" | "tpc";
+type StrategyType = "gess" | "breakout_1h" | "vpb_v2" | "vpb_v3" | "vpr" | "mtf" | "tpc";
 
 const STRATEGY_TYPES: { key: StrategyType; label: string; desc: string }[] = [
+  { key: "gess", label: "Gess", desc: "Empty — build from scratch" },
   { key: "breakout_1h", label: "Breakout 1H", desc: "EMA/MACD/RSI breakout" },
   { key: "vpb_v2", label: "VPB v2", desc: "High WR two-step retest" },
   { key: "vpb_v3", label: "VPB v3 量价", desc: "Multi-TF volume-price" },
@@ -18,6 +19,38 @@ const STRATEGY_TYPES: { key: StrategyType; label: string; desc: string }[] = [
   { key: "mtf", label: "MTF", desc: "Daily ST+HT → 4H entry" },
   { key: "tpc", label: "TPC 趋势回调", desc: "Weekly ST+HT pullback" },
 ];
+
+// Strategy info — buy/sell conditions for tooltip
+const STRATEGY_INFO: Record<StrategyType, { buy: string[]; sell: string[] }> = {
+  gess: {
+    buy: ["No conditions — configure your own"],
+    sell: ["ATR stop loss", "TP at R-multiple"],
+  },
+  breakout_1h: {
+    buy: ["EMA trend up (20>50)", "MACD histogram positive", "RSI momentum rising", "Volume spike above avg", "SuperTrend bullish", "HalfTrend uptrend", "Breakout above N-bar high"],
+    sell: ["ATR trailing stop hit", "TP1 at 1R (50% exit)", "TP2 at target R (remainder)", "Stop loss at ATR×mult"],
+  },
+  vpb_v2: {
+    buy: ["Triple EMA aligned", "EMA slope rising", "Volume ramp (consecutive increase)", "Volume spike > avg×mult", "Strong candle body", "Close near high", "Session filter (skip open/close)"],
+    sell: ["ATR stop loss", "TP at R-multiple", "Session end exit"],
+  },
+  vpb_v3: {
+    buy: ["Daily trend (EMA20>50)", "Accumulation (low vol tight range)", "Breakout with volume surge", "RSI 40-72 zone", "1H EMA trend", "Bullish candle quality"],
+    sell: ["ATR stop loss", "TP at R-multiple", "Session filter exit"],
+  },
+  vpr: {
+    buy: ["Price above VWAP", "Volume profile near HVN/POC", "RSI momentum rising", "Bullish candle close"],
+    sell: ["ATR stop loss", "TP2 at R-multiple", "Session end exit"],
+  },
+  mtf: {
+    buy: ["Daily SuperTrend bullish", "Daily HalfTrend uptrend", "HT re-confirm flip", "SMA50 trend", "4H EMA9>21 aligned", "4H RSI 40-70", "Bullish candle"],
+    sell: ["ATR trailing stop", "TP1 at 1R (50%)", "TP2 at R-mult", "Daily ST flip bearish"],
+  },
+  tpc: {
+    buy: ["Weekly SuperTrend bullish", "Daily HalfTrend uptrend", "Price near HT line (pullback)"],
+    sell: ["HT Exit: sell when HalfTrend turns red", "W.ST Exit: Weekly ST flips bearish", "ATR Trail: trailing stop after TP1", "TP1: partial exit at 1R (50%)", "TP2: full exit at R-mult", "Max Hold: exit after N bars"],
+  },
+};
 
 // ═══════════════════════════════════════════════════════════════════════
 // UNIFIED CONDITION POOL — grouped by category
@@ -86,6 +119,7 @@ const CONDITION_GROUPS = ["Daily", "Trend", "Entry", "Momentum", "Volume", "Cand
 
 // Which conditions each base strategy uses by default
 const STRATEGY_DEFAULTS: Record<StrategyType, string[]> = {
+  gess:        [],
   breakout_1h: ["ema_trend", "ema_slope", "pullback", "breakout", "supertrend", "ht_trend", "macd_momentum", "rsi_momentum", "volume_spike", "atr_range"],
   vpb_v2:      ["ema_alignment", "ema_slope", "ema_trend", "vol_ramp", "vol_spike", "body_strength", "close_near_high", "bullish_candle", "session"],
   vpb_v3:      ["daily_trend", "accum", "breakout", "vol_surge", "rsi", "h_ema_trend", "candle_quality", "session"],
@@ -164,6 +198,8 @@ type Props = {
 export default function USStrategyPlanner({ activePreset, onApply, onPresetsChanged, onTagSaved, favSymbols = [], allTags = [], selectedSymbol }: Props) {
   const [presets, setPresets] = useState<StrategyPreset[]>([]);
   const [showStocksFor, setShowStocksFor] = useState<string | null>(null);
+  const [showInfoFor, setShowInfoFor] = useState<string | null>(null);
+  const [infoPos, setInfoPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [editing, setEditing] = useState<StrategyPreset>({ ...EMPTY_PRESET });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -416,6 +452,16 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                 >
                   <div className="flex items-center gap-1">
                     <span className="text-[10px] font-bold text-slate-200">{st.label}</span>
+                    <span
+                      className="text-[9px] text-slate-600 hover:text-blue-400 cursor-help transition ml-auto"
+                      onClick={(e) => { e.stopPropagation(); }}
+                      onMouseEnter={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setInfoPos({ x: rect.left + rect.width / 2, y: rect.bottom + 4 });
+                        setShowInfoFor(st.key);
+                      }}
+                      onMouseLeave={() => setShowInfoFor(null)}
+                    >ℹ</span>
                   </div>
                   <div className="text-[7px] text-slate-500 mt-0.5">{st.desc}</div>
                   <div className="flex flex-wrap gap-0.5 mt-1">
@@ -1242,6 +1288,23 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ═══ Strategy Info Tooltip (fixed position) ═══ */}
+      {showInfoFor && STRATEGY_INFO[showInfoFor as StrategyType] && (
+        <div
+          className="fixed w-[240px] p-2.5 rounded-lg bg-slate-800 border border-slate-600/80 shadow-2xl pointer-events-none"
+          style={{ left: infoPos.x, top: infoPos.y, transform: "translateX(-50%)", zIndex: 99999 }}
+        >
+          <div className="text-[8px] font-bold text-emerald-400 uppercase tracking-wider mb-1">Buy When</div>
+          {STRATEGY_INFO[showInfoFor as StrategyType].buy.map((b, i) => (
+            <div key={i} className="text-[8px] text-slate-300 leading-relaxed">• {b}</div>
+          ))}
+          <div className="text-[8px] font-bold text-rose-400 uppercase tracking-wider mt-1.5 mb-1">Sell When</div>
+          {STRATEGY_INFO[showInfoFor as StrategyType].sell.map((s, i) => (
+            <div key={i} className="text-[8px] text-slate-300 leading-relaxed">• {s}</div>
+          ))}
         </div>
       )}
     </div>

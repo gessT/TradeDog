@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, forwardRef, useState } from "react";
 import { fetchUS1HBacktest, fetchVPBBacktest, fetchVPRBacktest, fetchMTFBacktest, fetchTPCBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
 import USTopBar from "./USTopBar";
 import USWatchlist from "./USWatchlist";
@@ -28,7 +28,22 @@ import USStrategyPlanner, { type StrategyPreset } from "./USStrategyPlanner";
 type Mode = "Live" | "Backtest" | "Replay";
 type MobilePanel = "chart" | "watchlist" | "orders";
 
-export default function USDashboard() {
+export interface USLayoutState {
+  watchlist: boolean;
+  chart: boolean;
+  rightPanel: boolean;
+}
+
+export interface USDashboardHandle {
+  setLayout: (key: keyof USLayoutState, value: boolean) => void;
+}
+
+interface USDashboardProps {
+  onLayoutChange?: (layout: USLayoutState) => void;
+  layout?: USLayoutState;
+}
+
+const USDashboard = forwardRef<USDashboardHandle, USDashboardProps>(function USDashboard({ onLayoutChange, layout }, ref) {
   // ── Core state ──────────────────────────────────────────
   const [selectedSymbol, setSelectedSymbol] = useState("AAPL");
   const [selectedName, setSelectedName] = useState("Apple");
@@ -39,6 +54,11 @@ export default function USDashboard() {
 
   // ── Mobile panel toggle ─────────────────────────────────
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chart");
+
+  // ── Desktop layout collapsible state ────────────────────
+  const [watchlistOpen, setWatchlistOpen] = useState(layout?.watchlist ?? true);
+  const [chartOpen, setChartOpen] = useState(layout?.chart ?? true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(layout?.rightPanel ?? true);
 
   // ── Price data (from latest backtest candle or live) ──
   const [price, setPrice] = useState(0);
@@ -73,6 +93,25 @@ export default function USDashboard() {
   const [activePreset, setActivePreset] = useState<StrategyPreset | null>(null);
   const [rightTab, setRightTab] = useState<"orders" | "strategy">("orders");
   const [savedPresets, setSavedPresets] = useState<StrategyPreset[]>([]);
+
+  useImperativeHandle(ref, () => ({
+    setLayout: (key: keyof USLayoutState, value: boolean) => {
+      if (key === "watchlist") setWatchlistOpen(value);
+      else if (key === "chart") setChartOpen(value);
+      else if (key === "rightPanel") setRightPanelOpen(value);
+    },
+  }), []);
+
+  useEffect(() => {
+    onLayoutChange?.({ watchlist: watchlistOpen, chart: chartOpen, rightPanel: rightPanelOpen });
+  }, [watchlistOpen, chartOpen, rightPanelOpen, onLayoutChange]);
+
+  useEffect(() => {
+    if (!layout) return;
+    setWatchlistOpen(layout.watchlist);
+    setChartOpen(layout.chart);
+    setRightPanelOpen(layout.rightPanel);
+  }, [layout]);
 
   // ── Stock strategy tags ────────────────────────────────
   type StockTag = { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null };
@@ -360,6 +399,11 @@ export default function USDashboard() {
     setStrategy(presetName);
   }, [savedPresets]);
 
+  const visibleCount = [watchlistOpen, chartOpen, rightPanelOpen].filter(Boolean).length;
+  const watchlistDesktopWidth = visibleCount === 3 ? "lg:w-[20%]" : visibleCount === 2 ? "lg:w-1/2" : "lg:w-full";
+  const chartDesktopWidth = visibleCount === 3 ? "lg:w-[40%]" : visibleCount === 2 ? "lg:w-1/2" : "lg:w-full";
+  const rightPanelDesktopWidth = visibleCount === 3 ? "lg:w-[40%]" : visibleCount === 2 ? "lg:w-1/2" : "lg:w-full";
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       {/* ═══ TEST ALL STRATEGIES DIALOG ═══ */}
@@ -537,10 +581,27 @@ export default function USDashboard() {
 
       {/* ═══ MAIN BODY ═══ */}
       <div className="flex flex-1 overflow-hidden">
+        {!watchlistOpen && (
+          <button
+            onClick={() => setWatchlistOpen(true)}
+            className="hidden lg:flex items-center px-0.5 bg-slate-900/80 border-r border-slate-800/60 hover:bg-slate-800/80 transition-colors group"
+            title="Show Watchlist"
+          >
+            <span className="text-[9px] text-slate-500 group-hover:text-slate-300 [writing-mode:vertical-lr] rotate-180 tracking-widest font-bold uppercase">Watchlist</span>
+          </button>
+        )}
+
         {/* ── LEFT SIDEBAR (Watchlist) — desktop or mobile-selected ── */}
         <aside className={`${
           mobilePanel === "watchlist" ? "flex w-full" : "hidden"
-        } lg:flex lg:w-1/5 shrink-0 flex-col overflow-hidden border-r border-slate-800/60`}>
+        } ${watchlistOpen ? `lg:flex ${watchlistDesktopWidth}` : "lg:hidden"} shrink-0 flex-col overflow-hidden border-r border-slate-800/60`}>
+          <button
+            onClick={() => setWatchlistOpen(false)}
+            className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-slate-600 hover:text-slate-300 uppercase tracking-widest font-bold bg-slate-950/60 hover:bg-slate-900/80 border-b border-slate-800/40 transition-colors shrink-0"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M15 19l-7-7 7-7"/></svg>
+            Watchlist
+          </button>
           <USWatchlist
             activeSymbol={selectedSymbol}
             onSelectSymbol={(sym, name) => {
@@ -553,10 +614,27 @@ export default function USDashboard() {
           />
         </aside>
 
+        {!chartOpen && (
+          <button
+            onClick={() => setChartOpen(true)}
+            className="hidden lg:flex items-center px-0.5 bg-slate-900/80 border-r border-slate-800/60 hover:bg-slate-800/80 transition-colors group"
+            title="Show Chart"
+          >
+            <span className="text-[9px] text-slate-500 group-hover:text-slate-300 [writing-mode:vertical-lr] rotate-180 tracking-widest font-bold uppercase">Chart</span>
+          </button>
+        )}
+
         {/* ── CENTER (Chart + Bottom Panel) — desktop or mobile-selected ── */}
         <div className={`${
           mobilePanel === "chart" ? "flex" : "hidden"
-        } lg:flex lg:w-2/5 flex-col overflow-hidden relative`}>
+        } ${chartOpen ? `lg:flex ${chartDesktopWidth}` : "lg:hidden"} flex-col overflow-hidden relative border-r border-slate-800/60`}>
+          <button
+            onClick={() => setChartOpen(false)}
+            className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-slate-600 hover:text-slate-300 uppercase tracking-widest font-bold bg-slate-950/60 hover:bg-slate-900/80 border-b border-slate-800/40 transition-colors shrink-0"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M15 19l-7-7 7-7"/></svg>
+            Chart & Backtest
+          </button>
           {/* Loading overlay with progress bar */}
           {btLoading && (
             <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-slate-950/70 backdrop-blur-[2px]">
@@ -602,10 +680,27 @@ export default function USDashboard() {
           </div>
         </div>
 
+        {!rightPanelOpen && (
+          <button
+            onClick={() => setRightPanelOpen(true)}
+            className="hidden lg:flex items-center px-0.5 bg-slate-900/80 hover:bg-slate-800/80 transition-colors group"
+            title="Show Orders and Strategy"
+          >
+            <span className="text-[9px] text-slate-500 group-hover:text-slate-300 [writing-mode:vertical-lr] rotate-180 tracking-widest font-bold uppercase">Orders</span>
+          </button>
+        )}
+
         {/* ── RIGHT PANEL (Execution + Strategy) — desktop or mobile-selected ── */}
         <aside className={`${
           mobilePanel === "orders" ? "flex w-full" : "hidden"
-        } lg:flex lg:w-2/5 shrink-0 flex-col overflow-hidden border-l border-slate-800/60`}>
+        } ${rightPanelOpen ? `lg:flex ${rightPanelDesktopWidth}` : "lg:hidden"} shrink-0 flex-col overflow-hidden border-l border-slate-800/60`}>
+          <button
+            onClick={() => setRightPanelOpen(false)}
+            className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-slate-600 hover:text-slate-300 uppercase tracking-widest font-bold bg-slate-950/60 hover:bg-slate-900/80 border-b border-slate-800/40 transition-colors shrink-0"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M15 19l-7-7 7-7"/></svg>
+            Orders & Strategy
+          </button>
           {/* Right panel tabs */}
           <div className="flex border-b border-slate-800/40 shrink-0">
             <button
@@ -652,4 +747,6 @@ export default function USDashboard() {
       </div>
     </div>
   );
-}
+});
+
+export default USDashboard;

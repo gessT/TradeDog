@@ -1482,6 +1482,48 @@ async def us_stock_quotes(
     return {"quotes": quotes, "timestamp": datetime.now(SGT).strftime("%H:%M:%S SGT")}
 
 
+@router.get("/us-fear-greed")
+async def us_fear_greed_index() -> dict:
+    """Return latest US Fear & Greed index via Alternative.me API."""
+
+    def _fetch() -> dict:
+        url = "https://api.alternative.me/fng/?limit=1&format=json"
+        try:
+            res = http_requests.get(url, timeout=8)
+            res.raise_for_status()
+            payload = res.json() if res.content else {}
+            data = payload.get("data") or []
+            row = data[0] if data else {}
+
+            value_raw = row.get("value")
+            value = int(value_raw) if value_raw is not None else None
+            classification = (row.get("value_classification") or "Unknown").strip() or "Unknown"
+            ts_raw = row.get("timestamp")
+            updated_at = None
+            if ts_raw:
+                try:
+                    updated_at = datetime.fromtimestamp(int(ts_raw), tz=timezone.utc).astimezone(SGT).isoformat()
+                except Exception:
+                    updated_at = None
+
+            return {
+                "value": value,
+                "classification": classification,
+                "updated_at": updated_at,
+                "source": "alternative.me",
+            }
+        except Exception as exc:
+            logger.warning("FearGreed fetch failed: %s", exc)
+            return {
+                "value": None,
+                "classification": "Unavailable",
+                "updated_at": None,
+                "source": "alternative.me",
+            }
+
+    return await run_in_threadpool(_fetch)
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # US Stock 1-Hour Strategy Backtest
 # ═══════════════════════════════════════════════════════════════════════

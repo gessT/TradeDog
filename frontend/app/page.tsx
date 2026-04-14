@@ -5,6 +5,7 @@ import FuturesDashboard from "../components/futures/FuturesDashboard";
 import type { FuturesDashboardHandle, LayoutState } from "../components/futures/FuturesDashboard";
 import KLSEDashboard from "../components/klse/KLSEDashboard";
 import USDashboard from "../components/us/USDashboard";
+import type { USDashboardHandle, USLayoutState } from "../components/us/USDashboard";
 
 type Tab = "MY" | "US" | "FUTURES";
 
@@ -20,7 +21,9 @@ export default function Page() {
   const [visited, setVisited] = useState<Set<string>>(() => new Set(["US"]));
   const [configOpen, setConfigOpen] = useState(false);
   const futuresRef = useRef<FuturesDashboardHandle>(null);
+  const usRef = useRef<USDashboardHandle>(null);
   const [futuresLayout, setFuturesLayout] = useState<LayoutState>({ col1: true, col2: true, col3: true, tiger: true });
+  const [usLayout, setUsLayout] = useState<USLayoutState>({ watchlist: true, chart: true, rightPanel: true });
 
   // Restore saved default tab after hydration
   useEffect(() => {
@@ -37,7 +40,21 @@ export default function Page() {
         });
       }
     }
+
+    const savedUSLayout = localStorage.getItem("tradedog_us_layout");
+    if (savedUSLayout) {
+      try {
+        const parsed = JSON.parse(savedUSLayout) as USLayoutState;
+        setUsLayout((prev) => ({ ...prev, ...parsed }));
+      } catch {
+        // ignore malformed saved layout
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem("tradedog_us_layout", JSON.stringify(usLayout));
+  }, [usLayout]);
 
   const switchTab = useCallback((tab: Tab) => {
     setMode(tab);
@@ -140,11 +157,11 @@ export default function Page() {
                 })}
               </div>
 
-              {/* Layout toggles (Futures only) */}
-              {mode === "FUTURES" && (
+              {/* Layout toggles (Futures / US) */}
+              {(mode === "FUTURES" || mode === "US") && (
                 <div className="px-3 py-2 border-t border-slate-800/60">
                   <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1.5">Layout Panels</div>
-                  {([
+                  {mode === "FUTURES" && ([
                     { key: "col1" as const, label: "Chart", icon: "📊" },
                     { key: "col2" as const, label: "Strategy", icon: "🧪" },
                     { key: "col3" as const, label: "Trader", icon: "🤖" },
@@ -163,6 +180,27 @@ export default function Page() {
                       <span className="text-[11px] font-semibold flex-1">{item.label}</span>
                       <span className={`w-7 h-4 rounded-full relative transition-colors ${futuresLayout[item.key] ? "bg-emerald-500/40" : "bg-slate-700"}`}>
                         <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${futuresLayout[item.key] ? "left-3.5 bg-emerald-400" : "left-0.5 bg-slate-500"}`} />
+                      </span>
+                    </button>
+                  ))}
+                  {mode === "US" && ([
+                    { key: "watchlist" as const, label: "Watchlist", icon: "📋" },
+                    { key: "chart" as const, label: "Chart & Backtest", icon: "📊" },
+                    { key: "rightPanel" as const, label: "Orders & Strategy", icon: "💹" },
+                  ]).map((item) => (
+                    <button
+                      key={item.key}
+                      onClick={() => {
+                        const next = !usLayout[item.key];
+                        setUsLayout((prev) => ({ ...prev, [item.key]: next }));
+                        usRef.current?.setLayout(item.key, next);
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition mb-0.5 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200"
+                    >
+                      <span className="text-sm">{item.icon}</span>
+                      <span className="text-[11px] font-semibold flex-1">{item.label}</span>
+                      <span className={`w-7 h-4 rounded-full relative transition-colors ${usLayout[item.key] ? "bg-emerald-500/40" : "bg-slate-700"}`}>
+                        <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${usLayout[item.key] ? "left-3.5 bg-emerald-400" : "left-0.5 bg-slate-500"}`} />
                       </span>
                     </button>
                   ))}
@@ -185,7 +223,7 @@ export default function Page() {
         {visited.has("MY") && <KLSEDashboard />}
       </div>
       <div className={`flex-1 overflow-hidden ${mode === "US" ? "flex" : "hidden"}`}>
-        {visited.has("US") && <USDashboard />}
+        {visited.has("US") && <USDashboard ref={usRef} onLayoutChange={setUsLayout} layout={usLayout} />}
       </div>
     </main>
   );

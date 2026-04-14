@@ -39,6 +39,13 @@ type Props = {
   onToggleFav: (symbol: string, name: string) => void;
 };
 
+type FearGreedData = {
+  value: number | null;
+  classification: string;
+  updated_at: string | null;
+  source?: string;
+};
+
 export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = [], favSymbols, onToggleFav }: Props) {
   // Build watchlist from favSymbols (DB-backed) — fall back to defaults if empty
   const [items, setItems] = useState<WatchlistItem[]>(INITIAL_WATCHLIST);
@@ -69,6 +76,29 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
   const [sectorFilter, setSectorFilter] = useState<string>("ALL");
   const [sectorDropdownOpen, setSectorDropdownOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [fearGreed, setFearGreed] = useState<FearGreedData | null>(null);
+
+  useEffect(() => {
+    const fetchFearGreed = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/stock/us-fear-greed");
+        if (!res.ok) return;
+        const data = await res.json();
+        setFearGreed({
+          value: typeof data.value === "number" ? data.value : null,
+          classification: typeof data.classification === "string" ? data.classification : "Unknown",
+          updated_at: typeof data.updated_at === "string" ? data.updated_at : null,
+          source: typeof data.source === "string" ? data.source : undefined,
+        });
+      } catch {
+        // backend offline — leave as null
+      }
+    };
+
+    fetchFearGreed();
+    const iv = setInterval(fetchFearGreed, 5 * 60 * 1000);
+    return () => clearInterval(iv);
+  }, []);
 
   // Fetch real prices from backend /stock/us-quotes
   // Track which symbols we've already fetched to avoid re-fetching the same set
@@ -155,6 +185,22 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
       ? items.filter((i) => i.sector === sectorFilter).length
       : US_STOCKS.filter((s) => s.sector === sectorFilter).length)
     : 0;
+
+  const fgValue = fearGreed?.value;
+  const fgClass = fearGreed?.classification ?? "Unknown";
+  const fgTone = fgValue == null
+    ? "text-slate-400 bg-slate-800/60 border-slate-700/60"
+    : fgValue <= 25
+      ? "text-rose-300 bg-rose-500/15 border-rose-500/30"
+      : fgValue <= 45
+        ? "text-amber-300 bg-amber-500/15 border-amber-500/30"
+        : fgValue < 55
+          ? "text-slate-300 bg-slate-500/15 border-slate-500/30"
+          : fgValue < 75
+            ? "text-emerald-300 bg-emerald-500/15 border-emerald-500/30"
+            : "text-emerald-200 bg-emerald-500/20 border-emerald-400/40";
+
+  const fgFill = fgValue == null ? 0 : Math.max(0, Math.min(100, fgValue));
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/60">
@@ -375,6 +421,24 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
             </button>
           );
         })}
+      </div>
+
+      {/* ═══ MIDDLE CARD: FEAR & GREED INDEX ═══ */}
+      <div className="px-2.5 py-2 border-y border-slate-800/40 bg-slate-900/40 shrink-0">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Fear &amp; Greed Index</span>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold ${fgTone}`}>{fgClass}</span>
+        </div>
+        <div className="flex items-end justify-between gap-2">
+          <div className="flex items-end gap-1">
+            <span className="text-[20px] leading-none font-black text-slate-100 tabular-nums">{fgValue == null ? "--" : fgValue}</span>
+            <span className="text-[9px] text-slate-500 mb-0.5">/100</span>
+          </div>
+          <span className="text-[8px] text-slate-600">US market sentiment</span>
+        </div>
+        <div className="mt-1.5 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+          <div className="h-full rounded-full bg-gradient-to-r from-rose-500 via-amber-400 to-emerald-400 transition-all duration-500" style={{ width: `${fgFill}%` }} />
+        </div>
       </div>
 
       {/* ═══ FOOTER ═══ */}
