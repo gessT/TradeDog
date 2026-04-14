@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useImperativeHandle, forwardRef, useState } from "react";
-import { fetchTPCBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
+import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState } from "react";
+import { fetchTPCBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
 import MYStrategySection from "./MYStrategySection";
@@ -29,12 +29,21 @@ export interface MYDashboardHandle {
   setLayout: (key: keyof MYLayoutState, value: boolean) => void;
 }
 
+export interface MYStockInfo {
+  symbol: string;
+  name: string;
+  price: number;
+  change: number;
+  changePct: number;
+}
+
 interface MYDashboardProps {
   onLayoutChange?: (layout: MYLayoutState) => void;
   layout?: MYLayoutState;
+  onStockChange?: (info: MYStockInfo) => void;
 }
 
-const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYDashboard({ onLayoutChange, layout }, ref) {
+const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYDashboard({ onLayoutChange, layout, onStockChange }, ref) {
   // ── Core state
   const [selectedSymbol, setSelectedSymbol] = useState("5347.KL");
   const [selectedName, setSelectedName] = useState("Tenaga Nasional");
@@ -71,20 +80,53 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
 
   // ── Backtest period
   const [backtestPeriod, setBacktestPeriod] = useState<string>("2y");
-  useEffect(() => {
-    const saved = localStorage.getItem("my_bt_period");
-    if (saved && saved !== backtestPeriod) setBacktestPeriod(saved);
-  }, []);
   const handlePeriodChange = useCallback((p: string) => {
     setBacktestPeriod(p);
-    localStorage.setItem("my_bt_period", p);
   }, []);
+
+  // ── Load persisted config on mount ──
+  const configLoaded = useRef(false);
+  useEffect(() => {
+    if (configLoaded.current) return;
+    configLoaded.current = true;
+    loadKLSEStrategyConfig(selectedSymbol).then((cfg) => {
+      if (cfg.disabled_conditions) setDisabledConditions(new Set(cfg.disabled_conditions));
+      if (cfg.atr_sl_mult !== undefined) setAtrSlMult(cfg.atr_sl_mult);
+      if (cfg.tp1_r_mult !== undefined) setTp1RMult(cfg.tp1_r_mult);
+      if (cfg.tp2_r_mult !== undefined) setTp2RMult(cfg.tp2_r_mult);
+      if (cfg.capital !== undefined) setCapital(cfg.capital);
+      if (cfg.period) setBacktestPeriod(cfg.period);
+    }).catch(() => {});
+  }, [selectedSymbol]);
+
+  // ── Auto-save config when it changes ──
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!configLoaded.current) return; // don't save before load completes
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveKLSEStrategyConfig({
+        disabled_conditions: Array.from(disabledConditions),
+        atr_sl_mult: atrSlMult,
+        tp1_r_mult: tp1RMult,
+        tp2_r_mult: tp2RMult,
+        capital,
+        period: backtestPeriod,
+      }, selectedSymbol).catch(() => {});
+    }, 800);
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+  }, [disabledConditions, atrSlMult, tp1RMult, tp2RMult, capital, backtestPeriod, selectedSymbol]);
 
   // ── Chart overlay toggles — default show SMA, HalfTrend, SuperTrend
   type Overlay = "ema_fast" | "ema_slow" | "vwap" | "halftrend" | "w_supertrend";
   type Indicator = "rsi" | "macd" | "volume";
   const [overlays] = useState<Set<Overlay>>(() => new Set<Overlay>(["ema_fast", "ema_slow", "halftrend", "w_supertrend"]));
   const [indicators] = useState<Set<Indicator>>(() => new Set<Indicator>(["volume"]));
+
+  // ── Notify parent of stock info changes ──
+  useEffect(() => {
+    onStockChange?.({ symbol: selectedSymbol, name: selectedName, price, change, changePct });
+  }, [selectedSymbol, selectedName, price, change, changePct, onStockChange]);
 
   // ── Focus time (click trade → scroll chart)
   const [focusTime, setFocusTime] = useState<number | null>(null);
@@ -182,7 +224,6 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      {/* top bar removed — stock info now lives in left sidebar */}
 
       {/* ═══ MOBILE PANEL TABS (visible < lg) ═══ */}
       <div className="lg:hidden shrink-0 flex border-b border-slate-800/40 bg-slate-900/70">
@@ -290,7 +331,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
                   <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-400 animate-spin" />
                 </div>
                 <div className="text-[11px] font-bold text-cyan-400 tracking-wide">Running backtest\u2026</div>
-                <div className="text-[9px] text-slate-500">{selectedSymbol.replace(".KL", "")} · TPC 趋势回调</div>
+                <div className="text-[9px] text-slate-500">{selectedName} ({selectedSymbol.replace(".KL", "")})</div>
                 <div className="w-full h-1.5 rounded-full bg-slate-800/80 overflow-hidden mt-1">
                   <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-400 animate-[progress_2s_ease-in-out_infinite]" style={{ width: "100%", animation: "progress 2s ease-in-out infinite" }} />
                 </div>
@@ -304,15 +345,20 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
               {!btData && !btLoading ? (
                 <div className="flex flex-col items-center justify-center h-full bg-slate-950/60 text-center px-4">
                   <div className="text-2xl mb-2">\uD83C\uDDF2\uD83C\uDDFE</div>
-                  <div className="text-xs font-bold text-slate-200 mb-1">TPC 趋势回调</div>
+                  <div className="text-xs font-bold text-slate-200 mb-1">TPC Strategy</div>
                   <div className="text-[10px] text-slate-400 max-w-[200px] leading-relaxed mb-3">
                     Configure conditions, then click <span className="text-cyan-400 font-semibold">Run Backtest</span>.
                   </div>
                   <button
                     onClick={runBacktest}
-                    className="px-4 py-1.5 rounded-lg text-[10px] font-bold bg-gradient-to-r from-cyan-500 to-blue-500 text-white hover:from-cyan-400 hover:to-blue-400 transition-all active:scale-[0.98]"
+                    className="group relative px-5 py-2 rounded-xl text-[11px] font-bold text-white overflow-hidden transition-all active:scale-[0.97] hover:shadow-lg hover:shadow-cyan-500/20"
                   >
-                    \u25B6 Run Backtest
+                    <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 to-blue-500 group-hover:from-cyan-400 group-hover:to-blue-400 transition-all" />
+                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.15),transparent_70%)]" />
+                    <span className="relative flex items-center gap-1.5">
+                      <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.84A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.27l9.344-5.891a1.5 1.5 0 000-2.538L6.3 2.841z" /></svg>
+                      Run {selectedName}
+                    </span>
                   </button>
                 </div>
               ) : (
@@ -346,7 +392,8 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
               onRunBacktest={runBacktest}
               loading={btLoading}
               symbol={selectedSymbol}
-              strategyLabel="TPC \u8D8B\u52BF\u56DE\u8C03"
+              symbolName={selectedName}
+              strategyLabel={`TPC · ${selectedSymbol.replace(".KL", "")}`}
             />
           </div>
         </div>
@@ -356,6 +403,8 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           mobilePanel === "strategy" ? "flex w-full" : "hidden"
         } lg:flex lg:w-[25%] shrink-0 flex-col overflow-hidden`}>
           <MYStrategySection
+            symbol={selectedSymbol}
+            symbolName={selectedName}
             disabledConditions={disabledConditions}
             onToggleCondition={toggleCondition}
             atrSlMult={atrSlMult}

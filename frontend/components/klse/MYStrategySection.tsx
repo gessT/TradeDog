@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 // ═══════════════════════════════════════════════════════════
 // MY Strategy Section — TPC 趋势回调 (base strategy)
 // ═══════════════════════════════════════════════════════════
@@ -44,7 +46,31 @@ type Props = {
   onCapitalChange: (v: number) => void;
   onRunBacktest: () => void;
   loading: boolean;
+  symbol?: string;
+  symbolName?: string;
 };
+
+// ── Collapsible Section ──
+function CollapsibleSection({ title, defaultOpen, count, enabledCount, children }: {
+  title: string; defaultOpen: boolean; count: number; enabledCount: number; children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border-b border-slate-800/30">
+      <button
+        onClick={() => setOpen((p) => !p)}
+        className="w-full flex items-center gap-1.5 px-2.5 py-2 text-left hover:bg-slate-800/20 transition"
+      >
+        <svg className={`w-3 h-3 text-slate-500 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+        </svg>
+        <span className="text-[8px] text-slate-500 uppercase tracking-widest font-bold flex-1">{title}</span>
+        <span className="text-[8px] tabular-nums text-slate-600">{enabledCount}/{count}</span>
+      </button>
+      {open && <div className="px-2.5 pb-2.5">{children}</div>}
+    </div>
+  );
+}
 
 export default function MYStrategySection({
   disabledConditions,
@@ -59,6 +85,8 @@ export default function MYStrategySection({
   onCapitalChange,
   onRunBacktest,
   loading,
+  symbol,
+  symbolName,
 }: Props) {
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/80">
@@ -67,7 +95,7 @@ export default function MYStrategySection({
         <div className="flex items-center gap-2">
           <span className="text-sm">{"\u{1F4C8}"}</span>
           <div>
-            <div className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider">TPC 趋势回调</div>
+            <div className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider">TPC Strategy</div>
             <div className="text-[9px] text-slate-500 mt-0.5">Trend-Pullback-Continuation</div>
           </div>
         </div>
@@ -75,9 +103,8 @@ export default function MYStrategySection({
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto">
-        {/* ── Entry Conditions ── */}
-        <div className="p-2.5 border-b border-slate-800/30">
-          <div className="text-[8px] text-slate-500 uppercase tracking-widest font-bold mb-1.5">Entry Conditions</div>
+        {/* ── Entry Conditions (collapsible) ── */}
+        <CollapsibleSection title="Entry Conditions" defaultOpen={true} count={CONDITIONS.length} enabledCount={CONDITIONS.filter(c => !disabledConditions.has(c.key)).length}>
           <div className="space-y-1">
             {CONDITIONS.map((c) => {
               const enabled = !disabledConditions.has(c.key);
@@ -109,88 +136,76 @@ export default function MYStrategySection({
               );
             })}
           </div>
-        </div>
+        </CollapsibleSection>
 
-        {/* ── Exit Rules (toggleable) ── */}
-        <div className="p-2.5 border-b border-slate-800/30">
-          <div className="text-[8px] text-slate-500 uppercase tracking-widest font-bold mb-1.5">Exit Rules</div>
+        {/* ── Exit Rules (collapsible) ── */}
+        <CollapsibleSection title="Exit Rules" defaultOpen={true} count={EXIT_RULES.length} enabledCount={EXIT_RULES.filter(r => !disabledConditions.has(r.key)).length}>
           <div className="space-y-1">
             {EXIT_RULES.map((r) => {
               const enabled = !disabledConditions.has(r.key);
+              // Map exit rule to its param slider
+              const paramConfig = r.key === "sl_exit"
+                ? { label: "ATR ×", value: atrSlMult, onChange: onSlChange, min: 0.5, max: 5, step: 0.5, color: "rose" }
+                : r.key === "tp1_exit"
+                ? { label: "R ×", value: tp1RMult, onChange: onTp1Change, min: 0.5, max: 4, step: 0.5, color: "amber" }
+                : r.key === "tp2_exit"
+                ? { label: "R ×", value: tp2RMult, onChange: onTp2Change, min: 1, max: 6, step: 0.5, color: "emerald" }
+                : null;
               return (
-                <button
+                <div
                   key={r.key}
-                  onClick={() => onToggleCondition(r.key)}
-                  className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition ${
+                  className={`rounded-lg transition ${
                     enabled
-                      ? "bg-rose-500/8 border border-rose-500/20 hover:bg-rose-500/15"
-                      : "bg-slate-800/20 border border-slate-800/30 hover:bg-slate-800/40 opacity-50"
+                      ? "bg-rose-500/8 border border-rose-500/20"
+                      : "bg-slate-800/20 border border-slate-800/30 opacity-50"
                   }`}
                 >
-                  <span className="text-sm shrink-0">{r.icon}</span>
-                  <div className="min-w-0 flex-1">
-                    <div className={`text-[10px] font-semibold ${enabled ? "text-slate-200" : "text-slate-500"}`}>
-                      {r.label}
+                  <button
+                    onClick={() => onToggleCondition(r.key)}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 text-left hover:bg-rose-500/10 transition rounded-lg"
+                  >
+                    <span className="text-sm shrink-0">{r.icon}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className={`text-[10px] font-semibold ${enabled ? "text-slate-200" : "text-slate-500"}`}>
+                        {r.label}
+                        {paramConfig && enabled && (
+                          <span className={`ml-1.5 text-${paramConfig.color}-400 tabular-nums`}>{paramConfig.value.toFixed(1)}</span>
+                        )}
+                      </div>
+                      <div className="text-[8px] text-slate-600 truncate">{r.desc}</div>
                     </div>
-                    <div className="text-[8px] text-slate-600 truncate">{r.desc}</div>
-                  </div>
-                  <div className={`w-7 h-4 rounded-full relative transition-colors shrink-0 ${
-                    enabled ? "bg-rose-500/50" : "bg-slate-700"
-                  }`}>
-                    <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${
-                      enabled ? "left-3.5 bg-rose-400" : "left-0.5 bg-slate-500"
-                    }`} />
-                  </div>
-                </button>
+                    <div className={`w-7 h-4 rounded-full relative transition-colors shrink-0 ${
+                      enabled ? "bg-rose-500/50" : "bg-slate-700"
+                    }`}>
+                      <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${
+                        enabled ? "left-3.5 bg-rose-400" : "left-0.5 bg-slate-500"
+                      }`} />
+                    </div>
+                  </button>
+                  {enabled && paramConfig && (
+                    <div className="px-2.5 pb-2 pt-0">
+                      <input
+                        type="range"
+                        min={paramConfig.min} max={paramConfig.max} step={paramConfig.step}
+                        value={paramConfig.value}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => paramConfig.onChange(parseFloat(e.target.value))}
+                        className={`w-full h-1 rounded-full appearance-none bg-slate-700 accent-${paramConfig.color}-400`}
+                      />
+                      <div className="flex justify-between text-[7px] text-slate-600 mt-0.5 tabular-nums">
+                        <span>{paramConfig.min}</span>
+                        <span>{paramConfig.max}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
-        </div>
+        </CollapsibleSection>
 
-        {/* ── Parameters ── */}
+        {/* ── Capital ── */}
         <div className="p-2.5 space-y-2">
-          <div className="text-[8px] text-slate-500 uppercase tracking-widest font-bold mb-1">Parameters</div>
-
-          {/* SL */}
-          <div className="bg-slate-800/30 rounded-lg p-2.5 border border-slate-800/40">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] text-slate-400 font-medium">Stop Loss (ATR×)</span>
-              <span className="text-[11px] font-bold text-rose-400 tabular-nums">{atrSlMult.toFixed(1)}</span>
-            </div>
-            <input
-              type="range" min={0.5} max={5} step={0.5} value={atrSlMult}
-              onChange={(e) => onSlChange(parseFloat(e.target.value))}
-              className="w-full h-1 rounded-full appearance-none bg-slate-700 accent-rose-400"
-            />
-          </div>
-
-          {/* TP1 */}
-          <div className="bg-slate-800/30 rounded-lg p-2.5 border border-slate-800/40">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] text-slate-400 font-medium">TP1 — 50% exit (×R)</span>
-              <span className="text-[11px] font-bold text-amber-400 tabular-nums">{tp1RMult.toFixed(1)}</span>
-            </div>
-            <input
-              type="range" min={0.5} max={4} step={0.5} value={tp1RMult}
-              onChange={(e) => onTp1Change(parseFloat(e.target.value))}
-              className="w-full h-1 rounded-full appearance-none bg-slate-700 accent-amber-400"
-            />
-          </div>
-
-          {/* TP2 */}
-          <div className="bg-slate-800/30 rounded-lg p-2.5 border border-slate-800/40">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] text-slate-400 font-medium">TP2 — full exit (×R)</span>
-              <span className="text-[11px] font-bold text-emerald-400 tabular-nums">{tp2RMult.toFixed(1)}</span>
-            </div>
-            <input
-              type="range" min={1} max={6} step={0.5} value={tp2RMult}
-              onChange={(e) => onTp2Change(parseFloat(e.target.value))}
-              className="w-full h-1 rounded-full appearance-none bg-slate-700 accent-emerald-400"
-            />
-          </div>
-
-          {/* Capital */}
           <div className="bg-slate-800/30 rounded-lg p-2.5 border border-slate-800/40">
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] text-slate-400 font-medium">Capital (RM)</span>
@@ -220,9 +235,17 @@ export default function MYStrategySection({
         <button
           onClick={onRunBacktest}
           disabled={loading}
-          className="w-full py-2 rounded-lg text-[11px] font-bold bg-gradient-to-r from-cyan-500 to-blue-500 text-white hover:from-cyan-400 hover:to-blue-400 disabled:opacity-40 transition-all active:scale-[0.98]"
+          className="group relative w-full py-2.5 rounded-xl text-[11px] font-bold text-white overflow-hidden transition-all active:scale-[0.97] disabled:opacity-40 hover:shadow-lg hover:shadow-cyan-500/20"
         >
-          {loading ? "Running…" : "▶ Run Backtest"}
+          <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 to-blue-500 group-hover:from-cyan-400 group-hover:to-blue-400 transition-all" />
+          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.15),transparent_70%)]" />
+          <span className="relative flex items-center justify-center gap-1.5">
+            {loading ? (
+              <><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg> Running\u2026</>
+            ) : (
+              <><svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.84A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.27l9.344-5.891a1.5 1.5 0 000-2.538L6.3 2.841z" /></svg> Run {symbolName ?? symbol?.replace(".KL", "") ?? "Backtest"}</>
+            )}
+          </span>
         </button>
         <div className="text-[8px] text-slate-600 text-center mt-1">
           {disabledConditions.size > 0

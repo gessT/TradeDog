@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import FuturesDashboard from "../components/futures/FuturesDashboard";
 import type { FuturesDashboardHandle, LayoutState } from "../components/futures/FuturesDashboard";
 import MYDashboard from "../components/klse/MYDashboard";
-import type { MYDashboardHandle, MYLayoutState } from "../components/klse/MYDashboard";
+import type { MYDashboardHandle, MYLayoutState, MYStockInfo } from "../components/klse/MYDashboard";
 import USDashboard from "../components/us/USDashboard";
 import type { USDashboardHandle, USLayoutState } from "../components/us/USDashboard";
 
@@ -27,6 +27,7 @@ export default function Page() {
   const [futuresLayout, setFuturesLayout] = useState<LayoutState>({ col1: true, col2: true, col3: true, tiger: true });
   const [usLayout, setUsLayout] = useState<USLayoutState>({ watchlist: true, chart: true, rightPanel: true });
   const [myLayout, setMyLayout] = useState<MYLayoutState>({ watchlist: true, chart: true, rightPanel: true });
+  const [myStock, setMyStock] = useState<MYStockInfo | null>(null);
 
   // Restore saved default tab after hydration
   useEffect(() => {
@@ -102,6 +103,7 @@ export default function Page() {
       {/* ── Top navigation bar ─────────── */}
       <div className="flex items-center border-b border-slate-800/60 bg-slate-900/60">
         {/* Dashboard tabs */}
+        <div className="flex items-center shrink-0">
         {TABS.map((tab) => (
           <button
             key={tab.key}
@@ -119,9 +121,25 @@ export default function Page() {
             )}
           </button>
         ))}
+        </div>
 
-        {/* Spacer */}
-        <div className="flex-1" />
+        {/* Center — Active stock info (MY tab) */}
+        <div className="flex-1 flex justify-center">
+          {mode === "MY" && myStock && (
+            <div className="flex items-center gap-2.5">
+              <span className="text-[15px] font-black text-white tracking-tight">{myStock.name}</span>
+              <span className="text-[11px] font-semibold text-slate-500 tabular-nums">{myStock.symbol.replace(".KL", "")}</span>
+              {myStock.price > 0 && (
+                <>
+                  <span className="text-[12px] font-bold text-white tabular-nums">RM{myStock.price.toFixed(2)}</span>
+                  <span className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded ${myStock.change >= 0 ? "text-emerald-400 bg-emerald-500/10" : "text-rose-400 bg-rose-500/10"}`}>
+                    {myStock.change >= 0 ? "+" : ""}{myStock.changePct.toFixed(2)}%
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Config button */}
         <div className="relative shrink-0 mr-2">
@@ -258,7 +276,7 @@ export default function Page() {
         {visited.has("FUTURES") && <FuturesDashboard ref={futuresRef} onLayoutChange={setFuturesLayout} />}
       </div>
       <div className={`flex-1 overflow-hidden ${mode === "MY" ? "flex" : "hidden"}`}>
-        {visited.has("MY") && <MYDashboard ref={myRef} onLayoutChange={setMyLayout} layout={myLayout} />}
+        {visited.has("MY") && <MYDashboard ref={myRef} onLayoutChange={setMyLayout} layout={myLayout} onStockChange={setMyStock} />}
       </div>
       <div className={`flex-1 overflow-hidden ${mode === "US" ? "flex" : "hidden"}`}>
         {visited.has("US") && <USDashboard ref={usRef} onLayoutChange={setUsLayout} layout={usLayout} />}

@@ -21,6 +21,7 @@ type Props = {
   onRunBacktest: () => void;
   loading: boolean;
   symbol: string;
+  symbolName?: string;
   strategyLabel?: string;
 };
 
@@ -274,6 +275,7 @@ export default function MYBottomPanel({
   onRunBacktest,
   loading,
   symbol,
+  symbolName,
   strategyLabel = "Backtest",
 }: Props) {
   const [tab, setTab] = useState<Tab>("Backtest");
@@ -306,7 +308,11 @@ export default function MYBottomPanel({
             disabled={loading}
             className="ml-auto mr-3 text-[9px] px-2.5 py-0.5 rounded border border-blue-500/60 bg-blue-500/15 text-blue-400 hover:bg-blue-500/30 disabled:opacity-40 transition font-medium"
           >
-            {loading ? "Running…" : `▶ ${symbol} · ${strategyLabel}`}
+            {loading ? (
+              <span className="flex items-center gap-1"><svg className="w-2.5 h-2.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg> Running\u2026</span>
+            ) : (
+              <span className="flex items-center gap-1"><svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.84A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.27l9.344-5.891a1.5 1.5 0 000-2.538L6.3 2.841z" /></svg> {symbolName ?? symbol} · {strategyLabel}</span>
+            )}
           </button>
         )}
 
@@ -344,9 +350,17 @@ export default function MYBottomPanel({
                 <button
                   onClick={onRunBacktest}
                   disabled={loading}
-                  className="text-[10px] px-4 py-1.5 rounded-lg border border-blue-500/60 bg-blue-500/15 text-blue-400 hover:bg-blue-500/30 disabled:opacity-40 transition font-medium"
+                  className="group relative text-[10px] px-5 py-2 rounded-xl font-bold text-white overflow-hidden transition-all active:scale-[0.97] disabled:opacity-40 hover:shadow-lg hover:shadow-blue-500/20"
                 >
-                  {loading ? "Running…" : `▶ Run ${symbol} · ${strategyLabel}`}
+                  <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 to-blue-500 group-hover:from-cyan-400 group-hover:to-blue-400 transition-all" />
+                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.15),transparent_70%)]" />
+                  <span className="relative flex items-center gap-1.5">
+                    {loading ? (
+                      <><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg> Running\u2026</>
+                    ) : (
+                      <><svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.84A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.27l9.344-5.891a1.5 1.5 0 000-2.538L6.3 2.841z" /></svg> Run {symbolName ?? symbol}</>
+                    )}
+                  </span>
                 </button>
               </div>
             ) : (

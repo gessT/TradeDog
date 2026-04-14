@@ -1806,6 +1806,31 @@ export async function fetchTPCBacktest(
   return (await response.json()) as US1HBacktestResponse;
 }
 
+// ── KLSE TPC Strategy Config (per-symbol persistence) ──────────────
+
+export type KLSEStrategyConfig = {
+  disabled_conditions?: string[];
+  atr_sl_mult?: number;
+  tp1_r_mult?: number;
+  tp2_r_mult?: number;
+  capital?: number;
+  period?: string;
+};
+
+export async function loadKLSEStrategyConfig(symbol: string = "5347.KL"): Promise<KLSEStrategyConfig> {
+  const res = await fetch(`${API_BASE}/stock/klse_strategy_config?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+  if (!res.ok) return {};
+  return (await res.json()) as KLSEStrategyConfig;
+}
+
+export async function saveKLSEStrategyConfig(config: KLSEStrategyConfig, symbol: string = "5347.KL"): Promise<void> {
+  await fetch(`${API_BASE}/stock/klse_strategy_config?symbol=${encodeURIComponent(symbol)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // Auto-Trader v2 — 4-Layer Production Trading System

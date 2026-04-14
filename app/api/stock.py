@@ -584,6 +584,86 @@ def save_stock_configuration(payload: StockConfigurationPayload, db: Session = D
     return {"status": "ok"}
 
 
+# ── KLSE TPC Strategy Config (per-symbol, persisted) ─────────────────
+
+class KLSEStrategyConfigPayload(BaseModel):
+    disabled_conditions: list[str] | None = None
+    atr_sl_mult: float | None = None
+    tp1_r_mult: float | None = None
+    tp2_r_mult: float | None = None
+    capital: float | None = None
+    period: str | None = None
+
+
+@router.get("/klse_strategy_config")
+def get_klse_strategy_config(symbol: str = Query("5347.KL")) -> dict:
+    """Load persisted KLSE TPC strategy config for a symbol."""
+    import json
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    sym = f"{symbol.upper()}_TPC"
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT config_json FROM strategy_configs WHERE symbol = :sym"),
+            {"sym": sym},
+        ).fetchone()
+    if row:
+        try:
+            return json.loads(row[0])
+        except Exception:
+            pass
+    return {}
+
+
+@router.post("/klse_strategy_config")
+def save_klse_strategy_config(
+    payload: KLSEStrategyConfigPayload,
+    symbol: str = Query("5347.KL"),
+) -> dict[str, str]:
+    """Save KLSE TPC strategy config for a symbol (merge with existing)."""
+    import json
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    sym = f"{symbol.upper()}_TPC"
+    new_fields = {k: v for k, v in {
+        "disabled_conditions": payload.disabled_conditions,
+        "atr_sl_mult": payload.atr_sl_mult,
+        "tp1_r_mult": payload.tp1_r_mult,
+        "tp2_r_mult": payload.tp2_r_mult,
+        "capital": payload.capital,
+        "period": payload.period,
+    }.items() if v is not None}
+
+    existing = {}
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT config_json FROM strategy_configs WHERE symbol = :sym"),
+            {"sym": sym},
+        ).fetchone()
+    if row:
+        try:
+            existing = json.loads(row[0])
+        except Exception:
+            pass
+    merged = {**existing, **new_fields}
+    config = json.dumps(merged)
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO strategy_configs (symbol, config_json, updated_at)
+                VALUES (:sym, :cfg, CURRENT_TIMESTAMP)
+                ON CONFLICT (symbol) DO UPDATE SET
+                    config_json = EXCLUDED.config_json,
+                    updated_at = CURRENT_TIMESTAMP
+            """),
+            {"sym": sym, "cfg": config},
+        )
+    return {"status": "ok"}
+
+
 def _normalize_column_name(column: object) -> str:
     if isinstance(column, tuple):
         parts = [str(part) for part in column if part not in (None, "")]
