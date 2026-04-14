@@ -75,9 +75,37 @@ DATA_PERIOD = "60d"          # Max intraday history from yfinance
 # Tiger Open API  (read from .env — never hardcode secrets)
 # ═══════════════════════════════════════════════════════════════════════
 TIGER_ID = os.getenv("TIGER_ID", "")
-TIGER_PRIVATE_KEY = os.getenv("TIGER_PRIVATE_KEY", "strategies/futures/tiger_private.pem")
 TIGER_ACCOUNT = os.getenv("TIGER_ACCOUNT", "")
 TIGER_IS_SANDBOX = False
+
+
+def _prepare_tiger_private_key_path() -> str:
+    """Resolve Tiger private key path, optionally materializing from env PEM content.
+
+    In Render, set TIGER_PRIVATE_KEY_PEM as a secret (supports escaped "\\n").
+    This writes the key to a local file so tigeropen can read it by path.
+    """
+    configured_path = os.getenv("TIGER_PRIVATE_KEY", "strategies/futures/tiger_private.pem")
+    pem_content = os.getenv("TIGER_PRIVATE_KEY_PEM", "").strip()
+    if not pem_content:
+        return configured_path
+
+    # Render secret values are often pasted with escaped newlines.
+    normalized = pem_content.replace("\\n", "\n")
+    key_path = Path(configured_path)
+    if not key_path.is_absolute():
+        key_path = _root / key_path
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    key_path.write_text(normalized, encoding="utf-8")
+    try:
+        os.chmod(key_path, 0o600)
+    except Exception:
+        # Best-effort on platforms/filesystems that do not support chmod.
+        pass
+    return str(key_path)
+
+
+TIGER_PRIVATE_KEY = _prepare_tiger_private_key_path()
 
 # ═══════════════════════════════════════════════════════════════════════
 # Webhook Server
