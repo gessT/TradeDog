@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useImperativeHandle, forwardRef, useState } from "react";
-import { fetchUS1HBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
+import { fetchTPCBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
 import MYTopBar from "./MYTopBar";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
@@ -54,10 +54,11 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   const [btData, setBtData] = useState<US1HBacktestResponse | null>(null);
   const [btLoading, setBtLoading] = useState(false);
 
-  // ── Strategy conditions (empty = all disabled by default)
+  // ── TPC strategy conditions & params
   const [disabledConditions, setDisabledConditions] = useState<Set<string>>(() => new Set());
-  const [atrSlMult, setAtrSlMult] = useState(3);
-  const [atrTpMult, setAtrTpMult] = useState(2.5);
+  const [atrSlMult, setAtrSlMult] = useState(2);
+  const [tp1RMult, setTp1RMult] = useState(1);
+  const [tp2RMult, setTp2RMult] = useState(2.5);
   const [capital, setCapital] = useState(5000);
 
   const toggleCondition = useCallback((key: string) => {
@@ -129,21 +130,16 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     }
   }, [favSymbols]);
 
-  // ── Run backtest with disabled conditions
+  // ── Run TPC backtest with disabled conditions
   const runBacktest = useCallback(async () => {
     setBtLoading(true);
     try {
       const disabledArr = Array.from(disabledConditions);
-      const data = await fetchUS1HBacktest(
+      const data = await fetchTPCBacktest(
         selectedSymbol,
         backtestPeriod,
-        0.3,
-        atrSlMult,
-        atrTpMult,
-        undefined,
-        undefined,
         disabledArr.length > 0 ? disabledArr : undefined,
-        undefined,
+        { atr_sl_mult: atrSlMult, tp1_r_mult: tp1RMult, tp2_r_mult: tp2RMult },
         capital,
       );
       setBtData(data);
@@ -161,14 +157,23 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     } finally {
       setBtLoading(false);
     }
-  }, [selectedSymbol, backtestPeriod, disabledConditions, atrSlMult, atrTpMult, capital]);
+  }, [selectedSymbol, backtestPeriod, disabledConditions, atrSlMult, tp1RMult, tp2RMult, capital]);
 
-  // No auto-run — user clicks "Run Backtest" manually
+  // Auto-run when symbol changes (clicking a stock loads its chart)
+  // Strategy param changes require manual "Run Backtest"
+  const [hasRun, setHasRun] = useState(false);
+  useEffect(() => {
+    if (!hasRun) return; // skip initial mount
+    runBacktest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSymbol]);
 
   // ── Handlers
   const handleSymbolChange = useCallback((sym: string, name: string) => {
     setSelectedSymbol(sym);
     setSelectedName(name);
+    setBtData(null);
+    setHasRun(true);
   }, []);
 
   const handleTradeClick = useCallback((t: US1HTrade) => {
@@ -247,7 +252,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
                   <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-400 animate-spin" />
                 </div>
                 <div className="text-[11px] font-bold text-cyan-400 tracking-wide">Running backtest\u2026</div>
-                <div className="text-[9px] text-slate-500">{selectedSymbol.replace(".KL", "")} \u00B7 Breakout 1H</div>
+                <div className="text-[9px] text-slate-500">{selectedSymbol.replace(".KL", "")} · TPC 趋势回调</div>
                 <div className="w-full h-1.5 rounded-full bg-slate-800/80 overflow-hidden mt-1">
                   <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-400 animate-[progress_2s_ease-in-out_infinite]" style={{ width: "100%", animation: "progress 2s ease-in-out infinite" }} />
                 </div>
@@ -259,13 +264,13 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             {!btData && !btLoading ? (
               <div className="flex flex-col items-center justify-center h-full bg-slate-950/60 text-center px-6">
                 <div className="text-3xl mb-3">\uD83C\uDDF2\uD83C\uDDFE</div>
-                <div className="text-sm font-bold text-slate-200 mb-1">Bursa Malaysia — Breakout 1H Strategy</div>
+                <div className="text-sm font-bold text-slate-200 mb-1">Bursa Malaysia — TPC 趋势回调</div>
                 <div className="text-[11px] text-slate-400 max-w-sm leading-relaxed mb-4">
-                  Backtest Bursa stocks with a multi-indicator breakout strategy. Configure entry/exit conditions 
-                  and parameters in the Strategy panel, then click <span className="text-cyan-400 font-semibold">Run Backtest</span> to analyse.
+                  Trend-Pullback-Continuation strategy. Weekly SuperTrend detects the trend, Daily HalfTrend
+                  times the entry. Configure conditions and parameters, then click <span className="text-cyan-400 font-semibold">Run Backtest</span>.
                 </div>
                 <div className="flex flex-wrap justify-center gap-1.5 mb-4">
-                  {["EMA Trend", "SuperTrend", "HalfTrend", "RSI", "MACD", "Volume"].map((tag) => (
+                  {["W. SuperTrend", "D. HalfTrend", "TP1 / TP2", "Trailing SL"].map((tag) => (
                     <span key={tag} className="text-[9px] px-2 py-0.5 rounded-full bg-slate-800/60 text-slate-500 border border-slate-700/40">{tag}</span>
                   ))}
                 </div>
@@ -297,7 +302,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
               onRunBacktest={runBacktest}
               loading={btLoading}
               symbol={selectedSymbol}
-              strategyLabel="Breakout 1H"
+              strategyLabel="TPC \u8D8B\u52BF\u56DE\u8C03"
             />
           </div>
         </div>
@@ -310,9 +315,11 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             disabledConditions={disabledConditions}
             onToggleCondition={toggleCondition}
             atrSlMult={atrSlMult}
-            atrTpMult={atrTpMult}
+            tp1RMult={tp1RMult}
+            tp2RMult={tp2RMult}
             onSlChange={setAtrSlMult}
-            onTpChange={setAtrTpMult}
+            onTp1Change={setTp1RMult}
+            onTp2Change={setTp2RMult}
             capital={capital}
             onCapitalChange={setCapital}
             onRunBacktest={runBacktest}

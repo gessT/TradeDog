@@ -276,28 +276,6 @@ export default function MYMainChart({
         });
         bgSeries.setData(bgData);
       }
-
-      // SuperTrend line with direction color
-      const stLineData: { time: UTCTimestamp; value: number; color: string }[] = [];
-      for (let i = 0; i < visibleCandles.length; i++) {
-        const c = visibleCandles[i];
-        if (c.st_line == null || c.st_dir == null) continue;
-        stLineData.push({
-          time: cData[i].time,
-          value: c.st_line,
-          color: c.st_dir === 1 ? "#10b981" : "#ef4444",
-        });
-      }
-      if (stLineData.length > 0) {
-        const stSeries = chart.addSeries(LineSeries, {
-          lineWidth: 2,
-          lastValueVisible: false,
-          priceLineVisible: false,
-          crosshairMarkerVisible: false,
-          pointMarkersVisible: false,
-        });
-        stSeries.setData(stLineData);
-      }
     }
 
     // ── Volume ──
