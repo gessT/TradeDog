@@ -174,19 +174,6 @@ export default function MYMainChart({
 
     // ── Overlays ──
     if (emaOn) {
-      const emaFastData = visibleCandles
-        .filter((c) => c.ema_fast != null)
-        .map((c) => ({ time: toLocal(parseTS(c.time)), value: c.ema_fast! }));
-      if (emaFastData.length > 0) {
-        const s = chart.addSeries(LineSeries, {
-          color: "#38bdf8",
-          lineWidth: 1,
-          lastValueVisible: false,
-          priceLineVisible: false,
-        });
-        s.setData(emaFastData);
-      }
-
       const emaSlowData = visibleCandles
         .filter((c) => c.ema_slow != null)
         .map((c) => ({ time: toLocal(parseTS(c.time)), value: c.ema_slow! }));
@@ -464,7 +451,7 @@ export default function MYMainChart({
               : "border-slate-700 text-slate-600 hover:text-slate-400 hover:border-slate-600"
           }`}
         >
-          {emaOn ? "📊 EMA" : "📊 EMA"}
+          {emaOn ? "📊 EMA 28" : "📊 EMA 28"}
         </button>
         )}
 

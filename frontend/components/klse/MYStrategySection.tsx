@@ -22,11 +22,13 @@ const CONDITIONS = [
 ] as const;
 
 const EXIT_RULES = [
-  { icon: "\u{1F6D1}", label: "Stop Loss", desc: "ATR \u00D7 SL multiplier below entry" },
-  { icon: "\u{1F3AF}", label: "TP1 Partial", desc: "Exit 50% at R \u00D7 TP1 multiplier" },
-  { icon: "\u{1F3C6}", label: "TP2 Full", desc: "Exit rest at R \u00D7 TP2 multiplier" },
-  { icon: "\u{1F4C9}", label: "Trailing Stop", desc: "ATR trailing after TP1 hit, move SL to BE" },
-  { icon: "\u26A0\uFE0F", label: "W.ST Flip Exit", desc: "Hard exit when Weekly SuperTrend flips bearish" },
+  { key: "sl_exit", icon: "\u{1F6D1}", label: "Stop Loss", desc: "ATR \u00D7 SL multiplier below entry" },
+  { key: "tp1_exit", icon: "\u{1F3AF}", label: "TP1 Partial", desc: "Exit 50% at R \u00D7 TP1 multiplier" },
+  { key: "tp2_exit", icon: "\u{1F3C6}", label: "TP2 Full", desc: "Exit rest at R \u00D7 TP2 multiplier" },
+  { key: "trail_exit", icon: "\u{1F4C9}", label: "Trailing Stop", desc: "ATR trailing after TP1 hit, move SL to BE" },
+  { key: "wst_flip_exit", icon: "\u26A0\uFE0F", label: "W.ST Flip Exit", desc: "Hard exit when Weekly ST flips bearish" },
+  { key: "ema28_break_exit", icon: "\u{1F4C9}", label: "EMA28 Break", desc: "Exit when bar closes below 3% of EMA 28" },
+  { key: "ht_flip_exit", icon: "\u{1F534}", label: "HT Flip Red", desc: "Exit when Daily HalfTrend turns bearish (red)" },
 ] as const;
 
 type Props = {
@@ -109,19 +111,39 @@ export default function MYStrategySection({
           </div>
         </div>
 
-        {/* ── Exit Rules (info only) ── */}
+        {/* ── Exit Rules (toggleable) ── */}
         <div className="p-2.5 border-b border-slate-800/30">
           <div className="text-[8px] text-slate-500 uppercase tracking-widest font-bold mb-1.5">Exit Rules</div>
-          <div className="space-y-0.5">
-            {EXIT_RULES.map((r) => (
-              <div key={r.label} className="flex items-center gap-2 px-2 py-1 rounded">
-                <span className="text-[10px] shrink-0">{r.icon}</span>
-                <div className="min-w-0 flex-1">
-                  <span className="text-[10px] text-slate-400 font-medium">{r.label}</span>
-                  <span className="text-[8px] text-slate-600 ml-1.5">{r.desc}</span>
-                </div>
-              </div>
-            ))}
+          <div className="space-y-1">
+            {EXIT_RULES.map((r) => {
+              const enabled = !disabledConditions.has(r.key);
+              return (
+                <button
+                  key={r.key}
+                  onClick={() => onToggleCondition(r.key)}
+                  className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition ${
+                    enabled
+                      ? "bg-rose-500/8 border border-rose-500/20 hover:bg-rose-500/15"
+                      : "bg-slate-800/20 border border-slate-800/30 hover:bg-slate-800/40 opacity-50"
+                  }`}
+                >
+                  <span className="text-sm shrink-0">{r.icon}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className={`text-[10px] font-semibold ${enabled ? "text-slate-200" : "text-slate-500"}`}>
+                      {r.label}
+                    </div>
+                    <div className="text-[8px] text-slate-600 truncate">{r.desc}</div>
+                  </div>
+                  <div className={`w-7 h-4 rounded-full relative transition-colors shrink-0 ${
+                    enabled ? "bg-rose-500/50" : "bg-slate-700"
+                  }`}>
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${
+                      enabled ? "left-3.5 bg-rose-400" : "left-0.5 bg-slate-500"
+                    }`} />
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
 

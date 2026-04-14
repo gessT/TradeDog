@@ -140,9 +140,16 @@ function TradeTable({
           {filtered.map((t, i) => {
             const win = t.pnl >= 0;
             const reasonStyle: Record<string, string> = {
+              TP1: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
+              TP2: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
               TP: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
               SL: "text-rose-400 bg-rose-500/10 border-rose-500/30",
+              TRAIL: "text-amber-400 bg-amber-500/10 border-amber-500/30",
               TRAILING: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+              W_ST_FLIP: "text-orange-400 bg-orange-500/10 border-orange-500/30",
+              EMA28_BREAK: "text-red-400 bg-red-500/10 border-red-500/30",
+              HT_FLIP: "text-purple-400 bg-purple-500/10 border-purple-500/30",
+              MAX_HOLD: "text-slate-400 bg-slate-500/10 border-slate-500/30",
               BE: "text-sky-400 bg-sky-500/10 border-sky-500/30",
               EOD: "text-slate-400 bg-slate-500/10 border-slate-500/30",
             };

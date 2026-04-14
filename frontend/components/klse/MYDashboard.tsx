@@ -152,8 +152,8 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
         setChange(last.close - prev.close);
         setChangePct(prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0);
       }
-    } catch {
-      // Error handled silently
+    } catch (err) {
+      console.error("TPC backtest error:", err);
     } finally {
       setBtLoading(false);
     }
