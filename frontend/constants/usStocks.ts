@@ -267,7 +267,7 @@ export const US_STOCKS: USStock[] = [
 ];
 
 // ── Derived helpers ─────────────────────────────────────
-export const US_SECTORS = [...new Set(US_STOCKS.map((s) => s.sector))];
+export const US_SECTORS = Array.from(new Set(US_STOCKS.map((s) => s.sector)));
 
 export const US_STOCKS_BY_SECTOR = US_SECTORS.reduce<Record<string, USStock[]>>(
   (acc, sector) => {

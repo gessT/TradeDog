@@ -69,11 +69,17 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
     ]).then(([cfg, presets, saved]) => {
       // Layout
       if (cfg.layout) {
-        if (cfg.layout.col1 !== undefined) setCol1Open(cfg.layout.col1);
-        if (cfg.layout.col2 !== undefined) setCol2Open(cfg.layout.col2);
-        if (cfg.layout.col3 !== undefined) setCol3Open(cfg.layout.col3);
-        if (cfg.layout.tiger !== undefined) setTigerOpen(cfg.layout.tiger);
-        onLayoutChange?.(cfg.layout as LayoutState);
+        const layout: LayoutState = {
+          col1: cfg.layout.col1 ?? true,
+          col2: cfg.layout.col2 ?? true,
+          col3: cfg.layout.col3 ?? true,
+          tiger: cfg.layout.tiger ?? true,
+        };
+        setCol1Open(layout.col1);
+        setCol2Open(layout.col2);
+        setCol3Open(layout.col3);
+        setTigerOpen(layout.tiger);
+        onLayoutChange?.(layout);
       }
       layoutLoaded.current = true;
 

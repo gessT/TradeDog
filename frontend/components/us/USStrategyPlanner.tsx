@@ -425,7 +425,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
               const condCount = STRATEGY_DEFAULTS[st.key].length;
               const tagCount = allTags.filter((t) => t.strategy_type === st.key).length;
               // Show which groups this strategy touches
-              const groups = [...new Set(ALL_CONDITIONS.filter((c) => STRATEGY_DEFAULTS[st.key].includes(c.key)).map((c) => c.group))];
+              const groups = Array.from(new Set(ALL_CONDITIONS.filter((c) => STRATEGY_DEFAULTS[st.key].includes(c.key)).map((c) => c.group)));
               return (
                 <button
                   key={st.key}

@@ -36,7 +36,7 @@ function aggregateCandles(
     groups.get(key)!.push(c);
   }
   const result: US1HCandle[] = [];
-  for (const [key, bars] of groups) {
+  groups.forEach((bars, key) => {
     const last = bars[bars.length - 1];
     result.push({
       time: key + "T00:00:00",
@@ -57,7 +57,7 @@ function aggregateCandles(
       ht_low: last.ht_low,
       signal: bars.some((b) => b.signal !== 0) ? 1 : 0,
     });
-  }
+  });
   return result;
 }
 
