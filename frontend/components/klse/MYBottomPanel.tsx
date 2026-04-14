@@ -25,7 +25,7 @@ type Props = {
 };
 
 // ── Performance Metrics Grid ─────────────────────────────
-function MetricsGrid({ m }: { m: US1HMetrics }) {
+export function MetricsGrid({ m }: { m: US1HMetrics }) {
   const up = m.total_return_pct >= 0;
   const pnl = m.final_equity - m.initial_capital;
 
@@ -351,12 +351,8 @@ export default function MYBottomPanel({
               </div>
             ) : (
               <>
-                {/* Metrics (top) + Trade List (bottom) — stacked cleanly */}
+                {/* Trade List only — metrics shown beside chart */}
                 <div className="flex flex-col gap-2 flex-1 min-h-0">
-                  {/* Metrics */}
-                  <MetricsGrid m={btData.metrics} />
-
-                  {/* Trade List */}
                   <div className="flex-1 rounded-lg border border-slate-800/40 overflow-hidden flex flex-col min-h-0">
                     <div className="px-3 py-1.5 border-b border-slate-800/40 bg-slate-900/60 flex items-center shrink-0">
                       <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">

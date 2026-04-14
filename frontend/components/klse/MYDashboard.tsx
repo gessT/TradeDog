@@ -2,11 +2,10 @@
 
 import { useCallback, useEffect, useImperativeHandle, forwardRef, useState } from "react";
 import { fetchTPCBacktest, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
-import MYTopBar from "./MYTopBar";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
 import MYStrategySection from "./MYStrategySection";
-import MYBottomPanel from "./MYBottomPanel";
+import MYBottomPanel, { MetricsGrid } from "./MYBottomPanel";
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 const API_BASE = RAW_API_BASE
@@ -183,21 +182,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      {/* ═══ TOP CONTROL BAR ═══ */}
-      <MYTopBar
-        symbol={selectedSymbol}
-        symbolName={selectedName}
-        mode={mode}
-        onModeChange={setMode}
-        tradingActive={tradingActive}
-        onTradingToggle={() => setTradingActive((p) => !p)}
-        price={price}
-        change={change}
-        changePct={changePct}
-        volume={btData?.candles?.length ? btData.candles[btData.candles.length - 1].volume : 0}
-        period={backtestPeriod}
-        onPeriodChange={handlePeriodChange}
-      />
+      {/* top bar removed — stock info now lives in left sidebar */}
 
       {/* ═══ MOBILE PANEL TABS (visible < lg) ═══ */}
       <div className="lg:hidden shrink-0 flex border-b border-slate-800/40 bg-slate-900/70">
@@ -227,6 +212,59 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
         <aside className={`${
           mobilePanel === "watchlist" ? "flex w-full" : "hidden"
         } lg:flex lg:w-[20%] shrink-0 flex-col overflow-hidden border-r border-slate-800/60`}>
+          {/* ── Stock info header ── */}
+          <div className="shrink-0 px-3 py-2 border-b border-slate-800/60 bg-slate-950/90">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[14px] font-black text-white tracking-tight">{selectedSymbol.replace(".KL", "")}</span>
+              <span className="text-[10px] text-slate-500 font-medium truncate">{selectedName}</span>
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <span className={`text-[15px] font-bold tabular-nums ${change >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                RM{price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+              <span className={`text-[10px] font-semibold tabular-nums px-1 py-px rounded ${
+                change >= 0 ? "text-emerald-400 bg-emerald-500/10" : "text-rose-400 bg-rose-500/10"
+              }`}>
+                {change >= 0 ? "+" : ""}{changePct.toFixed(2)}%
+              </span>
+              <span className="text-[9px] tabular-nums text-slate-600">
+                Vol {(btData?.candles?.length ? btData.candles[btData.candles.length - 1].volume : 0) > 0
+                  ? ((btData?.candles?.length ? btData.candles[btData.candles.length - 1].volume : 0) / 1e6).toFixed(1) + "M"
+                  : "—"}
+              </span>
+            </div>
+            {/* Period + Mode row */}
+            <div className="flex items-center gap-1.5 mt-1.5">
+              <div className="flex items-center rounded-md border border-slate-700/60 overflow-hidden shrink-0">
+                {[{ value: "3mo", label: "3M" }, { value: "6mo", label: "6M" }, { value: "1y", label: "1Y" }, { value: "2y", label: "2Y" }, { value: "5y", label: "5Y" }].map((p) => (
+                  <button
+                    key={p.value}
+                    onClick={() => handlePeriodChange(p.value)}
+                    className={`px-1.5 py-0.5 text-[8px] font-bold tracking-wide transition ${
+                      backtestPeriod === p.value
+                        ? "bg-cyan-500 text-white"
+                        : "text-slate-500 hover:text-slate-200 hover:bg-slate-800"
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex-1" />
+              <button
+                onClick={() => setTradingActive((p) => !p)}
+                className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[8px] font-bold tracking-wide transition shrink-0 ${
+                  tradingActive
+                    ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-400"
+                    : "border-slate-700 bg-slate-800/60 text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${tradingActive ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`} />
+                {tradingActive ? "ON" : "OFF"}
+              </button>
+            </div>
+          </div>
+
           <MYWatchlist
             activeSymbol={selectedSymbol}
             onSelectSymbol={(sym, name) => {
@@ -239,7 +277,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           />
         </aside>
 
-        {/* ── CENTER (Chart + Bottom Panel) — 55% */}
+        {/* ── CENTER (Chart + Metrics + Bottom Panel) — 55% */}
         <div className={`${
           mobilePanel === "chart" ? "flex" : "hidden"
         } lg:flex lg:w-[55%] flex-col overflow-hidden relative border-r border-slate-800/60`}>
@@ -259,39 +297,45 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
               </div>
             </div>
           )}
-          {/* Chart — 60% height */}
-          <div className="h-[60%] min-h-[240px] shrink-0">
-            {!btData && !btLoading ? (
-              <div className="flex flex-col items-center justify-center h-full bg-slate-950/60 text-center px-6">
-                <div className="text-3xl mb-3">\uD83C\uDDF2\uD83C\uDDFE</div>
-                <div className="text-sm font-bold text-slate-200 mb-1">Bursa Malaysia — TPC 趋势回调</div>
-                <div className="text-[11px] text-slate-400 max-w-sm leading-relaxed mb-4">
-                  Trend-Pullback-Continuation strategy. Weekly SuperTrend detects the trend, Daily HalfTrend
-                  times the entry. Configure conditions and parameters, then click <span className="text-cyan-400 font-semibold">Run Backtest</span>.
+          {/* Top row: Chart (left ~65%) + Metrics (right ~35%) */}
+          <div className="flex h-[45%] min-h-[180px] shrink-0">
+            {/* Chart */}
+            <div className="w-[65%] min-w-0">
+              {!btData && !btLoading ? (
+                <div className="flex flex-col items-center justify-center h-full bg-slate-950/60 text-center px-4">
+                  <div className="text-2xl mb-2">\uD83C\uDDF2\uD83C\uDDFE</div>
+                  <div className="text-xs font-bold text-slate-200 mb-1">TPC 趋势回调</div>
+                  <div className="text-[10px] text-slate-400 max-w-[200px] leading-relaxed mb-3">
+                    Configure conditions, then click <span className="text-cyan-400 font-semibold">Run Backtest</span>.
+                  </div>
+                  <button
+                    onClick={runBacktest}
+                    className="px-4 py-1.5 rounded-lg text-[10px] font-bold bg-gradient-to-r from-cyan-500 to-blue-500 text-white hover:from-cyan-400 hover:to-blue-400 transition-all active:scale-[0.98]"
+                  >
+                    \u25B6 Run Backtest
+                  </button>
                 </div>
-                <div className="flex flex-wrap justify-center gap-1.5 mb-4">
-                  {["W. SuperTrend", "D. HalfTrend", "TP1 / TP2", "Trailing SL"].map((tag) => (
-                    <span key={tag} className="text-[9px] px-2 py-0.5 rounded-full bg-slate-800/60 text-slate-500 border border-slate-700/40">{tag}</span>
-                  ))}
+              ) : (
+                <MYMainChart
+                  candles={btData?.candles ?? []}
+                  trades={btData?.trades ?? []}
+                  mode={mode}
+                  overlays={overlays}
+                  indicators={indicators}
+                  focusTime={focusTime}
+                />
+              )}
+            </div>
+            {/* Backtest Metrics */}
+            <div className="w-[35%] min-w-0 border-l border-slate-800/60 overflow-y-auto p-2 bg-slate-950/40">
+              {btData ? (
+                <MetricsGrid m={btData.metrics} />
+              ) : (
+                <div className="flex items-center justify-center h-full text-[10px] text-slate-600">
+                  Run backtest to see results
                 </div>
-                <button
-                  onClick={runBacktest}
-                  className="px-5 py-2 rounded-lg text-[11px] font-bold bg-gradient-to-r from-cyan-500 to-blue-500 text-white hover:from-cyan-400 hover:to-blue-400 transition-all active:scale-[0.98]"
-                >
-                  \u25B6 Run Backtest
-                </button>
-                <div className="text-[9px] text-slate-600 mt-2">{selectedSymbol.replace(".KL", "")} \u00B7 {backtestPeriod}</div>
-              </div>
-            ) : (
-              <MYMainChart
-                candles={btData?.candles ?? []}
-                trades={btData?.trades ?? []}
-                mode={mode}
-                overlays={overlays}
-                indicators={indicators}
-                focusTime={focusTime}
-              />
-            )}
+              )}
+            </div>
           </div>
 
           {/* Bottom Panel */}

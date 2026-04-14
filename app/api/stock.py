@@ -2863,7 +2863,9 @@ async def us_stock_backtest_tpc(
 
     _disabled: set[str] = set()
     if disabled_conditions:
-        _valid = {"w_st_trend", "ht_trend"}
+        _valid = {"w_st_trend", "ht_trend",
+                  "sl_exit", "tp1_exit", "tp2_exit", "trail_exit",
+                  "wst_flip_exit", "ema28_break_exit", "ht_flip_exit"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
 
     def _run():
@@ -2873,9 +2875,17 @@ async def us_stock_backtest_tpc(
         from strategies.us_stock.tpc.config import DEFAULT_TPC_PARAMS, RISK_PER_TRADE as TPC_RISK
 
         # Load weekly + daily + 1H data
-        df_weekly = load_yfinance(symbol=symbol, interval="1wk", period="5y")
-        df_daily = load_yfinance(symbol=symbol, interval="1d", period="5y")
-        df_1h = load_yfinance(symbol=symbol, interval="1h", period=period)
+        # Yahoo Finance limits 1h data to ~730 days; for longer periods use daily as trade timeframe
+        _period_days_map = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730, "4y": 1460, "5y": 1825}
+        _req_days = _period_days_map.get(period, 730)
+        _use_daily = _req_days > 730
+
+        df_weekly = load_yfinance(symbol=symbol, interval="1wk", period="10y" if _use_daily else "5y")
+        df_daily = load_yfinance(symbol=symbol, interval="1d", period=period if _use_daily else "5y")
+        if _use_daily:
+            df_1h = df_daily.copy()  # use daily bars as the trade timeframe
+        else:
+            df_1h = load_yfinance(symbol=symbol, interval="1h", period=period)
 
         if df_1h.empty or len(df_1h) < 50:
             raise ValueError(f"Not enough 1H data for {symbol}.")
@@ -2917,7 +2927,7 @@ async def us_stock_backtest_tpc(
         display_start: _Opt[str] = None
         if date_from:
             display_start = date_from
-        elif period not in ("2y", "max"):
+        elif period not in ("2y", "4y", "5y", "max"):
             _period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
             _days = _period_days.get(period, 730)
             if _days < 730:
