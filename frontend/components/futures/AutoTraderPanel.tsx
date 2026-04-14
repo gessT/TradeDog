@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLivePrice } from "../../hooks/useLivePrice";
+import { getTimezone } from "../../utils/time";
 import {
   autoTraderStart,
   autoTraderStop,
@@ -100,6 +101,8 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
   const currentInterval = lockedConfig?.interval ?? activeConfig?.interval ?? "1m";
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastBarRef = useRef("");
+  const livePriceRef = useRef(livePrice);
+  livePriceRef.current = livePrice;
 
   const pushLog = useCallback((msg: string, type: LogEntry["type"] = "info") => {
     setLogs((prev) => [{ ts: ts(), msg, type }, ...prev.slice(0, 80)]);
@@ -132,7 +135,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
     }
 
     const doTick = async () => {
-      if (!livePrice) return;
+      const px = livePriceRef.current || 0;
       const now = new Date();
       const min = now.getMinutes();
       const tickInterval = currentInterval;
@@ -142,7 +145,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
       if (isBarClose) lastBarRef.current = barKey;
 
       try {
-        const result = await autoTraderTick(livePrice, isBarClose, 0, symbol, "7d", tickInterval);
+        const result = await autoTraderTick(px, isBarClose, 0, symbol, "7d", tickInterval);
         if (result.snapshot) setSnap(result.snapshot as AutoTraderSnapshot);
 
         // Log detail
@@ -171,7 +174,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
     tickRef.current = setInterval(doTick, 10_000);
     doTick();
     return () => { if (tickRef.current) clearInterval(tickRef.current); };
-  }, [snap?.started, livePrice, symbol, activeConfig?.interval, pushLog]);
+  }, [snap?.started, symbol, activeConfig?.interval, pushLog]);
 
   // ── Controls ────────────────────────────────────────────────
   const handleStart = async (m: "paper" | "live") => {
@@ -675,7 +678,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
             )}
             {logs.map((l, i) => (
               <div key={l.ts + i} className={`flex gap-1.5 px-1.5 py-0.5 rounded hover:bg-white/[0.02] ${i === 0 && snap?.started ? "at-log-entry" : ""}`}>
-                <span className="text-white/15 shrink-0">{new Date(l.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                <span className="text-white/15 shrink-0">{new Date(l.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: getTimezone() })}</span>
                 <span className={
                   l.type === "entry" ? "text-violet-400" :
                   l.type === "exit" ? "text-amber-300" :

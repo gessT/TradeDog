@@ -11,7 +11,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { halfTrend, type HalfTrendPoint } from "../../utils/indicators";
-import { fmtDateTimeSGT, fmtInputDateSGT, SGT_OFFSET_SEC, toSGT } from "../../utils/time";
+import { fmtDateTimeSGT, fmtInputDateSGT, getTzOffsetSec, toLocal as toLocalTz } from "../../utils/time";
 import TradeDetailDialog from "./TradeDetailDialog";
 import HoldingMiniChart from "./HoldingMiniChart";
 import OptimizationDialog from "./OptimizationDialog";
@@ -38,8 +38,7 @@ import {
 import { useLivePrice } from "../../hooks/useLivePrice";
 // ═══════════════════════════════════════════════════════════════════════
 
-/** Offset (seconds) to shift UTC epoch → SGT for lightweight-charts */
-const TZ_OFFSET_SEC = SGT_OFFSET_SEC;
+/** Offset (seconds) to shift UTC epoch → local TZ for lightweight-charts */
 
 // ── Locked config snapshot sent to AutoTraderPanel after backtest ──
 export type LockedTradingConfig = {
@@ -63,7 +62,7 @@ export type LockedTradingConfig = {
   lockedAt: number; // timestamp ms
 };
 
-const toLocal = (utcSec: number) => toSGT(utcSec) as UTCTimestamp;
+const toLocal = (utcSec: number) => toLocalTz(utcSec) as UTCTimestamp;
 
 const n = (v: unknown): number =>
   typeof v === "number" && Number.isFinite(v) ? v : 0;
@@ -1010,7 +1009,7 @@ function ExamTab({
               loading ? "bg-slate-800 text-slate-500 cursor-wait" : "bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95"
             }`}
           >
-            {loading ? "Loading…" : "Run Backtest"}
+            {loading ? "Analysing…" : "Run Backtest"}
           </button>
         </div>
       )}
@@ -1820,7 +1819,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   : "bg-gradient-to-r from-cyan-600 to-cyan-500 text-white hover:from-cyan-500 hover:to-cyan-400 active:scale-95 shadow-md shadow-cyan-900/30"
               }`}
             >
-              {loading ? "Running…" : "▶ Backtest"}
+              {loading ? "Analysing…" : "▶ Backtest"}
             </button>
             <button
               onClick={runConditionOptimization}
@@ -2205,7 +2204,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             <div className="flex items-center justify-center min-h-[300px]">
               <div className="flex flex-col items-center gap-3">
                 <div className="w-7 h-7 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-                <span className="text-[11px] text-cyan-400 font-bold">Running backtest…</span>
+                <span className="text-[11px] text-cyan-400 font-bold">Analysing strategy…</span>
                 <span className="text-[9px] text-slate-600">Fetching {period} data & simulating trades</span>
               </div>
             </div>
@@ -2518,7 +2517,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm rounded-lg">
                     <div className="flex flex-col items-center gap-2">
                       <div className="w-5 h-5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-                      <span className="text-[10px] text-cyan-400 font-bold">Loading trades…</span>
+                      <span className="text-[10px] text-cyan-400 font-bold">Updating results…</span>
                     </div>
                   </div>
                 )}

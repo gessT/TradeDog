@@ -84,19 +84,23 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     setBacktestPeriod(p);
   }, []);
 
-  // ── Load persisted config on mount ──
+  // ── Load persisted config per symbol ──
   const configLoaded = useRef(false);
+  const loadingSymbol = useRef<string | null>(null);
   useEffect(() => {
-    if (configLoaded.current) return;
-    configLoaded.current = true;
+    loadingSymbol.current = selectedSymbol;
+    configLoaded.current = false;
     loadKLSEStrategyConfig(selectedSymbol).then((cfg) => {
+      if (loadingSymbol.current !== selectedSymbol) return; // stale
       if (cfg.disabled_conditions) setDisabledConditions(new Set(cfg.disabled_conditions));
+      else setDisabledConditions(new Set());
       if (cfg.atr_sl_mult !== undefined) setAtrSlMult(cfg.atr_sl_mult);
       if (cfg.tp1_r_mult !== undefined) setTp1RMult(cfg.tp1_r_mult);
       if (cfg.tp2_r_mult !== undefined) setTp2RMult(cfg.tp2_r_mult);
       if (cfg.capital !== undefined) setCapital(cfg.capital);
       if (cfg.period) setBacktestPeriod(cfg.period);
-    }).catch(() => {});
+      configLoaded.current = true;
+    }).catch(() => { configLoaded.current = true; });
   }, [selectedSymbol]);
 
   // ── Auto-save config when it changes ──
@@ -337,7 +341,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
                   <div className="absolute inset-0 rounded-full border-2 border-cyan-500/20" />
                   <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-400 animate-spin" />
                 </div>
-                <div className="text-[11px] font-bold text-cyan-400 tracking-wide">Running backtest\u2026</div>
+                <div className="text-[11px] font-bold text-cyan-400 tracking-wide">Analysing strategy\u2026</div>
                 <div className="text-[9px] text-slate-500">{selectedName} ({selectedSymbol.replace(".KL", "")})</div>
                 <div className="w-full h-1.5 rounded-full bg-slate-800/80 overflow-hidden mt-1">
                   <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-400 animate-[progress_2s_ease-in-out_infinite]" style={{ width: "100%", animation: "progress 2s ease-in-out infinite" }} />

@@ -8,6 +8,7 @@ import SectorList from "./SectorList";
 import StockPicker from "../common/StockPicker";
 import StrategyPanel from "../futures/StrategyPanel";
 import StrategyPanelV1 from "../futures/StrategyPanelV1";
+import { getTimezone } from "../../utils/time";
 import KLSEStrategyPanel from "./KLSEStrategyPanel";
 import StarredStocks from "./StarredStocks";
 import DataTable from "../common/DataTable";
@@ -163,7 +164,7 @@ export default function KLSEDashboard() {
                   ))}
                 </div>
                 <span className="text-[10px] text-slate-600 ml-auto">
-                  {lastRefreshed && `${lastRefreshed.toLocaleDateString("en-GB")} ${lastRefreshed.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`}
+                  {lastRefreshed && `${lastRefreshed.toLocaleDateString("en-GB", { timeZone: getTimezone() })} ${lastRefreshed.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: getTimezone() })}`}
                 </span>
               </>
             )}

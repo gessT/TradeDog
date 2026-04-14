@@ -10,14 +10,14 @@ import {
   type IChartApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { SGT_OFFSET_SEC, toSGT } from "../../utils/time";
+import { toLocal as toLocalTz } from "../../utils/time";
 import type { US1HCandle, US1HTrade } from "../../services/api";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Main Chart Area — Professional candlestick chart with overlays
 // ═══════════════════════════════════════════════════════════════════════
 
-const toLocal = (utcSec: number) => toSGT(utcSec) as UTCTimestamp;
+const toLocal = (utcSec: number) => toLocalTz(utcSec) as UTCTimestamp;
 const parseTS = (s: string): number => {
   let ms = new Date(s).getTime();
   if (isNaN(ms)) ms = new Date(s.replace(" ", "T")).getTime();

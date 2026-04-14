@@ -1,14 +1,39 @@
 /**
- * Shared date/time helpers — all display times use Asia/Singapore (SGT, UTC+8).
+ * Shared date/time helpers — display times use configurable timezone (default Asia/Singapore).
+ * Set timezone via setTimezone(). Persisted in localStorage under "APP_TIMEZONE".
  */
 
-const SGT = "Asia/Singapore";
+const TZ_STORAGE_KEY = "APP_TIMEZONE";
+const DEFAULT_TZ = "Asia/Singapore";
 
-/** Format a raw timestamp string to "DD/MM HH:MM" in SGT */
+/** Get the currently configured timezone */
+export function getTimezone(): string {
+  if (typeof window === "undefined") return DEFAULT_TZ;
+  return localStorage.getItem(TZ_STORAGE_KEY) || DEFAULT_TZ;
+}
+
+/** Set and persist the timezone (e.g. "Asia/Singapore", "America/New_York", "UTC") */
+export function setTimezone(tz: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(TZ_STORAGE_KEY, tz);
+}
+
+/** Compute UTC offset in seconds for the configured timezone (for lightweight-charts) */
+export function getTzOffsetSec(): number {
+  const tz = getTimezone();
+  const now = new Date();
+  const utcStr = now.toLocaleString("en-US", { timeZone: "UTC" });
+  const tzStr = now.toLocaleString("en-US", { timeZone: tz });
+  return Math.round((new Date(tzStr).getTime() - new Date(utcStr).getTime()) / 1000);
+}
+
+/** @deprecated Use getTzOffsetSec() — kept for backward compat */
+export const SGT_OFFSET_SEC = 8 * 3600;
+
+/** Format a raw timestamp string to "DD/MM HH:MM" in configured timezone */
 export function fmtDateTimeSGT(raw: string): string {
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) {
-    // fallback: try replacing space with T
     const d2 = new Date(raw.replace(" ", "T"));
     if (Number.isNaN(d2.getTime())) return raw.slice(5, 16);
     return fmtDateObj(d2);
@@ -18,7 +43,7 @@ export function fmtDateTimeSGT(raw: string): string {
 
 function fmtDateObj(d: Date): string {
   return d.toLocaleString("en-GB", {
-    timeZone: SGT,
+    timeZone: getTimezone(),
     day: "2-digit",
     month: "2-digit",
     hour: "2-digit",
@@ -27,25 +52,25 @@ function fmtDateObj(d: Date): string {
   }).replace(",", "");
 }
 
-/** Format a raw timestamp string to "DD/MM/YYYY" in SGT */
+/** Format a raw timestamp string to "DD/MM/YYYY" in configured timezone */
 export function fmtDateSGT(raw: string): string {
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
   return d.toLocaleDateString("en-GB", {
-    timeZone: SGT,
+    timeZone: getTimezone(),
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
   });
 }
 
-/** Format a raw timestamp string to "HH:MM:SS" in SGT */
+/** Format a raw timestamp string to "DD/MM HH:MM:SS" in configured timezone */
 export function fmtTimeSGT(raw: string): string {
   if (!raw) return "";
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return raw.slice(0, 16);
   return d.toLocaleString("en-GB", {
-    timeZone: SGT,
+    timeZone: getTimezone(),
     day: "2-digit",
     month: "2-digit",
     hour: "2-digit",
@@ -55,13 +80,12 @@ export function fmtTimeSGT(raw: string): string {
   }).replace(",", "");
 }
 
-/** Get today's date string "YYYY-MM-DD" in SGT */
+/** Get today's date string "YYYY-MM-DD" in configured timezone */
 export function todaySGT(d: Date = new Date()): string {
-  const parts = d.toLocaleDateString("en-CA", { timeZone: SGT }); // en-CA gives YYYY-MM-DD
-  return parts;
+  return d.toLocaleDateString("en-CA", { timeZone: getTimezone() });
 }
 
-/** Convert a raw timestamp to "YYYY-MM-DD" in SGT (for date comparison) */
+/** Convert a raw timestamp to "YYYY-MM-DD" in configured timezone (for date comparison) */
 export function toDateSGT(raw: string): string {
   if (!raw) return "";
   const d = new Date(raw);
@@ -69,19 +93,21 @@ export function toDateSGT(raw: string): string {
   return todaySGT(d);
 }
 
-/** Format a Date object to "YYYY-MM-DD" in SGT (for input[type=date] values) */
+/** Format a Date object to "YYYY-MM-DD" in configured timezone (for input[type=date] values) */
 export function fmtInputDateSGT(d: Date): string {
-  return d.toLocaleDateString("en-CA", { timeZone: SGT });
+  return d.toLocaleDateString("en-CA", { timeZone: getTimezone() });
 }
 
 /**
- * SGT offset in seconds for lightweight-charts (UTC+8 = 28800s).
+ * Timezone offset in seconds for lightweight-charts.
  * lightweight-charts expects Unix seconds in "local" time, so we add this offset
- * to UTC timestamps to display them in SGT.
+ * to UTC timestamps to display them in the configured timezone.
  */
-export const SGT_OFFSET_SEC = 8 * 3600;
+export function toLocal(utcSec: number): number {
+  return utcSec + getTzOffsetSec();
+}
 
-/** Convert a UTC epoch (seconds) to SGT epoch for lightweight-charts */
+/** @deprecated Use toLocal() */
 export function toSGT(utcSec: number): number {
-  return utcSec + SGT_OFFSET_SEC;
+  return toLocal(utcSec);
 }
