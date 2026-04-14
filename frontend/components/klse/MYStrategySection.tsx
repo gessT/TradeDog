@@ -1,37 +1,78 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // ═══════════════════════════════════════════════════════════
-// MY Strategy Section — TPC 趋势回调 (base strategy)
+// MY Strategy Section — multi-strategy with dropdown
 // ═══════════════════════════════════════════════════════════
 
-const CONDITIONS = [
+export type StrategyType = "tpc" | "hpb";
+
+type StrategyDef = {
+  key: StrategyType;
+  label: string;
+  subtitle: string;
+  icon: string;
+  color: string;
+  conditions: readonly { key: string; label: string; icon: string; desc: string }[];
+  exitRules: readonly { key: string; label: string; icon: string; desc: string }[];
+  sliders: {
+    sl: { label: string; min: number; max: number; step: number };
+    tp1: { label: string; min: number; max: number; step: number };
+    tp2?: { label: string; min: number; max: number; step: number };
+  };
+};
+
+const STRATEGIES: StrategyDef[] = [
   {
-    key: "w_st_trend",
-    label: "Weekly SuperTrend",
-    icon: "\u26A1",
-    desc: "Weekly ST flips from bearish to bullish",
-    group: "Entry",
-  },
-  {
-    key: "ht_trend",
-    label: "Daily HalfTrend",
+    key: "tpc",
+    label: "TPC Strategy",
+    subtitle: "Trend-Pullback-Continuation",
     icon: "\u{1F4C8}",
-    desc: "Daily HT direction bullish + price near HT line",
-    group: "Entry",
+    color: "cyan",
+    conditions: [
+      { key: "w_st_trend", label: "Weekly SuperTrend", icon: "\u26A1", desc: "Weekly ST flips from bearish to bullish" },
+      { key: "ht_trend", label: "Daily HalfTrend", icon: "\u{1F4C8}", desc: "Daily HT direction bullish + price near HT line" },
+    ],
+    exitRules: [
+      { key: "sl_exit", icon: "\u{1F6D1}", label: "Stop Loss", desc: "ATR \u00D7 SL multiplier below entry" },
+      { key: "tp1_exit", icon: "\u{1F3AF}", label: "TP1 Partial", desc: "Exit 50% at R \u00D7 TP1 multiplier" },
+      { key: "tp2_exit", icon: "\u{1F3C6}", label: "TP2 Full", desc: "Exit rest at R \u00D7 TP2 multiplier" },
+      { key: "trail_exit", icon: "\u{1F4C9}", label: "Trailing Stop", desc: "ATR trailing after TP1 hit, move SL to BE" },
+      { key: "wst_flip_exit", icon: "\u26A0\uFE0F", label: "W.ST Flip Exit", desc: "Hard exit when Weekly ST flips bearish" },
+      { key: "ema28_break_exit", icon: "\u{1F4C9}", label: "EMA28 Break", desc: "Exit when bar closes below 3% of EMA 28" },
+      { key: "ht_flip_exit", icon: "\u{1F534}", label: "HT Flip Red", desc: "Exit when Daily HalfTrend turns bearish (red)" },
+    ],
+    sliders: {
+      sl: { label: "SL ATR \u00D7", min: 0.5, max: 5, step: 0.5 },
+      tp1: { label: "TP1 R \u00D7", min: 0.5, max: 4, step: 0.5 },
+      tp2: { label: "TP2 R \u00D7", min: 1, max: 6, step: 0.5 },
+    },
   },
-] as const;
-
-const EXIT_RULES = [
-  { key: "sl_exit", icon: "\u{1F6D1}", label: "Stop Loss", desc: "ATR \u00D7 SL multiplier below entry" },
-  { key: "tp1_exit", icon: "\u{1F3AF}", label: "TP1 Partial", desc: "Exit 50% at R \u00D7 TP1 multiplier" },
-  { key: "tp2_exit", icon: "\u{1F3C6}", label: "TP2 Full", desc: "Exit rest at R \u00D7 TP2 multiplier" },
-  { key: "trail_exit", icon: "\u{1F4C9}", label: "Trailing Stop", desc: "ATR trailing after TP1 hit, move SL to BE" },
-  { key: "wst_flip_exit", icon: "\u26A0\uFE0F", label: "W.ST Flip Exit", desc: "Hard exit when Weekly ST flips bearish" },
-  { key: "ema28_break_exit", icon: "\u{1F4C9}", label: "EMA28 Break", desc: "Exit when bar closes below 3% of EMA 28" },
-  { key: "ht_flip_exit", icon: "\u{1F534}", label: "HT Flip Red", desc: "Exit when Daily HalfTrend turns bearish (red)" },
-] as const;
+  {
+    key: "hpb",
+    label: "HPB Strategy",
+    subtitle: "HeatPulse Breakout",
+    icon: "\u{1F525}",
+    color: "amber",
+    conditions: [
+      { key: "heat_filter", label: "Heat Score > 45", icon: "\u{1F525}", desc: "Market Heat Score must exceed threshold" },
+      { key: "ema_filter", label: "EMA50/200 Trend", icon: "\u{1F4C8}", desc: "Close above both EMA50 and EMA200" },
+      { key: "breakout_filter", label: "5-Day Breakout", icon: "\u{1F680}", desc: "Close above 5-day highest high" },
+      { key: "volume_filter", label: "Volume Spike", icon: "\u{1F4CA}", desc: "Volume > 1.2\u00D7 20-day average" },
+      { key: "atr_filter", label: "ATR Expansion", icon: "\u26A1", desc: "ATR above 20-day ATR mean (skip sideways)" },
+    ],
+    exitRules: [
+      { key: "sl_exit", icon: "\u{1F6D1}", label: "Stop Loss", desc: "ATR \u00D7 SL multiplier below entry" },
+      { key: "tp_exit", icon: "\u{1F3AF}", label: "Take Profit", desc: "ATR \u00D7 TP multiplier above entry" },
+      { key: "trail_exit", icon: "\u{1F4C9}", label: "Trailing Stop", desc: "ATR \u00D7 1.5 trailing after entry" },
+    ],
+    sliders: {
+      sl: { label: "SL ATR \u00D7", min: 0.5, max: 5, step: 0.5 },
+      tp1: { label: "TP ATR \u00D7", min: 0.5, max: 10, step: 0.5 },
+    },
+  },
+];
 
 type Props = {
   disabledConditions: Set<string>;
@@ -48,6 +89,8 @@ type Props = {
   loading: boolean;
   symbol?: string;
   symbolName?: string;
+  activeStrategy: StrategyType;
+  onStrategyChange: (s: StrategyType) => void;
 };
 
 // ── Collapsible Section ──
@@ -87,26 +130,75 @@ export default function MYStrategySection({
   loading,
   symbol,
   symbolName,
+  activeStrategy,
+  onStrategyChange,
 }: Props) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setDropdownOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const strat = STRATEGIES.find(s => s.key === activeStrategy) ?? STRATEGIES[0];
+
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/80">
-      {/* Header */}
+      {/* Header with Strategy Dropdown */}
       <div className="shrink-0 px-3 py-2.5 border-b border-slate-800/60 bg-slate-900/60">
-        <div className="flex items-center gap-2">
-          <span className="text-sm">{"\u{1F4C8}"}</span>
-          <div>
-            <div className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider">TPC Strategy</div>
-            <div className="text-[9px] text-slate-500 mt-0.5">Trend-Pullback-Continuation</div>
-          </div>
+        <div className="relative" ref={dropdownRef}>
+          <button
+            onClick={() => setDropdownOpen(p => !p)}
+            className="w-full flex items-center gap-2 group"
+          >
+            <span className="text-sm">{strat.icon}</span>
+            <div className="flex-1 text-left min-w-0">
+              <div className={`text-[11px] font-bold text-${strat.color}-400 uppercase tracking-wider truncate`}>
+                {strat.label}
+              </div>
+              <div className="text-[9px] text-slate-500 mt-0.5">{strat.subtitle}</div>
+            </div>
+            <svg className={`w-3.5 h-3.5 text-slate-500 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {dropdownOpen && (
+            <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700/60 rounded-lg shadow-xl shadow-black/30 overflow-hidden">
+              {STRATEGIES.map(s => (
+                <button
+                  key={s.key}
+                  onClick={() => { onStrategyChange(s.key); setDropdownOpen(false); }}
+                  className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition hover:bg-slate-800/60 ${
+                    activeStrategy === s.key ? `bg-${s.color}-500/10 border-l-2 border-${s.color}-400` : "border-l-2 border-transparent"
+                  }`}
+                >
+                  <span className="text-sm">{s.icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-[10px] font-semibold ${activeStrategy === s.key ? `text-${s.color}-400` : "text-slate-200"}`}>{s.label}</div>
+                    <div className="text-[8px] text-slate-500">{s.subtitle}</div>
+                  </div>
+                  {activeStrategy === s.key && (
+                    <svg className={`w-3 h-3 text-${s.color}-400`} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto">
         {/* ── Entry Conditions (collapsible) ── */}
-        <CollapsibleSection title="Entry Conditions" defaultOpen={true} count={CONDITIONS.length} enabledCount={CONDITIONS.filter(c => !disabledConditions.has(c.key)).length}>
+        <CollapsibleSection title="Entry Conditions" defaultOpen={true} count={strat.conditions.length} enabledCount={strat.conditions.filter(c => !disabledConditions.has(c.key)).length}>
           <div className="space-y-1">
-            {CONDITIONS.map((c) => {
+            {strat.conditions.map((c) => {
               const enabled = !disabledConditions.has(c.key);
               return (
                 <button
@@ -120,17 +212,11 @@ export default function MYStrategySection({
                 >
                   <span className="text-sm shrink-0">{c.icon}</span>
                   <div className="min-w-0 flex-1">
-                    <div className={`text-[10px] font-semibold ${enabled ? "text-slate-200" : "text-slate-500"}`}>
-                      {c.label}
-                    </div>
+                    <div className={`text-[10px] font-semibold ${enabled ? "text-slate-200" : "text-slate-500"}`}>{c.label}</div>
                     <div className="text-[8px] text-slate-600 truncate">{c.desc}</div>
                   </div>
-                  <div className={`w-7 h-4 rounded-full relative transition-colors shrink-0 ${
-                    enabled ? "bg-emerald-500/50" : "bg-slate-700"
-                  }`}>
-                    <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${
-                      enabled ? "left-3.5 bg-emerald-400" : "left-0.5 bg-slate-500"
-                    }`} />
+                  <div className={`w-7 h-4 rounded-full relative transition-colors shrink-0 ${enabled ? "bg-emerald-500/50" : "bg-slate-700"}`}>
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${enabled ? "left-3.5 bg-emerald-400" : "left-0.5 bg-slate-500"}`} />
                   </div>
                 </button>
               );
@@ -139,63 +225,38 @@ export default function MYStrategySection({
         </CollapsibleSection>
 
         {/* ── Exit Rules (collapsible) ── */}
-        <CollapsibleSection title="Exit Rules" defaultOpen={true} count={EXIT_RULES.length} enabledCount={EXIT_RULES.filter(r => !disabledConditions.has(r.key)).length}>
+        <CollapsibleSection title="Exit Rules" defaultOpen={true} count={strat.exitRules.length} enabledCount={strat.exitRules.filter(r => !disabledConditions.has(r.key)).length}>
           <div className="space-y-1">
-            {EXIT_RULES.map((r) => {
+            {strat.exitRules.map((r) => {
               const enabled = !disabledConditions.has(r.key);
-              // Map exit rule to its param slider
               const paramConfig = r.key === "sl_exit"
-                ? { label: "ATR ×", value: atrSlMult, onChange: onSlChange, min: 0.5, max: 5, step: 0.5, color: "rose" }
-                : r.key === "tp1_exit"
-                ? { label: "R ×", value: tp1RMult, onChange: onTp1Change, min: 0.5, max: 4, step: 0.5, color: "amber" }
-                : r.key === "tp2_exit"
-                ? { label: "R ×", value: tp2RMult, onChange: onTp2Change, min: 1, max: 6, step: 0.5, color: "emerald" }
+                ? { label: strat.sliders.sl.label, value: atrSlMult, onChange: onSlChange, min: strat.sliders.sl.min, max: strat.sliders.sl.max, step: strat.sliders.sl.step, color: "rose" }
+                : (r.key === "tp1_exit" || r.key === "tp_exit")
+                ? { label: strat.sliders.tp1.label, value: tp1RMult, onChange: onTp1Change, min: strat.sliders.tp1.min, max: strat.sliders.tp1.max, step: strat.sliders.tp1.step, color: "amber" }
+                : r.key === "tp2_exit" && strat.sliders.tp2
+                ? { label: strat.sliders.tp2.label, value: tp2RMult, onChange: onTp2Change, min: strat.sliders.tp2.min, max: strat.sliders.tp2.max, step: strat.sliders.tp2.step, color: "emerald" }
                 : null;
               return (
-                <div
-                  key={r.key}
-                  className={`rounded-lg transition ${
-                    enabled
-                      ? "bg-rose-500/8 border border-rose-500/20"
-                      : "bg-slate-800/20 border border-slate-800/30 opacity-50"
-                  }`}
-                >
-                  <button
-                    onClick={() => onToggleCondition(r.key)}
-                    className="w-full flex items-center gap-2 px-2.5 py-2 text-left hover:bg-rose-500/10 transition rounded-lg"
-                  >
+                <div key={r.key} className={`rounded-lg transition ${enabled ? "bg-rose-500/8 border border-rose-500/20" : "bg-slate-800/20 border border-slate-800/30 opacity-50"}`}>
+                  <button onClick={() => onToggleCondition(r.key)} className="w-full flex items-center gap-2 px-2.5 py-2 text-left hover:bg-rose-500/10 transition rounded-lg">
                     <span className="text-sm shrink-0">{r.icon}</span>
                     <div className="min-w-0 flex-1">
                       <div className={`text-[10px] font-semibold ${enabled ? "text-slate-200" : "text-slate-500"}`}>
                         {r.label}
-                        {paramConfig && enabled && (
-                          <span className={`ml-1.5 text-${paramConfig.color}-400 tabular-nums`}>{paramConfig.value.toFixed(1)}</span>
-                        )}
+                        {paramConfig && enabled && <span className={`ml-1.5 text-${paramConfig.color}-400 tabular-nums`}>{paramConfig.value.toFixed(1)}</span>}
                       </div>
                       <div className="text-[8px] text-slate-600 truncate">{r.desc}</div>
                     </div>
-                    <div className={`w-7 h-4 rounded-full relative transition-colors shrink-0 ${
-                      enabled ? "bg-rose-500/50" : "bg-slate-700"
-                    }`}>
-                      <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${
-                        enabled ? "left-3.5 bg-rose-400" : "left-0.5 bg-slate-500"
-                      }`} />
+                    <div className={`w-7 h-4 rounded-full relative transition-colors shrink-0 ${enabled ? "bg-rose-500/50" : "bg-slate-700"}`}>
+                      <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${enabled ? "left-3.5 bg-rose-400" : "left-0.5 bg-slate-500"}`} />
                     </div>
                   </button>
                   {enabled && paramConfig && (
                     <div className="px-2.5 pb-2 pt-0">
-                      <input
-                        type="range"
-                        min={paramConfig.min} max={paramConfig.max} step={paramConfig.step}
-                        value={paramConfig.value}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => paramConfig.onChange(parseFloat(e.target.value))}
-                        className={`w-full h-1 rounded-full appearance-none bg-slate-700 accent-${paramConfig.color}-400`}
-                      />
-                      <div className="flex justify-between text-[7px] text-slate-600 mt-0.5 tabular-nums">
-                        <span>{paramConfig.min}</span>
-                        <span>{paramConfig.max}</span>
-                      </div>
+                      <input type="range" min={paramConfig.min} max={paramConfig.max} step={paramConfig.step} value={paramConfig.value}
+                        onClick={(e) => e.stopPropagation()} onChange={(e) => paramConfig.onChange(parseFloat(e.target.value))}
+                        className={`w-full h-1 rounded-full appearance-none bg-slate-700 accent-${paramConfig.color}-400`} />
+                      <div className="flex justify-between text-[7px] text-slate-600 mt-0.5 tabular-nums"><span>{paramConfig.min}</span><span>{paramConfig.max}</span></div>
                     </div>
                   )}
                 </div>

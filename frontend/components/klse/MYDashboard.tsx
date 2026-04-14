@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState } from "react";
-import { fetchTPCBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
+import { fetchTPCBacktest, fetchHPBBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
-import MYStrategySection from "./MYStrategySection";
+import MYStrategySection, { type StrategyType } from "./MYStrategySection";
 import MYBottomPanel, { MetricsGrid } from "./MYBottomPanel";
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
@@ -68,6 +68,21 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   const [tp1RMult, setTp1RMult] = useState(1);
   const [tp2RMult, setTp2RMult] = useState(2.5);
   const [capital, setCapital] = useState(5000);
+
+  // ── Active strategy type
+  const [activeStrategy, setActiveStrategy] = useState<StrategyType>("tpc");
+  const activeStrategyRef = useRef<StrategyType>("tpc");
+  const handleStrategyChange = useCallback((s: StrategyType) => {
+    setActiveStrategy(s);
+    activeStrategyRef.current = s;
+    setDisabledConditions(new Set());
+    // Reset params to strategy defaults
+    if (s === "hpb") {
+      setAtrSlMult(2); setTp1RMult(4); setTp2RMult(4);
+    } else {
+      setAtrSlMult(2); setTp1RMult(1); setTp2RMult(2.5);
+    }
+  }, []);
 
   const toggleCondition = useCallback((key: string) => {
     setDisabledConditions((prev) => {
@@ -175,18 +190,30 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     }
   }, [favSymbols]);
 
-  // ── Run TPC backtest with disabled conditions
+  // ── Run backtest (routes to TPC or HPB based on active strategy)
   const runBacktest = useCallback(async () => {
     setBtLoading(true);
     try {
       const disabledArr = Array.from(disabledConditions);
-      const data = await fetchTPCBacktest(
-        selectedSymbol,
-        backtestPeriod,
-        disabledArr.length > 0 ? disabledArr : undefined,
-        { atr_sl_mult: atrSlMult, tp1_r_mult: tp1RMult, tp2_r_mult: tp2RMult },
-        capital,
-      );
+      const strat = activeStrategyRef.current;
+      let data: US1HBacktestResponse;
+      if (strat === "hpb") {
+        data = await fetchHPBBacktest(
+          selectedSymbol,
+          backtestPeriod,
+          disabledArr.length > 0 ? disabledArr : undefined,
+          { sl_atr_mult: atrSlMult, tp_atr_mult: tp1RMult },
+          capital,
+        );
+      } else {
+        data = await fetchTPCBacktest(
+          selectedSymbol,
+          backtestPeriod,
+          disabledArr.length > 0 ? disabledArr : undefined,
+          { atr_sl_mult: atrSlMult, tp1_r_mult: tp1RMult, tp2_r_mult: tp2RMult },
+          capital,
+        );
+      }
       setBtData(data);
 
       // Update price from latest candle
@@ -404,7 +431,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
               loading={btLoading}
               symbol={selectedSymbol}
               symbolName={selectedName}
-              strategyLabel={`TPC · ${selectedSymbol.replace(".KL", "")}`}
+              strategyLabel={`${activeStrategy.toUpperCase()} · ${selectedSymbol.replace(".KL", "")}`}
             />
           </div>
         </div>
@@ -428,6 +455,8 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             onCapitalChange={setCapital}
             onRunBacktest={runBacktest}
             loading={btLoading}
+            activeStrategy={activeStrategy}
+            onStrategyChange={handleStrategyChange}
           />
         </aside>
       </div>

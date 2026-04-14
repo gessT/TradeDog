@@ -3114,3 +3114,147 @@ async def us_stock_backtest_tpc(
         params=params,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# HPB — HeatPulse Breakout Strategy (KLSE Daily)
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/backtest_hpb")
+async def klse_backtest_hpb(
+    symbol: _Ann[str, Query()] = "0208.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 10000.0,
+    disabled_conditions: _Ann[_Opt[str], Query()] = None,
+    heat_threshold: _Ann[_Opt[float], Query()] = None,
+    sl_atr_mult: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    tp_atr_mult: _Ann[_Opt[float], Query(ge=0.5, le=10.0)] = None,
+    trailing_atr_mult: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    vol_mult: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    risk_pct: _Ann[_Opt[float], Query(ge=1.0, le=20.0)] = None,
+    cooldown_bars: _Ann[_Opt[int], Query(ge=0, le=20)] = None,
+) -> US1HBacktestResponse:
+    """Run HeatPulse Breakout backtest on a KLSE stock (daily timeframe)."""
+
+    _disabled: set[str] = set()
+    if disabled_conditions:
+        _valid = {"heat_filter", "ema_filter", "breakout_filter", "volume_filter",
+                  "atr_filter", "sl_exit", "tp_exit", "trail_exit"}
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
+
+    def _run():
+        from strategies.futures.data_loader import load_yfinance
+        from strategies.klse.hpb.config import HPBParams
+        from strategies.klse.hpb.backtest import run_backtest as hpb_backtest
+        from strategies.klse.hpb.signals import build_indicators
+
+        params = HPBParams()
+        if heat_threshold is not None:
+            params.heat_threshold = heat_threshold
+        if sl_atr_mult is not None:
+            params.sl_atr_mult = sl_atr_mult
+        if tp_atr_mult is not None:
+            params.tp_atr_mult = tp_atr_mult
+        if trailing_atr_mult is not None:
+            params.trailing_atr_mult = trailing_atr_mult
+        if vol_mult is not None:
+            params.vol_mult = vol_mult
+        if risk_pct is not None:
+            params.risk_pct = risk_pct
+        if cooldown_bars is not None:
+            params.cooldown_bars = cooldown_bars
+
+        df = load_yfinance(symbol=symbol, interval="1d", period=period)
+        if df.empty or len(df) < 200:
+            raise ValueError(f"Not enough daily data for {symbol} (need 200+ bars for EMA200).")
+
+        result = hpb_backtest(df, params, capital=capital, disabled_conditions=_disabled or None)
+
+        # Build candles with indicators for chart
+        df_ind = build_indicators(df.copy(), params)
+
+        candles = []
+        for ts_val, row in df_ind.iterrows():
+            candles.append(US1HCandle(
+                time=ts_val.isoformat() if hasattr(ts_val, "isoformat") else str(ts_val),
+                open=round(float(row["open"]), 4),
+                high=round(float(row["high"]), 4),
+                low=round(float(row["low"]), 4),
+                close=round(float(row["close"]), 4),
+                volume=float(row.get("volume", 0)),
+                ema_fast=round(float(row["ema50"]), 4) if not _isnan(row.get("ema50")) else None,
+                ema_slow=round(float(row["ema200"]), 4) if not _isnan(row.get("ema200")) else None,
+                rsi=round(float(row["rsi"]), 1) if not _isnan(row.get("rsi")) else None,
+                signal=0,
+            ))
+
+        wins = [t for t in result.trades if t.win]
+        losses = [t for t in result.trades if not t.win]
+        n_trades = len(result.trades)
+        total_pnl = sum(t.pnl for t in result.trades)
+
+        metrics = US1HMetrics(
+            initial_capital=capital,
+            final_equity=round(capital + total_pnl, 2),
+            total_return_pct=round(total_pnl / capital * 100, 2) if capital else 0,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            total_trades=n_trades,
+            winners=len(wins),
+            losers=len(losses),
+            win_rate=round(len(wins) / n_trades * 100, 1) if n_trades else 0,
+            avg_win=round(sum(t.pnl for t in wins) / len(wins), 2) if wins else 0,
+            avg_loss=round(sum(t.pnl for t in losses) / len(losses), 2) if losses else 0,
+            profit_factor=round(
+                abs(sum(t.pnl for t in wins) / sum(t.pnl for t in losses)), 2
+            ) if losses and sum(t.pnl for t in losses) != 0 else 999.0,
+            risk_reward_ratio=result.risk_reward,
+        )
+
+        trades_out = [
+            US1HTrade(
+                entry_time=t.entry_date,
+                exit_time=t.exit_date,
+                entry_price=t.entry_price,
+                exit_price=t.exit_price,
+                qty=0,
+                pnl=t.pnl,
+                pnl_pct=t.return_pct,
+                reason=t.exit_reason,
+                signal_type="HPB",
+                direction="CALL",
+            )
+            for t in result.trades
+        ]
+
+        out_params = {
+            "heat_threshold": params.heat_threshold,
+            "sl_atr_mult": params.sl_atr_mult,
+            "tp_atr_mult": params.tp_atr_mult,
+            "trailing_atr_mult": params.trailing_atr_mult,
+            "vol_mult": params.vol_mult,
+            "risk_pct": params.risk_pct,
+            "cooldown_bars": params.cooldown_bars,
+        }
+
+        return candles, trades_out, result.equity_curve, metrics, out_params
+
+    try:
+        candles, trades, eq_curve, metrics, params_out = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("HPB backtest failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return US1HBacktestResponse(
+        symbol=symbol,
+        interval="1d",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        params=params_out,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
