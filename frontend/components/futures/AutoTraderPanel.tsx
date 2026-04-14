@@ -96,6 +96,8 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
   const [runningConfig, setRunningConfig] = useState<LockedTradingConfig | null>(null);
   // Use runningConfig while trading, lockedConfig otherwise
   const activeConfig = runningConfig ?? lockedConfig ?? null;
+  // Interval always follows the latest strategy setting (not frozen at start)
+  const currentInterval = lockedConfig?.interval ?? activeConfig?.interval ?? "1m";
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastBarRef = useRef("");
 
@@ -133,7 +135,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
       if (!livePrice) return;
       const now = new Date();
       const min = now.getMinutes();
-      const tickInterval = activeConfig?.interval ?? "5m";
+      const tickInterval = currentInterval;
       const intervalMins = tickInterval === "1m" ? 1 : tickInterval === "2m" ? 2 : tickInterval === "15m" ? 15 : 5;
       const barKey = `${now.getHours()}:${min - (min % intervalMins)}`;
       const isBarClose = barKey !== lastBarRef.current && min % intervalMins === 0;
@@ -322,7 +324,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
       {/* ═══ Scan info bar ═══ */}
       {started && snap && (
         <div className="mx-2 mt-1.5 flex items-center gap-2 text-[8px] text-white/40">
-          <span>Interval: <span className="text-white/60 font-medium">{activeConfig?.interval ?? "5m"}</span></span>
+          <span>Interval: <span className="text-white/60 font-medium">{currentInterval}</span></span>
           <span>Scans: <span className="text-white/60 font-medium">{snap.scan_count ?? 0}</span></span>
           <span>Daily: <span className="text-white/60 font-medium">{snap.daily_trades ?? 0}</span></span>
         </div>

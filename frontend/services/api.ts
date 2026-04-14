@@ -1064,6 +1064,7 @@ export async function save5MinConditionToggles(toggles: Record<string, boolean>,
 
 export type StrategyConfig = {
   period?: string;
+  interval?: string;
   sl_mult?: number;
   tp_mult?: number;
   risk_filters?: Record<string, boolean>;

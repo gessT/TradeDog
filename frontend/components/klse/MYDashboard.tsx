@@ -209,6 +209,13 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSymbol]);
 
+  // Auto-run on initial mount
+  useEffect(() => {
+    runBacktest();
+    setHasRun(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Handlers
   const handleSymbolChange = useCallback((sym: string, name: string) => {
     setSelectedSymbol(sym);

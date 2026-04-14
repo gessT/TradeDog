@@ -3098,6 +3098,7 @@ async def reset_daily_pnl(symbol: str = Query("MGC")):
 
 class StrategyConfigPayload(BaseModel):
     period: str | None = None
+    interval: str | None = None
     sl_mult: float | None = None
     tp_mult: float | None = None
     risk_filters: dict[str, bool] | None = None

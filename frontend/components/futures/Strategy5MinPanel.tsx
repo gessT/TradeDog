@@ -568,7 +568,7 @@ export const BUILT_IN_PRESETS: BuiltInPreset[] = [
   {
     name: "⚡ Keep GOING",
     desc: "Always-in-market scalp — EMA5/13 + SuperTrend + RSI, 5m",
-    interval: "5m",
+    interval: "1m",
     sl: 2.5,
     tp: 1.5,
     toggles: {
@@ -1381,6 +1381,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     ]).then(([cfg, loadedPresets, autoSettings]) => {
       if (cancelled) return;
       if (cfg.period) setPeriod(cfg.period);
+      if (cfg.interval) handleIntervalChange(cfg.interval);
       if (cfg.sl_mult != null) setSlMult(cfg.sl_mult);
       if (cfg.tp_mult != null) setTpMult(cfg.tp_mult);
       if (cfg.risk_filters) setRiskFilters(cfg.risk_filters);
@@ -1407,10 +1408,10 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   useEffect(() => {
     if (!configLoaded) return;  // Don't save during initial load
     const timer = setTimeout(() => {
-      saveStrategyConfig({ period, sl_mult: slMult, tp_mult: tpMult, risk_filters: riskFilters, active_preset: activePreset ?? undefined }, symbol).catch(() => {});
+      saveStrategyConfig({ period, interval, sl_mult: slMult, tp_mult: tpMult, risk_filters: riskFilters, active_preset: activePreset ?? undefined }, symbol).catch(() => {});
     }, 500);  // debounce 500ms
     return () => clearTimeout(timer);
-  }, [period, slMult, tpMult, riskFilters, activePreset, symbol, configLoaded]);
+  }, [period, interval, slMult, tpMult, riskFilters, activePreset, symbol, configLoaded]);
 
   // ── Persist auto-trading toggle to backend ──
   useEffect(() => {

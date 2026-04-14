@@ -295,14 +295,14 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
 
               <div className="flex flex-col min-w-0 flex-1">
                 <div className="flex items-center gap-1">
-                  <span className={`text-[11px] font-bold leading-tight ${active ? "text-cyan-300" : "text-slate-200"}`}>
-                    {item.symbol.replace(".KL", "")}
+                  <span className={`text-[11px] font-bold leading-tight truncate ${active ? "text-cyan-300" : "text-slate-200"}`}>
+                    {item.name}
                   </span>
                   {viewMode === "all" && sectorFilter === "ALL" && (
                     <span className="text-[7px] px-1 py-[1px] rounded bg-slate-800 text-slate-500 font-medium">{item.sector}</span>
                   )}
                 </div>
-                <span className="text-[8px] text-slate-500 truncate leading-tight">{item.name}</span>
+                <span className="text-[8px] text-slate-500 truncate leading-tight">{item.symbol.replace(".KL", "")}</span>
                 {stockTags.filter((t) => t.symbol === item.symbol).length > 0 && (
                   <div className="flex gap-0.5 mt-0.5 flex-wrap">
                     {stockTags.filter((t) => t.symbol === item.symbol).map((tag) => (

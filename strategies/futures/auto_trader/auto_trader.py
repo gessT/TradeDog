@@ -259,6 +259,34 @@ class FuturesAutoTrader:
                         trade=self._trade_dict(trade),
                         snapshot=self._snap(),
                     )
+                else:
+                    # Paper position already cleared but state machine stuck —
+                    # force state machine exit to stay in sync
+                    logger.warning("[%s] Paper exit_reason=%s but execute_exit returned None — forcing state exit",
+                                   self.symbol, exit_reason)
+                    trade = self._machine.on_exit(live_price, exit_reason, CONTRACT_SIZE, 0.0, is_paper=True)
+                    if trade:
+                        self._persist_trade(trade)
+                    return TickResult(
+                        action="EXIT",
+                        message=f"PAPER {exit_reason} @ ${live_price:.2f} (sync)",
+                        trade=self._trade_dict(trade),
+                        snapshot=self._snap(),
+                    )
+
+            # Paper trader has no open position but state machine is IN_TRADE —
+            # force exit to stay in sync
+            if not self._paper.has_position:
+                logger.warning("[%s] State IN_TRADE but paper has no position — forcing exit", self.symbol)
+                trade = self._machine.on_exit(live_price, "SYNC", CONTRACT_SIZE, 0.0, is_paper=True)
+                if trade:
+                    self._persist_trade(trade)
+                return TickResult(
+                    action="EXIT",
+                    message=f"Position closed (sync) @ ${live_price:.2f}",
+                    trade=self._trade_dict(trade),
+                    snapshot=self._snap(),
+                )
 
         # Live mode: check state machine SL/TP + broker sync
         elif mode == "live":
@@ -423,25 +451,27 @@ class FuturesAutoTrader:
 
     def emergency_stop(self, live_price: float = 0.0) -> dict:
         """Emergency: close paper position + stop machine."""
-        result = {"paper_closed": False, "machine_stopped": True}
-        if self._machine.mode == "paper" and self._paper.has_position:
-            trade = self._paper.close_position(live_price)
-            if trade:
-                rec = self._machine.on_exit(trade.exit_price, "EMERGENCY", CONTRACT_SIZE, is_paper=True)
-                if rec:
-                    self._persist_trade(rec)
-                result["paper_closed"] = True
-                result["paper_pnl"] = trade.pnl
-        self._machine.emergency_stop()
-        return result
+        with self._lock:
+            result = {"paper_closed": False, "machine_stopped": True}
+            if self._machine.mode == "paper" and self._paper.has_position:
+                trade = self._paper.close_position(live_price)
+                if trade:
+                    rec = self._machine.on_exit(trade.exit_price, "EMERGENCY", CONTRACT_SIZE, is_paper=True)
+                    if rec:
+                        self._persist_trade(rec)
+                    result["paper_closed"] = True
+                    result["paper_pnl"] = trade.pnl
+            self._machine.emergency_stop()
+            return result
 
     # ═══════════════════════════════════════════════════════════════
     # Controls
     # ═══════════════════════════════════════════════════════════════
 
     def start(self, mode: str = "paper") -> dict:
-        self._machine.start(mode)
-        return self._snap()
+        with self._lock:
+            self._machine.start(mode)
+            return self._snap()
 
     def sync_backtest_position(self, pos: dict) -> bool:
         """Seed paper trader with an open position from backtest.
@@ -487,19 +517,22 @@ class FuturesAutoTrader:
         return True
 
     def stop(self) -> dict:
-        self._machine.stop()
-        return self._snap()
+        with self._lock:
+            self._machine.stop()
+            return self._snap()
 
     def reset(self) -> dict:
-        self._machine.reset()
-        self._paper.reset()
-        self._risk.manual_reset()
-        return self._snap()
+        with self._lock:
+            self._machine.reset()
+            self._paper.reset()
+            self._risk.manual_reset()
+            return self._snap()
 
     def unblock(self) -> dict:
-        self._machine.unblock()
-        self._risk.manual_reset()
-        return self._snap()
+        with self._lock:
+            self._machine.unblock()
+            self._risk.manual_reset()
+            return self._snap()
 
     def update_config(
         self,
