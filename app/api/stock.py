@@ -1483,41 +1483,140 @@ async def us_stock_quotes(
 
 
 @router.get("/us-fear-greed")
-async def us_fear_greed_index() -> dict:
-    """Return latest US Fear & Greed index via Alternative.me API."""
+async def us_fear_greed_index(
+    date: str | None = Query(default=None, description="UTC date in YYYY-MM-DD format"),
+) -> dict:
+    """Return latest or selected-date US Fear & Greed index via Alternative.me API."""
+
+    requested_date = None
+    if date:
+        try:
+            requested_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    def _row_to_payload(row: dict, selected_date: str | None = None) -> dict:
+        value_raw = row.get("value")
+        value = int(value_raw) if value_raw is not None else None
+        classification = (row.get("value_classification") or "Unknown").strip() or "Unknown"
+        ts_raw = row.get("timestamp")
+        updated_at = None
+        date_utc = None
+        if ts_raw:
+            try:
+                dt_utc = datetime.fromtimestamp(int(ts_raw), tz=timezone.utc)
+                date_utc = dt_utc.date().isoformat()
+                updated_at = dt_utc.astimezone(SGT).isoformat()
+            except Exception:
+                updated_at = None
+                date_utc = None
+
+        return {
+            "value": value,
+            "classification": classification,
+            "updated_at": updated_at,
+            "date_utc": date_utc,
+            "selected_date": selected_date,
+            "source": "alternative.me",
+        }
 
     def _fetch() -> dict:
         url = "https://api.alternative.me/fng/?limit=1&format=json"
+        if requested_date:
+            # Need history to locate exact requested day.
+            url = "https://api.alternative.me/fng/?limit=0&format=json"
         try:
             res = http_requests.get(url, timeout=8)
             res.raise_for_status()
             payload = res.json() if res.content else {}
             data = payload.get("data") or []
+
+            if requested_date:
+                found = None
+                for row in data:
+                    ts_raw = row.get("timestamp")
+                    if not ts_raw:
+                        continue
+                    try:
+                        day = datetime.fromtimestamp(int(ts_raw), tz=timezone.utc).date()
+                    except Exception:
+                        continue
+                    if day == requested_date:
+                        found = row
+                        break
+                if found is None:
+                    return {
+                        "value": None,
+                        "classification": "Not Found",
+                        "updated_at": None,
+                        "date_utc": requested_date.isoformat(),
+                        "selected_date": requested_date.isoformat(),
+                        "source": "alternative.me",
+                    }
+                return _row_to_payload(found, requested_date.isoformat())
+
             row = data[0] if data else {}
-
-            value_raw = row.get("value")
-            value = int(value_raw) if value_raw is not None else None
-            classification = (row.get("value_classification") or "Unknown").strip() or "Unknown"
-            ts_raw = row.get("timestamp")
-            updated_at = None
-            if ts_raw:
-                try:
-                    updated_at = datetime.fromtimestamp(int(ts_raw), tz=timezone.utc).astimezone(SGT).isoformat()
-                except Exception:
-                    updated_at = None
-
-            return {
-                "value": value,
-                "classification": classification,
-                "updated_at": updated_at,
-                "source": "alternative.me",
-            }
+            return _row_to_payload(row)
         except Exception as exc:
             logger.warning("FearGreed fetch failed: %s", exc)
             return {
                 "value": None,
                 "classification": "Unavailable",
                 "updated_at": None,
+                "date_utc": requested_date.isoformat() if requested_date else None,
+                "selected_date": requested_date.isoformat() if requested_date else None,
+                "source": "alternative.me",
+            }
+
+    return await run_in_threadpool(_fetch)
+
+
+@router.get("/us-fear-greed-history")
+async def us_fear_greed_history(
+    days: int = Query(default=5, ge=1, le=30, description="Number of latest days to return"),
+) -> dict:
+    """Return latest Fear & Greed daily history (newest first)."""
+
+    def _fetch() -> dict:
+        url = "https://api.alternative.me/fng/?limit=0&format=json"
+        try:
+            res = http_requests.get(url, timeout=8)
+            res.raise_for_status()
+            payload = res.json() if res.content else {}
+            data = payload.get("data") or []
+
+            items = []
+            for row in data[:days]:
+                ts_raw = row.get("timestamp")
+                date_utc = None
+                updated_at = None
+                if ts_raw:
+                    try:
+                        dt_utc = datetime.fromtimestamp(int(ts_raw), tz=timezone.utc)
+                        date_utc = dt_utc.date().isoformat()
+                        updated_at = dt_utc.astimezone(SGT).isoformat()
+                    except Exception:
+                        date_utc = None
+                        updated_at = None
+
+                value_raw = row.get("value")
+                items.append({
+                    "value": int(value_raw) if value_raw is not None else None,
+                    "classification": (row.get("value_classification") or "Unknown").strip() or "Unknown",
+                    "date_utc": date_utc,
+                    "updated_at": updated_at,
+                })
+
+            return {
+                "days": days,
+                "items": items,
+                "source": "alternative.me",
+            }
+        except Exception as exc:
+            logger.warning("FearGreed history fetch failed: %s", exc)
+            return {
+                "days": days,
+                "items": [],
                 "source": "alternative.me",
             }
 

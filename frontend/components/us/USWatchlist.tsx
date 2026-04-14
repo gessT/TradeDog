@@ -43,7 +43,16 @@ type FearGreedData = {
   value: number | null;
   classification: string;
   updated_at: string | null;
+  date_utc?: string | null;
+  selected_date?: string | null;
   source?: string;
+};
+
+type FearGreedHistoryItem = {
+  value: number | null;
+  classification: string;
+  date_utc: string | null;
+  updated_at: string | null;
 };
 
 export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = [], favSymbols, onToggleFav }: Props) {
@@ -77,17 +86,39 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
   const [sectorDropdownOpen, setSectorDropdownOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [fearGreed, setFearGreed] = useState<FearGreedData | null>(null);
+  const [fearGreedDate, setFearGreedDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [fearGreedHistory, setFearGreedHistory] = useState<FearGreedHistoryItem[]>([]);
 
   useEffect(() => {
+    const fetchFearGreedHistory = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/stock/us-fear-greed-history?days=5");
+        if (!res.ok) return;
+        const data = await res.json();
+        const items = Array.isArray(data.items) ? data.items : [];
+        setFearGreedHistory(items.map((x) => ({
+          value: typeof x.value === "number" ? x.value : null,
+          classification: typeof x.classification === "string" ? x.classification : "Unknown",
+          date_utc: typeof x.date_utc === "string" ? x.date_utc : null,
+          updated_at: typeof x.updated_at === "string" ? x.updated_at : null,
+        })));
+      } catch {
+        // backend offline
+      }
+    };
+
     const fetchFearGreed = async () => {
       try {
-        const res = await fetch("http://127.0.0.1:8000/stock/us-fear-greed");
+        const qs = fearGreedDate ? `?date=${encodeURIComponent(fearGreedDate)}` : "";
+        const res = await fetch(`http://127.0.0.1:8000/stock/us-fear-greed${qs}`);
         if (!res.ok) return;
         const data = await res.json();
         setFearGreed({
           value: typeof data.value === "number" ? data.value : null,
           classification: typeof data.classification === "string" ? data.classification : "Unknown",
           updated_at: typeof data.updated_at === "string" ? data.updated_at : null,
+          date_utc: typeof data.date_utc === "string" ? data.date_utc : null,
+          selected_date: typeof data.selected_date === "string" ? data.selected_date : null,
           source: typeof data.source === "string" ? data.source : undefined,
         });
       } catch {
@@ -96,9 +127,10 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
     };
 
     fetchFearGreed();
+    fetchFearGreedHistory();
     const iv = setInterval(fetchFearGreed, 5 * 60 * 1000);
     return () => clearInterval(iv);
-  }, []);
+  }, [fearGreedDate]);
 
   // Fetch real prices from backend /stock/us-quotes
   // Track which symbols we've already fetched to avoid re-fetching the same set
@@ -429,15 +461,38 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Fear &amp; Greed Index</span>
           <span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold ${fgTone}`}>{fgClass}</span>
         </div>
+        <div className="mb-1.5">
+          <input
+            type="date"
+            value={fearGreedDate}
+            max={new Date().toISOString().slice(0, 10)}
+            onChange={(e) => setFearGreedDate(e.target.value)}
+            className="w-full rounded-md border border-slate-700/70 bg-slate-900/80 px-2 py-1 text-[10px] text-slate-300 outline-none focus:border-blue-500/60"
+          />
+        </div>
         <div className="flex items-end justify-between gap-2">
           <div className="flex items-end gap-1">
             <span className="text-[20px] leading-none font-black text-slate-100 tabular-nums">{fgValue == null ? "--" : fgValue}</span>
             <span className="text-[9px] text-slate-500 mb-0.5">/100</span>
           </div>
-          <span className="text-[8px] text-slate-600">US market sentiment</span>
+          <span className="text-[8px] text-slate-600">{fearGreed?.date_utc ?? fearGreedDate}</span>
         </div>
         <div className="mt-1.5 h-1.5 rounded-full bg-slate-800 overflow-hidden">
           <div className="h-full rounded-full bg-gradient-to-r from-rose-500 via-amber-400 to-emerald-400 transition-all duration-500" style={{ width: `${fgFill}%` }} />
+        </div>
+        <div className="mt-2 border-t border-slate-800/50 pt-1.5">
+          <div className="text-[8px] text-slate-500 uppercase tracking-wider mb-1">Last 5 day</div>
+          <div className="space-y-1">
+            {fearGreedHistory.map((h, idx) => (
+              <div key={`${h.date_utc ?? "na"}-${idx}`} className="flex items-center justify-between text-[9px]">
+                <span className="text-slate-500 tabular-nums">{h.date_utc ?? "-"}</span>
+                <span className="text-slate-300 font-bold tabular-nums">{h.value == null ? "--" : h.value}</span>
+              </div>
+            ))}
+            {fearGreedHistory.length === 0 && (
+              <div className="text-[9px] text-slate-600">No history</div>
+            )}
+          </div>
         </div>
       </div>
 
