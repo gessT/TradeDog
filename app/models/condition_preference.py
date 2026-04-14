@@ -102,6 +102,55 @@ class USStockStrategyTag(Base):
     tagged_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
 
+class MYStrategyPreset(Base):
+    """Saved MY (Bursa) stock strategy presets — reusable across symbols."""
+    __tablename__ = "my_strategy_presets"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    conditions_json: Mapped[str] = mapped_column(Text, nullable=False)
+    atr_sl_mult: Mapped[float] = mapped_column(default=3.0)
+    atr_tp_mult: Mapped[float] = mapped_column(default=2.5)
+    period: Mapped[str] = mapped_column(String(8), default="1y")
+    skip_flat: Mapped[bool] = mapped_column(Boolean, default=False)
+    strategy_type: Mapped[str] = mapped_column(String(16), default="breakout_1h")
+    capital: Mapped[float] = mapped_column(Float, default=5000.0)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    bt_symbol: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    bt_win_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bt_return_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bt_max_dd_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bt_profit_factor: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bt_sharpe: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bt_total_trades: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    bt_tested_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+
+class MYStockStrategyTag(Base):
+    """Tag a Bursa stock with a strategy + backtest metrics."""
+    __tablename__ = "my_stock_strategy_tags"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    strategy_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    strategy_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    period: Mapped[str] = mapped_column(String(8), default="2y")
+    capital: Mapped[float] = mapped_column(Float, default=5000.0)
+
+    win_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    return_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    profit_factor: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_dd_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    sharpe: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    total_trades: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    tagged_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+
 class FuturesTraderConfig(Base):
     """Persisted auto-trader configuration for futures (shared by paper & live)."""
     __tablename__ = "futures_trader_configs"

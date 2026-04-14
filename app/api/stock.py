@@ -1709,7 +1709,7 @@ class US1HBacktestResponse(BaseModel):
 # US Strategy Presets — save / load / delete
 # ═══════════════════════════════════════════════════════════════════════
 import json as _json
-from app.models.condition_preference import USStrategyPreset, USStockStrategyTag
+from app.models.condition_preference import USStrategyPreset, USStockStrategyTag, MYStrategyPreset, MYStockStrategyTag
 
 
 class StrategyPresetPayload(BaseModel):
@@ -1922,6 +1922,183 @@ def delete_stock_tag(tag_id: int, db: Session = Depends(get_db)):
     return {"status": "deleted", "id": tag_id}
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# MY (Bursa) Strategy Presets — separate from US presets
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/my-strategy-presets")
+def list_my_strategy_presets(db: Session = Depends(get_db)):
+    rows = db.query(MYStrategyPreset).order_by(MYStrategyPreset.name).all()
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "conditions": _json.loads(r.conditions_json),
+            "atr_sl_mult": r.atr_sl_mult,
+            "atr_tp_mult": r.atr_tp_mult,
+            "period": r.period,
+            "skip_flat": r.skip_flat,
+            "capital": getattr(r, "capital", 5000.0) or 5000.0,
+            "bt_symbol": r.bt_symbol,
+            "bt_win_rate": r.bt_win_rate,
+            "bt_return_pct": r.bt_return_pct,
+            "bt_max_dd_pct": r.bt_max_dd_pct,
+            "bt_profit_factor": r.bt_profit_factor,
+            "bt_sharpe": r.bt_sharpe,
+            "bt_total_trades": r.bt_total_trades,
+            "bt_tested_at": r.bt_tested_at.isoformat() if r.bt_tested_at else None,
+            "strategy_type": getattr(r, "strategy_type", "breakout_1h") or "breakout_1h",
+            "is_favorite": getattr(r, "is_favorite", False) or False,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/my-strategy-presets")
+def save_my_strategy_preset(payload: StrategyPresetPayload, db: Session = Depends(get_db)):
+    existing = db.query(MYStrategyPreset).filter(MYStrategyPreset.name == payload.name).first()
+    if existing:
+        existing.conditions_json = _json.dumps(payload.conditions)
+        existing.atr_sl_mult = payload.atr_sl_mult
+        existing.atr_tp_mult = payload.atr_tp_mult
+        existing.period = payload.period
+        existing.skip_flat = payload.skip_flat
+        existing.strategy_type = payload.strategy_type
+        existing.capital = payload.capital
+    else:
+        db.add(MYStrategyPreset(
+            name=payload.name,
+            conditions_json=_json.dumps(payload.conditions),
+            atr_sl_mult=payload.atr_sl_mult,
+            atr_tp_mult=payload.atr_tp_mult,
+            period=payload.period,
+            skip_flat=payload.skip_flat,
+            strategy_type=payload.strategy_type,
+            capital=payload.capital,
+        ))
+    db.commit()
+    return {"status": "ok", "name": payload.name}
+
+
+@router.put("/my-strategy-presets/{preset_id}/metrics")
+def update_my_preset_metrics(preset_id: int, payload: PresetMetricsPayload, db: Session = Depends(get_db)):
+    preset = db.query(MYStrategyPreset).filter(MYStrategyPreset.id == preset_id).first()
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    preset.bt_symbol = payload.symbol
+    preset.bt_win_rate = payload.win_rate
+    preset.bt_return_pct = payload.total_return_pct
+    preset.bt_max_dd_pct = payload.max_drawdown_pct
+    preset.bt_profit_factor = payload.profit_factor
+    preset.bt_sharpe = payload.sharpe_ratio
+    preset.bt_total_trades = payload.total_trades
+    preset.bt_tested_at = func.now()
+    db.commit()
+    return {"status": "ok", "id": preset_id}
+
+
+@router.delete("/my-strategy-presets/{preset_id}")
+def delete_my_strategy_preset(preset_id: int, db: Session = Depends(get_db)):
+    row = db.query(MYStrategyPreset).filter(MYStrategyPreset.id == preset_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    db.delete(row)
+    db.commit()
+    return {"status": "deleted", "id": preset_id}
+
+
+@router.put("/my-strategy-presets/{preset_id}/favorite")
+def toggle_my_preset_favorite(preset_id: int, db: Session = Depends(get_db)):
+    preset = db.query(MYStrategyPreset).filter(MYStrategyPreset.id == preset_id).first()
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    preset.is_favorite = not (preset.is_favorite or False)
+    db.commit()
+    return {"status": "ok", "id": preset_id, "is_favorite": preset.is_favorite}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# MY (Bursa) Stock Strategy Tags
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/my-stock-tags")
+def list_my_stock_tags(
+    symbol: _Opt[str] = None,
+    strategy_type: _Opt[str] = None,
+    db: Session = Depends(get_db),
+):
+    q = db.query(MYStockStrategyTag)
+    if symbol:
+        q = q.filter(MYStockStrategyTag.symbol == symbol.upper())
+    if strategy_type:
+        q = q.filter(MYStockStrategyTag.strategy_type == strategy_type)
+    rows = q.order_by(MYStockStrategyTag.symbol, MYStockStrategyTag.tagged_at.desc()).all()
+    return [
+        {
+            "id": r.id,
+            "symbol": r.symbol,
+            "strategy_type": r.strategy_type,
+            "strategy_name": r.strategy_name,
+            "period": r.period,
+            "capital": r.capital,
+            "win_rate": r.win_rate,
+            "return_pct": r.return_pct,
+            "profit_factor": r.profit_factor,
+            "max_dd_pct": r.max_dd_pct,
+            "sharpe": r.sharpe,
+            "total_trades": r.total_trades,
+            "tagged_at": r.tagged_at.isoformat() if r.tagged_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/my-stock-tags")
+def save_my_stock_tag(payload: StrategyTagPayload, db: Session = Depends(get_db)):
+    sym = payload.symbol.upper()
+    existing = db.query(MYStockStrategyTag).filter(
+        MYStockStrategyTag.symbol == sym,
+        MYStockStrategyTag.strategy_type == payload.strategy_type,
+    ).first()
+    if existing:
+        existing.strategy_name = payload.strategy_name
+        existing.period = payload.period
+        existing.capital = payload.capital
+        existing.win_rate = payload.win_rate
+        existing.return_pct = payload.return_pct
+        existing.profit_factor = payload.profit_factor
+        existing.max_dd_pct = payload.max_dd_pct
+        existing.sharpe = payload.sharpe
+        existing.total_trades = payload.total_trades
+        existing.tagged_at = func.now()
+    else:
+        db.add(MYStockStrategyTag(
+            symbol=sym,
+            strategy_type=payload.strategy_type,
+            strategy_name=payload.strategy_name,
+            period=payload.period,
+            capital=payload.capital,
+            win_rate=payload.win_rate,
+            return_pct=payload.return_pct,
+            profit_factor=payload.profit_factor,
+            max_dd_pct=payload.max_dd_pct,
+            sharpe=payload.sharpe,
+            total_trades=payload.total_trades,
+        ))
+    db.commit()
+    return {"status": "ok", "symbol": sym, "strategy_type": payload.strategy_type}
+
+
+@router.delete("/my-stock-tags/{tag_id}")
+def delete_my_stock_tag(tag_id: int, db: Session = Depends(get_db)):
+    row = db.query(MYStockStrategyTag).filter(MYStockStrategyTag.id == tag_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    db.delete(row)
+    db.commit()
+    return {"status": "deleted", "id": tag_id}
+
+
 @router.get("/backtest_1h")
 async def us_stock_backtest_1h(
     symbol: _Ann[str, Query()] = "AAPL",
@@ -2041,6 +2218,7 @@ async def us_stock_backtest_1h(
                 rsi=round(float(row["rsi"]), 1) if not _isnan(row.get("rsi")) else None,
                 macd_hist=round(float(row["macd_hist"]), 4) if not _isnan(row.get("macd_hist")) else None,
                 st_dir=int(row["st_dir"]) if not _isnan(row.get("st_dir")) else None,
+                st_line=round(float(row["st_line"]), 2) if not _isnan(row.get("st_line")) else None,
                 ht_line=round(float(row["ht_line"]), 2) if not _isnan(row.get("ht_line")) else None,
                 ht_dir=int(row["ht_dir"]) if not _isnan(row.get("ht_dir")) else None,
                 ht_high=round(float(row["ht_high"]), 2) if not _isnan(row.get("ht_high")) else None,
