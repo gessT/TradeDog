@@ -91,6 +91,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [starting, setStarting] = useState(false);
   const [launchFlash, setLaunchFlash] = useState<string | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
   // Snapshot the locked config when trading actually starts — so subsequent backtests don't affect it
   const [runningConfig, setRunningConfig] = useState<LockedTradingConfig | null>(null);
   // Use runningConfig while trading, lockedConfig otherwise
@@ -242,6 +243,9 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
           <span className="text-[10px] font-semibold tracking-tight text-white/90 shrink-0">
             Auto-Trader
           </span>
+          <button onClick={() => setShowGuide(v => !v)} className="shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white/30 hover:text-white/70 hover:bg-white/10 transition-colors" title="How it works">
+            ?
+          </button>
           {started && (
             <span className="text-[8px] text-violet-400/70 truncate" title={activeConfig?.preset ?? "Custom"}>
               · {activeConfig?.preset ?? "Custom"}
@@ -270,6 +274,40 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
         )}
       </div>
 
+      {/* ═══ How It Works guide ═══ */}
+      {showGuide && (
+        <div className="mx-2 mt-2 rounded-lg ring-1 ring-cyan-500/20 bg-gradient-to-b from-cyan-950/20 to-slate-950/80 overflow-hidden">
+          <div className="px-3 py-1.5 flex items-center justify-between border-b border-cyan-500/10">
+            <span className="text-[8px] uppercase tracking-widest text-cyan-400/60 font-bold">How It Works</span>
+            <button onClick={() => setShowGuide(false)} className="text-[9px] text-white/30 hover:text-white/60 transition-colors">✕</button>
+          </div>
+          <div className="px-3 py-2 space-y-2">
+            {[
+              { step: "1", icon: "⚙️", title: "Set Strategy", desc: "Configure conditions, SL & TP in the Strategy panel" },
+              { step: "2", icon: "▶", title: "Start Paper or Live", desc: "Click Paper Trade to simulate, or Live Trade for real" },
+              { step: "3", icon: "🔍", title: "Scanning", desc: "Auto-scans every bar close for entry signals matching your strategy" },
+              { step: "4", icon: "📈", title: "Auto Entry", desc: "When signal detected → opens position with your SL/TP" },
+              { step: "5", icon: "👁", title: "Monitoring", desc: "Watches price vs SL/TP and signal conditions in real-time" },
+              { step: "6", icon: "✅", title: "Auto Exit", desc: "Closes on SL hit, TP hit, or strategy signal flip" },
+              { step: "7", icon: "🔁", title: "Repeat", desc: "Goes back to scanning for next entry — same strategy, fully automatic" },
+            ].map((s) => (
+              <div key={s.step} className="flex items-start gap-2">
+                <div className="shrink-0 w-5 h-5 rounded-full bg-cyan-500/10 ring-1 ring-cyan-500/20 flex items-center justify-center">
+                  <span className="text-[8px] font-bold text-cyan-400">{s.step}</span>
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[9px]">{s.icon}</span>
+                    <span className="text-[9px] font-bold text-white/70">{s.title}</span>
+                  </div>
+                  <div className="text-[8px] text-white/30 leading-snug">{s.desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ═══ BLOCKED banner ═══ */}
       {state === "BLOCKED" && snap?.blocked_reason && (
         <div className="mx-2 mt-2 flex items-center justify-between gap-1.5 rounded-lg bg-red-500/10 ring-1 ring-red-500/20 px-2 py-1.5">
@@ -290,72 +328,140 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
         </div>
       )}
 
-      {/* ═══ Strategy STATUS — backtest metrics from locked config ═══ */}
-      {activeConfig ? (
-        <div className="mx-2 mt-2 rounded-lg ring-1 ring-violet-500/15 bg-violet-500/[0.03] overflow-hidden">
-          <div className="px-2 py-1.5 flex items-center justify-between border-b border-violet-500/10">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[7px] uppercase tracking-widest text-violet-400/60 font-bold">Strategy</span>
-              <span className="text-[8px] text-violet-300 font-bold truncate">{activeConfig.preset ?? "Custom"}</span>
+      {/* ═══ Status Hero — clear state at a glance ═══ */}
+      <div className="mx-2 mt-2">
+        {!started ? (
+          /* ── Not Running ── */
+          <div className="rounded-lg ring-1 ring-slate-700/40 bg-slate-800/20 p-3 text-center space-y-1">
+            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Not Running</div>
+            <div className="text-[8px] text-slate-600 leading-relaxed">
+              Start paper or live trading below.<br />
+              Strategy follows backtest conditions &amp; same SL/TP.
             </div>
-            <div className="flex items-center gap-1">
-              <span className="text-[7px] px-1 py-px rounded bg-slate-800 text-slate-400 ring-1 ring-slate-700/50 font-bold">{activeConfig.interval}</span>
-              <span className="text-[7px] px-1 py-px rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15 font-bold">SL {activeConfig.slMult}×</span>
-              <span className="text-[7px] px-1 py-px rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15 font-bold">TP {activeConfig.tpMult}×</span>
-            </div>
-          </div>
-          <div className="grid grid-cols-4 gap-px">
-            {[
-              { label: "Win Rate", value: `${activeConfig.metrics.win_rate.toFixed(1)}%`, color: activeConfig.metrics.win_rate >= 55 ? "text-emerald-400" : activeConfig.metrics.win_rate >= 45 ? "text-amber-400" : "text-rose-400" },
-              { label: "Return", value: `${activeConfig.metrics.total_return_pct >= 0 ? "+" : ""}${activeConfig.metrics.total_return_pct.toFixed(2)}%`, color: activeConfig.metrics.total_return_pct >= 0 ? "text-emerald-400" : "text-rose-400" },
-              { label: "Sharpe", value: activeConfig.metrics.sharpe_ratio.toFixed(2), color: activeConfig.metrics.sharpe_ratio >= 1 ? "text-emerald-400" : "text-white/60" },
-              { label: "PF", value: activeConfig.metrics.profit_factor.toFixed(2), color: activeConfig.metrics.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400" },
-            ].map((s, i) => (
-              <div key={i} className="bg-white/[0.02] py-1 text-center">
-                <div className="text-[6px] uppercase tracking-widest text-white/20 font-medium">{s.label}</div>
-                <div className={`text-[9px] font-bold mt-px ${s.color}`}>{s.value}</div>
+            {activeConfig && (
+              <div className="flex items-center justify-center gap-1.5 mt-1.5">
+                <span className="text-[7px] px-1.5 py-px rounded bg-slate-800 text-slate-400 ring-1 ring-slate-700/50 font-bold">{activeConfig.interval}</span>
+                <span className="text-[7px] px-1.5 py-px rounded bg-violet-500/10 text-violet-300 ring-1 ring-violet-500/20 font-bold">{activeConfig.preset ?? "Custom"}</span>
+                <span className="text-[7px] px-1.5 py-px rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15 font-bold">SL {activeConfig.slMult}×</span>
+                <span className="text-[7px] px-1.5 py-px rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15 font-bold">TP {activeConfig.tpMult}×</span>
               </div>
-            ))}
+            )}
           </div>
-          <div className="grid grid-cols-4 gap-px">
-            {[
-              { label: "Trades", value: String(activeConfig.metrics.total_trades), color: "text-white/60" },
-              { label: "W/L", value: `${activeConfig.metrics.winners}/${activeConfig.metrics.losers}`, color: "text-white/60" },
-              { label: "Max DD", value: `${activeConfig.metrics.max_drawdown_pct.toFixed(1)}%`, color: "text-rose-400" },
-              { label: "R:R", value: `1:${activeConfig.metrics.risk_reward_ratio.toFixed(2)}`, color: "text-cyan-400" },
-            ].map((s, i) => (
-              <div key={i} className="bg-white/[0.01] py-1 text-center">
-                <div className="text-[6px] uppercase tracking-widest text-white/20 font-medium">{s.label}</div>
-                <div className={`text-[9px] font-bold mt-px ${s.color}`}>{s.value}</div>
+        ) : snap?.position ? (
+          /* ── Holding Position ── */
+          <div className={`rounded-lg overflow-hidden ${
+            mode === "live" ? "ring-1 ring-red-500/25" : "ring-1 ring-violet-500/25"
+          }`}>
+            {/* Status badge */}
+            <div className={`px-3 py-1.5 flex items-center justify-between ${
+              mode === "live" ? "bg-red-500/[0.06]" : "bg-violet-500/[0.06]"
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 ${
+                    snap.position.direction === "CALL" ? "bg-emerald-400" : "bg-red-400"
+                  }`} />
+                  <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                    snap.position.direction === "CALL" ? "bg-emerald-400" : "bg-red-400"
+                  }`} />
+                </span>
+                <span className={`text-xs font-black tracking-tight ${snap.position.direction === "CALL" ? "text-emerald-400" : "text-red-400"}`}>
+                  {snap.position.direction === "CALL" ? "▲ LONG" : "▼ SHORT"}
+                </span>
+                <span className="text-[8px] text-white/25 font-mono">×{snap.position.qty}</span>
               </div>
-            ))}
-          </div>
-          {/* Enabled conditions pills */}
-          <div className="px-2 py-1.5 flex flex-wrap gap-0.5 border-t border-violet-500/10">
-            {Object.entries(activeConfig.conditionToggles).filter(([, v]) => v).map(([k]) => (
-              <span key={k} className="px-1 py-px rounded text-[6px] bg-emerald-500/10 text-emerald-400/70 ring-1 ring-emerald-500/10 font-bold">
-                {k.replace(/_/g, " ")}
-              </span>
-            ))}
-          </div>
-          {runningConfig && (
-            <div className="px-2 py-0.5 border-t border-violet-500/10 text-[7px] text-violet-400/40 text-center">
-              Locked at {new Date(runningConfig.lockedAt).toLocaleTimeString()} — backtest changes won&apos;t affect running trader
+              <div className="flex items-center gap-1">
+                {mode === "live"
+                  ? <span className="text-[7px] px-1.5 py-px rounded bg-red-500/15 text-red-400 ring-1 ring-red-500/25 font-bold">LIVE</span>
+                  : <span className="text-[7px] px-1.5 py-px rounded bg-emerald-500/10 text-emerald-400/60 ring-1 ring-emerald-500/15 font-bold">PAPER</span>
+                }
+              </div>
             </div>
-          )}
-        </div>
-      ) : (
-        <div className="mx-2 mt-2 rounded-lg ring-1 ring-slate-700/30 bg-slate-800/30 px-3 py-4 text-center">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mx-auto mb-1.5 text-slate-600">
-            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-          </svg>
-          <div className="text-[9px] text-slate-500 font-bold mb-0.5">No Strategy Loaded</div>
-          <div className="text-[7px] text-slate-600 leading-relaxed">
-            Run a backtest in the Strategy panel first.<br />
-            The latest config &amp; results will appear here.
+
+            {/* P&L hero */}
+            {unrealizedPnl !== null && (
+              <div className={`px-3 py-2 text-center ${unrealizedPnl >= 0 ? "bg-emerald-500/[0.03]" : "bg-red-500/[0.03]"}`}>
+                <div className={`text-xl font-black tabular-nums tracking-tight ${unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl.toFixed(2)}
+                </div>
+                <div className="text-[8px] text-white/25 mt-0.5">Unrealized P&L</div>
+              </div>
+            )}
+
+            {/* Entry / SL / TP */}
+            <div className="px-3 py-1.5 space-y-1.5">
+              <div className="flex items-center justify-between text-[9px]">
+                <span className="text-white/30">Entry</span>
+                <span className="text-white/60 font-mono font-bold">${snap.position.entry_price.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center gap-1 text-[8px] font-mono">
+                <span className="text-red-400/70">SL {snap.position.stop_loss.toFixed(2)}</span>
+                <div className="flex-1 h-1 bg-slate-800/60 rounded-full overflow-hidden relative">
+                  {(() => {
+                    const sl = snap.position.stop_loss;
+                    const tp = snap.position.take_profit;
+                    const entry = snap.position.entry_price;
+                    const range = Math.abs(tp - sl);
+                    if (!livePrice || range === 0) return null;
+                    const isLong = snap.position.direction === "CALL";
+                    const progress = isLong ? (livePrice - sl) / range : (sl - livePrice) / range;
+                    const pct = Math.max(0, Math.min(100, progress * 100));
+                    return (
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          pct > 70 ? "bg-gradient-to-r from-amber-500 to-emerald-400" :
+                          pct > 40 ? "bg-gradient-to-r from-amber-600 to-amber-400" :
+                          "bg-gradient-to-r from-red-600 to-red-400"
+                        }`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    );
+                  })()}
+                </div>
+                <span className="text-emerald-400/70">TP {snap.position.take_profit.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between text-[7px] text-white/20">
+                <span>{snap.position.entry_time?.slice(0, 16)}</span>
+                <span>SL {activeConfig?.slMult ?? 0}× · TP {activeConfig?.tpMult ?? 0}× ATR</span>
+              </div>
+            </div>
+
+            {/* What happens next */}
+            <div className="px-3 py-1.5 border-t border-white/[0.04] text-center">
+              <span className="text-[7px] text-white/25">Monitoring — will auto-exit on SL/TP hit or signal flip</span>
+            </div>
           </div>
-        </div>
-      )}
+        ) : (
+          /* ── Scanning / Waiting for Entry ── */
+          <div className="rounded-lg ring-1 ring-emerald-500/15 bg-emerald-500/[0.03] overflow-hidden">
+            <div className="relative px-3 py-3 text-center overflow-hidden">
+              <div className="at-scan-sweep" />
+              <div className="flex items-center justify-center gap-2 mb-1">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+                </span>
+                <span className="text-[11px] text-emerald-400 font-bold uppercase tracking-widest">Waiting for Entry</span>
+              </div>
+              <div className="text-[8px] text-white/30">
+                Scanning every bar close · same strategy as backtest
+              </div>
+              {activeConfig && (
+                <div className="flex items-center justify-center gap-1.5 mt-2">
+                  <span className="text-[7px] px-1.5 py-px rounded bg-slate-800 text-slate-400 ring-1 ring-slate-700/50 font-bold">{activeConfig.interval}</span>
+                  <span className="text-[7px] px-1.5 py-px rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15 font-bold">SL {activeConfig.slMult}×</span>
+                  <span className="text-[7px] px-1.5 py-px rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15 font-bold">TP {activeConfig.tpMult}×</span>
+                </div>
+              )}
+            </div>
+            {state === "COOLDOWN" && snap?.cooldown_remaining && (
+              <div className="px-3 py-1 border-t border-amber-500/10 text-center">
+                <span className="text-[8px] text-amber-400/70 font-bold">Cooldown — {Math.ceil(snap.cooldown_remaining)}s remaining</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* ═══ LIVE warning banner ═══ */}
       {started && mode === "live" && !launchFlash && (
@@ -403,12 +509,11 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
       {/* ═══ Controls ═══ */}
       <div className="px-3 py-2 space-y-2">
         {!started ? (
-          activeConfig ? (
           <div className="flex gap-1.5">
             <button onClick={() => handleStart("paper")}
-              disabled={starting}
+              disabled={starting || !lockedConfig}
               className={`flex-1 py-1.5 rounded-lg text-[9px] font-bold tracking-wide transition-all ${
-                starting
+                starting || !lockedConfig
                   ? "bg-emerald-600/10 text-emerald-400/50 ring-1 ring-emerald-500/10 cursor-wait"
                   : "bg-gradient-to-r from-emerald-600/20 to-emerald-500/10 hover:from-emerald-600/30 hover:to-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/20 hover:ring-emerald-500/40 active:scale-95"
               }`}>
@@ -420,9 +525,9 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
               ) : "Paper Trade"}
             </button>
             <button onClick={() => handleStart("live")}
-              disabled={starting}
+              disabled={starting || !lockedConfig}
               className={`flex-1 py-2 rounded-lg text-[9px] font-extrabold tracking-wider transition-all ${
-                starting
+                starting || !lockedConfig
                   ? "bg-red-600/10 text-red-300/50 ring-1 ring-red-500/10 cursor-wait"
                   : "bg-gradient-to-r from-red-600/30 to-red-500/20 hover:from-red-600/50 hover:to-red-500/30 text-red-300 ring-2 ring-red-500/30 hover:ring-red-500/50 active:scale-95"
               }`}>
@@ -446,11 +551,6 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
               🗑
             </button>
           </div>
-          ) : (
-            <div className="text-center text-[8px] text-slate-600 py-1.5">
-              Run a backtest first to enable trading
-            </div>
-          )
         ) : (
           <div className="flex gap-1.5">
             <button onClick={handleStop}
@@ -470,47 +570,6 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
           </div>
         )}
       </div>
-
-      {/* ═══ Position card ═══ */}
-      {started && snap?.position && (
-        <div className={`mx-3 mb-2 rounded-lg p-2 space-y-1.5 ${
-          mode === "live"
-            ? "bg-red-500/[0.04] ring-1 ring-red-500/20"
-            : "bg-white/[0.03] ring-1 ring-white/[0.06]"
-        }`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <span className={`text-xs font-black tracking-tight ${snap.position.direction === "CALL" ? "text-emerald-400" : "text-red-400"}`}>
-                {snap.position.direction === "CALL" ? "↗ LONG" : "↘ SHORT"}
-              </span>
-              <span className="text-[8px] text-white/20 font-mono">×{snap.position.qty}</span>
-              {mode === "live"
-                ? <span className="text-[7px] px-1 py-px rounded bg-red-500/15 text-red-400 ring-1 ring-red-500/25 font-bold">LIVE</span>
-                : <span className="text-[7px] px-1 py-px rounded bg-emerald-500/10 text-emerald-400/60 ring-1 ring-emerald-500/15 font-bold">PAPER</span>
-              }
-            </div>
-            <span className="font-mono text-[10px] text-white/50">${snap.position.entry_price.toFixed(2)}</span>
-          </div>
-
-          {/* SL / TP bar */}
-          <div className="flex items-center gap-1 text-[8px] font-mono">
-            <span className="text-red-400/70">SL {snap.position.stop_loss.toFixed(2)}</span>
-            <div className="flex-1 h-px bg-gradient-to-r from-red-500/30 via-white/10 to-emerald-500/30 rounded" />
-            <span className="text-emerald-400/70">TP {snap.position.take_profit.toFixed(2)}</span>
-          </div>
-          <div className="text-[7px] text-white/15 text-center">
-            SL {activeConfig?.slMult ?? 0}x ATR | TP {activeConfig?.tpMult ?? 0}x ATR
-          </div>
-
-          {/* Unrealized P&L */}
-          {unrealizedPnl !== null && (
-            <div className={`text-center text-sm font-black tracking-tight ${unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-              {unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl.toFixed(2)}
-              <span className="text-[8px] text-white/20 ml-1 font-normal">unrealized</span>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ═══ Daily stats ═══ */}
       {started && snap && (
