@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 import { US_STOCKS, US_SECTORS, US_DEFAULT_STOCKS } from "../../constants/usStocks";
 
+const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
+const API_BASE = RAW_API_BASE
+  ? (RAW_API_BASE.startsWith("http") ? RAW_API_BASE : `https://${RAW_API_BASE}`)
+  : "http://127.0.0.1:8000";
+
 // ═══════════════════════════════════════════════════════════════════════
 // Left Sidebar — Watchlist  (TradingView-inspired)
 // ═══════════════════════════════════════════════════════════════════════
@@ -81,7 +86,7 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
   useEffect(() => {
     const fetchFearGreed = async () => {
       try {
-        const res = await fetch("http://127.0.0.1:8000/stock/us-fear-greed");
+        const res = await fetch(`${API_BASE}/stock/us-fear-greed`);
         if (!res.ok) return;
         const data = await res.json();
         setFearGreed({
@@ -110,7 +115,7 @@ export default function USWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
     if (symKey === fetchedSymKey && fetchedSymKey !== "") return;
     setFetchedSymKey(symKey);
 
-    const url = `http://127.0.0.1:8000/stock/us-quotes?symbols=${symbols.join(",")}`;
+    const url = `${API_BASE}/stock/us-quotes?symbols=${symbols.join(",")}`;
 
     const fetchQuotes = async () => {
       try {

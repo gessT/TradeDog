@@ -4,6 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { fetchUS1HBacktest, fetchVPBBacktest, fetchVPRBacktest, fetchMTFBacktest } from "../../services/api";
 import { US_DEFAULT_SYMBOLS, US_SECTORS, US_STOCKS_BY_SECTOR } from "../../constants/usStocks";
 
+const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
+const API_BASE = RAW_API_BASE
+  ? (RAW_API_BASE.startsWith("http") ? RAW_API_BASE : `https://${RAW_API_BASE}`)
+  : "http://127.0.0.1:8000";
+
 // ═══════════════════════════════════════════════════════════════════════
 // Strategy Planner — Modern unified view
 // ═══════════════════════════════════════════════════════════════════════
@@ -217,7 +222,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
   // ── Load saved presets ──────────────────────────────
   const fetchPresets = useCallback(async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/stock/us-strategy-presets");
+      const res = await fetch(`${API_BASE}/stock/us-strategy-presets`);
       if (res.ok) {
         const data = await res.json();
         setPresets(data);
@@ -228,7 +233,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
 
   // ── Toggle favorite ─────────────────────────────────
   const toggleFavorite = useCallback(async (id: number) => {
-    await fetch(`http://127.0.0.1:8000/stock/us-strategy-presets/${id}/favorite`, { method: "PUT" });
+    await fetch(`${API_BASE}/stock/us-strategy-presets/${id}/favorite`, { method: "PUT" });
     await fetchPresets();
   }, [fetchPresets]);
 
@@ -278,7 +283,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
     if (!editing.name.trim()) return;
     setSaving(true);
     try {
-      await fetch("http://127.0.0.1:8000/stock/us-strategy-presets", {
+      await fetch(`${API_BASE}/stock/us-strategy-presets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(editing),
@@ -299,7 +304,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
     }
     // No tags — delete directly
     try {
-      await fetch(`http://127.0.0.1:8000/stock/us-strategy-presets/${id}`, { method: "DELETE" });
+      await fetch(`${API_BASE}/stock/us-strategy-presets/${id}`, { method: "DELETE" });
       await fetchPresets();
       if (activePreset?.name === name) onApply({ ...EMPTY_PRESET, name: "breakout_v2" });
       showToast(`Deleted "${name}"`);
@@ -311,10 +316,10 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
     try {
       // Remove all affected tags first
       for (const tag of deleteDialog.affectedTags) {
-        await fetch(`http://127.0.0.1:8000/stock/us-stock-tags/${tag.id}`, { method: "DELETE" });
+        await fetch(`${API_BASE}/stock/us-stock-tags/${tag.id}`, { method: "DELETE" });
       }
       // Then delete the preset
-      await fetch(`http://127.0.0.1:8000/stock/us-strategy-presets/${deleteDialog.id}`, { method: "DELETE" });
+      await fetch(`${API_BASE}/stock/us-strategy-presets/${deleteDialog.id}`, { method: "DELETE" });
       await fetchPresets();
       onTagSaved?.();
       if (activePreset?.name === deleteDialog.name) onApply({ ...EMPTY_PRESET, name: "breakout_v2" });
@@ -500,11 +505,11 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                             if (!selectedSymbol) return;
                             try {
                               if (existingTag) {
-                                await fetch(`http://127.0.0.1:8000/stock/us-stock-tags/${existingTag.id}`, { method: "DELETE" });
+                                await fetch(`${API_BASE}/stock/us-stock-tags/${existingTag.id}`, { method: "DELETE" });
                                 onTagSaved?.();
                                 showToast(`Untagged ${selectedSymbol} ✕ ${st.label}`);
                               } else {
-                                await fetch("http://127.0.0.1:8000/stock/us-stock-tags", {
+                                await fetch(`${API_BASE}/stock/us-stock-tags`, {
                                   method: "POST",
                                   headers: { "Content-Type": "application/json" },
                                   body: JSON.stringify({ symbol: selectedSymbol, strategy_type: st.key }),
@@ -658,11 +663,11 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                               if (!selectedSymbol) return;
                               try {
                                 if (existingTag) {
-                                  await fetch(`http://127.0.0.1:8000/stock/us-stock-tags/${existingTag.id}`, { method: "DELETE" });
+                                  await fetch(`${API_BASE}/stock/us-stock-tags/${existingTag.id}`, { method: "DELETE" });
                                   onTagSaved?.();
                                   showToast(`Untagged ${selectedSymbol} ✕ ${p.name}`);
                                 } else {
-                                  await fetch("http://127.0.0.1:8000/stock/us-stock-tags", {
+                                  await fetch(`${API_BASE}/stock/us-stock-tags`, {
                                     method: "POST",
                                     headers: { "Content-Type": "application/json" },
                                     body: JSON.stringify({ symbol: selectedSymbol, strategy_type: p.strategy_type, strategy_name: p.name }),
@@ -1225,7 +1230,7 @@ export default function USStrategyPlanner({ activePreset, onApply, onPresetsChan
                               <button
                                 onClick={async () => {
                                   try {
-                                    await fetch("http://127.0.0.1:8000/stock/us-stock-tags", {
+                                    await fetch(`${API_BASE}/stock/us-stock-tags`, {
                                       method: "POST",
                                       headers: { "Content-Type": "application/json" },
                                       body: JSON.stringify({

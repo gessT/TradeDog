@@ -9,6 +9,11 @@ import USOrderPanel from "./USOrderPanel";
 import USBottomPanel from "./USBottomPanel";
 import USStrategyPlanner, { type StrategyPreset } from "./USStrategyPlanner";
 
+const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
+const API_BASE = RAW_API_BASE
+  ? (RAW_API_BASE.startsWith("http") ? RAW_API_BASE : `https://${RAW_API_BASE}`)
+  : "http://127.0.0.1:8000";
+
 // ═══════════════════════════════════════════════════════════════════════
 // US Stock Trading Dashboard — Moomoo-inspired, strategy-first layout
 // ─────────────────────────────────────────────────────────────────────
@@ -118,7 +123,7 @@ const USDashboard = forwardRef<USDashboardHandle, USDashboardProps>(function USD
   const [stockTags, setStockTags] = useState<StockTag[]>([]);
   const fetchTags = useCallback(async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/stock/us-stock-tags");
+      const res = await fetch(`${API_BASE}/stock/us-stock-tags`);
       if (res.ok) setStockTags(await res.json());
     } catch { /* offline */ }
   }, []);
@@ -128,7 +133,7 @@ const USDashboard = forwardRef<USDashboardHandle, USDashboardProps>(function USD
   const [favSymbols, setFavSymbols] = useState<string[]>([]);
   const fetchFavs = useCallback(async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/stock/starred?market=US");
+      const res = await fetch(`${API_BASE}/stock/starred?market=US`);
       if (res.ok) {
         const data: { symbol: string }[] = await res.json();
         setFavSymbols(data.map((d) => d.symbol));
@@ -141,13 +146,13 @@ const USDashboard = forwardRef<USDashboardHandle, USDashboardProps>(function USD
     if (favSymbols.includes(symbol)) {
       // Remove
       try {
-        await fetch(`http://127.0.0.1:8000/stock/starred?symbol=${encodeURIComponent(symbol)}`, { method: "DELETE" });
+        await fetch(`${API_BASE}/stock/starred?symbol=${encodeURIComponent(symbol)}`, { method: "DELETE" });
         setFavSymbols((prev) => prev.filter((s) => s !== symbol));
       } catch { /* offline */ }
     } else {
       // Add
       try {
-        await fetch("http://127.0.0.1:8000/stock/starred", {
+        await fetch(`${API_BASE}/stock/starred`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ symbol, name, market: "US" }),
@@ -251,7 +256,7 @@ const USDashboard = forwardRef<USDashboardHandle, USDashboardProps>(function USD
       // Save backtest metrics to preset in DB
       if (activePreset?.id && data.metrics) {
         try {
-          await fetch(`http://127.0.0.1:8000/stock/us-strategy-presets/${activePreset.id}/metrics`, {
+          await fetch(`${API_BASE}/stock/us-strategy-presets/${activePreset.id}/metrics`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -265,7 +270,7 @@ const USDashboard = forwardRef<USDashboardHandle, USDashboardProps>(function USD
             }),
           });
           // Refresh presets so strategy cards get updated metrics
-          const res = await fetch("http://127.0.0.1:8000/stock/us-strategy-presets");
+          const res = await fetch(`${API_BASE}/stock/us-strategy-presets`);
           if (res.ok) {
             const updated = await res.json();
             setSavedPresets(updated);
@@ -368,7 +373,7 @@ const USDashboard = forwardRef<USDashboardHandle, USDashboardProps>(function USD
 
   const saveTestAllTag = useCallback(async (row: TestAllRow) => {
     try {
-      await fetch("http://127.0.0.1:8000/stock/us-stock-tags", {
+      await fetch(`${API_BASE}/stock/us-stock-tags`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
