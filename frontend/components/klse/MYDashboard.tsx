@@ -163,11 +163,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     }
   }, [selectedSymbol, backtestPeriod, disabledConditions, atrSlMult, atrTpMult, capital]);
 
-  // Auto-run only on symbol or period change (not on strategy setting changes)
-  useEffect(() => {
-    runBacktest();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSymbol, backtestPeriod]);
+  // No auto-run — user clicks "Run Backtest" manually
 
   // ── Handlers
   const handleSymbolChange = useCallback((sym: string, name: string) => {
@@ -260,14 +256,37 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           )}
           {/* Chart — 60% height */}
           <div className="h-[60%] min-h-[240px] shrink-0">
-            <MYMainChart
-              candles={btData?.candles ?? []}
-              trades={btData?.trades ?? []}
-              mode={mode}
-              overlays={overlays}
-              indicators={indicators}
-              focusTime={focusTime}
-            />
+            {!btData && !btLoading ? (
+              <div className="flex flex-col items-center justify-center h-full bg-slate-950/60 text-center px-6">
+                <div className="text-3xl mb-3">\uD83C\uDDF2\uD83C\uDDFE</div>
+                <div className="text-sm font-bold text-slate-200 mb-1">Bursa Malaysia — Breakout 1H Strategy</div>
+                <div className="text-[11px] text-slate-400 max-w-sm leading-relaxed mb-4">
+                  Backtest Bursa stocks with a multi-indicator breakout strategy. Configure entry/exit conditions 
+                  and parameters in the Strategy panel, then click <span className="text-cyan-400 font-semibold">Run Backtest</span> to analyse.
+                </div>
+                <div className="flex flex-wrap justify-center gap-1.5 mb-4">
+                  {["EMA Trend", "SuperTrend", "HalfTrend", "RSI", "MACD", "Volume"].map((tag) => (
+                    <span key={tag} className="text-[9px] px-2 py-0.5 rounded-full bg-slate-800/60 text-slate-500 border border-slate-700/40">{tag}</span>
+                  ))}
+                </div>
+                <button
+                  onClick={runBacktest}
+                  className="px-5 py-2 rounded-lg text-[11px] font-bold bg-gradient-to-r from-cyan-500 to-blue-500 text-white hover:from-cyan-400 hover:to-blue-400 transition-all active:scale-[0.98]"
+                >
+                  \u25B6 Run Backtest
+                </button>
+                <div className="text-[9px] text-slate-600 mt-2">{selectedSymbol.replace(".KL", "")} \u00B7 {backtestPeriod}</div>
+              </div>
+            ) : (
+              <MYMainChart
+                candles={btData?.candles ?? []}
+                trades={btData?.trades ?? []}
+                mode={mode}
+                overlays={overlays}
+                indicators={indicators}
+                focusTime={focusTime}
+              />
+            )}
           </div>
 
           {/* Bottom Panel */}
