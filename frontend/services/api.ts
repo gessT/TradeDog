@@ -1850,6 +1850,7 @@ export type AutoTraderSnapshot = {
     daily_limit: number;
     daily_loss_limit: number;
   };
+  scan_count: number;
 };
 
 export type AutoTraderTickResult = {

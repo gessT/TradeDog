@@ -565,6 +565,29 @@ export const BUILT_IN_PRESETS: BuiltInPreset[] = [
       smc_fvg: false,
     },
   },
+  {
+    name: "⚡ Keep GOING",
+    desc: "Always-in-market scalp — EMA5/13 + SuperTrend + RSI, 5m",
+    interval: "5m",
+    sl: 2.5,
+    tp: 1.5,
+    toggles: {
+      ema_trend: true,
+      ema_slope: false,
+      pullback: false,
+      breakout: false,
+      supertrend: true,
+      macd_momentum: false,
+      rsi_momentum: true,
+      volume_spike: false,
+      atr_range: false,
+      session_ok: false,
+      adx_ok: false,
+      smc_bos: false,
+      smc_ob: false,
+      smc_fvg: false,
+    },
+  },
 ];
 
 /** Compute next candle close time for a given interval (minutes). Returns ms epoch. */

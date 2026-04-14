@@ -281,6 +281,15 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
         </div>
       )}
 
+      {/* ═══ Scan info bar ═══ */}
+      {started && snap && (
+        <div className="mx-3 mt-2 flex items-center gap-3 text-[10px] text-white/40">
+          <span>Interval: <span className="text-white/60 font-medium">{activeConfig?.interval ?? "5m"}</span></span>
+          <span>Scans: <span className="text-white/60 font-medium">{snap.scan_count ?? 0}</span></span>
+          <span>Daily: <span className="text-white/60 font-medium">{snap.daily_trades ?? 0}</span></span>
+        </div>
+      )}
+
       {/* ═══ Strategy STATUS — backtest metrics from locked config ═══ */}
       {activeConfig ? (
         <div className="mx-3 mt-3 rounded-xl ring-1 ring-violet-500/15 bg-violet-500/[0.03] overflow-hidden">
