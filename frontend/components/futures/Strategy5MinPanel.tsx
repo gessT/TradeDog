@@ -1009,7 +1009,7 @@ function ExamTab({
               loading ? "bg-slate-800 text-slate-500 cursor-wait" : "bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95"
             }`}
           >
-            {loading ? "Analysing…" : "Run Backtest"}
+            {loading ? "Loading" : "Run Backtest"}
           </button>
         </div>
       )}
@@ -1819,7 +1819,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   : "bg-gradient-to-r from-cyan-600 to-cyan-500 text-white hover:from-cyan-500 hover:to-cyan-400 active:scale-95 shadow-md shadow-cyan-900/30"
               }`}
             >
-              {loading ? "Analysing…" : "▶ Backtest"}
+              {loading ? "Loading" : "▶ Backtest"}
             </button>
             <button
               onClick={runConditionOptimization}
@@ -2204,8 +2204,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             <div className="flex items-center justify-center min-h-[300px]">
               <div className="flex flex-col items-center gap-3">
                 <div className="w-7 h-7 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-                <span className="text-[11px] text-cyan-400 font-bold">Analysing strategy…</span>
-                <span className="text-[9px] text-slate-600">Fetching {period} data & simulating trades</span>
+                <span className="text-[9px] text-slate-600">Fetching {period} data</span>
               </div>
             </div>
           )}
@@ -2517,7 +2516,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm rounded-lg">
                     <div className="flex flex-col items-center gap-2">
                       <div className="w-5 h-5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-                      <span className="text-[10px] text-cyan-400 font-bold">Updating results…</span>
+                      <span className="text-[10px] text-cyan-400 font-bold">Loading</span>
                     </div>
                   </div>
                 )}

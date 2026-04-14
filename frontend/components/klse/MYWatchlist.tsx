@@ -74,35 +74,67 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
   const [searchQuery, setSearchQuery] = useState("");
 
   // Fetch real prices from backend /stock/us-quotes (works for .KL symbols too via yfinance)
+  const [quotes, setQuotes] = useState<Record<string, { price: number; change_pct: number }>>({});
   const [fetchedSymKey, setFetchedSymKey] = useState("");
+
+  // Determine which symbols to fetch: favs + currently visible all-mode stocks
+  const allVisibleSymbols = (() => {
+    const base = items.map((w) => w.symbol);
+    if (viewMode === "all" || searchQuery) {
+      const extra = MY_STOCKS.map((s) => s.symbol).filter((s) => !base.includes(s));
+      return [...base, ...extra];
+    }
+    return base;
+  })();
+
   useEffect(() => {
-    const symbols = items.map((w) => w.symbol);
-    const symKey = symbols.sort().join(",");
+    const symbols = allVisibleSymbols;
+    const symKey = [...symbols].sort().join(",");
     if (symKey === fetchedSymKey && fetchedSymKey !== "") return;
     setFetchedSymKey(symKey);
 
-    const url = `${API_BASE}/stock/us-quotes?symbols=${symbols.join(",")}`;
-
     const fetchQuotes = async () => {
-      try {
-        const res = await fetch(url);
-        if (!res.ok) return;
-        const json = await res.json();
-        const data: Array<{ symbol: string; price: number; change_pct: number }> = json.quotes ?? json;
-        setItems((prev) =>
-          prev.map((item) => {
-            const q = data.find((d) => d.symbol === item.symbol);
-            if (!q) return item;
-            return { ...item, price: q.price, change_pct: q.change_pct };
-          }),
-        );
-      } catch { /* backend offline */ }
+      // Fetch in batches of 30 to avoid URL length issues
+      const batches: string[][] = [];
+      for (let i = 0; i < symbols.length; i += 30) {
+        batches.push(symbols.slice(i, i + 30));
+      }
+      const allData: Array<{ symbol: string; price: number; change_pct: number }> = [];
+      for (const batch of batches) {
+        try {
+          const res = await fetch(`${API_BASE}/stock/us-quotes?symbols=${batch.join(",")}`);
+          if (!res.ok) continue;
+          const json = await res.json();
+          const data = json.quotes ?? json;
+          allData.push(...data);
+        } catch { /* backend offline */ }
+      }
+      if (allData.length === 0) return;
+
+      // Update quotes map
+      setQuotes((prev) => {
+        const next = { ...prev };
+        for (const q of allData) {
+          if (q.price > 0) next[q.symbol] = { price: q.price, change_pct: q.change_pct };
+        }
+        return next;
+      });
+
+      // Also update items state for favs
+      setItems((prev) =>
+        prev.map((item) => {
+          const q = allData.find((d) => d.symbol === item.symbol);
+          if (!q) return item;
+          return { ...item, price: q.price, change_pct: q.change_pct };
+        }),
+      );
     };
 
     fetchQuotes();
     const iv = setInterval(fetchQuotes, 30000);
     return () => clearInterval(iv);
-  }, [items, fetchedSymKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchedSymKey, viewMode, searchQuery]);
 
   useEffect(() => {
     if (!sectorDropdownOpen) return;
@@ -118,6 +150,9 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
       return items.filter((i) => {
         if (sectorFilter !== "ALL" && i.sector !== sectorFilter) return false;
         return true;
+      }).map((i) => {
+        const qt = quotes[i.symbol];
+        return qt ? { ...i, price: qt.price, change_pct: qt.change_pct } : i;
       });
     }
 
@@ -126,14 +161,14 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
       if (q) return s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q);
       return true;
     }).map((s) => {
-      const existing = items.find((i) => i.symbol === s.symbol);
+      const qt = quotes[s.symbol];
       return {
         symbol: s.symbol,
         name: s.name,
         sector: s.sector,
         cap: s.cap,
-        price: existing?.price ?? 0,
-        change_pct: existing?.change_pct ?? 0,
+        price: qt?.price ?? 0,
+        change_pct: qt?.change_pct ?? 0,
         signal: "—" as const,
       };
     });

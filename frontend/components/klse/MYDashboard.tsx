@@ -341,7 +341,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
                   <div className="absolute inset-0 rounded-full border-2 border-cyan-500/20" />
                   <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-400 animate-spin" />
                 </div>
-                <div className="text-[11px] font-bold text-cyan-400 tracking-wide">Analysing strategy\u2026</div>
+
                 <div className="text-[9px] text-slate-500">{selectedName} ({selectedSymbol.replace(".KL", "")})</div>
                 <div className="w-full h-1.5 rounded-full bg-slate-800/80 overflow-hidden mt-1">
                   <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-400 animate-[progress_2s_ease-in-out_infinite]" style={{ width: "100%", animation: "progress 2s ease-in-out infinite" }} />
