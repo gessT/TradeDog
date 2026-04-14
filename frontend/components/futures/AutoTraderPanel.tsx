@@ -547,67 +547,6 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
         {tab === "status" && (
           <div className="p-2 space-y-2">
 
-            {/* ── Backtest Results Card ── */}
-            {activeConfig ? (
-              <div className="rounded-lg ring-1 ring-cyan-500/15 bg-gradient-to-b from-cyan-950/20 to-slate-950/80 overflow-hidden">
-                <div className="px-2 py-1.5 flex items-center justify-between border-b border-cyan-500/10">
-                  <span className="text-[7px] uppercase tracking-widest text-cyan-400/60 font-bold">Backtest Results</span>
-                  <div className="flex items-center gap-1">
-                    <span className="text-[7px] px-1 py-px rounded bg-slate-800 text-slate-300 ring-1 ring-slate-700/50 font-bold">{activeConfig.interval}</span>
-                    <span className="text-[7px] px-1 py-px rounded bg-violet-500/10 text-violet-300 ring-1 ring-violet-500/20 font-bold">{activeConfig.preset ?? "Custom"}</span>
-                  </div>
-                </div>
-
-                {/* Hero: Win Rate + ROI */}
-                <div className="grid grid-cols-2 gap-px">
-                  <div className="bg-white/[0.02] px-3 py-2 text-center">
-                    <div className="text-[7px] uppercase tracking-widest text-white/25 font-medium mb-0.5">Win Rate</div>
-                    <div className={`text-lg font-black tabular-nums tracking-tight ${activeConfig.metrics.win_rate >= 55 ? "text-emerald-400" : activeConfig.metrics.win_rate >= 45 ? "text-amber-400" : "text-rose-400"}`}>
-                      {activeConfig.metrics.win_rate.toFixed(1)}%
-                    </div>
-                    <div className="text-[7px] text-white/25 mt-px">{activeConfig.metrics.winners}W / {activeConfig.metrics.losers}L</div>
-                  </div>
-                  <div className="bg-white/[0.02] px-3 py-2 text-center">
-                    <div className="text-[7px] uppercase tracking-widest text-white/25 font-medium mb-0.5">ROI</div>
-                    <div className={`text-lg font-black tabular-nums tracking-tight ${activeConfig.metrics.total_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                      {activeConfig.metrics.total_return_pct >= 0 ? "+" : ""}{activeConfig.metrics.total_return_pct.toFixed(1)}%
-                    </div>
-                    <div className="text-[7px] text-white/25 mt-px">{activeConfig.metrics.total_trades} trades</div>
-                  </div>
-                </div>
-
-                {/* Secondary metrics cards */}
-                <div className="grid grid-cols-4 gap-px border-t border-white/[0.04]">
-                  <div className="bg-white/[0.015] py-1 text-center">
-                    <div className="text-[6px] uppercase tracking-widest text-white/20">Sharpe</div>
-                    <div className={`text-[10px] font-bold mt-px ${activeConfig.metrics.sharpe_ratio >= 1 ? "text-emerald-400" : activeConfig.metrics.sharpe_ratio >= 0.5 ? "text-amber-400" : "text-white/50"}`}>{activeConfig.metrics.sharpe_ratio.toFixed(2)}</div>
-                  </div>
-                  <div className="bg-white/[0.015] py-1 text-center">
-                    <div className="text-[6px] uppercase tracking-widest text-white/20">Profit F.</div>
-                    <div className={`text-[10px] font-bold mt-px ${activeConfig.metrics.profit_factor >= 1.5 ? "text-emerald-400" : activeConfig.metrics.profit_factor >= 1 ? "text-amber-400" : "text-rose-400"}`}>{activeConfig.metrics.profit_factor.toFixed(2)}</div>
-                  </div>
-                  <div className="bg-white/[0.015] py-1 text-center">
-                    <div className="text-[6px] uppercase tracking-widest text-white/20">Max DD</div>
-                    <div className="text-[10px] font-bold mt-px text-rose-400">{activeConfig.metrics.max_drawdown_pct.toFixed(1)}%</div>
-                  </div>
-                  <div className="bg-white/[0.015] py-1 text-center">
-                    <div className="text-[6px] uppercase tracking-widest text-white/20">R:R</div>
-                    <div className="text-[10px] font-bold mt-px text-cyan-400">1:{activeConfig.metrics.risk_reward_ratio.toFixed(1)}</div>
-                  </div>
-                </div>
-
-                {/* SL / TP config */}
-                <div className="flex items-center justify-center gap-2 py-1.5 border-t border-white/[0.04]">
-                  <span className="text-[7px] px-1.5 py-px rounded-md bg-rose-500/10 text-rose-400/80 ring-1 ring-rose-500/15 font-bold">SL {activeConfig.slMult}× ATR</span>
-                  <span className="text-[7px] px-1.5 py-px rounded-md bg-emerald-500/10 text-emerald-400/80 ring-1 ring-emerald-500/15 font-bold">TP {activeConfig.tpMult}× ATR</span>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-lg ring-1 ring-slate-700/30 bg-slate-800/20 px-3 py-4 text-center">
-                <div className="text-[8px] text-slate-600">No backtest results — run a backtest first</div>
-              </div>
-            )}
-
             {/* ── Live Session Card ── */}
             {snap && (
               <div className="rounded-lg ring-1 ring-white/[0.06] bg-white/[0.02] overflow-hidden">
