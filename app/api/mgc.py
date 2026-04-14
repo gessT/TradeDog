@@ -1720,6 +1720,8 @@ class MGC5MinCandle(BaseModel):
     mkt_structure: Optional[int] = None
     sma_28: Optional[float] = None
     adx: Optional[float] = None
+    ht_dir: Optional[int] = None
+    ht_line: Optional[float] = None
 
 
 class MGC5MinTrade(BaseModel):
@@ -1795,6 +1797,7 @@ async def mgc_backtest_5min(
     daily_loss_limit: Annotated[float, Query(ge=0, le=5000)] = 0.0,
     skip_hours: Annotated[Optional[str], Query()] = None,
     max_loss_per_trade: Annotated[float, Query(ge=0, le=2000)] = 0.0,
+    interval: Annotated[str, Query()] = "5m",
 ) -> MGC5MinBacktestResponse:
     """Run 5-minute strategy backtest with out-of-sample validation.
 
@@ -1806,7 +1809,7 @@ async def mgc_backtest_5min(
     if disabled_conditions:
         _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
                   "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok",
-                  "smc_ob","smc_fvg","smc_bos"}
+                  "halftrend","smc_ob","smc_fvg","smc_bos"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
 
     # Parse skip_hours from comma-separated string (e.g. "4,16")
@@ -1819,9 +1822,12 @@ async def mgc_backtest_5min(
         from strategies.futures.backtest_5min import Backtester5Min
         from strategies.futures.strategy_5min import MGCStrategy5Min, DEFAULT_5MIN_PARAMS
 
-        # Always load 60d so indicators are fully warmed up
+        # Always load max history so indicators are fully warmed up
         # (EMA, RSI, MACD, Supertrend need history to stabilize)
-        df = load_yfinance(symbol=symbol, interval="5m", period="60d")
+        # yfinance limits: 1m=7d, 2m=60d, 5m=60d, 15m=60d
+        _max_period = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d"}
+        fetch_period = _max_period.get(interval, "60d")
+        df = load_yfinance(symbol=symbol, interval=interval, period=fetch_period)
 
         if df.empty or len(df) < 20:
             raise ValueError("Not enough 5m data from yfinance.")
@@ -1849,11 +1855,18 @@ async def mgc_backtest_5min(
                 display_start = cutoff.strftime("%Y-%m-%d")
 
         # ── Filter trades to display window ─────────────────────
-        # Return ALL trades — frontend filters by period client-side
-        filtered_trades = result.trades
+        if display_start:
+            filtered_trades = [t for t in result.trades if str(t.entry_time) >= display_start]
+        else:
+            filtered_trades = result.trades
 
-        # ── Return ALL daily_pnl (frontend filters by period) ──
-        filtered_daily = result.daily_pnl
+        # ── Filter daily_pnl to display window ─────────────────
+        if display_start and isinstance(result.daily_pnl, list):
+            filtered_daily = [d for d in result.daily_pnl if str(d.get("date", d.get("day", ""))) >= display_start]
+        elif display_start and isinstance(result.daily_pnl, dict):
+            filtered_daily = {k: v for k, v in result.daily_pnl.items() if str(k) >= display_start}
+        else:
+            filtered_daily = result.daily_pnl
 
         # ── Recompute metrics for the display window ────────────
         display_wins = [t for t in filtered_trades if t.pnl > 0]
@@ -1914,6 +1927,8 @@ async def mgc_backtest_5min(
                 mkt_structure=int(row["mkt_structure"]) if not _isnan(row.get("mkt_structure")) else None,
                 sma_28=round(float(row["sma_28"]), 2) if not _isnan(row.get("sma_28")) else None,
                 adx=round(float(row["adx"]), 1) if not _isnan(row.get("adx")) else None,
+                ht_dir=int(row["ht_dir"]) if not _isnan(row.get("ht_dir")) else None,
+                ht_line=round(float(row["ht_line"]), 2) if not _isnan(row.get("ht_line")) else None,
             ))
 
         trades = [
@@ -1936,29 +1951,34 @@ async def mgc_backtest_5min(
             for t in filtered_trades
         ]
 
-        return candles, trades, result.equity_curve, metrics, result.params, filtered_daily
+        return candles, trades, result.equity_curve, metrics, result.params, filtered_daily, df, custom_params
 
     try:
-        candles, trades, eq_curve, metrics, params, daily_pnl = await run_in_threadpool(_run)
+        candles, trades, eq_curve, metrics, params, daily_pnl, raw_df, bt_params = await run_in_threadpool(_run)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as exc:
         logger.exception("5min backtest failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
-    # ── Detect open position from the last EOD trade ─────────────────
-    # The backtester force-closes any open position at data end as "EOD".
-    # If the very last trade (unfiltered or filtered) is EOD, it means
-    # the position is still live → convert it to "OPEN".
+    # ── Detect open position ─────────────────────────────────────────
+    # Use get_live_position() with the SAME dataframe for consistency.
     open_pos = None
-    if trades:
-        # Only convert if the very last trade is EOD (position still open at end of data)
-        last_eod_idx = None
-        if trades[-1].reason == "EOD":
-            last_eod_idx = len(trades) - 1
 
-        if last_eod_idx is not None:
-            t = trades[last_eod_idx]
+    try:
+        def _get_live_pos():
+            from strategies.futures.backtest_5min import Backtester5Min
+            bt2 = Backtester5Min(capital=capital)
+            return bt2.get_live_position(raw_df, params=bt_params, disabled_conditions=_disabled or None)
+        open_pos = await run_in_threadpool(_get_live_pos)
+    except Exception as e:
+        logger.warning("get_live_position failed, using EOD heuristic: %s", e)
+
+    # Fallback: EOD heuristic + relabel last EOD trade as OPEN
+    if trades and trades[-1].reason == "EOD":
+        last_eod_idx = len(trades) - 1
+        t = trades[last_eod_idx]
+        if open_pos is None:
             open_pos = {
                 "direction": t.direction or "CALL",
                 "entry_price": t.entry_price,
@@ -1968,26 +1988,26 @@ async def mgc_backtest_5min(
                 "signal_type": t.signal_type,
                 "bar_time": t.entry_time,
             }
-            trades[last_eod_idx] = MGC5MinTrade(
-                entry_time=t.entry_time,
-                exit_time=t.exit_time,
-                entry_price=t.entry_price,
-                exit_price=t.exit_price,
-                qty=t.qty,
-                pnl=t.pnl,
-                pnl_pct=t.pnl_pct,
-                reason="OPEN",
-                signal_type=t.signal_type,
-                direction=t.direction,
-                mae=t.mae,
-                mkt_structure=t.mkt_structure,
-                sl=t.sl,
-                tp=t.tp,
-            )
+        trades[last_eod_idx] = MGC5MinTrade(
+            entry_time=t.entry_time,
+            exit_time=t.exit_time,
+            entry_price=t.entry_price,
+            exit_price=t.exit_price,
+            qty=t.qty,
+            pnl=t.pnl,
+            pnl_pct=t.pnl_pct,
+            reason="OPEN",
+            signal_type=t.signal_type,
+            direction=t.direction,
+            mae=t.mae,
+            mkt_structure=t.mkt_structure,
+            sl=t.sl,
+            tp=t.tp,
+        )
 
     return MGC5MinBacktestResponse(
         symbol=symbol,
-        interval="5m",
+        interval=interval,
         period=period,
         candles=candles,
         trades=trades,
@@ -2037,6 +2057,7 @@ class Scan5MinConditions(BaseModel):
     atr_range: bool = False
     session_ok: bool = False
     adx_ok: bool = False
+    halftrend: bool = False
     htf_15m_trend: bool = False
     htf_15m_supertrend: bool = False
     htf_1h_trend: bool = False
@@ -2070,7 +2091,7 @@ async def mgc_scan_5min(
     if disabled_conditions:
         _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
                   "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok",
-                  "smc_ob","smc_fvg","smc_bos"}
+                  "halftrend","smc_ob","smc_fvg","smc_bos"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid} or None
 
     def _run():
@@ -2139,6 +2160,7 @@ async def mgc_scan_5min(
             supertrend=c.supertrend, macd_momentum=c.macd_momentum,
             rsi_momentum=c.rsi_momentum, volume_spike=c.volume_spike,
             atr_range=c.atr_range, session_ok=c.session_ok, adx_ok=c.adx_ok,
+            halftrend=c.halftrend,
             htf_15m_trend=c.htf_15m_trend, htf_15m_supertrend=c.htf_15m_supertrend,
             htf_1h_trend=c.htf_1h_trend, htf_1h_supertrend=c.htf_1h_supertrend,
             mkt_structure=c.mkt_structure,
@@ -2174,7 +2196,7 @@ async def mgc_scan_5min_live(
     if disabled_conditions:
         _valid = {"ema_trend","ema_slope","pullback","breakout","supertrend",
                   "macd_momentum","rsi_momentum","volume_spike","atr_range","session_ok","adx_ok",
-                  "smc_ob","smc_fvg","smc_bos"}
+                  "halftrend","smc_ob","smc_fvg","smc_bos"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid} or None
 
     def _run():
@@ -2267,6 +2289,7 @@ async def mgc_scan_5min_live(
             supertrend=c.supertrend, macd_momentum=c.macd_momentum,
             rsi_momentum=c.rsi_momentum, volume_spike=c.volume_spike,
             atr_range=c.atr_range, session_ok=c.session_ok, adx_ok=c.adx_ok,
+            halftrend=c.halftrend,
             htf_15m_trend=c.htf_15m_trend, htf_15m_supertrend=c.htf_15m_supertrend,
             htf_1h_trend=c.htf_1h_trend, htf_1h_supertrend=c.htf_1h_supertrend,
             mkt_structure=c.mkt_structure,
@@ -2822,7 +2845,7 @@ async def mgc_trade_log_5min(
 _VALID_5MIN_CONDITIONS = {
     "ema_trend", "ema_slope", "pullback", "breakout", "supertrend",
     "macd_momentum", "rsi_momentum", "volume_spike", "atr_range",
-    "session_ok", "adx_ok",
+    "session_ok", "adx_ok", "halftrend",
     "htf_15m_trend", "htf_15m_supertrend", "htf_1h_trend", "htf_1h_supertrend",
 }
 
@@ -3074,11 +3097,12 @@ async def reset_daily_pnl(symbol: str = Query("MGC")):
 
 
 class StrategyConfigPayload(BaseModel):
-    period: str = "3d"
-    sl_mult: float = 4.0
-    tp_mult: float = 3.0
-    risk_filters: dict[str, bool] = {}
+    period: str | None = None
+    sl_mult: float | None = None
+    tp_mult: float | None = None
+    risk_filters: dict[str, bool] | None = None
     active_preset: str | None = None
+    layout: dict[str, bool] | None = None
 
 
 @router.get("/strategy_config")
@@ -3113,13 +3137,30 @@ def save_strategy_config(
     from app.db.database import engine
 
     sym = f"{symbol.upper()}_5MIN"
-    config = json.dumps({
+    new_fields = {k: v for k, v in {
         "period": payload.period,
         "sl_mult": payload.sl_mult,
         "tp_mult": payload.tp_mult,
         "risk_filters": payload.risk_filters,
         "active_preset": payload.active_preset,
-    })
+        "layout": payload.layout,
+    }.items() if v is not None}
+
+    # Merge with existing config so partial saves don't wipe fields
+    existing = {}
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT config_json FROM strategy_configs WHERE symbol = :sym"),
+            {"sym": sym},
+        ).fetchone()
+    if row:
+        try:
+            existing = json.loads(row[0])
+        except Exception:
+            pass
+    merged = {**existing, **new_fields}
+    config = json.dumps(merged)
+
     with engine.begin() as conn:
         conn.execute(
             text("""
@@ -3199,6 +3240,7 @@ async def optimize_5min_conditions(
             "smc_ob",
             "smc_fvg",
             "smc_bos",
+            "halftrend",
         ]
 
         results = []
@@ -3813,3 +3855,475 @@ def delete_position_tag(symbol: str) -> dict[str, str]:
             {"sym": symbol},
         )
     return {"status": "ok"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Auto-Trader v2 — 4-Layer Production Trading System
+# ═══════════════════════════════════════════════════════════════════════
+
+class AutoTraderStartPayload(BaseModel):
+    mode: str = "paper"  # "paper" | "live"
+
+
+class AutoTraderConfigPayload(BaseModel):
+    cooldown_secs: Optional[float] = None
+    min_strength: Optional[int] = None
+    max_consec_losses: Optional[int] = None
+    daily_limit: Optional[int] = None
+    daily_loss_limit: Optional[float] = None
+    sl_mult: Optional[float] = None
+    tp_mult: Optional[float] = None
+    risk_per_trade: Optional[float] = None
+    max_qty: Optional[int] = None
+    disabled_conditions: Optional[list[str]] = None
+    strategy_preset: Optional[str] = None
+
+
+class AutoTraderTickPayload(BaseModel):
+    live_price: float = 0.0
+    is_bar_close: bool = False
+    tiger_qty: int = 0
+
+
+class AutoTraderEntryPayload(BaseModel):
+    entry_price: float
+    sl: float
+    tp: float
+    qty: int
+    direction: str
+
+
+class AutoTraderExitPayload(BaseModel):
+    exit_price: float
+    reason: str = "TP"
+
+
+@router.post("/auto-trader/start")
+async def auto_trader_start(
+    payload: AutoTraderStartPayload,
+    symbol: str = Query("MGC"),
+    period: str = Query("7d"),
+    interval: str = Query("5m"),
+):
+    """Start auto-trader in paper or live mode.
+
+    Auto-syncs backtest open position: if the backtest shows a holding
+    trade, the paper trader inherits it. Once SL/TP hits, normal signal
+    flow resumes.
+    """
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+
+    # Auto-set cooldown to match bar interval (only if user hasn't configured it)
+    if not trader._machine._cooldown_user_set:
+        _interval_secs = {"1m": 60, "2m": 120, "5m": 300, "15m": 900}
+        cooldown = _interval_secs.get(interval, 300)
+        trader.update_config(cooldown_secs=cooldown, _user_set=False)
+
+    result = trader.start(payload.mode)
+
+    # Sync backtest open position into paper trader
+    if payload.mode == "paper":
+        try:
+            open_pos = await run_in_threadpool(_get_backtest_open_position, symbol, period, trader, interval)
+            if open_pos:
+                trader.sync_backtest_position(open_pos)
+                result = trader._snap()  # refresh snapshot after sync
+        except Exception as e:
+            logger.warning("Failed to sync backtest position: %s", e)
+
+    return result
+
+
+def _get_backtest_open_position(symbol: str, period: str, trader, interval: str = "5m") -> dict | None:
+    """Run a quick backtest to detect any open position."""
+    from strategies.futures.backtest_5min import Backtester5Min
+
+    yf_symbol = f"{symbol}=F"
+    _period_map = {"1d": "5d", "3d": "5d", "7d": "14d", "14d": "30d", "30d": "60d"}
+    _max_period = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d"}
+    fetch_period = _period_map.get(period, "14d")
+    max_allowed = _max_period.get(interval, "60d")
+    if int(fetch_period.replace("d", "")) > int(max_allowed.replace("d", "")):
+        fetch_period = max_allowed
+    df = load_yfinance(symbol=yf_symbol, interval=interval, period=fetch_period)
+    if df is None or len(df) < 50:
+        return None
+
+    disabled = list(trader._disabled_conditions) if trader._disabled_conditions else None
+    bt = Backtester5Min()
+    params = {"atr_sl_mult": trader._sl_mult, "atr_tp_mult": trader._tp_mult}
+    return bt.get_live_position(df, params=params, disabled_conditions=set(disabled) if disabled else None)
+
+
+@router.post("/auto-trader/stop")
+async def auto_trader_stop(symbol: str = Query("MGC")):
+    """Stop auto-trader (keeps position if in trade)."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader.stop()
+
+
+@router.post("/auto-trader/reset")
+async def auto_trader_reset(symbol: str = Query("MGC")):
+    """Full reset — clears state, paper trades, risk counters."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader.reset()
+
+
+@router.post("/auto-trader/emergency-stop")
+async def auto_trader_emergency_stop(
+    symbol: str = Query("MGC"),
+    live_price: float = Query(0.0),
+):
+    """Emergency stop — close paper position + halt everything."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader.emergency_stop(live_price)
+
+
+@router.post("/auto-trader/unblock")
+async def auto_trader_unblock(symbol: str = Query("MGC")):
+    """Manually unblock after risk limit hit."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader.unblock()
+
+
+@router.get("/auto-trader/state")
+async def auto_trader_state(symbol: str = Query("MGC")):
+    """Full state — machine + risk + paper summary."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader.get_full_state()
+
+
+@router.post("/auto-trader/tick")
+async def auto_trader_tick(
+    payload: AutoTraderTickPayload,
+    symbol: str = Query("MGC"),
+    period: str = Query("7d"),
+    interval: str = Query("5m"),
+):
+    """Process one tick — called by frontend every 10s + at bar close.
+
+    If is_bar_close=True, loads latest data and scans for signals.
+    """
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+
+    df_5m = None
+    if payload.is_bar_close:
+        df_5m = await run_in_threadpool(
+            _load_5min_data_for_tick, symbol, period, interval
+        )
+
+    # For live mode, fetch actual Tiger position for broker-sync
+    tiger_qty = payload.tiger_qty
+    if trader._machine.mode == "live" and trader._machine.state == "IN_TRADE":
+        tiger_qty = await run_in_threadpool(_get_tiger_position, symbol)
+
+    result = trader.tick(
+        live_price=payload.live_price,
+        df_5m=df_5m,
+        is_bar_close=payload.is_bar_close,
+        tiger_qty=tiger_qty,
+    )
+
+    # ── Live mode: auto-execute Tiger bracket order on SIGNAL ──
+    if result.action == "SIGNAL" and trader._machine.mode == "live" and result.risk:
+        try:
+            tiger_result = await run_in_threadpool(
+                _auto_trader_execute_tiger,
+                symbol,
+                result.signal or {},
+                result.risk,
+                payload.live_price,
+            )
+            if tiger_result["executed"]:
+                # Notify auto-trader of live fill
+                trader.on_live_entry_filled(
+                    entry_price=tiger_result["entry_price"],
+                    sl=tiger_result["sl"],
+                    tp=tiger_result["tp"],
+                    qty=tiger_result["qty"],
+                    direction=tiger_result["direction"],
+                )
+                result.action = "ENTRY"
+                result.message = f"Live entry: {tiger_result['direction']} @ ${tiger_result['entry_price']:.2f} qty={tiger_result['qty']} | SL=${tiger_result['sl']:.2f} TP=${tiger_result['tp']:.2f}"
+                result.snapshot = trader._snap()
+                logger.info("[%s] Auto-trader live bracket order placed: %s", symbol, tiger_result["reason"])
+            else:
+                result.message = f"Signal found but Tiger order failed: {tiger_result['reason']}"
+                trader._machine.cancel_signal()
+                result.snapshot = trader._snap()
+                logger.error("[%s] Auto-trader Tiger order failed: %s", symbol, tiger_result["reason"])
+        except Exception as e:
+            logger.exception("[%s] Auto-trader live execution error", symbol)
+            result.message = f"Signal found but execution error: {e}"
+            trader._machine.cancel_signal()
+            result.snapshot = trader._snap()
+
+    return {
+        "action": result.action,
+        "signal": result.signal,
+        "trade": result.trade,
+        "risk": result.risk,
+        "message": result.message,
+        "snapshot": result.snapshot,
+    }
+
+
+def _load_5min_data_for_tick(symbol: str, period: str, interval: str = "5m") -> "pd.DataFrame | None":
+    """Load data for signal scanning during tick."""
+    import pandas as pd
+    try:
+        _period_map = {"1d": "5d", "3d": "5d", "7d": "14d", "14d": "30d", "30d": "60d"}
+        # yfinance limits: 1m max 7d
+        _max_period = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d"}
+        fetch_period = _period_map.get(period, "14d")
+        max_allowed = _max_period.get(interval, "60d")
+        # Clamp to yfinance limit
+        if int(fetch_period.replace("d", "")) > int(max_allowed.replace("d", "")):
+            fetch_period = max_allowed
+        df = load_yfinance(symbol=f"{symbol}=F", interval=interval, period=fetch_period)
+        if df is not None and len(df) > 50:
+            return df
+    except Exception as e:
+        logger.error("Failed to load %s data for tick: %s", interval, e)
+    return None
+
+
+def _auto_trader_execute_tiger(
+    symbol: str,
+    signal: dict,
+    risk: dict,
+    live_price: float,
+) -> dict:
+    """Place a Tiger bracket order (entry + SL/TP) for auto-trader live mode.
+
+    Returns dict with executed, entry_price, sl, tp, qty, direction, reason.
+    """
+    from strategies.futures.tiger_execution import TigerTrader
+
+    commodity = _COMMODITY_SYMBOLS.get(symbol, _COMMODITY_SYMBOLS["MGC"])
+    tiger_sym = commodity["tiger"]
+    tick_size = commodity["tick"]
+
+    direction = signal.get("direction", "CALL")
+    entry_price = signal.get("entry_price", 0)
+    sl_raw = risk.get("sl", 0)
+    tp_raw = risk.get("tp", 0)
+    qty = int(risk.get("qty", 1))
+    side = "BUY" if direction == "CALL" else "SELL"
+
+    # Round SL/TP to tick size
+    sl_price = round(round(sl_raw / tick_size) * tick_size, 6)
+    tp_price = round(round(tp_raw / tick_size) * tick_size, 6)
+
+    fail = {
+        "executed": False, "entry_price": entry_price,
+        "sl": sl_price, "tp": tp_price, "qty": qty,
+        "direction": direction, "reason": "",
+    }
+
+    if entry_price <= 0 or sl_price <= 0 or tp_price <= 0:
+        fail["reason"] = f"Invalid prices: entry={entry_price} sl={sl_price} tp={tp_price}"
+        return fail
+
+    try:
+        trader = TigerTrader()
+        trader.connect()
+    except Exception as exc:
+        fail["reason"] = f"Tiger connection failed: {exc}"
+        return fail
+
+    try:
+        current_px = _tiger_live_price(symbol) or live_price or entry_price
+        bracket = trader.place_bracket_order(
+            symbol=tiger_sym,
+            qty=qty,
+            side=side,
+            stop_loss_price=sl_price,
+            take_profit_price=tp_price,
+            limit_price=None,
+            current_price=current_px,
+        )
+    except Exception as exc:
+        fail["reason"] = f"Bracket order error: {exc}"
+        return fail
+
+    if bracket.entry and bracket.entry.status != "FAILED":
+        sl_ok = bracket.stop_loss is not None and bracket.stop_loss.status != "FAILED"
+        tp_ok = bracket.take_profit is not None and bracket.take_profit.status != "FAILED"
+
+        parts = [f"Entry {bracket.entry.order_id} {side}"]
+        if bracket.stop_loss:
+            parts.append(f"SL {bracket.stop_loss.order_id} @ ${sl_price:.2f}")
+        if bracket.take_profit:
+            parts.append(f"TP {bracket.take_profit.order_id} @ ${tp_price:.2f}")
+
+        if not sl_ok or not tp_ok:
+            # SL/TP failed — cancel entry for safety
+            logger.error(
+                "[%s] Auto-trader FAIL-SAFE: SL=%s TP=%s — cancelling entry %s",
+                symbol, sl_ok, tp_ok, bracket.entry.order_id,
+            )
+            try:
+                trader.cancel_order(bracket.entry.order_id)
+            except Exception:
+                logger.exception("Failed to cancel entry order %s", bracket.entry.order_id)
+            fail["reason"] = f"OCO not confirmed (SL={sl_ok}, TP={tp_ok}) — entry cancelled"
+            return fail
+
+        return {
+            "executed": True,
+            "entry_price": entry_price,
+            "sl": sl_price,
+            "tp": tp_price,
+            "qty": qty,
+            "direction": direction,
+            "reason": " | ".join(parts),
+        }
+
+    entry_status = bracket.entry.status if bracket.entry else "NO_ENTRY"
+    fail["reason"] = f"Tiger order failed ({entry_status})"
+    return fail
+
+
+@router.get("/auto-trader/trades")
+async def auto_trader_trades(symbol: str = Query("MGC")):
+    """Return all trade records (paper + live)."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return [
+        {
+            "direction": t.direction,
+            "entry_price": t.entry_price,
+            "exit_price": t.exit_price,
+            "stop_loss": t.stop_loss,
+            "take_profit": t.take_profit,
+            "qty": t.qty,
+            "pnl": t.pnl,
+            "exit_reason": t.exit_reason,
+            "entry_time": t.entry_time,
+            "exit_time": t.exit_time,
+            "strength": t.strength,
+            "slippage": t.slippage,
+            "is_paper": t.is_paper,
+        }
+        for t in trader.trades
+    ]
+
+
+@router.get("/auto-trader/paper-summary")
+async def auto_trader_paper_summary(symbol: str = Query("MGC")):
+    """Paper trading P&L summary."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader._paper.get_summary()
+
+
+@router.post("/auto-trader/config")
+async def auto_trader_config(
+    payload: AutoTraderConfigPayload,
+    symbol: str = Query("MGC"),
+):
+    """Update auto-trader config (scanner, risk, state machine)."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    kwargs = {k: v for k, v in payload.model_dump().items() if v is not None and k not in ("disabled_conditions",)}
+    disabled = set(payload.disabled_conditions) if payload.disabled_conditions else None
+    return trader.update_config(disabled_conditions=disabled, **kwargs)
+
+
+@router.post("/auto-trader/entry-filled")
+async def auto_trader_entry_filled(
+    payload: AutoTraderEntryPayload,
+    symbol: str = Query("MGC"),
+):
+    """Notify auto-trader that a live order filled."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    trader.on_live_entry_filled(
+        entry_price=payload.entry_price,
+        sl=payload.sl,
+        tp=payload.tp,
+        qty=payload.qty,
+        direction=payload.direction,
+    )
+    return trader.get_full_state()
+
+
+@router.post("/auto-trader/exit")
+async def auto_trader_exit(
+    payload: AutoTraderExitPayload,
+    symbol: str = Query("MGC"),
+):
+    """Notify auto-trader that a live position exited."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    trade = trader.on_live_exit(payload.exit_price, payload.reason)
+    return {
+        "trade": {
+            "direction": trade.direction,
+            "entry_price": trade.entry_price,
+            "exit_price": trade.exit_price,
+            "pnl": trade.pnl,
+            "exit_reason": trade.exit_reason,
+        } if trade else None,
+        **trader.get_full_state(),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Paper Trade DB persistence
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/auto-trader/db-trades")
+async def auto_trader_db_trades(symbol: str = Query("MGC")):
+    """Return all paper/live trades saved in the database."""
+    from app.db.database import SessionLocal
+    from app.models.paper_trade import PaperTrade
+
+    with SessionLocal() as db:
+        rows = db.query(PaperTrade).filter(
+            PaperTrade.symbol == symbol,
+        ).order_by(PaperTrade.id.desc()).all()
+        return [
+            {
+                "id": r.id,
+                "symbol": r.symbol,
+                "direction": r.direction,
+                "entry_price": r.entry_price,
+                "exit_price": r.exit_price,
+                "stop_loss": r.stop_loss,
+                "take_profit": r.take_profit,
+                "qty": r.qty,
+                "pnl": r.pnl,
+                "exit_reason": r.exit_reason,
+                "entry_time": r.entry_time,
+                "exit_time": r.exit_time,
+                "bar_time": r.bar_time,
+                "strength": r.strength,
+                "slippage": r.slippage,
+                "is_paper": r.is_paper,
+                "strategy_preset": r.strategy_preset,
+                "mode": r.mode,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+
+
+@router.delete("/auto-trader/db-trades")
+async def auto_trader_clear_db_trades(symbol: str = Query("MGC")):
+    """Delete all saved paper/live trades for a symbol."""
+    from app.db.database import SessionLocal
+    from app.models.paper_trade import PaperTrade
+
+    with SessionLocal() as db:
+        count = db.query(PaperTrade).filter(PaperTrade.symbol == symbol).delete()
+        db.commit()
+        return {"deleted": count}

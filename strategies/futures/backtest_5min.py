@@ -424,19 +424,47 @@ class Backtester5Min:
                     worst_unrealized = 0.0
 
                 # ── SMA28 cut-loss exit ─────────────────────────────
-                # Long: close < SMA28 AND close < entry bar low AND SMA28 sloping down
-                # Short: close > SMA28 AND close > entry bar high AND SMA28 sloping up
+                # Only triggers when ALL conditions are met:
+                # 1. Bar closes opposite SMA28
+                # 2. Close breaks entry bar high/low
+                # 3. SMA28 slope confirms adverse direction
+                # 4. High volume on this bar (>= 1.2× average)
+                # 5. Strong reversal signal (momentum + opposite candle body)
                 hit_sma28_cut = False
                 if position is not None and params.get("use_sma28_cut") and "sma_28" in bar.index:
                     sma_val = float(bar["sma_28"])
                     sma_slope = float(bar["sma_28_slope"]) if "sma_28_slope" in bar.index else 0.0
                     bar_close = float(bar["close"])
+                    bar_open = float(bar["open"])
                     if not math.isnan(sma_val) and not math.isnan(sma_slope):
-                        if direction == 1:
-                            if bar_close < sma_val and bar_close < position.get("entry_bar_low", 0) and sma_slope < 0:
+                        # Volume confirmation: bar volume >= 1.2× 20-bar average
+                        vol_avg = float(prev.get("volume", 0)) if "volume" not in bar.index else 0.0
+                        bar_vol = float(bar["volume"]) if "volume" in bar.index else 0.0
+                        _vol_col = df_ind["volume"] if "volume" in df_ind.columns else None
+                        if _vol_col is not None and i >= 20:
+                            vol_avg = float(_vol_col.iloc[i-20:i].mean())
+                        high_volume = vol_avg > 0 and bar_vol >= 1.2 * vol_avg
+
+                        # Reversal candle: strong body in adverse direction
+                        bar_range = float(bar["high"]) - float(bar["low"])
+                        body = abs(bar_close - bar_open)
+                        strong_body = bar_range > 0 and body >= 0.6 * bar_range  # candle body >= 60% of range
+
+                        # Momentum reversal check
+                        macd_hist = float(bar.get("macd_hist", 0)) if "macd_hist" in bar.index else 0.0
+                        rsi_val = float(bar.get("rsi", 50)) if "rsi" in bar.index else 50.0
+
+                        if direction == 1:  # LONG
+                            cross_sma = bar_close < sma_val and bar_close < position.get("entry_bar_low", 0) and sma_slope < 0
+                            bearish_candle = bar_close < bar_open  # red candle
+                            bearish_momentum = macd_hist < 0 or rsi_val < 40
+                            if cross_sma and high_volume and strong_body and bearish_candle and bearish_momentum:
                                 hit_sma28_cut = True
-                        elif direction == -1:
-                            if bar_close > sma_val and bar_close > position.get("entry_bar_high", 1e9) and sma_slope > 0:
+                        elif direction == -1:  # SHORT
+                            cross_sma = bar_close > sma_val and bar_close > position.get("entry_bar_high", 1e9) and sma_slope > 0
+                            bullish_candle = bar_close > bar_open  # green candle
+                            bullish_momentum = macd_hist > 0 or rsi_val > 60
+                            if cross_sma and high_volume and strong_body and bullish_candle and bullish_momentum:
                                 hit_sma28_cut = True
 
                 if hit_sma28_cut and not hit_sl and not hit_tp and not hit_structure_exit and not hit_ema_exit:
@@ -454,6 +482,43 @@ class Backtester5Min:
                         pnl=round(pnl, 2),
                         pnl_pct=round(pnl_pct, 2),
                         reason="SMA28_CUT",
+                        signal_type=position.get("signal_type", ""),
+                        direction="CALL" if direction == 1 else "PUT",
+                        mae=round(worst_unrealized, 2),
+                        mkt_structure=position.get("mkt_structure", 0),
+                        sl=round(sl, 2),
+                        tp=round(position["tp"], 2),
+                    ))
+                    consec_losses = consec_losses + 1 if pnl < 0 else 0
+                    position = None
+                    worst_unrealized = 0.0
+
+                # ── HalfTrend flip exit ─────────────────────────────
+                # Exit when HalfTrend direction flips against the position
+                hit_ht_flip = False
+                if position is not None and "ht_dir" in bar.index:
+                    ht_dir = int(bar["ht_dir"])
+                    prev_ht_dir = int(prev["ht_dir"]) if "ht_dir" in prev.index else ht_dir
+                    if direction == 1 and ht_dir == 1 and prev_ht_dir == 0:   # was bullish → bearish
+                        hit_ht_flip = True
+                    elif direction == -1 and ht_dir == 0 and prev_ht_dir == 1:  # was bearish → bullish
+                        hit_ht_flip = True
+
+                if hit_ht_flip and not hit_sl and not hit_tp and not hit_structure_exit and not hit_ema_exit and not hit_sma28_cut:
+                    exit_price = float(bar["close"])
+                    pnl = direction * (exit_price - position["entry_price"]) * position["qty"] * CONTRACT_SIZE
+                    pnl_pct = pnl / (self.initial_capital or 1) * 100
+                    equity += pnl
+                    daily_pnl_running[bar_date] = daily_pnl_running.get(bar_date, 0.0) + pnl
+                    trades.append(Trade5Min(
+                        entry_time=position["entry_time"],
+                        exit_time=bar.name,
+                        entry_price=position["entry_price"],
+                        exit_price=round(exit_price, 2),
+                        qty=position["qty"],
+                        pnl=round(pnl, 2),
+                        pnl_pct=round(pnl_pct, 2),
+                        reason="HT_FLIP",
                         signal_type=position.get("signal_type", ""),
                         direction="CALL" if direction == 1 else "PUT",
                         mae=round(worst_unrealized, 2),
@@ -689,14 +754,15 @@ class Backtester5Min:
             bar = df_ind.iloc[i]
             prev = df_ind.iloc[i - 1]
             bar_date = str(bar.name.date()) if hasattr(bar.name, "date") else str(bar.name)[:10]
+            is_last_bar = (i == len(df_ind) - 1)
 
             if bar_date != prev_bar_date:
                 prev_bar_date = bar_date
                 consec_losses = 0
                 daily_counts[bar_date] = daily_counts.get(bar_date, 0)
 
-            # EOD close on day change
-            if position is not None:
+            # EOD close on day change (skip on last bar to preserve live position)
+            if position is not None and not is_last_bar:
                 prev_date = str(prev.name.date()) if hasattr(prev.name, "date") else str(prev.name)[:10]
                 if bar_date != prev_date:
                     d = position["direction"]

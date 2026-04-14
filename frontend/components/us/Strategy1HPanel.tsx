@@ -408,6 +408,8 @@ export default function Strategy1HPanel({
     { value: "6mo", label: "6M" },
     { value: "1y", label: "1Y" },
     { value: "2y", label: "2Y" },
+    { value: "3y", label: "3Y" },
+    { value: "5y", label: "5Y" },
   ];
 
   return (

@@ -41,6 +41,28 @@ import { useLivePrice } from "../../hooks/useLivePrice";
 /** Offset (seconds) to shift UTC epoch → SGT for lightweight-charts */
 const TZ_OFFSET_SEC = SGT_OFFSET_SEC;
 
+// ── Locked config snapshot sent to AutoTraderPanel after backtest ──
+export type LockedTradingConfig = {
+  conditionToggles: Record<string, boolean>;
+  slMult: number;
+  tpMult: number;
+  interval: string;
+  preset: string | null;
+  symbol: string;
+  metrics: {
+    win_rate: number;
+    total_return_pct: number;
+    max_drawdown_pct: number;
+    sharpe_ratio: number;
+    profit_factor: number;
+    total_trades: number;
+    winners: number;
+    losers: number;
+    risk_reward_ratio: number;
+  };
+  lockedAt: number; // timestamp ms
+};
+
 const toLocal = (utcSec: number) => toSGT(utcSec) as UTCTimestamp;
 
 const n = (v: unknown): number =>
@@ -457,6 +479,7 @@ const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m
   { key: "atr_range", label: "ATR Range", group: "5m", desc: "ATR is within acceptable range — not too flat (no movement) or too volatile (choppy)." },
   { key: "session_ok", label: "Session Hours", group: "5m", desc: "Current time is within active trading hours (US market session)." },
   { key: "adx_ok", label: "ADX Filter", group: "5m", desc: "ADX is above threshold, confirming the market is trending (not ranging)." },
+  { key: "halftrend", label: "HalfTrend", group: "5m", desc: "HalfTrend indicator direction is aligned with signal — uptrend for CALL, downtrend for PUT." },
   // Smart Money Concepts
   { key: "smc_bos", label: "Break of Structure", group: "smc", desc: "Recent BOS detected — price broke a swing high (bullish) or swing low (bearish), confirming trend continuation." },
   { key: "smc_ob", label: "Order Block", group: "smc", desc: "Price is in an institutional Order Block zone — the last opposing candle before an impulsive move (demand/supply zone)." },
@@ -484,6 +507,65 @@ const DEFAULT_RISK_FILTERS: Record<string, boolean> = Object.fromEntries(
 const DEFAULT_CONDITION_TOGGLES: Record<string, boolean> = Object.fromEntries(
   CONDITION_DEFS.map((d) => [d.key, d.group === "5m"])
 );
+
+// ── Built-in strategy presets (locked, cannot be deleted) ────────────
+export type BuiltInPreset = {
+  name: string;
+  toggles: Record<string, boolean>;
+  interval: string;
+  sl: number;
+  tp: number;
+  desc: string;
+};
+
+export const BUILT_IN_PRESETS: BuiltInPreset[] = [
+  {
+    name: "⚡ Scalper 1m",
+    desc: "Ultra-fast 1m scalp — trend + breakout + MACD, tight SL, 2:1 R:R",
+    interval: "1m",
+    sl: 1,
+    tp: 2,
+    toggles: {
+      ema_trend: true,
+      ema_slope: true,
+      pullback: false,
+      breakout: true,
+      supertrend: true,
+      macd_momentum: true,
+      rsi_momentum: false,
+      volume_spike: false,
+      atr_range: false,
+      session_ok: false,
+      adx_ok: false,
+      smc_bos: false,
+      smc_ob: false,
+      smc_fvg: false,
+    },
+  },
+  {
+    name: "⚡ Scalper 2m",
+    desc: "Fast 2m scalp — trend + momentum, slightly wider stops",
+    interval: "2m",
+    sl: 2,
+    tp: 3,
+    toggles: {
+      ema_trend: true,
+      ema_slope: true,
+      pullback: true,
+      breakout: true,
+      supertrend: true,
+      macd_momentum: true,
+      rsi_momentum: false,
+      volume_spike: false,
+      atr_range: false,
+      session_ok: false,
+      adx_ok: false,
+      smc_bos: false,
+      smc_ob: false,
+      smc_fvg: false,
+    },
+  },
+];
 
 /** Compute next candle close time for a given interval (minutes). Returns ms epoch. */
 
@@ -1194,7 +1276,7 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }>) {
+export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles, interval: intervalProp = "5m", onIntervalChange, onSlTpChange, onConfigLock }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>>; interval?: string; onIntervalChange?: (v: string) => void; onSlTpChange?: (sl: number, tp: number) => void; onConfigLock?: (config: LockedTradingConfig) => void }>) {
   const [showExam, setShowExam] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1218,6 +1300,13 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const [btData, setBtData] = useState<MGC5MinBacktestResponse | null>(null);
   const [zoomTrade, setZoomTrade] = useState<MGC5MinTrade | null>(null);
   const [period, setPeriod] = useState("3d");
+  const [interval, setInterval_] = useState(intervalProp);
+  const handleIntervalChange = (v: string) => {
+    setInterval_(v);
+    onIntervalChange?.(v);
+    // 1m data limited to 7d max — clamp period
+    if (v === "1m" && parseInt(period) > 7) setPeriod("3d");
+  };
   const [slMult, setSlMult] = useState(defaultRisk.sl);
   const [tpMult, setTpMult] = useState(defaultRisk.tp);
 
@@ -1237,6 +1326,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     setSlMult(risk.sl);
     setTpMult(risk.tp);
   }, [symbol]);
+
+  // Notify parent of SL/TP changes instantly
+  useEffect(() => { onSlTpChange?.(slMult, tpMult); }, [slMult, tpMult, onSlTpChange]);
 
   const [conditionsOpen, setConditionsOpen] = useState(false);
 
@@ -1344,10 +1436,33 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       const disabled = CONDITION_DEFS
         .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
         .map((d) => d.key);
-      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade);
+      const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade, interval);
       setBtData(res);
       onTradesUpdate?.(res.trades);
       setHasRunBacktest(true);
+      // Lock config snapshot for trader
+      if (res.metrics && onConfigLock) {
+        onConfigLock({
+          conditionToggles: { ...conditionToggles },
+          slMult,
+          tpMult,
+          interval,
+          preset: activePreset,
+          symbol,
+          metrics: {
+            win_rate: res.metrics.win_rate ?? 0,
+            total_return_pct: res.metrics.total_return_pct ?? 0,
+            max_drawdown_pct: res.metrics.max_drawdown_pct ?? 0,
+            sharpe_ratio: res.metrics.sharpe_ratio ?? 0,
+            profit_factor: res.metrics.profit_factor ?? 0,
+            total_trades: res.metrics.total_trades ?? 0,
+            winners: res.metrics.winners ?? 0,
+            losers: res.metrics.losers ?? 0,
+            risk_reward_ratio: res.metrics.risk_reward_ratio ?? 0,
+          },
+          lockedAt: Date.now(),
+        });
+      }
       // Cache result so page refresh doesn't re-run
       try {
         sessionStorage.setItem("bt5min_cache", JSON.stringify({ configKey, data: res }));
@@ -1357,7 +1472,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     } finally {
       setLoading(false);
     }
-  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, riskFilters, configKey]);
+  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, riskFilters, configKey, interval]);
 
   // ── Trigger backtest after optimizer apply (so new state is used) ──
   useEffect(() => {
@@ -1367,25 +1482,11 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     }
   }, [pendingOptRun, runBacktest]);
 
-  // ── Restore cached backtest on mount, or auto-run fresh ──
+  // ── No auto-run on mount — user must click Start Backtest ──
   const initialRunDone = useRef(false);
   useEffect(() => {
     if (!configLoaded) return;
-    if (initialRunDone.current) return;
-    // Try cache first for instant display
-    try {
-      const raw = sessionStorage.getItem("bt5min_cache");
-      if (raw) {
-        const cached = JSON.parse(raw);
-        if (cached.configKey === configKey) {
-          setBtData(cached.data);
-          onTradesUpdate?.(cached.data.trades);
-        }
-      }
-    } catch { /* corrupt cache — ignore */ }
-    // Always run a fresh backtest on landing for up-to-date data
     initialRunDone.current = true;
-    runBacktest();
   }, [configLoaded]);
 
   // ── Auto re-run backtest after trade executed (from scanner) ──
@@ -1486,7 +1587,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     const doRun = async () => {
       if (!autoTradingRef.current) return;
       try {
-        const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, fmtDate(new Date()) || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade);
+        const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, fmtDate(new Date()) || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade, interval);
         if (!autoTradingRef.current) return;
         setBtData(res);
         onTradesUpdate?.(res.trades);
@@ -1564,7 +1665,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
 
     slTpHitRef.current = true;
     const reason = hitTP ? "TP" : "SL";
-    setExitStatus(`${reason} HIT @ $${livePrice.toFixed(2)} — re-running…`);
 
     // Immediately re-run backtest
     (async () => {
@@ -1575,7 +1675,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         const disabled = CONDITION_DEFS
           .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
           .map((d) => d.key);
-        const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade);
+        const res = await fetchMGC5MinBacktest(period, 0.3, slMult, tpMult, freshFrom || undefined, freshTo || undefined, symbol, disabled.length > 0 ? disabled : undefined, riskFilters.skip_flat, riskFilters.skip_counter_trend ?? true, riskFilters.use_ema_exit ?? false, exitConditions.use_struct_fade ?? false, exitConditions.use_sma28_cut ?? false, 0, skipHours.length > 0 ? skipHours : undefined, maxLossPerTrade, interval);
         setBtData(res);
         onTradesUpdate?.(res.trades);
         try { sessionStorage.setItem("bt5min_cache", JSON.stringify({ configKey, data: res })); } catch { /* */ }
@@ -1670,7 +1770,17 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="text-sm font-bold text-slate-100 tracking-tight">{symbolName}</span>
-                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700/50 text-slate-400 uppercase tracking-wider">5min</span>
+                <select
+                  value={interval}
+                  onChange={(e) => handleIntervalChange(e.target.value)}
+                  className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700/50 text-slate-400 uppercase tracking-wider appearance-none cursor-pointer hover:border-cyan-600/50 focus:outline-none focus:border-cyan-600/50 transition-colors"
+                  style={{ colorScheme: "dark" }}
+                >
+                  <option value="1m">1min</option>
+                  <option value="2m">2min</option>
+                  <option value="5m">5min</option>
+                  <option value="15m">15min</option>
+                </select>
               </div>
               <div className="text-[9px] text-slate-500 -mt-0.5">{symbol}=F · Futures</div>
             </div>
@@ -1716,13 +1826,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         </div>
       )}
 
-      {/* ── Exit + re-entry status ──────────────────── */}
-      {exitStatus && (
-        <div className="mx-3 mt-2 rounded-lg border border-amber-500/40 bg-amber-950/20 px-3 py-2 text-[10px] text-amber-400 font-bold animate-pulse">
-          ⚡ {exitStatus}
-        </div>
-      )}
-
       {/* ═════════════════════════════════════════════════════ */}
       {/* Backtest Conditions                                   */}
       {/* ═════════════════════════════════════════════════════ */}
@@ -1733,16 +1836,10 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             {/* Collapsed header bar — always visible */}
             <button
               onClick={() => setConditionsOpen((v) => !v)}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-800/60 bg-slate-900/40 hover:bg-slate-900/70 transition-all"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-800/60 bg-slate-900/40 hover:bg-slate-900/70 transition-all"
             >
               <span className="text-[10px]">⚙️</span>
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Conditions</span>
-              {activePreset && (
-                <span className="text-[9px] font-bold text-cyan-400 bg-cyan-950/40 border border-cyan-700/30 px-1.5 py-0.5 rounded">{activePreset}</span>
-              )}
-              {!activePreset && (
-                <span className="text-[9px] font-medium text-slate-500 bg-slate-800/50 px-1.5 py-0.5 rounded">Custom</span>
-              )}
 
               {/* Compact inline pills when collapsed */}
               {!conditionsOpen && (
@@ -1765,6 +1862,90 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 <svg className={`w-3 h-3 text-slate-500 transition-transform ${conditionsOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path d="M19 9l-7 7-7-7"/></svg>
               </span>
             </button>
+            {/* Preset dropdown — beside conditions header */}
+            <div className="flex items-center gap-1.5 mt-1">
+              <div className="relative flex-1">
+                <select
+                  value={activePreset ?? "__custom__"}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === "__custom__") { setActivePreset(null); return; }
+                    const bp = BUILT_IN_PRESETS.find((x) => x.name === val);
+                    if (bp) {
+                      setConditionToggles((prev) => ({ ...prev, ...bp.toggles }));
+                      setActivePreset(bp.name);
+                      setSlMult(bp.sl);
+                      setTpMult(bp.tp);
+                      handleIntervalChange(bp.interval);
+                      setPendingOptRun(true);
+                      return;
+                    }
+                    const p = presets.find((x) => x.name === val);
+                    if (p) {
+                      setConditionToggles((prev) => ({ ...prev, ...p.toggles }));
+                      setActivePreset(p.name);
+                      setPendingOptRun(true);
+                    }
+                  }}
+                  className="w-full bg-slate-900/60 ring-1 ring-slate-700/50 rounded-md pl-2 pr-6 py-1.5 text-[10px] text-slate-300 font-bold
+                    hover:ring-slate-600/60 focus:ring-cyan-500/40 focus:outline-none transition-all appearance-none cursor-pointer"
+                  style={{ colorScheme: "dark" }}
+                >
+                  <option value="__custom__">Custom</option>
+                  {BUILT_IN_PRESETS.map((bp) => (
+                    <option key={bp.name} value={bp.name}>🔒 {bp.name} ({bp.interval} · SL{bp.sl}× TP{bp.tp}×)</option>
+                  ))}
+                  {presets.map((p) => (
+                    <option key={p.name} value={p.name}>{p.name}</option>
+                  ))}
+                </select>
+                <svg className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+              <button
+                onClick={() => setShowPresetSave(!showPresetSave)}
+                className="px-2 py-1.5 text-[9px] font-bold rounded-md bg-slate-800/60 text-blue-400 hover:text-blue-300 ring-1 ring-slate-700/50 hover:ring-blue-600/30 transition-all shrink-0"
+                title="Save current conditions as preset"
+              >
+                {showPresetSave ? "✕" : "💾"}
+              </button>
+            </div>
+            {showPresetSave && (
+              <div className="flex gap-1 mt-1">
+                <input
+                  type="text"
+                  value={presetName}
+                  onChange={(e) => setPresetName(e.target.value)}
+                  placeholder="Preset name…"
+                  className="flex-1 px-2 py-1 text-[9px] rounded-md bg-slate-900 border border-slate-700 text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-blue-600"
+                  maxLength={50}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && presetName.trim()) {
+                      save5MinConditionPreset(presetName.trim(), conditionToggles, symbol)
+                        .then(() => load5MinConditionPresets(symbol).then(setPresets))
+                        .catch(() => {});
+                      setPresetName("");
+                      setShowPresetSave(false);
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    if (!presetName.trim()) return;
+                    save5MinConditionPreset(presetName.trim(), conditionToggles, symbol)
+                      .then(() => load5MinConditionPresets(symbol).then(setPresets))
+                      .catch(() => {});
+                    setPresetName("");
+                    setShowPresetSave(false);
+                  }}
+                  disabled={!presetName.trim()}
+                  className="px-2 py-1 text-[9px] font-bold rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 transition"
+                >
+                  Save
+                </button>
+              </div>
+            )}
 
             {/* Expanded condition toggles */}
             {conditionsOpen && (
@@ -1913,93 +2094,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   </div>
                 </div>
 
-                {/* Condition Presets — save/load */}
-                <div className="mt-2 pt-2 border-t border-slate-800/40">
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="text-[8px] text-blue-500/70 uppercase tracking-wider">Presets</p>
-                    <button
-                      onClick={() => setShowPresetSave(!showPresetSave)}
-                      className="text-[8px] font-bold text-blue-400 hover:text-blue-300 transition"
-                    >
-                      {showPresetSave ? "Cancel" : "+ Save Current"}
-                    </button>
-                  </div>
-                  {showPresetSave && (
-                    <div className="flex gap-1 mb-2">
-                      <input
-                        type="text"
-                        value={presetName}
-                        onChange={(e) => setPresetName(e.target.value)}
-                        placeholder="Preset name…"
-                        className="flex-1 px-2 py-1 text-[9px] rounded bg-slate-900 border border-slate-700 text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-blue-600"
-                        maxLength={50}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && presetName.trim()) {
-                            save5MinConditionPreset(presetName.trim(), conditionToggles, symbol)
-                              .then(() => load5MinConditionPresets(symbol).then(setPresets))
-                              .catch(() => {});
-                            setPresetName("");
-                            setShowPresetSave(false);
-                          }
-                        }}
-                      />
-                      <button
-                        onClick={() => {
-                          if (!presetName.trim()) return;
-                          save5MinConditionPreset(presetName.trim(), conditionToggles, symbol)
-                            .then(() => load5MinConditionPresets(symbol).then(setPresets))
-                            .catch(() => {});
-                          setPresetName("");
-                          setShowPresetSave(false);
-                        }}
-                        disabled={!presetName.trim()}
-                        className="px-2 py-1 text-[9px] font-bold rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 transition"
-                      >
-                        Save
-                      </button>
-                    </div>
-                  )}
-                  {presets.length > 0 && (
-                    <div className="space-y-1">
-                      {presets.map((p) => {
-                        const enabledCount = Object.values(p.toggles).filter(Boolean).length;
-                        const total = Object.keys(p.toggles).length;
-                        const isActive = activePreset === p.name;
-                        return (
-                          <div key={p.name} className="flex items-center gap-1.5 group">
-                            <button
-                              onClick={() => {
-                                setConditionToggles((prev) => ({ ...prev, ...p.toggles }));
-                                setActivePreset(p.name);
-                                setConditionsOpen(false);
-                              }}
-                              className={`flex-1 flex items-center gap-1.5 px-2 py-1 rounded text-left text-[9px] border transition ${
-                                isActive
-                                  ? "border-cyan-500/50 bg-cyan-950/30 ring-1 ring-cyan-500/20"
-                                  : "border-blue-800/30 bg-blue-950/10 hover:bg-blue-950/30"
-                              }`}
-                            >
-                              {isActive && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />}
-                              <span className={`font-bold truncate ${isActive ? "text-cyan-400" : "text-blue-400"}`}>{p.name}</span>
-                              <span className="text-[7px] text-slate-500 ml-auto">{enabledCount}/{total}</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                delete5MinConditionPreset(p.name, symbol)
-                                  .then(() => load5MinConditionPresets(symbol).then(setPresets))
-                                  .catch(() => {});
-                              }}
-                              className="w-5 h-5 rounded flex items-center justify-center text-slate-600 hover:text-rose-400 hover:bg-rose-950/30 opacity-0 group-hover:opacity-100 transition text-[9px]"
-                              title="Delete preset"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
               </div>
             )}
           </div>
@@ -2013,7 +2107,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
           {/* Controls */}
           <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-800/40">
             <div className="flex gap-0.5">
-              {["1d", "3d", "7d", "30d", "60d"].map((p) => (
+              {(interval === "1m" ? ["1d", "2d", "3d", "5d", "7d"] : ["1d", "3d", "7d", "30d", "60d"]).map((p) => (
                 <button
                   key={p}
                   onClick={() => setPeriod(p)}
@@ -2069,11 +2163,15 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
           {/* Idle state */}
           {!btData && !loading && (
             <div className="flex items-center justify-center min-h-[300px]">
-              <div className="text-center space-y-2">
+              <div className="text-center space-y-3">
                 <p className="text-4xl">🎯</p>
-                <p className="text-sm text-slate-400">Click <span className="text-cyan-400 font-bold">🎯 Run 5min</span> to backtest</p>
-                <p className="text-[10px] text-slate-600">EMA20/50 · MACD · RSI · Supertrend · Volume</p>
-                <p className="text-[9px] text-slate-700">SL 1×ATR · TP 2×ATR · 70/30 OOS split</p>
+                <button
+                  onClick={runBacktest}
+                  className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white font-bold text-sm shadow-lg shadow-cyan-900/40 transition-all hover:scale-105 active:scale-95"
+                >
+                  ▶ Start Backtest
+                </button>
+                <p className="text-[10px] text-slate-500">{period} · SL {slMult}× · TP {tpMult}× · EMA · MACD · RSI · Supertrend</p>
               </div>
             </div>
           )}
@@ -2084,7 +2182,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               <div className="flex flex-col items-center gap-3">
                 <div className="w-7 h-7 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
                 <span className="text-[11px] text-cyan-400 font-bold">Running backtest…</span>
-                <span className="text-[9px] text-slate-600">Fetching 60d data & simulating trades</span>
+                <span className="text-[9px] text-slate-600">Fetching {period} data & simulating trades</span>
               </div>
             </div>
           )}
@@ -2354,6 +2452,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                             <span className="text-[8px] text-slate-600">{fmtDateTime(pos.entry_time)}</span>
                           </div>
                           <div className="flex items-center gap-1.5">
+                            {/* Sync & Auto buttons hidden — use Auto-Trader panel instead
                             <button
                               onClick={(e) => { e.stopPropagation(); handleSync(); }}
                               disabled={syncing || autoTrading}
@@ -2377,110 +2476,14 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                             >
                               {autoTrading ? "● Auto ON" : "⚡ Auto"}
                             </button>
+                            */}
                           </div>
                           {syncStatus && (
                             <div className="text-[8px] font-bold text-orange-400 animate-pulse truncate">{syncStatus}</div>
                           )}
                         </div>
                       </div>
-                    ) : (
-                      /* ─── Live Trading Card (no position) ─── */
-                      <div className={`${hasDays ? "w-1/2" : "w-full"} rounded-xl overflow-hidden flex flex-col relative ${
-                        autoTrading
-                          ? "border border-emerald-500/20 bg-gradient-to-b from-emerald-950/40 via-slate-950/95 to-slate-950/95"
-                          : "border border-slate-800/50 bg-gradient-to-b from-slate-900/90 to-slate-950/95"
-                      }`}>
-                        {/* Scanning radar animation when active */}
-                        {autoTrading && (
-                          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-40 h-40 rounded-full border border-emerald-500/5 animate-ping" style={{ animationDuration: "3s" }} />
-                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-24 h-24 rounded-full border border-emerald-500/8 animate-ping" style={{ animationDuration: "2s", animationDelay: "0.5s" }} />
-                            <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-emerald-400/40 to-transparent animate-pulse" />
-                            <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-emerald-400/20 to-transparent" />
-                          </div>
-                        )}
-
-                        <div className="relative px-4 py-4 flex flex-col items-center gap-3 text-center">
-                          {/* Status indicator */}
-                          <div className="relative">
-                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-500 ${
-                              autoTrading
-                                ? "bg-emerald-500/10 ring-2 ring-emerald-500/20 shadow-lg shadow-emerald-500/10"
-                                : "bg-slate-800/60 ring-1 ring-slate-700/50"
-                            }`}>
-                              {autoTrading ? (
-                                <div className="relative">
-                                  <svg width="20" height="20" viewBox="0 0 20 20" className="animate-spin" style={{ animationDuration: "4s" }}>
-                                    <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="12 8" className="text-emerald-400/60" />
-                                  </svg>
-                                  <div className="absolute inset-0 flex items-center justify-center">
-                                    <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-md shadow-emerald-400/50" />
-                                  </div>
-                                </div>
-                              ) : (
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-500">
-                                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-                                </svg>
-                              )}
-                            </div>
-                            {autoTrading && (
-                              <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
-                                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-400 shadow-sm shadow-emerald-400/50" />
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Title + status */}
-                          <div>
-                            <div className={`text-[10px] font-bold uppercase tracking-[0.15em] mb-1 transition-colors ${
-                              autoTrading ? "text-emerald-400" : "text-slate-500"
-                            }`}>
-                              {autoTrading ? "Live Trading Active" : "Live Trading"}
-                            </div>
-                            <div className={`text-[8px] leading-relaxed ${autoTrading ? "text-emerald-500/60" : "text-slate-600"}`}>
-                              {autoTrading
-                                ? "Scanning for entry signals every 5m candle…"
-                                : "Auto-place bracket orders on indicator signals"
-                              }
-                            </div>
-                          </div>
-
-                          {/* Config pills when active */}
-                          {autoTrading && (
-                            <div className="flex flex-col items-center gap-1.5">
-                              <span className="px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-[8px] font-bold text-cyan-400 tracking-wide">
-                                {activePreset || "Custom"}
-                              </span>
-                              <div className="flex items-center gap-1">
-                                <span className="px-1.5 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/20 text-[7px] font-bold text-rose-400">SL {slMult}×</span>
-                                <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[7px] font-bold text-emerald-400">TP {tpMult}×</span>
-                                <span className="px-1.5 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-[7px] font-bold text-amber-400">{symbol}</span>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Toggle button */}
-                          <button
-                            onClick={() => setAutoTrading((v) => !v)}
-                            className={`w-full py-2 text-[10px] font-bold rounded-lg transition-all duration-300 ${
-                              autoTrading
-                                ? "bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-lg shadow-emerald-900/40 ring-1 ring-emerald-400/20 hover:from-rose-600 hover:to-rose-500 hover:shadow-rose-900/40 hover:ring-rose-400/20"
-                                : "bg-slate-800/80 border border-slate-700/50 text-slate-400 hover:text-emerald-400 hover:border-emerald-600/40 hover:bg-emerald-950/30 active:scale-[0.97]"
-                            }`}
-                          >
-                            {autoTrading ? "■ Stop Live Trading" : "⚡ Enable Live Trading"}
-                          </button>
-
-                          {/* Status message */}
-                          {exitStatus && (
-                            <div className="text-[8px] font-bold text-emerald-400 truncate w-full px-1 py-1 rounded-md bg-emerald-500/5 border border-emerald-500/10">
-                              {exitStatus}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
+                    ) : null}
                   </div>
                 );
               })()}

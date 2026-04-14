@@ -61,3 +61,4 @@ _archive/
 # Generated data exports
 apple_stock.json
 strategies/futures/tiger_private.pem
+tiger_private.pem

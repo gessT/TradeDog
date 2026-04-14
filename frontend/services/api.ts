@@ -968,6 +968,8 @@ export type MGC5MinCandle = {
   mkt_structure: number | null;
   sma_28: number | null;
   adx: number | null;
+  ht_dir: number | null;
+  ht_line: number | null;
 };
 
 export type MGC5MinTrade = {
@@ -1066,6 +1068,7 @@ export type StrategyConfig = {
   tp_mult?: number;
   risk_filters?: Record<string, boolean>;
   active_preset?: string;
+  layout?: Record<string, boolean>;
 };
 
 export async function loadStrategyConfig(symbol: string = "MGC"): Promise<StrategyConfig> {
@@ -1208,8 +1211,9 @@ export async function fetchMGC5MinBacktest(
   dailyLossLimit: number = 0,
   skipHours?: number[],
   maxLossPerTrade: number = 0,
+  interval: string = "5m",
 ): Promise<MGC5MinBacktestResponse> {
-  let url = `${API_BASE}/mgc/backtest_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  let url = `${API_BASE}/mgc/backtest_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}&interval=${encodeURIComponent(interval)}`;
   if (date_from) url += `&date_from=${date_from}`;
   if (date_to) url += `&date_to=${date_to}`;
   if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
@@ -1324,6 +1328,7 @@ export type Scan5MinConditions = {
   atr_range: boolean;
   session_ok: boolean;
   adx_ok: boolean;
+  halftrend: boolean;
   smc_ob: boolean;
   smc_fvg: boolean;
   smc_bos: boolean;
@@ -1631,6 +1636,11 @@ export type US1HCandle = {
   rsi?: number | null;
   macd_hist?: number | null;
   st_dir?: number | null;
+  st_line?: number | null;
+  ht_line?: number | null;
+  ht_dir?: number | null;
+  ht_high?: number | null;
+  ht_low?: number | null;
   signal: number;
 };
 
@@ -1683,7 +1693,7 @@ export type US1HBacktestResponse = {
 
 export async function fetchUS1HBacktest(
   symbol: string = "AAPL",
-  period: string = "2y",
+  period: string = "1y",
   oos_split: number = 0.3,
   atr_sl_mult: number = 3.0,
   atr_tp_mult: number = 2.5,
@@ -1691,8 +1701,9 @@ export async function fetchUS1HBacktest(
   date_to?: string,
   disabledConditions?: string[],
   skipFlat?: boolean,
+  capital: number = 5000,
 ): Promise<US1HBacktestResponse> {
-  let url = `${API_BASE}/stock/backtest_1h?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  let url = `${API_BASE}/stock/backtest_1h?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&oos_split=${oos_split}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}&capital=${capital}`;
   if (date_from) url += `&date_from=${date_from}`;
   if (date_to) url += `&date_to=${date_to}`;
   if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
@@ -1703,4 +1714,267 @@ export async function fetchUS1HBacktest(
     throw new Error(detail || `Request failed with ${response.status}`);
   }
   return (await response.json()) as US1HBacktestResponse;
+}
+
+export async function fetchVPBBacktest(
+  symbol: string = "AAPL",
+  period: string = "1y",
+  version: string = "v2",
+  disabledConditions?: string[],
+  params?: Record<string, unknown>,
+  capital: number = 5000,
+): Promise<US1HBacktestResponse> {
+  let url = `${API_BASE}/stock/backtest_vpb?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&version=${version}&capital=${capital}`;
+  if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) url += `&${k}=${v}`;
+    }
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as US1HBacktestResponse;
+}
+
+export async function fetchVPRBacktest(
+  symbol: string = "AAPL",
+  period: string = "1y",
+  disabledConditions?: string[],
+  params?: Record<string, unknown>,
+  capital: number = 5000,
+): Promise<US1HBacktestResponse> {
+  let url = `${API_BASE}/stock/backtest_vpr?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&capital=${capital}`;
+  if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) url += `&${k}=${v}`;
+    }
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as US1HBacktestResponse;
+}
+
+export async function fetchMTFBacktest(
+  symbol: string = "AAPL",
+  period: string = "1y",
+  disabledConditions?: string[],
+  params?: Record<string, unknown>,
+  capital: number = 5000,
+): Promise<US1HBacktestResponse> {
+  let url = `${API_BASE}/stock/backtest_mtf?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&capital=${capital}`;
+  if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) url += `&${k}=${v}`;
+    }
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as US1HBacktestResponse;
+}
+
+// ── TPC (Trend-Pullback-Continuation) backtest ─────────────────────
+export async function fetchTPCBacktest(
+  symbol: string = "AAPL",
+  period: string = "1y",
+  disabledConditions?: string[],
+  params?: Record<string, unknown>,
+  capital: number = 5000,
+): Promise<US1HBacktestResponse> {
+  let url = `${API_BASE}/stock/backtest_tpc?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&capital=${capital}`;
+  if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) url += `&${k}=${v}`;
+    }
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as US1HBacktestResponse;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// Auto-Trader v2 — 4-Layer Production Trading System
+// ═══════════════════════════════════════════════════════════════════════
+
+export type AutoTraderSnapshot = {
+  state: "IDLE" | "IN_TRADE" | "COOLDOWN" | "BLOCKED";
+  signal: {
+    direction: string;
+    signal_type: string;
+    entry_price: number;
+    stop_loss: number;
+    take_profit: number;
+    strength: number;
+    bar_time: string;
+    is_fresh: boolean;
+    risk_reward: number;
+  } | null;
+  position: {
+    direction: string;
+    entry_price: number;
+    stop_loss: number;
+    take_profit: number;
+    qty: number;
+    entry_time: string;
+  } | null;
+  trade_count: number;
+  cooldown_remaining: number;
+  last_exit_reason: string;
+  daily_trades: number;
+  daily_pnl: number;
+  daily_wins: number;
+  daily_losses: number;
+  consecutive_losses: number;
+  blocked_reason: string;
+  started: boolean;
+  mode: "off" | "paper" | "live";
+  config: {
+    cooldown_secs: number;
+    min_strength: number;
+    max_consec_losses: number;
+    daily_limit: number;
+    daily_loss_limit: number;
+  };
+};
+
+export type AutoTraderTickResult = {
+  action: string;
+  signal: Record<string, unknown> | null;
+  trade: Record<string, unknown> | null;
+  risk: Record<string, unknown> | null;
+  message: string;
+  snapshot: AutoTraderSnapshot;
+};
+
+export type AutoTraderTrade = {
+  direction: string;
+  entry_price: number;
+  exit_price: number;
+  stop_loss: number;
+  take_profit: number;
+  qty: number;
+  pnl: number;
+  exit_reason: string;
+  entry_time: string;
+  exit_time: string;
+  strength: number;
+  slippage: number;
+  is_paper: boolean;
+};
+
+export type AutoTraderFullState = AutoTraderSnapshot & {
+  risk: Record<string, unknown>;
+  paper: Record<string, unknown>;
+};
+
+const _at = (path: string, symbol: string = "MGC") =>
+  `${API_BASE}/mgc/auto-trader/${path}?symbol=${encodeURIComponent(symbol)}`;
+
+export async function autoTraderStart(mode: "paper" | "live", symbol = "MGC", interval = "5m"): Promise<AutoTraderSnapshot> {
+  const res = await fetch(`${_at("start", symbol)}&interval=${interval}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+  return res.json();
+}
+
+export async function autoTraderStop(symbol = "MGC"): Promise<AutoTraderSnapshot> {
+  const res = await fetch(_at("stop", symbol), { method: "POST" });
+  return res.json();
+}
+
+export async function autoTraderReset(symbol = "MGC"): Promise<AutoTraderSnapshot> {
+  const res = await fetch(_at("reset", symbol), { method: "POST" });
+  return res.json();
+}
+
+export async function autoTraderEmergencyStop(livePrice = 0, symbol = "MGC"): Promise<Record<string, unknown>> {
+  const res = await fetch(`${_at("emergency-stop", symbol)}&live_price=${livePrice}`, { method: "POST" });
+  return res.json();
+}
+
+export async function autoTraderUnblock(symbol = "MGC"): Promise<AutoTraderSnapshot> {
+  const res = await fetch(_at("unblock", symbol), { method: "POST" });
+  return res.json();
+}
+
+export async function autoTraderGetState(symbol = "MGC"): Promise<AutoTraderFullState> {
+  const res = await fetch(_at("state", symbol), { cache: "no-store" });
+  return res.json();
+}
+
+export async function autoTraderTick(
+  livePrice: number, isBarClose: boolean, tigerQty = 0, symbol = "MGC", period = "7d", interval = "5m",
+): Promise<AutoTraderTickResult> {
+  const res = await fetch(`${_at("tick", symbol)}&period=${period}&interval=${interval}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ live_price: livePrice, is_bar_close: isBarClose, tiger_qty: tigerQty }),
+  });
+  return res.json();
+}
+
+export async function autoTraderGetTrades(symbol = "MGC"): Promise<AutoTraderTrade[]> {
+  const res = await fetch(_at("trades", symbol), { cache: "no-store" });
+  return res.json();
+}
+
+export async function autoTraderGetDbTrades(symbol = "MGC"): Promise<AutoTraderTrade[]> {
+  const res = await fetch(_at("db-trades", symbol), { cache: "no-store" });
+  return res.json();
+}
+
+export async function autoTraderClearDbTrades(symbol = "MGC"): Promise<{ deleted: number }> {
+  const res = await fetch(_at("db-trades", symbol), { method: "DELETE" });
+  return res.json();
+}
+
+export async function autoTraderGetPaperSummary(symbol = "MGC"): Promise<Record<string, unknown>> {
+  const res = await fetch(_at("paper-summary", symbol), { cache: "no-store" });
+  return res.json();
+}
+
+export async function autoTraderUpdateConfig(
+  config: Record<string, unknown>, symbol = "MGC",
+): Promise<Record<string, unknown>> {
+  const res = await fetch(_at("config", symbol), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  return res.json();
+}
+
+export async function autoTraderEntryFilled(
+  entry: { entry_price: number; sl: number; tp: number; qty: number; direction: string },
+  symbol = "MGC",
+): Promise<AutoTraderFullState> {
+  const res = await fetch(_at("entry-filled", symbol), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(entry),
+  });
+  return res.json();
+}
+
+export async function autoTraderExit(
+  exitPrice: number, reason = "TP", symbol = "MGC",
+): Promise<Record<string, unknown>> {
+  const res = await fetch(_at("exit", symbol), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ exit_price: exitPrice, reason }),
+  });
+  return res.json();
 }
