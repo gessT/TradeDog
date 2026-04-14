@@ -2,6 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 
+const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
+const API_BASE = RAW_API_BASE
+  ? (RAW_API_BASE.startsWith("http") ? RAW_API_BASE : `https://${RAW_API_BASE}`)
+  : "http://127.0.0.1:8000";
+
 type USStockQuote = {
   symbol: string;
   name: string;
@@ -81,7 +86,6 @@ export default function USStockCards({ selected, onSelect }: Props) {
     let cancelled = false;
     async function fetchQuotes() {
       try {
-        const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
         const res = await fetch(`${API_BASE}/stock/us-quotes`, { cache: "no-store" });
         if (!res.ok) return;
         const data = await res.json();
