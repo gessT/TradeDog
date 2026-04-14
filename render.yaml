@@ -21,6 +21,14 @@ services:
         value: ""
       - key: PYTHON_VERSION
         value: "3.11.11"
+      - key: TIGER_ID
+        value: ""
+      - key: TIGER_ACCOUNT
+        value: ""
+      - key: TIGER_PRIVATE_KEY
+        value: "strategies/futures/tiger_private.pem"
+      - key: TIGER_PRIVATE_KEY_PEM
+        value: ""
 
   # ── Next.js Frontend ────────────────────────────────────
   - type: web
