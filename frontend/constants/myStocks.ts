@@ -12,7 +12,7 @@ export type MYStock = {
   /** Market cap tier: L=Large, M=Mid, S=Small */
   cap: "L" | "M" | "S";
   /** Default strategy for this stock (auto-selects on stock pick) */
-  strategy?: "tpc" | "hpb" | "vpb3";
+  strategy?: "tpc" | "hpb" | "vpb3" | "smp";
 };
 
 export const MY_STOCKS: MYStock[] = [
@@ -58,7 +58,7 @@ export const MY_STOCKS: MYStock[] = [
   { symbol: "0225.KL", name: "Southern Cable", sector: "Industrial", refPrice: 2.5, cap: "S" },
   { symbol: "6963.KL", name: "VS Industry", sector: "Industrial", refPrice: 1.0, cap: "M" },
   { symbol: "7172.KL", name: "PMB Technology", sector: "Industrial", refPrice: 1.5, cap: "S" },
-  { symbol: "0233.KL", name: "Pekat Group", sector: "Industrial", refPrice: 1.0, cap: "S" },
+  { symbol: "0233.KL", name: "Pekat Group", sector: "Industrial", refPrice: 1.0, cap: "S", strategy: "smp" },
   { symbol: "0167.KL", name: "MClean Technologies", sector: "Industrial", refPrice: 1.0, cap: "S" },
 
   // ── Telecommunications ────────────────────────────────

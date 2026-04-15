@@ -7,7 +7,7 @@ import type { US1HBacktestResponse } from "../../services/api";
 // MY Strategy Section — multi-strategy with dropdown
 // ═══════════════════════════════════════════════════════════
 
-export type StrategyType = "tpc" | "hpb" | "vpb3";
+export type StrategyType = "tpc" | "hpb" | "vpb3" | "smp";
 
 type StrategyDef = {
   key: StrategyType;
@@ -98,6 +98,31 @@ const STRATEGIES: StrategyDef[] = [
       tp1: { label: "TP R \u00D7", min: 0.5, max: 4, step: 0.1 },
     },
   },
+  {
+    key: "smp",
+    label: "SMP Strategy",
+    subtitle: "Smart Money Pivot",
+    icon: "\u{1F9E0}",
+    color: "violet",
+    conditions: [
+      { key: "ema_trend", label: "EMA Trend Gate", icon: "\u{1F4C8}", desc: "Close > EMA13 > EMA34 (required)" },
+      { key: "bos", label: "Break of Structure", icon: "\u26A1", desc: "Higher high detected (BOS)" },
+      { key: "pivot_breakout", label: "Pivot Breakout", icon: "\u{1F680}", desc: "Close above 10-bar highest high" },
+      { key: "order_block", label: "Order Block", icon: "\u{1F4E6}", desc: "Price near bullish demand zone" },
+      { key: "fvg_pullback", label: "Fair Value Gap", icon: "\u{1F300}", desc: "Pulled into imbalance zone & bounced" },
+      { key: "vol_confirm", label: "Volume Confirm", icon: "\u{1F4CA}", desc: "Vol > 1.2\u00D7 20-day avg" },
+      { key: "rsi_filter", label: "RSI Filter", icon: "\u{1F3AF}", desc: "RSI between 40\u201372" },
+    ],
+    exitRules: [
+      { key: "sl_exit", icon: "\u{1F6D1}", label: "Stop Loss", desc: "Swing low of last N bars" },
+      { key: "tp_exit", icon: "\u{1F3AF}", label: "Take Profit", desc: "R \u00D7 2.0 above entry" },
+      { key: "trail_exit", icon: "\u{1F4C9}", label: "Trailing Stop", desc: "2.5\u00D7 ATR trailing from peak" },
+    ],
+    sliders: {
+      sl: { label: "SL Lookback", min: 1, max: 10, step: 1 },
+      tp1: { label: "TP R \u00D7", min: 0.5, max: 5, step: 0.5 },
+    },
+  },
 ];
 
 // Default parameter values per strategy (the single source of truth)
@@ -108,6 +133,7 @@ export const STRATEGY_DEFAULTS: Record<StrategyType, {
   tpc:  { sl: 2,   tp1: 1,   tp2: 2.5, capital: 5000, disabledConditions: [] },
   hpb:  { sl: 2,   tp1: 4,   tp2: 4,   capital: 5000, disabledConditions: [] },
   vpb3: { sl: 5,   tp1: 3.0, tp2: 3.0, capital: 5000, disabledConditions: [] },
+  smp:  { sl: 4,   tp1: 2.0, tp2: 2.0, capital: 5000, disabledConditions: [] },
 };
 
 type Props = {

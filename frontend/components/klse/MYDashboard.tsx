@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState } from "react";
-import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, fetchBestStrategy, type US1HBacktestResponse, type US1HTrade, type StrategyGradeResult } from "../../services/api";
+import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, fetchSMPBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, fetchBestStrategy, type US1HBacktestResponse, type US1HTrade, type StrategyGradeResult } from "../../services/api";
 import { MY_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
@@ -298,6 +298,8 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           data = await fetchHPBBacktest(sym, backtestPeriod, undefined, { sl_atr_mult: atrSlMult, tp_atr_mult: tp1RMult }, capital);
         } else if (strat === "vpb3") {
           data = await fetchVPB3Backtest(sym, backtestPeriod, undefined, { sl_lookback: atrSlMult, tp_r_multiple: tp1RMult }, capital);
+        } else if (strat === "smp") {
+          data = await fetchSMPBacktest(sym, backtestPeriod, undefined, { sl_lookback: atrSlMult, tp_r_multiple: tp1RMult, trailing_atr_mult: tp2RMult }, capital);
         } else {
           data = await fetchTPCBacktest(sym, backtestPeriod, undefined, { atr_sl_mult: atrSlMult, tp1_r_mult: tp1RMult, tp2_r_mult: tp2RMult }, capital);
         }
@@ -360,6 +362,14 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           backtestPeriod,
           disabledArr.length > 0 ? disabledArr : undefined,
           { sl_lookback: atrSlMult, tp_r_multiple: tp1RMult },
+          capital,
+        );
+      } else if (strat === "smp") {
+        data = await fetchSMPBacktest(
+          selectedSymbol,
+          backtestPeriod,
+          disabledArr.length > 0 ? disabledArr : undefined,
+          { sl_lookback: atrSlMult, tp_r_multiple: tp1RMult, trailing_atr_mult: tp2RMult },
           capital,
         );
       } else {

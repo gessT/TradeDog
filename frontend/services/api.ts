@@ -1901,6 +1901,30 @@ export async function fetchVPB3Backtest(
   return (await response.json()) as US1HBacktestResponse;
 }
 
+// ── SMP (Smart Money Pivot) backtest ─────────────────────────────────
+
+export async function fetchSMPBacktest(
+  symbol: string = "0233.KL",
+  period: string = "2y",
+  disabledConditions?: string[],
+  params?: Record<string, unknown>,
+  capital: number = 5000,
+): Promise<US1HBacktestResponse> {
+  let url = `${API_BASE}/stock/backtest_smp?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&capital=${capital}`;
+  if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) url += `&${k}=${v}`;
+    }
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as US1HBacktestResponse;
+}
+
 // ── KLSE Strategy Config (per-symbol + per-strategy persistence) ────
 
 export type KLSEStrategyConfig = {

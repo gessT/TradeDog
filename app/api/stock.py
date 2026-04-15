@@ -3640,6 +3640,139 @@ async def klse_backtest_vpb3(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# SMP — Smart Money Pivot Strategy (KLSE Daily)
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/backtest_smp")
+async def klse_backtest_smp(
+    symbol: _Ann[str, Query()] = "0233.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 5000.0,
+    disabled_conditions: _Ann[_Opt[str], Query()] = None,
+    tp_r_multiple: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    sl_lookback: _Ann[_Opt[int], Query(ge=1, le=20)] = None,
+    trailing_atr_mult: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+) -> US1HBacktestResponse:
+    """Run SMP (Smart Money Pivot) backtest — Pivot Points + Order Blocks + FVG."""
+
+    from strategies.klse.smp.strategy import VALID_CONDITIONS
+
+    _disabled: set[str] = set()
+    if disabled_conditions:
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in VALID_CONDITIONS}
+
+    def _run():
+        from strategies.futures.data_loader import load_yfinance
+        from strategies.klse.smp.strategy import DEFAULT_PARAMS, build_indicators
+        from strategies.klse.smp.backtest import run_backtest as smp_backtest
+
+        param_overrides: dict = {}
+        if tp_r_multiple is not None:
+            param_overrides["tp_r_multiple"] = tp_r_multiple
+        if sl_lookback is not None:
+            param_overrides["sl_lookback"] = sl_lookback
+        if trailing_atr_mult is not None:
+            param_overrides["trailing_atr_mult"] = trailing_atr_mult
+
+        full_params = {**DEFAULT_PARAMS, **param_overrides}
+
+        df = load_yfinance(symbol=symbol, interval="1d", period=period)
+        if df.empty or len(df) < 60:
+            raise ValueError(f"Not enough daily data for {symbol} (need 60+ bars).")
+
+        result = smp_backtest(df, params=full_params, capital=capital,
+                              disabled_conditions=_disabled or None)
+
+        # Build candles with indicators
+        df_ind = build_indicators(df.copy(), full_params)
+
+        candles = []
+        for ts_val, row in df_ind.iterrows():
+            candles.append(US1HCandle(
+                time=ts_val.isoformat() if hasattr(ts_val, "isoformat") else str(ts_val),
+                open=round(float(row["open"]), 4),
+                high=round(float(row["high"]), 4),
+                low=round(float(row["low"]), 4),
+                close=round(float(row["close"]), 4),
+                volume=float(row.get("volume", 0)),
+                ema_fast=round(float(row.get("ema_fast", 0)), 4) if not _isnan(row.get("ema_fast")) else None,
+                ema_slow=round(float(row.get("ema_slow", 0)), 4) if not _isnan(row.get("ema_slow")) else None,
+                rsi=round(float(row.get("rsi", 0)), 1) if not _isnan(row.get("rsi")) else None,
+                st_dir=int(row.get("bos", 0)),
+                st_line=round(float(row.get("swing_low", 0)), 4) if not _isnan(row.get("swing_low")) else None,
+                ht_line=round(float(row.get("ob_top", 0)), 4) if not _isnan(row.get("ob_top")) else None,
+                ht_dir=1 if not _isnan(row.get("ob_top")) else 0,
+                signal=0,
+            ))
+
+        n_trades = len(result.trades)
+        wins = [t for t in result.trades if t.win]
+        losses = [t for t in result.trades if not t.win]
+
+        metrics = US1HMetrics(
+            initial_capital=result.initial_capital,
+            final_equity=result.final_equity,
+            total_return_pct=result.total_return_pct,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            total_trades=n_trades,
+            winners=result.winners,
+            losers=result.losers,
+            win_rate=result.win_rate,
+            avg_win=result.avg_win_pct,
+            avg_loss=result.avg_loss_pct,
+            profit_factor=result.profit_factor,
+            risk_reward_ratio=result.risk_reward,
+        )
+
+        trades_out = [
+            US1HTrade(
+                entry_time=t.entry_date,
+                exit_time=t.exit_date,
+                entry_price=t.entry_price,
+                exit_price=t.exit_price,
+                qty=0,
+                pnl=t.pnl,
+                pnl_pct=t.return_pct,
+                reason=t.exit_reason,
+                signal_type="SMP",
+                direction="CALL",
+                sl_price=t.sl_price,
+            )
+            for t in result.trades
+        ]
+
+        out_params = {
+            "tp_r_multiple": full_params["tp_r_multiple"],
+            "sl_lookback": full_params["sl_lookback"],
+            "trailing_atr_mult": full_params["trailing_atr_mult"],
+            "min_score": full_params["min_score"],
+        }
+
+        return candles, trades_out, result.equity_curve, metrics, out_params
+
+    try:
+        candles, trades, eq_curve, metrics, params_out = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("SMP backtest failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return US1HBacktestResponse(
+        symbol=symbol,
+        interval="1d",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        params=params_out,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Scan Best Strategy — run all 3 KLSE strategies and grade them
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -3694,7 +3827,7 @@ async def scan_best_strategy(
     period: _Ann[str, Query()] = "2y",
     capital: _Ann[float, Query()] = 5000.0,
 ) -> dict:
-    """Run all 3 KLSE strategies (TPC, HPB, VPB3) with defaults and return graded comparison."""
+    """Run all 4 KLSE strategies (TPC, HPB, VPB3, SMP) with defaults and return graded comparison."""
 
     def _run_all() -> list[dict]:
         from strategies.futures.data_loader import load_yfinance
@@ -3805,6 +3938,34 @@ async def scan_best_strategy(
         except Exception as exc:
             logger.debug("VPB3 scan failed for %s: %s", symbol, exc)
             results.append({"strategy": "vpb3", "label": "VPB3", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
+
+        # --- SMP ---
+        try:
+            from strategies.klse.smp.strategy import DEFAULT_PARAMS as SMP_PARAMS
+            from strategies.klse.smp.backtest import run_backtest as smp_backtest
+
+            df = load_yfinance(symbol=symbol, interval="1d", period=period)
+            if df.empty or len(df) < 60:
+                raise ValueError("Not enough data")
+
+            result = smp_backtest(df, params=SMP_PARAMS, capital=capital, disabled_conditions=None)
+            n = len(result.trades)
+
+            m = {
+                "total_return_pct": result.total_return_pct,
+                "win_rate": result.win_rate,
+                "profit_factor": result.profit_factor,
+                "sharpe_ratio": result.sharpe_ratio,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "total_trades": n,
+                "winners": result.winners,
+                "losers": result.losers,
+            }
+            grade, score = _grade_metrics(m)
+            results.append({"strategy": "smp", "label": "SMP", "grade": grade, "score": score, "metrics": m})
+        except Exception as exc:
+            logger.debug("SMP scan failed for %s: %s", symbol, exc)
+            results.append({"strategy": "smp", "label": "SMP", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
 
         # Sort by score descending
         results.sort(key=lambda x: -x["score"])
