@@ -805,6 +805,135 @@ async def near_ath(top: int = 10, market: str = Query(default="MY")) -> dict:
     }
 
 
+# ── Volume Breakout Scanner ─────────────────────────────────────────
+
+def _scan_vol_breakout(code: str, name: str, lookback: int = 10, vol_mult: float = 2.0) -> dict | None:
+    """
+    Find stocks with big-volume day(s) in last `lookback` bars,
+    then classify current price vs the big-volume day's price range.
+    Returns: breakout / range / breakdown status, or None on failure.
+    """
+    try:
+        ticker = yf.Ticker(code)
+        hist = ticker.history(period="3mo", auto_adjust=False)
+        if hist is None or hist.empty or len(hist) < lookback + 20:
+            return None
+
+        cols = hist.columns
+        if isinstance(cols[0], tuple):
+            hist.columns = [c[0] if isinstance(c, tuple) else str(c) for c in cols]
+
+        for col in ("Close", "High", "Low", "Volume"):
+            if col not in hist.columns:
+                return None
+
+        close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+        high = pd.to_numeric(hist["High"], errors="coerce").dropna()
+        low = pd.to_numeric(hist["Low"], errors="coerce").dropna()
+        vol = pd.to_numeric(hist["Volume"], errors="coerce").dropna()
+
+        if len(vol) < lookback + 20:
+            return None
+
+        # Average volume over 20 days BEFORE the lookback window
+        avg_vol = float(vol.iloc[-(lookback + 20):-(lookback)].mean())
+        if avg_vol <= 0:
+            return None
+
+        # Scan last `lookback` bars for big-volume days (>= vol_mult × avg)
+        recent = hist.iloc[-lookback:]
+        big_vol_mask = pd.to_numeric(recent["Volume"], errors="coerce") >= avg_vol * vol_mult
+        big_vol_days = recent[big_vol_mask]
+
+        if big_vol_days.empty:
+            return None
+
+        # Build price range from all big-volume days
+        bv_highs = pd.to_numeric(big_vol_days["High"], errors="coerce").dropna()
+        bv_lows = pd.to_numeric(big_vol_days["Low"], errors="coerce").dropna()
+        if bv_highs.empty or bv_lows.empty:
+            return None
+
+        range_high = float(bv_highs.max())
+        range_low = float(bv_lows.min())
+        if range_high <= 0 or range_low <= 0:
+            return None
+
+        current_price = float(close.iloc[-1])
+        max_vol_ratio = float((pd.to_numeric(big_vol_days["Volume"], errors="coerce") / avg_vol).max())
+        days_ago = len(hist) - hist.index.get_loc(big_vol_days.index[-1]) - 1
+        if isinstance(days_ago, slice):
+            days_ago = 1
+
+        # Classify
+        if current_price > range_high:
+            status = "breakout"
+        elif current_price < range_low:
+            status = "breakdown"
+        else:
+            status = "range"
+
+        pct_from_high = ((current_price - range_high) / range_high) * 100
+        pct_from_low = ((current_price - range_low) / range_low) * 100
+
+        return {
+            "symbol": code,
+            "name": name,
+            "current_price": round(current_price, 4),
+            "range_high": round(range_high, 4),
+            "range_low": round(range_low, 4),
+            "status": status,
+            "pct_from_high": round(pct_from_high, 2),
+            "pct_from_low": round(pct_from_low, 2),
+            "big_vol_days": int(big_vol_mask.sum()),
+            "max_vol_ratio": round(max_vol_ratio, 1),
+            "last_big_vol_days_ago": int(days_ago),
+        }
+    except Exception as exc:
+        logger.debug("Vol-breakout scan failed for %s: %s", code, exc)
+        return None
+
+
+@router.get("/vol-breakout")
+async def vol_breakout_scan(
+    top: int = 30,
+    market: str = Query(default="MY"),
+    lookback: int = Query(default=10, ge=3, le=30),
+    vol_mult: float = Query(default=2.0, ge=1.2, le=5.0),
+) -> dict:
+    """Scan stocks for big-volume days in last N bars and classify breakout/range/breakdown."""
+    import concurrent.futures
+
+    stocks_dict, _ = _get_stock_universe(market)
+    top = min(max(top, 1), 100)
+
+    def _scan_all() -> list[dict]:
+        results: list[dict] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {
+                pool.submit(_scan_vol_breakout, code, name, lookback, vol_mult): code
+                for code, name in stocks_dict.items()
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                res = fut.result()
+                if res is not None:
+                    results.append(res)
+        # Sort: breakouts first, then range, then breakdown; within each group by vol ratio desc
+        status_order = {"breakout": 0, "range": 1, "breakdown": 2}
+        results.sort(key=lambda x: (status_order.get(x["status"], 9), -x["max_vol_ratio"]))
+        return results[:top]
+
+    stocks = await run_in_threadpool(_scan_all)
+
+    return {
+        "count": len(stocks),
+        "scanned": len(stocks_dict),
+        "lookback": lookback,
+        "vol_mult": vol_mult,
+        "stocks": stocks,
+    }
+
+
 # ── Unusual / Special Volume Scanner ────────────────────────────────
 
 def _scan_volume(code: str, name: str, avg_days: int = 20) -> dict | None:

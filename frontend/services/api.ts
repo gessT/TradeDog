@@ -271,6 +271,51 @@ export async function fetchNearATH(top: number = 10, market: string = "MY"): Pro
 }
 
 
+// ── Volume Breakout Scanner ─────────────────────────────────────────
+
+export type VolBreakoutStock = {
+  symbol: string;
+  name: string;
+  current_price: number;
+  range_high: number;
+  range_low: number;
+  status: "breakout" | "range" | "breakdown";
+  pct_from_high: number;
+  pct_from_low: number;
+  big_vol_days: number;
+  max_vol_ratio: number;
+  last_big_vol_days_ago: number;
+};
+
+export type VolBreakoutResponse = {
+  count: number;
+  scanned: number;
+  lookback: number;
+  vol_mult: number;
+  stocks: VolBreakoutStock[];
+};
+
+export async function fetchVolBreakout(
+  top: number = 30,
+  market: string = "MY",
+  lookback: number = 10,
+  volMult: number = 2.0,
+): Promise<VolBreakoutResponse> {
+  const params = new URLSearchParams({
+    top: String(top),
+    market,
+    lookback: String(lookback),
+    vol_mult: String(volMult),
+  });
+  const response = await fetch(`${API_BASE}/stock/vol-breakout?${params}`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as VolBreakoutResponse;
+}
+
+
 // ── Top Volume Scanner ──────────────────────────────────────────────
 
 export type TopVolumeStock = {
