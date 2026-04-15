@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // MY Strategy Section — multi-strategy with dropdown
 // ═══════════════════════════════════════════════════════════
 
-export type StrategyType = "tpc" | "hpb";
+export type StrategyType = "tpc" | "hpb" | "vpb3";
 
 type StrategyDef = {
   key: StrategyType;
@@ -72,6 +72,31 @@ const STRATEGIES: StrategyDef[] = [
       tp1: { label: "TP ATR \u00D7", min: 0.5, max: 10, step: 0.5 },
     },
   },
+  {
+    key: "vpb3",
+    label: "VPB3 Malaysia",
+    subtitle: "\u91CF\u4EF7\u7A81\u7834 Volume-Price Breakout",
+    icon: "\u{1F4CA}",
+    color: "emerald",
+    conditions: [
+      { key: "ema_trend", label: "EMA Trend Up", icon: "\u{1F4C8}", desc: "Close > EMA20 > EMA50 (required gate)" },
+      { key: "accum", label: "Accumulation", icon: "\u{1F4E6}", desc: "\u91CF\u7F29\u4EF7\u7A33: low vol + tight range bars" },
+      { key: "breakout", label: "Breakout / Pullback", icon: "\u{1F680}", desc: "Close > 8-day high OR EMA20 pullback bounce" },
+      { key: "vol_surge", label: "Volume Surge", icon: "\u{1F4CA}", desc: "\u91CF\u589E: vol > 1.2\u00D7 20-day avg" },
+      { key: "rsi", label: "RSI Filter", icon: "\u26A1", desc: "RSI between 40\u201372 (avoid extremes)" },
+      { key: "candle_quality", label: "Candle Quality", icon: "\u{1F7E2}", desc: "Bullish body \u226525%, close in top 40%" },
+      { key: "atr_filter", label: "ATR Expansion", icon: "\u{1F4C8}", desc: "ATR above mean (off by default)" },
+    ],
+    exitRules: [
+      { key: "sl_exit", icon: "\u{1F6D1}", label: "Stop Loss", desc: "Swing low of last N bars (SL Lookback)" },
+      { key: "tp_exit", icon: "\u{1F3AF}", label: "Take Profit", desc: "R \u00D7 3.0 above entry (let winners run)" },
+      { key: "trail_exit", icon: "\u{1F4C9}", label: "Trailing Stop", desc: "2.5\u00D7 ATR trailing from peak" },
+    ],
+    sliders: {
+      sl: { label: "SL Lookback", min: 1, max: 10, step: 1 },
+      tp1: { label: "TP R \u00D7", min: 0.5, max: 4, step: 0.1 },
+    },
+  },
 ];
 
 // Default parameter values per strategy (the single source of truth)
@@ -79,8 +104,9 @@ export const STRATEGY_DEFAULTS: Record<StrategyType, {
   sl: number; tp1: number; tp2: number; capital: number;
   disabledConditions: string[];   // conditions OFF by default (empty = all ON)
 }> = {
-  tpc: { sl: 2, tp1: 1, tp2: 2.5, capital: 5000, disabledConditions: [] },
-  hpb: { sl: 2, tp1: 4, tp2: 4,   capital: 5000, disabledConditions: [] },
+  tpc:  { sl: 2,   tp1: 1,   tp2: 2.5, capital: 5000, disabledConditions: [] },
+  hpb:  { sl: 2,   tp1: 4,   tp2: 4,   capital: 5000, disabledConditions: [] },
+  vpb3: { sl: 5,   tp1: 3.0, tp2: 3.0, capital: 5000, disabledConditions: [] },
 };
 
 type Props = {
@@ -340,8 +366,8 @@ export default function MYStrategySection({
             </div>
             <p className="text-[11px] text-slate-400 mb-1">This will reset <span className="text-amber-400 font-semibold">{strat.label}</span> to default values:</p>
             <ul className="text-[10px] text-slate-500 mb-4 space-y-0.5 pl-4 list-disc">
-              <li>SL: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].sl.toFixed(1)}</span></li>
-              <li>{activeStrategy === "hpb" ? "TP" : "TP1"}: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].tp1.toFixed(1)}</span></li>
+              <li>{activeStrategy === "vpb3" ? "SL Lookback" : "SL"}: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].sl.toFixed(1)}</span></li>
+              <li>{activeStrategy === "tpc" ? "TP1" : "TP"}: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].tp1.toFixed(1)}</span></li>
               {activeStrategy === "tpc" && <li>TP2: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].tp2.toFixed(1)}</span></li>}
               <li>Capital: <span className="text-slate-300 font-mono">RM{STRATEGY_DEFAULTS[activeStrategy].capital.toLocaleString()}</span></li>
               <li>All conditions: <span className="text-emerald-400 font-semibold">enabled</span></li>
