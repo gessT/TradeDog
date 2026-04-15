@@ -18,10 +18,11 @@ import {
   type AutoTraderTrade,
 } from "../../services/api";
 import type { LockedTradingConfig } from "./Strategy5MinPanel";
+import TigerAccountTab from "./TigerAccountTab";
 
 type Mode = "off" | "paper" | "live";
 type LogEntry = { ts: number; msg: string; type: "info" | "signal" | "entry" | "exit" | "warn" | "error" };
-type Tab = "status" | "log" | "trades" | "config";
+type Tab = "status" | "log" | "trades" | "config" | "tiger";
 
 const STATE_BG: Record<string, string> = {
   IDLE: "from-emerald-500/10 to-emerald-600/5",
@@ -81,9 +82,10 @@ function notifyExit() {
 type Props = {
   symbol?: string;
   lockedConfig?: LockedTradingConfig | null;
+  tradeExecutedTick?: number;
 };
 
-export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props) {
+export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExecutedTick = 0 }: Props) {
   const { price: livePrice } = useLivePrice();
   const [snap, setSnap] = useState<AutoTraderSnapshot | null>(null);
   const [trades, setTrades] = useState<AutoTraderTrade[]>([]);
@@ -193,6 +195,8 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
       pushLog(`Started ${m.toUpperCase()} | ${label} | SL=${lockedConfig.slMult}x TP=${lockedConfig.tpMult}x`, "info");
       setLaunchFlash(m);
       setTimeout(() => setLaunchFlash(null), 3000);
+      // Auto-switch to Tiger Account tab when starting Live Trade
+      if (m === "live") setTab("tiger");
     }
   };
   const handleStop = async () => {
@@ -595,11 +599,15 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
 
       {/* ═══ Tab bar ═══ */}
       <div className="flex border-t border-white/5">
-        {(["status", "log", "trades", "config"] as Tab[]).map((t) => (
+        {(["status", "log", "trades", "config", "tiger"] as Tab[]).map((t) => (
           <button key={t} onClick={() => { setTab(t); if (t === "trades") autoTraderGetDbTrades(symbol).then(setTrades).catch(() => {}); }}
             className={`flex-1 py-1.5 text-[8px] uppercase tracking-widest font-semibold transition-colors
-              ${tab === t ? "text-white/80 bg-white/[0.04] border-b-2 border-violet-400/60" : "text-white/25 hover:text-white/40"}`}>
-            {t === "log" ? `Log (${logs.length})` : t === "trades" ? `Trades (${trades.length})` : t}
+              ${tab === t
+                ? t === "tiger"
+                  ? "text-amber-300/90 bg-amber-500/[0.06] border-b-2 border-amber-400/60"
+                  : "text-white/80 bg-white/[0.04] border-b-2 border-violet-400/60"
+                : "text-white/25 hover:text-white/40"}`}>
+            {t === "log" ? `Log (${logs.length})` : t === "trades" ? `Trades (${trades.length})` : t === "tiger" ? "🐯 Tiger" : t}
           </button>
         ))}
       </div>
@@ -779,6 +787,9 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig }: Props)
 
         {/* ── Config tab ── */}
         {tab === "config" && snap && <ConfigPanel snap={snap} symbol={symbol} onUpdate={refreshState} onLog={pushLog} />}
+
+        {/* ── Tiger Account tab ── */}
+        {tab === "tiger" && <TigerAccountTab tradeExecutedTick={tradeExecutedTick} />}
       </div>
 
       {/* ── Animations ── */}

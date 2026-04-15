@@ -200,7 +200,6 @@ export default function Page() {
                     { key: "col1" as const, label: "Chart", icon: "📊" },
                     { key: "col2" as const, label: "Strategy", icon: "🧪" },
                     { key: "col3" as const, label: "Trader", icon: "🤖" },
-                    { key: "tiger" as const, label: "Tiger Account", icon: "🐯" },
                   ]).map((item) => (
                     <button
                       key={item.key}

@@ -122,6 +122,7 @@ type Props = {
   onCapitalChange: (v: number) => void;
   onRunBacktest: () => void;
   onResetDefaults: () => void;
+  onSaveConfig: () => Promise<void>;
   loading: boolean;
   symbol?: string;
   symbolName?: string;
@@ -164,6 +165,7 @@ export default function MYStrategySection({
   onCapitalChange,
   onRunBacktest,
   onResetDefaults,
+  onSaveConfig,
   loading,
   symbol,
   symbolName,
@@ -172,12 +174,24 @@ export default function MYStrategySection({
 }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const handleConfirmReset = useCallback(() => {
     setConfirmResetOpen(false);
     onResetDefaults();
   }, [onResetDefaults]);
+
+  const handleSave = useCallback(async () => {
+    setSaveStatus("saving");
+    try {
+      await onSaveConfig();
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 2000);
+    } catch {
+      setSaveStatus("idle");
+    }
+  }, [onSaveConfig]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -340,11 +354,15 @@ export default function MYStrategySection({
               && [...disabledConditions].every(k => defaultDisabled.has(k));
             const isDefault = atrSlMult === d.sl && tp1RMult === d.tp1 && tp2RMult === d.tp2
               && capital === d.capital && condMatch;
-            if (isDefault) return null;
             return (
               <button
                 onClick={() => setConfirmResetOpen(true)}
-                className="w-full py-1.5 rounded-lg text-[9px] font-bold border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition flex items-center justify-center gap-1"
+                disabled={isDefault}
+                className={`w-full py-1.5 rounded-lg text-[9px] font-bold border transition flex items-center justify-center gap-1 ${
+                  isDefault
+                    ? "border-slate-700/30 bg-slate-800/20 text-slate-600 cursor-not-allowed"
+                    : "border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+                }`}
               >
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -353,6 +371,34 @@ export default function MYStrategySection({
               </button>
             );
           })()}
+
+          {/* ── Save Configuration ── */}
+          <button
+            onClick={handleSave}
+            disabled={saveStatus === "saving"}
+            className={`w-full py-1.5 rounded-lg text-[9px] font-bold border transition flex items-center justify-center gap-1 ${
+              saveStatus === "saved"
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                : "border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20"
+            }`}
+          >
+            {saveStatus === "saving" ? (
+              <>
+                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                Saving…
+              </>
+            ) : saveStatus === "saved" ? (
+              <>
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                Saved!
+              </>
+            ) : (
+              <>
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
+                Save Configuration
+              </>
+            )}
+          </button>
         </div>
       </div>
 

@@ -11,6 +11,8 @@ export type MYStock = {
   refPrice: number;
   /** Market cap tier: L=Large, M=Mid, S=Small */
   cap: "L" | "M" | "S";
+  /** Default strategy for this stock (auto-selects on stock pick) */
+  strategy?: "tpc" | "hpb" | "vpb3";
 };
 
 export const MY_STOCKS: MYStock[] = [
@@ -109,7 +111,7 @@ export const MY_STOCKS: MYStock[] = [
   { symbol: "8206.KL", name: "Eco World Development", sector: "Property", refPrice: 1.0, cap: "M" },
   { symbol: "5200.KL", name: "UOA Development", sector: "Property", refPrice: 2.0, cap: "M" },
   { symbol: "8664.KL", name: "SP Setia", sector: "Property", refPrice: 1.5, cap: "L" },
-  { symbol: "8583.KL", name: "Mah Sing", sector: "Property", refPrice: 1.5, cap: "M" },
+  { symbol: "8583.KL", name: "Mah Sing", sector: "Property", refPrice: 1.5, cap: "M", strategy: "vpb3" },
   { symbol: "5236.KL", name: "Matrix Concepts", sector: "Property", refPrice: 2.5, cap: "M" },
   { symbol: "7179.KL", name: "Lagenda Properties", sector: "Property", refPrice: 1.5, cap: "S" },
   { symbol: "5606.KL", name: "IGB Bhd", sector: "Property", refPrice: 2.0, cap: "M" },
@@ -183,6 +185,11 @@ export const MY_STOCKS_BY_SECTOR = MY_SECTORS.reduce<Record<string, MYStock[]>>(
 /** Quick lookup: symbol → name */
 export const MY_SYMBOL_MAP = Object.fromEntries(
   MY_STOCKS.map((s) => [s.symbol, s.name]),
+);
+
+/** Quick lookup: symbol → default strategy (if marked) */
+export const MY_STOCK_STRATEGY = Object.fromEntries(
+  MY_STOCKS.filter((s) => s.strategy).map((s) => [s.symbol, s.strategy!]),
 );
 
 /** Hot-pick 明星股 — default watchlist (10 stocks) */

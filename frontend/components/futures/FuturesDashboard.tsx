@@ -12,7 +12,6 @@ import {
 } from "../../services/api";
 import CommodityCards from "./CommodityCards";
 import MGCLiveChart from "./MGCLiveChart";
-import ScanTradePanel from "./ScanTradePanel";
 import Strategy5MinPanel, { type LockedTradingConfig } from "./Strategy5MinPanel";
 import AutoTraderPanel from "./AutoTraderPanel";
 import { LivePriceProvider } from "../../hooks/useLivePrice";
@@ -250,17 +249,8 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
           Trader
         </button>
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <AutoTraderPanel symbol={selectedSymbol} lockedConfig={lockedConfig} />
+          <AutoTraderPanel symbol={selectedSymbol} lockedConfig={lockedConfig} tradeExecutedTick={tradeExecutedTick} />
         </div>
-        <button onClick={() => setTigerOpen((v) => !v)} className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-slate-600 hover:text-slate-300 uppercase tracking-widest font-bold bg-slate-950/60 hover:bg-slate-900/80 border-y border-slate-800/40 transition-colors shrink-0 w-full">
-          <svg className={`w-3 h-3 transition-transform ${tigerOpen ? "" : "rotate-180"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M19 9l-7 7-7-7"/></svg>
-          Tiger Account
-        </button>
-        {tigerOpen && (
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <ScanTradePanel tradeExecutedTick={tradeExecutedTick} />
-          </div>
-        )}
       </section>
       )}
 

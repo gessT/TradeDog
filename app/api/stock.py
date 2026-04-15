@@ -596,13 +596,15 @@ class KLSEStrategyConfigPayload(BaseModel):
 
 
 @router.get("/klse_strategy_config")
-def get_klse_strategy_config(symbol: str = Query("5347.KL")) -> dict:
-    """Load persisted KLSE TPC strategy config for a symbol."""
+def get_klse_strategy_config(
+    strategy: str = Query("tpc"),
+) -> dict:
+    """Load persisted KLSE strategy config (per-strategy, global)."""
     import json
     from sqlalchemy import text
     from app.db.database import engine
 
-    sym = f"{symbol.upper()}_TPC"
+    sym = f"KLSE_{strategy.upper()}"
     with engine.connect() as conn:
         row = conn.execute(
             text("SELECT config_json FROM strategy_configs WHERE symbol = :sym"),
@@ -619,14 +621,14 @@ def get_klse_strategy_config(symbol: str = Query("5347.KL")) -> dict:
 @router.post("/klse_strategy_config")
 def save_klse_strategy_config(
     payload: KLSEStrategyConfigPayload,
-    symbol: str = Query("5347.KL"),
+    strategy: str = Query("tpc"),
 ) -> dict[str, str]:
-    """Save KLSE TPC strategy config for a symbol (merge with existing)."""
+    """Save KLSE strategy config (per-strategy, global — merge with existing)."""
     import json
     from sqlalchemy import text
     from app.db.database import engine
 
-    sym = f"{symbol.upper()}_TPC"
+    sym = f"KLSE_{strategy.upper()}"
     new_fields = {k: v for k, v in {
         "disabled_conditions": payload.disabled_conditions,
         "atr_sl_mult": payload.atr_sl_mult,

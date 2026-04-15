@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState } from "react";
 import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
-import { MY_STOCKS } from "../../constants/myStocks";
+import { MY_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
 import MYStrategySection, { type StrategyType, STRATEGY_DEFAULTS } from "./MYStrategySection";
@@ -88,6 +88,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   const handleStrategyChange = useCallback((s: StrategyType) => {
     setActiveStrategy(s);
     activeStrategyRef.current = s;
+    // config will be loaded from DB by the useEffect below; apply defaults as fallback
     applyDefaults(s);
   }, [applyDefaults]);
 
@@ -110,16 +111,27 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     setBacktestPeriod(p);
   }, []);
 
-  // ── Load persisted config per symbol ──
+  const handleSaveConfig = useCallback(async () => {
+    await saveKLSEStrategyConfig({
+      disabled_conditions: Array.from(disabledConditions),
+      atr_sl_mult: atrSlMult,
+      tp1_r_mult: tp1RMult,
+      tp2_r_mult: tp2RMult,
+      capital,
+      period: backtestPeriod,
+    }, activeStrategyRef.current);
+  }, [disabledConditions, atrSlMult, tp1RMult, tp2RMult, capital, backtestPeriod]);
+
+  // ── Load persisted config per strategy (global, not per-stock) ──
   const configLoaded = useRef(false);
-  const loadingSymbol = useRef<string | null>(null);
+  const loadingStrategy = useRef<string | null>(null);
   useEffect(() => {
-    loadingSymbol.current = selectedSymbol;
+    loadingStrategy.current = activeStrategy;
     configLoaded.current = false;
-    loadKLSEStrategyConfig(selectedSymbol).then((cfg) => {
-      if (loadingSymbol.current !== selectedSymbol) return; // stale
+    loadKLSEStrategyConfig(activeStrategy).then((cfg) => {
+      if (loadingStrategy.current !== activeStrategy) return; // stale
       if (cfg.disabled_conditions) setDisabledConditions(new Set(cfg.disabled_conditions));
-      else setDisabledConditions(new Set());
+      else setDisabledConditions(new Set(STRATEGY_DEFAULTS[activeStrategy].disabledConditions));
       if (cfg.atr_sl_mult !== undefined) setAtrSlMult(cfg.atr_sl_mult);
       if (cfg.tp1_r_mult !== undefined) setTp1RMult(cfg.tp1_r_mult);
       if (cfg.tp2_r_mult !== undefined) setTp2RMult(cfg.tp2_r_mult);
@@ -127,7 +139,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
       if (cfg.period) setBacktestPeriod(cfg.period);
       configLoaded.current = true;
     }).catch(() => { configLoaded.current = true; });
-  }, [selectedSymbol]);
+  }, [activeStrategy]);
 
   // ── Auto-save config when it changes ──
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -142,10 +154,10 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
         tp2_r_mult: tp2RMult,
         capital,
         period: backtestPeriod,
-      }, selectedSymbol).catch(() => {});
+      }, activeStrategy).catch(() => {});
     }, 800);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [disabledConditions, atrSlMult, tp1RMult, tp2RMult, capital, backtestPeriod, selectedSymbol]);
+  }, [disabledConditions, atrSlMult, tp1RMult, tp2RMult, capital, backtestPeriod, activeStrategy]);
 
   // ── Chart overlay toggles — default show SMA, HalfTrend, SuperTrend
   type Overlay = "ema_fast" | "ema_slow" | "vwap" | "halftrend" | "w_supertrend";
@@ -363,6 +375,12 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     setSelectedName(name);
     setBtData(null);
     setHasRun(true);
+    // Auto-switch to stock's preferred strategy if marked
+    const stockStrategy = MY_STOCK_STRATEGY[sym];
+    if (stockStrategy && stockStrategy !== activeStrategyRef.current) {
+      setActiveStrategy(stockStrategy);
+      activeStrategyRef.current = stockStrategy;
+    }
   }, []);
 
   const handleTradeClick = useCallback((t: US1HTrade) => {
@@ -567,6 +585,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             onCapitalChange={setCapital}
             onRunBacktest={runBacktest}
             onResetDefaults={handleResetDefaults}
+            onSaveConfig={handleSaveConfig}
             loading={btLoading}
             activeStrategy={activeStrategy}
             onStrategyChange={handleStrategyChange}

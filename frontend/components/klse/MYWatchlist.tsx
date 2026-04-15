@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MY_STOCKS, MY_SECTORS, MY_DEFAULT_STOCKS } from "../../constants/myStocks";
+import { MY_STOCKS, MY_SECTORS, MY_DEFAULT_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 const API_BASE = RAW_API_BASE
@@ -329,6 +329,13 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                   <span className={`text-[11px] font-bold leading-tight truncate ${active ? "text-cyan-300" : "text-slate-200"}`}>
                     {item.name}
                   </span>
+                  {MY_STOCK_STRATEGY[item.symbol] && (
+                    <span className={`text-[6px] px-1 py-[1px] rounded font-bold uppercase tracking-wider ${
+                      MY_STOCK_STRATEGY[item.symbol] === "tpc" ? "bg-cyan-500/20 text-cyan-400" :
+                      MY_STOCK_STRATEGY[item.symbol] === "vpb3" ? "bg-emerald-500/20 text-emerald-400" :
+                      "bg-amber-500/20 text-amber-400"
+                    }`}>{MY_STOCK_STRATEGY[item.symbol]}</span>
+                  )}
                   {viewMode === "all" && sectorFilter === "ALL" && (
                     <span className="text-[7px] px-1 py-[1px] rounded bg-slate-800 text-slate-500 font-medium">{item.sector}</span>
                   )}

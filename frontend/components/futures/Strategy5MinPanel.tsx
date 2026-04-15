@@ -1933,6 +1933,21 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               >
                 {showPresetSave ? "✕" : "💾"}
               </button>
+              {activePreset && !BUILT_IN_PRESETS.some((bp) => bp.name === activePreset) && (
+                <button
+                  onClick={() => {
+                    if (!confirm(`Delete preset "${activePreset}"?`)) return;
+                    delete5MinConditionPreset(activePreset, symbol)
+                      .then(() => load5MinConditionPresets(symbol).then(setPresets))
+                      .catch(() => {});
+                    setActivePreset(null);
+                  }}
+                  className="px-2 py-1.5 text-[9px] font-bold rounded-md bg-slate-800/60 text-red-400 hover:text-red-300 ring-1 ring-slate-700/50 hover:ring-red-500/30 transition-all shrink-0"
+                  title={`Delete preset "${activePreset}"`}
+                >
+                  🗑
+                </button>
+              )}
             </div>
             {showPresetSave && (
               <div className="flex gap-1 mt-1">

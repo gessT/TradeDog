@@ -1856,7 +1856,7 @@ export async function fetchVPB3Backtest(
   return (await response.json()) as US1HBacktestResponse;
 }
 
-// ── KLSE TPC Strategy Config (per-symbol persistence) ──────────────
+// ── KLSE Strategy Config (per-symbol + per-strategy persistence) ────
 
 export type KLSEStrategyConfig = {
   disabled_conditions?: string[];
@@ -1867,14 +1867,14 @@ export type KLSEStrategyConfig = {
   period?: string;
 };
 
-export async function loadKLSEStrategyConfig(symbol: string = "5347.KL"): Promise<KLSEStrategyConfig> {
-  const res = await fetch(`${API_BASE}/stock/klse_strategy_config?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+export async function loadKLSEStrategyConfig(strategy: string = "tpc"): Promise<KLSEStrategyConfig> {
+  const res = await fetch(`${API_BASE}/stock/klse_strategy_config?strategy=${encodeURIComponent(strategy)}`, { cache: "no-store" });
   if (!res.ok) return {};
   return (await res.json()) as KLSEStrategyConfig;
 }
 
-export async function saveKLSEStrategyConfig(config: KLSEStrategyConfig, symbol: string = "5347.KL"): Promise<void> {
-  await fetch(`${API_BASE}/stock/klse_strategy_config?symbol=${encodeURIComponent(symbol)}`, {
+export async function saveKLSEStrategyConfig(config: KLSEStrategyConfig, strategy: string = "tpc"): Promise<void> {
+  await fetch(`${API_BASE}/stock/klse_strategy_config?strategy=${encodeURIComponent(strategy)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),
