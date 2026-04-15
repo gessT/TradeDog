@@ -17,6 +17,7 @@ import HoldingMiniChart from "./HoldingMiniChart";
 import OptimizationDialog from "./OptimizationDialog";
 import {
   fetchMGC5MinBacktest,
+  fetchMGC2MinBacktest,
   execute5Min,
   getMgcPosition,
   optimize5MinConditions,
@@ -572,9 +573,35 @@ export type BuiltInPreset = {
   sl: number;
   tp: number;
   desc: string;
+  endpoint?: "5min" | "2min";  // which backend endpoint to use (default: 5min)
 };
 
 export const BUILT_IN_PRESETS: BuiltInPreset[] = [
+  {
+    name: "🎯 2Min Pullback",
+    desc: "EMA20/50 pullback · RSI>50 · ATR filter · 2m bars",
+    interval: "2m",
+    sl: 1.0,
+    tp: 1.5,
+    endpoint: "2min",
+    toggles: {
+      ema_trend: true,
+      ema_slope: false,
+      pullback: true,
+      breakout: false,
+      supertrend: false,
+      macd_momentum: false,
+      rsi_momentum: true,
+      volume_spike: false,
+      atr_range: true,
+      session_ok: false,
+      adx_ok: false,
+      smc_bos: false,
+      smc_ob: false,
+      smc_fvg: false,
+      halftrend: false,
+    },
+  },
   {
     name: "⚡ Keep GOING",
     desc: "Always-in-market scalp — EMA5/13 + SuperTrend + RSI, 5m",
@@ -1468,6 +1495,34 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     if (dateTo !== freshTo) setDateTo(freshTo);
     if (dateFrom !== freshFrom) setDateFrom(freshFrom);
     try {
+      // Check if active preset uses a different endpoint
+      const activeBuiltIn = BUILT_IN_PRESETS.find((bp) => bp.name === activePreset);
+      if (activeBuiltIn?.endpoint === "2min") {
+        const res = await fetchMGC2MinBacktest(symbol, slMult, tpMult);
+        setBtData(res);
+        onTradesUpdate?.(res.trades);
+        setHasRunBacktest(true);
+        if (res.metrics && onConfigLock) {
+          onConfigLock({
+            conditionToggles: { ...conditionToggles },
+            slMult, tpMult, interval, preset: activePreset, symbol,
+            metrics: {
+              win_rate: res.metrics.win_rate ?? 0,
+              total_return_pct: res.metrics.total_return_pct ?? 0,
+              max_drawdown_pct: res.metrics.max_drawdown_pct ?? 0,
+              sharpe_ratio: res.metrics.sharpe_ratio ?? 0,
+              profit_factor: res.metrics.profit_factor ?? 0,
+              total_trades: res.metrics.total_trades ?? 0,
+              winners: res.metrics.winners ?? 0,
+              losers: res.metrics.losers ?? 0,
+              risk_reward_ratio: res.metrics.risk_reward_ratio ?? 0,
+            },
+            lockedAt: Date.now(),
+          });
+        }
+        return;
+      }
+
       // Compute disabled conditions from toggles (OFF = disabled)
       const disabled = CONDITION_DEFS
         .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
@@ -1508,7 +1563,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     } finally {
       setLoading(false);
     }
-  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, riskFilters, configKey, interval]);
+  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, riskFilters, configKey, interval, activePreset]);
 
   // ── Trigger backtest after optimizer apply (so new state is used) ──
   useEffect(() => {

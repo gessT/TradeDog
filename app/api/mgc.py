@@ -2020,6 +2020,124 @@ async def mgc_backtest_5min(
     )
 
 
+# ── 2-min GMC Pullback Backtest endpoint ─────────────────────────────
+
+@router.get("/backtest_2min")
+async def mgc_backtest_2min(
+    symbol: Annotated[str, Query()] = "MGC=F",
+    period: Annotated[str, Query()] = "60d",
+    capital: Annotated[float, Query()] = INITIAL_CAPITAL,
+    sl_mult: Annotated[float, Query(ge=0.3, le=5.0)] = 1.0,
+    tp_mult: Annotated[float, Query(ge=0.3, le=5.0)] = 1.5,
+    rsi_min: Annotated[int, Query(ge=30, le=70)] = 50,
+    ema_fast: Annotated[int, Query(ge=5, le=50)] = 20,
+    ema_slow: Annotated[int, Query(ge=10, le=200)] = 50,
+    direction: Annotated[str, Query()] = "SHORT",
+) -> MGC5MinBacktestResponse:
+    """Run GMC 2-minute pullback/rally strategy backtest.
+    direction: LONG (buy pullback to EMA20) or SHORT (sell rally to EMA20)
+    """
+
+    def _run():
+        import pandas as _pd
+        from strategies.futures.strategy_2min import GMCPullbackStrategy, DEFAULT_PARAMS
+        from strategies.futures.backtest_2min import Backtester2Min
+
+        df = load_yfinance(symbol=symbol, interval="2m", period="60d")
+        if df.empty or len(df) < 100:
+            raise ValueError("Not enough 2m data from yfinance.")
+
+        params = {
+            **DEFAULT_PARAMS,
+            "sl_mult": sl_mult,
+            "tp_mult": tp_mult,
+            "rsi_min": rsi_min,
+            "ema_fast": ema_fast,
+            "ema_slow": ema_slow,
+            "direction": direction.upper(),
+        }
+        bt = Backtester2Min(capital=capital, risk_mode="fixed", contracts=1)
+        result = bt.run(df, params=params)
+
+        # Build candle list (reuse df columns)
+        strategy = GMCPullbackStrategy(params)
+        df_ind = strategy.compute_indicators(df)
+
+        candles = []
+        for ts, row in df_ind.iterrows():
+            candles.append(MGC5MinCandle(
+                time=str(ts),
+                open=round(float(row["open"]), 2),
+                high=round(float(row["high"]), 2),
+                low=round(float(row["low"]), 2),
+                close=round(float(row["close"]), 2),
+                volume=int(row.get("volume", 0) or 0),
+                ema_fast=round(float(row.get("ema20", 0) or 0), 2),
+                ema_slow=round(float(row.get("ema50", 0) or 0), 2),
+                rsi=round(float(row.get("rsi", 50) or 50), 2),
+                macd_hist=round(float(row.get("macd_hist", 0) or 0), 4),
+            ))
+
+        trades = []
+        for t in result.trades:
+            trades.append(MGC5MinTrade(
+                entry_time=str(t.entry_time),
+                exit_time=str(t.exit_time),
+                entry_price=round(t.entry_price, 2),
+                exit_price=round(t.exit_price, 2),
+                qty=1,
+                pnl=round(t.pnl, 2),
+                pnl_pct=round(t.pnl / capital * 100, 4),
+                reason=t.reason,
+                signal_type="PUT" if direction.upper() == "SHORT" else "CALL",
+                direction="PUT" if direction.upper() == "SHORT" else "CALL",
+                mae=0.0,
+                sl=round(t.sl_price, 2),
+                tp=round(t.tp_price, 2),
+            ))
+
+        m = result
+        metrics = MGC5MinMetrics(
+            total_trades=m.total_trades,
+            winners=m.winners,
+            losers=m.losers,
+            win_rate=round(m.win_rate, 2),
+            total_return_pct=round(m.total_return_pct, 2),
+            profit_factor=round(m.profit_factor, 2),
+            max_drawdown_pct=round(m.max_drawdown_pct, 2),
+            sharpe_ratio=round(m.sharpe_ratio, 2),
+            risk_reward_ratio=round(m.risk_reward, 2),
+            avg_win=round(m.avg_win_usd, 2),
+            avg_loss=round(m.avg_loss_usd, 2),
+            initial_capital=capital,
+            final_equity=round(m.final_equity, 2),
+        )
+
+        return candles, trades, result.equity_curve, metrics, params
+
+    try:
+        candles, trades, eq_curve, metrics, params = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("2min backtest failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return MGC5MinBacktestResponse(
+        symbol=symbol,
+        interval="2m",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        daily_pnl=[],
+        params=params,
+        open_position=None,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
 # ── 5min Scan endpoint ──────────────────────────────────────────────
 
 class Scan5MinSignal(BaseModel):

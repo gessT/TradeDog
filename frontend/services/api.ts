@@ -1321,6 +1321,25 @@ export async function fetchMGC5MinBacktest(
   return (await response.json()) as MGC5MinBacktestResponse;
 }
 
+export async function fetchMGC2MinBacktest(
+  symbol: string = "MGC",
+  sl_mult: number = 1.0,
+  tp_mult: number = 1.5,
+  rsi_min: number = 50,
+  ema_fast: number = 20,
+  ema_slow: number = 50,
+  capital: number = 10000,
+  direction: string = "SHORT",
+): Promise<MGC5MinBacktestResponse> {
+  const url = `${API_BASE}/mgc/backtest_2min?symbol=${encodeURIComponent(toYF(symbol))}&sl_mult=${sl_mult}&tp_mult=${tp_mult}&rsi_min=${rsi_min}&ema_fast=${ema_fast}&ema_slow=${ema_slow}&capital=${capital}&direction=${encodeURIComponent(direction)}`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as MGC5MinBacktestResponse;
+}
+
 
 // ── 5min Condition Optimization ──────────────────────────────────────
 
