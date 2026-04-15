@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState } from "react";
-import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
+import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, fetchBestStrategy, type US1HBacktestResponse, type US1HTrade, type StrategyGradeResult } from "../../services/api";
 import { MY_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
@@ -65,6 +65,12 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   // ── Backtest state
   const [btData, setBtData] = useState<US1HBacktestResponse | null>(null);
   const [btLoading, setBtLoading] = useState(false);
+
+  // ── Scan Best Strategy state
+  const [scanDialogOpen, setScanDialogOpen] = useState(false);
+  const [scanResults, setScanResults] = useState<StrategyGradeResult[]>([]);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanTagged, setScanTagged] = useState<Set<string>>(new Set());
 
   // ── TPC strategy conditions & params
   const [disabledConditions, setDisabledConditions] = useState<Set<string>>(() => new Set());
@@ -353,6 +359,45 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     }
   }, [selectedSymbol, backtestPeriod, disabledConditions, atrSlMult, tp1RMult, tp2RMult, capital]);
 
+  // ── Scan Best Strategy handler
+  const handleScanBest = useCallback(async () => {
+    setScanDialogOpen(true);
+    setScanLoading(true);
+    setScanResults([]);
+    setScanTagged(new Set());
+    try {
+      const res = await fetchBestStrategy(selectedSymbol, backtestPeriod, capital);
+      setScanResults(res.strategies);
+    } catch { /* ignore */ }
+    setScanLoading(false);
+  }, [selectedSymbol, backtestPeriod, capital]);
+
+  // ── Tag a strategy from scan results
+  const handleTagStrategy = useCallback(async (r: StrategyGradeResult) => {
+    if (!r.metrics) return;
+    try {
+      await fetch(`${API_BASE}/stock/my-stock-tags`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol: selectedSymbol,
+          strategy_type: r.strategy,
+          strategy_name: r.label,
+          period: backtestPeriod,
+          capital,
+          win_rate: r.metrics.win_rate,
+          return_pct: r.metrics.total_return_pct,
+          profit_factor: r.metrics.profit_factor,
+          max_dd_pct: r.metrics.max_drawdown_pct,
+          sharpe: r.metrics.sharpe_ratio,
+          total_trades: r.metrics.total_trades,
+        }),
+      });
+      setScanTagged((prev) => new Set(prev).add(r.strategy));
+      fetchTags();
+    } catch { /* ignore */ }
+  }, [selectedSymbol, backtestPeriod, capital, fetchTags]);
+
   // Auto-run when symbol changes (clicking a stock loads its chart)
   // Strategy param changes require manual "Run Backtest"
   const [hasRun, setHasRun] = useState(false);
@@ -558,6 +603,8 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
               btData={btData}
               onTradeClick={handleTradeClick}
               onRunBacktest={runBacktest}
+              onScanBest={handleScanBest}
+              scanLoading={scanLoading}
               loading={btLoading}
               symbol={selectedSymbol}
               symbolName={selectedName}
@@ -592,6 +639,142 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           />
         </aside>
       </div>
+
+      {/* ═══ SCAN BEST STRATEGY DIALOG ═══ */}
+      {scanDialogOpen && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setScanDialogOpen(false)}>
+          <div className="bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/50 w-[420px] max-w-[92vw] max-h-[80vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/60">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🏆</span>
+                <div>
+                  <h3 className="text-[13px] font-bold text-slate-100">Strategy Comparison</h3>
+                  <p className="text-[9px] text-slate-500">
+                    {scanLoading ? "Running all strategies…" : `${selectedName ?? selectedSymbol.replace(".KL", "")} · ${backtestPeriod} backtest`}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setScanDialogOpen(false)} className="text-slate-500 hover:text-slate-300 p-1 rounded hover:bg-slate-800/50 transition">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-4">
+              {scanLoading ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <svg className="w-8 h-8 text-violet-400 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                  <p className="text-[11px] text-slate-400">Running TPC, HPB, VPB3 backtests…</p>
+                  <p className="text-[9px] text-slate-600">This may take a minute</p>
+                </div>
+              ) : scanResults.length === 0 ? (
+                <div className="flex items-center justify-center py-12">
+                  <p className="text-[11px] text-slate-600">No results</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {scanResults.map((r, i) => {
+                    const isBest = i === 0 && r.score > 0;
+                    const gradeColor = r.grade.startsWith("A") ? "text-emerald-400 bg-emerald-500/20"
+                      : r.grade.startsWith("B") ? "text-cyan-400 bg-cyan-500/20"
+                      : r.grade.startsWith("C") ? "text-amber-400 bg-amber-500/20"
+                      : "text-red-400 bg-red-500/20";
+                    return (
+                      <div
+                        key={r.strategy}
+                        onClick={() => {
+                          handleStrategyChange(r.strategy as StrategyType);
+                          setScanDialogOpen(false);
+                        }}
+                        className={`cursor-pointer rounded-lg border p-3 transition hover:bg-slate-800/50 ${
+                          isBest ? "border-emerald-500/40 bg-emerald-500/5" : "border-slate-700/40 bg-slate-800/20"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            {isBest && <span className="text-xs">👑</span>}
+                            <span className="text-[12px] font-bold text-slate-200">{r.label}</span>
+                            {isBest && <span className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold">BEST</span>}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[11px] font-black px-2 py-0.5 rounded ${gradeColor}`}>{r.grade}</span>
+                            <span className="text-[9px] text-slate-500 tabular-nums">{r.score} pts</span>
+                          </div>
+                        </div>
+                        {r.metrics ? (
+                          <div className="grid grid-cols-4 gap-x-3 gap-y-1 text-[9px]">
+                            <div>
+                              <div className="text-slate-600">Return</div>
+                              <div className={`font-bold tabular-nums ${r.metrics.total_return_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                {r.metrics.total_return_pct >= 0 ? "+" : ""}{r.metrics.total_return_pct.toFixed(1)}%
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-slate-600">Win Rate</div>
+                              <div className="font-bold text-slate-300 tabular-nums">{r.metrics.win_rate.toFixed(1)}%</div>
+                            </div>
+                            <div>
+                              <div className="text-slate-600">PF</div>
+                              <div className="font-bold text-slate-300 tabular-nums">{r.metrics.profit_factor > 100 ? "∞" : r.metrics.profit_factor.toFixed(1)}</div>
+                            </div>
+                            <div>
+                              <div className="text-slate-600">Trades</div>
+                              <div className="font-bold text-slate-300 tabular-nums">{r.metrics.total_trades}</div>
+                            </div>
+                            <div>
+                              <div className="text-slate-600">Sharpe</div>
+                              <div className="font-bold text-slate-300 tabular-nums">{r.metrics.sharpe_ratio.toFixed(2)}</div>
+                            </div>
+                            <div>
+                              <div className="text-slate-600">Max DD</div>
+                              <div className="font-bold text-red-400/80 tabular-nums">-{Math.abs(r.metrics.max_drawdown_pct).toFixed(1)}%</div>
+                            </div>
+                            <div>
+                              <div className="text-slate-600">W/L</div>
+                              <div className="font-bold text-slate-300 tabular-nums">{r.metrics.winners}/{r.metrics.losers}</div>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-[9px] text-red-400/60">{r.error ?? "Failed"}</p>
+                        )}
+
+                        {/* Tag button */}
+                        {r.metrics && (
+                          <div className="mt-2 flex justify-end">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleTagStrategy(r); }}
+                              disabled={scanTagged.has(r.strategy)}
+                              className={`text-[9px] px-2.5 py-1 rounded-md border font-bold transition flex items-center gap-1 ${
+                                scanTagged.has(r.strategy)
+                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 cursor-default"
+                                  : "border-cyan-500/40 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20"
+                              }`}
+                            >
+                              {scanTagged.has(r.strategy) ? (
+                                <><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> Tagged</>
+                              ) : (
+                                <><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z" /></svg> Tag {r.label}</>
+                              )}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            {!scanLoading && scanResults.length > 0 && (
+              <div className="px-4 py-2 border-t border-slate-800/40">
+                <span className="text-[8px] text-slate-600">Click a strategy to switch to it</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ═══ RUN ALL FAVS DIALOG ═══ */}
       {runAllOpen && (

@@ -19,6 +19,8 @@ type Props = {
   btData: US1HBacktestResponse | null;
   onTradeClick: (t: US1HTrade) => void;
   onRunBacktest: () => void;
+  onScanBest?: () => void;
+  scanLoading?: boolean;
   loading: boolean;
   symbol: string;
   symbolName?: string;
@@ -290,6 +292,8 @@ export default function MYBottomPanel({
   btData,
   onTradeClick,
   onRunBacktest,
+  onScanBest,
+  scanLoading = false,
   loading,
   symbol,
   symbolName,
@@ -332,7 +336,19 @@ export default function MYBottomPanel({
             )}
           </button>
         )}
-
+        {tab === "Backtest" && onScanBest && (
+          <button
+            onClick={onScanBest}
+            disabled={scanLoading}
+            className="mr-3 text-[9px] px-2.5 py-0.5 rounded border border-violet-500/60 bg-violet-500/15 text-violet-400 hover:bg-violet-500/30 disabled:opacity-40 transition font-medium"
+          >
+            {scanLoading ? (
+              <span className="flex items-center gap-1"><svg className="w-2.5 h-2.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg> Scanning…</span>
+            ) : (
+              <span className="flex items-center gap-1">🏆 Scan Best</span>
+            )}
+          </button>
+        )}
         {(tab === "Trade History" || tab === "Backtest") && trades.length > 0 && (
           <div className="flex items-center gap-1 ml-auto mr-3">
             {(["ALL", "WIN", "LOSS"] as const).map((f) => (

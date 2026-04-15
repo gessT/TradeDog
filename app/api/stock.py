@@ -3542,3 +3542,190 @@ async def klse_backtest_vpb3(
         params=params_out,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Scan Best Strategy — run all 3 KLSE strategies and grade them
+# ═══════════════════════════════════════════════════════════════════════
+
+def _grade_metrics(m: dict) -> tuple[str, float]:
+    """
+    Assign a letter grade (A+ to F) and numeric score based on backtest metrics.
+    Score formula weights: return (30%), win_rate (25%), profit_factor (20%),
+    sharpe (15%), drawdown penalty (10%).
+    """
+    ret = m.get("total_return_pct", 0)
+    wr = m.get("win_rate", 0)
+    pf = min(m.get("profit_factor", 0), 10)  # cap at 10
+    sharpe = m.get("sharpe_ratio", 0)
+    dd = abs(m.get("max_drawdown_pct", 0))
+    trades = m.get("total_trades", 0)
+
+    # If no trades, automatic F
+    if trades == 0:
+        return "F", 0.0
+
+    score = (
+        min(ret, 100) * 0.30       # return % capped at 100 for scoring
+        + min(wr, 100) * 0.25      # win rate
+        + min(pf, 5) * 4 * 0.20    # profit factor (1→4, 5→20 pts, capped)
+        + min(max(sharpe, 0), 3) * 6.67 * 0.15  # sharpe (3→20 pts)
+        - dd * 0.10                 # drawdown penalty
+    )
+
+    if score >= 40:
+        grade = "A+"
+    elif score >= 30:
+        grade = "A"
+    elif score >= 22:
+        grade = "B+"
+    elif score >= 15:
+        grade = "B"
+    elif score >= 10:
+        grade = "C+"
+    elif score >= 5:
+        grade = "C"
+    elif score >= 0:
+        grade = "D"
+    else:
+        grade = "F"
+
+    return grade, round(score, 1)
+
+
+@router.get("/scan_best_strategy")
+async def scan_best_strategy(
+    symbol: _Ann[str, Query()] = "0208.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 5000.0,
+) -> dict:
+    """Run all 3 KLSE strategies (TPC, HPB, VPB3) with defaults and return graded comparison."""
+
+    def _run_all() -> list[dict]:
+        from strategies.futures.data_loader import load_yfinance
+
+        results = []
+
+        # --- TPC ---
+        try:
+            from strategies.us_stock.tpc.backtest import TPCBacktester
+            from strategies.us_stock.tpc.config import DEFAULT_TPC_PARAMS, RISK_PER_TRADE as TPC_RISK
+
+            _period_days_map = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
+            _req_days = _period_days_map.get(period, 730)
+            _use_daily = _req_days > 730
+
+            df_weekly = load_yfinance(symbol=symbol, interval="1wk", period="10y" if _use_daily else "5y")
+            df_daily = load_yfinance(symbol=symbol, interval="1d", period=period if _use_daily else "5y")
+            df_1h = df_daily.copy() if _use_daily else load_yfinance(symbol=symbol, interval="1h", period=period)
+
+            bt = TPCBacktester(capital=capital, risk_per_trade=TPC_RISK)
+            result = bt.run(
+                symbol=symbol, period=period, params={},
+                disabled_conditions=None,
+                df_weekly=df_weekly, df_daily=df_daily, df_1h=df_1h,
+            )
+
+            wins = [t for t in result.trades if t.pnl > 0]
+            losses = [t for t in result.trades if t.pnl <= 0]
+            n = len(result.trades)
+            total_pnl = sum(t.pnl for t in result.trades)
+            wr = round(len(wins) / n * 100, 1) if n else 0
+            pf = round(abs(sum(t.pnl for t in wins) / sum(t.pnl for t in losses)), 2) if losses and sum(t.pnl for t in losses) != 0 else 999.0
+
+            m = {
+                "total_return_pct": round(total_pnl / capital * 100, 2) if capital else 0,
+                "win_rate": wr,
+                "profit_factor": pf,
+                "sharpe_ratio": result.sharpe_ratio,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "total_trades": n,
+                "winners": len(wins),
+                "losers": len(losses),
+            }
+            grade, score = _grade_metrics(m)
+            results.append({"strategy": "tpc", "label": "TPC", "grade": grade, "score": score, "metrics": m})
+        except Exception as exc:
+            logger.debug("TPC scan failed for %s: %s", symbol, exc)
+            results.append({"strategy": "tpc", "label": "TPC", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
+
+        # --- HPB ---
+        try:
+            from strategies.klse.hpb.config import HPBParams
+            from strategies.klse.hpb.backtest import run_backtest as hpb_backtest
+
+            params = HPBParams()
+            df = load_yfinance(symbol=symbol, interval="1d", period=period)
+            if df.empty or len(df) < 200:
+                raise ValueError("Not enough data")
+
+            result = hpb_backtest(df, params, capital=capital, disabled_conditions=None)
+            wins = [t for t in result.trades if t.win]
+            losses = [t for t in result.trades if not t.win]
+            n = len(result.trades)
+            total_pnl = sum(t.pnl for t in result.trades)
+            wr = round(len(wins) / n * 100, 1) if n else 0
+            pf = round(abs(sum(t.pnl for t in wins) / sum(t.pnl for t in losses)), 2) if losses and sum(t.pnl for t in losses) != 0 else 999.0
+
+            m = {
+                "total_return_pct": round(total_pnl / capital * 100, 2) if capital else 0,
+                "win_rate": wr,
+                "profit_factor": pf,
+                "sharpe_ratio": result.sharpe_ratio,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "total_trades": n,
+                "winners": len(wins),
+                "losers": len(losses),
+            }
+            grade, score = _grade_metrics(m)
+            results.append({"strategy": "hpb", "label": "HPB", "grade": grade, "score": score, "metrics": m})
+        except Exception as exc:
+            logger.debug("HPB scan failed for %s: %s", symbol, exc)
+            results.append({"strategy": "hpb", "label": "HPB", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
+
+        # --- VPB3 ---
+        try:
+            from strategies.klse.vpb3.strategy import DEFAULT_PARAMS
+            from strategies.klse.vpb3.backtest import run_backtest as vpb3_backtest
+
+            df = load_yfinance(symbol=symbol, interval="1d", period=period)
+            if df.empty or len(df) < 60:
+                raise ValueError("Not enough data")
+
+            result = vpb3_backtest(df, params=DEFAULT_PARAMS, capital=capital, disabled_conditions=None)
+            n = len(result.trades)
+
+            m = {
+                "total_return_pct": result.total_return_pct,
+                "win_rate": result.win_rate,
+                "profit_factor": result.profit_factor,
+                "sharpe_ratio": result.sharpe_ratio,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "total_trades": n,
+                "winners": result.winners,
+                "losers": result.losers,
+            }
+            grade, score = _grade_metrics(m)
+            results.append({"strategy": "vpb3", "label": "VPB3", "grade": grade, "score": score, "metrics": m})
+        except Exception as exc:
+            logger.debug("VPB3 scan failed for %s: %s", symbol, exc)
+            results.append({"strategy": "vpb3", "label": "VPB3", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
+
+        # Sort by score descending
+        results.sort(key=lambda x: -x["score"])
+        return results
+
+    try:
+        strategies = await run_in_threadpool(_run_all)
+    except Exception as exc:
+        logger.exception("Scan best strategy failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    best = strategies[0] if strategies else None
+    return {
+        "symbol": symbol,
+        "period": period,
+        "best": best["strategy"] if best else None,
+        "best_grade": best["grade"] if best else "F",
+        "strategies": strategies,
+    }

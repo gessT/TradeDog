@@ -1927,6 +1927,55 @@ export async function saveKLSEStrategyConfig(config: KLSEStrategyConfig, strateg
 }
 
 
+// ── Scan Best Strategy ──────────────────────────────────────────────
+
+export type StrategyGradeMetrics = {
+  total_return_pct: number;
+  win_rate: number;
+  profit_factor: number;
+  sharpe_ratio: number;
+  max_drawdown_pct: number;
+  total_trades: number;
+  winners: number;
+  losers: number;
+};
+
+export type StrategyGradeResult = {
+  strategy: string;
+  label: string;
+  grade: string;
+  score: number;
+  metrics: StrategyGradeMetrics | null;
+  error?: string;
+};
+
+export type ScanBestStrategyResponse = {
+  symbol: string;
+  period: string;
+  best: string | null;
+  best_grade: string;
+  strategies: StrategyGradeResult[];
+};
+
+export async function fetchBestStrategy(
+  symbol: string,
+  period: string = "2y",
+  capital: number = 5000,
+): Promise<ScanBestStrategyResponse> {
+  const params = new URLSearchParams({
+    symbol,
+    period,
+    capital: String(capital),
+  });
+  const response = await fetch(`${API_BASE}/stock/scan_best_strategy?${params}`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as ScanBestStrategyResponse;
+}
+
+
 // ═══════════════════════════════════════════════════════════════════════
 // Auto-Trader v2 — 4-Layer Production Trading System
 // ═══════════════════════════════════════════════════════════════════════
