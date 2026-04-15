@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { MY_STOCKS, MY_SECTORS, MY_DEFAULT_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
+import { fetchNearATH, type NearATHStock } from "../../services/api";
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 const API_BASE = RAW_API_BASE
@@ -178,6 +179,25 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
     ? MY_STOCKS.filter((s) => s.sector === sectorFilter).length
     : 0;
 
+  // ── Scanner state ──
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [athDialogOpen, setAthDialogOpen] = useState(false);
+  const [athResults, setAthResults] = useState<NearATHStock[]>([]);
+  const [athScanning, setAthScanning] = useState(false);
+  const [athScanned, setAthScanned] = useState(0);
+
+  const handleScanATH = useCallback(async () => {
+    setAthDialogOpen(true);
+    setAthScanning(true);
+    setAthResults([]);
+    try {
+      const res = await fetchNearATH(30, "MY");
+      setAthResults(res.stocks);
+      setAthScanned(res.scanned);
+    } catch { /* ignore */ }
+    setAthScanning(false);
+  }, []);
+
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/60">
       {/* ═══ SEARCH BAR ═══ */}
@@ -278,6 +298,42 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
             </div>
           )}
         </div>
+      </div>
+
+      {/* ═══ SCANNER ═══ */}
+      <div className="border-b border-slate-800/30 shrink-0">
+        <button
+          onClick={() => setScannerOpen((p) => !p)}
+          className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-slate-800/20 transition"
+        >
+          <svg className={`w-3 h-3 text-slate-500 shrink-0 transition-transform ${scannerOpen ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+          </svg>
+          <span className="text-[8px] text-slate-500 uppercase tracking-widest font-bold flex-1">Scanner</span>
+          <svg className="w-3 h-3 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </button>
+        {scannerOpen && (
+          <div className="px-2.5 pb-2 space-y-1">
+            <button
+              onClick={handleScanATH}
+              disabled={athScanning}
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition bg-amber-500/8 border border-amber-500/20 hover:bg-amber-500/15"
+            >
+              <span className="text-sm shrink-0">🏔️</span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-semibold text-slate-200">Near ATH</div>
+                <div className="text-[8px] text-slate-600">Stocks closest to All-Time High</div>
+              </div>
+              {athScanning ? (
+                <svg className="w-3.5 h-3.5 text-amber-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+              ) : (
+                <svg className="w-3.5 h-3.5 text-slate-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              )}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ═══ COLUMN HEADER ═══ */}
@@ -409,6 +465,107 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
           )}
         </div>
       </div>
+
+      {/* ═══ NEAR ATH DIALOG ═══ */}
+      {athDialogOpen && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setAthDialogOpen(false)}>
+          <div className="bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/50 w-[480px] max-w-[92vw] max-h-[80vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/60">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🏔️</span>
+                <div>
+                  <h3 className="text-[13px] font-bold text-slate-100">Near All-Time High</h3>
+                  <p className="text-[9px] text-slate-500">
+                    {athScanning ? "Scanning all stocks…" : `${athResults.length} results from ${athScanned} stocks scanned`}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setAthDialogOpen(false)} className="text-slate-500 hover:text-slate-300 p-1 rounded hover:bg-slate-800/50 transition">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto">
+              {athScanning ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3">
+                  <svg className="w-8 h-8 text-amber-400 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                  <p className="text-[11px] text-slate-400">Scanning {MY_STOCKS.length} stocks for ATH proximity…</p>
+                  <p className="text-[9px] text-slate-600">This may take a minute</p>
+                </div>
+              ) : athResults.length === 0 ? (
+                <div className="flex items-center justify-center py-16">
+                  <p className="text-[11px] text-slate-600">No results found</p>
+                </div>
+              ) : (
+                <table className="w-full text-[10px]">
+                  <thead className="sticky top-0 bg-slate-900/95 backdrop-blur">
+                    <tr className="text-[8px] text-slate-500 uppercase tracking-wider">
+                      <th className="text-left px-3 py-2 font-bold">#</th>
+                      <th className="text-left px-2 py-2 font-bold">Stock</th>
+                      <th className="text-right px-2 py-2 font-bold">Price</th>
+                      <th className="text-right px-2 py-2 font-bold">ATH</th>
+                      <th className="text-right px-3 py-2 font-bold">From ATH</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {athResults.map((s, i) => {
+                      const near = s.pct_from_ath <= 5;
+                      const veryNear = s.pct_from_ath <= 2;
+                      return (
+                        <tr
+                          key={s.symbol}
+                          onClick={() => {
+                            const stock = MY_STOCKS.find(st => st.symbol === s.symbol);
+                            if (stock) onSelectSymbol(stock.symbol, stock.name);
+                            setAthDialogOpen(false);
+                          }}
+                          className={`cursor-pointer transition hover:bg-slate-800/50 border-b border-slate-800/20 ${
+                            veryNear ? "bg-emerald-500/5" : near ? "bg-amber-500/5" : ""
+                          }`}
+                        >
+                          <td className="px-3 py-2 text-slate-600 tabular-nums">{i + 1}</td>
+                          <td className="px-2 py-2">
+                            <div className="text-[10px] font-semibold text-slate-200">{s.name}</div>
+                            <div className="text-[8px] text-slate-500">{s.symbol.replace(".KL", "")}</div>
+                          </td>
+                          <td className="px-2 py-2 text-right text-slate-300 tabular-nums font-medium">
+                            {s.current_price.toFixed(2)}
+                          </td>
+                          <td className="px-2 py-2 text-right text-slate-500 tabular-nums">
+                            {s.ath_price.toFixed(2)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums font-bold">
+                            <span className={`px-1.5 py-0.5 rounded ${
+                              veryNear ? "bg-emerald-500/20 text-emerald-400" :
+                              near ? "bg-amber-500/20 text-amber-400" :
+                              "text-slate-400"
+                            }`}>
+                              -{s.pct_from_ath.toFixed(1)}%
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Footer */}
+            {!athScanning && athResults.length > 0 && (
+              <div className="px-4 py-2 border-t border-slate-800/40 flex items-center justify-between">
+                <span className="text-[8px] text-slate-600">Click a stock to select it</span>
+                <div className="flex items-center gap-3 text-[8px]">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-emerald-500/40" /> ≤2% from ATH</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-amber-500/40" /> ≤5% from ATH</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
