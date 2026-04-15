@@ -668,6 +668,8 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             loading={btLoading}
             activeStrategy={activeStrategy}
             onStrategyChange={handleStrategyChange}
+            btData={btData}
+            stockTags={stockTags}
           />
         </aside>
       </div>

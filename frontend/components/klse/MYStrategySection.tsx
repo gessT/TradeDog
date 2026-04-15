@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { US1HBacktestResponse } from "../../services/api";
 
 // ═══════════════════════════════════════════════════════════
 // MY Strategy Section — multi-strategy with dropdown
@@ -128,6 +129,8 @@ type Props = {
   symbolName?: string;
   activeStrategy: StrategyType;
   onStrategyChange: (s: StrategyType) => void;
+  btData?: US1HBacktestResponse | null;
+  stockTags?: { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null }[];
 };
 
 // ── Collapsible Section ──
@@ -171,6 +174,8 @@ export default function MYStrategySection({
   symbolName,
   activeStrategy,
   onStrategyChange,
+  btData,
+  stockTags,
 }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
@@ -204,6 +209,14 @@ export default function MYStrategySection({
 
   const strat = STRATEGIES.find(s => s.key === activeStrategy) ?? STRATEGIES[0];
 
+  // Build a set of tagged strategy types for the current symbol
+  const taggedStrategies = new Map<string, { win_rate: number | null; return_pct: number | null }>();
+  if (stockTags && symbol) {
+    for (const t of stockTags) {
+      if (t.symbol === symbol) taggedStrategies.set(t.strategy_type, { win_rate: t.win_rate, return_pct: t.return_pct });
+    }
+  }
+
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/80">
       {/* Header with Strategy Dropdown */}
@@ -215,8 +228,13 @@ export default function MYStrategySection({
           >
             <span className="text-sm">{strat.icon}</span>
             <div className="flex-1 text-left min-w-0">
-              <div className={`text-[11px] font-bold text-${strat.color}-400 uppercase tracking-wider truncate`}>
+              <div className={`text-[11px] font-bold text-${strat.color}-400 uppercase tracking-wider truncate flex items-center gap-1.5`}>
                 {strat.label}
+                {taggedStrategies.has(strat.key) && (
+                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-[8px] font-semibold normal-case tracking-normal">
+                    ★ {taggedStrategies.get(strat.key)!.win_rate != null ? `${taggedStrategies.get(strat.key)!.win_rate!.toFixed(0)}%` : "Tagged"}
+                  </span>
+                )}
               </div>
               <div className="text-[9px] text-slate-500 mt-0.5">{strat.subtitle}</div>
             </div>
@@ -237,7 +255,14 @@ export default function MYStrategySection({
                 >
                   <span className="text-sm">{s.icon}</span>
                   <div className="flex-1 min-w-0">
-                    <div className={`text-[10px] font-semibold ${activeStrategy === s.key ? `text-${s.color}-400` : "text-slate-200"}`}>{s.label}</div>
+                    <div className={`text-[10px] font-semibold ${activeStrategy === s.key ? `text-${s.color}-400` : "text-slate-200"} flex items-center gap-1.5`}>
+                      {s.label}
+                      {taggedStrategies.has(s.key) && (
+                        <span className="inline-flex items-center gap-0.5 px-1 py-px rounded-full bg-amber-500/20 text-amber-400 text-[7px] font-semibold">
+                          ★ {taggedStrategies.get(s.key)!.win_rate != null ? `${taggedStrategies.get(s.key)!.win_rate!.toFixed(0)}%` : "Tagged"}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-[8px] text-slate-500">{s.subtitle}</div>
                   </div>
                   {activeStrategy === s.key && (
@@ -249,6 +274,145 @@ export default function MYStrategySection({
           )}
         </div>
       </div>
+
+      {/* ═══ TRADE SUGGESTION (from backtest) ═══ */}
+      {btData && btData.candles.length > 0 && (() => {
+        const candles = btData.candles;
+        const last = candles[candles.length - 1];
+        const price = last.close;
+
+        // Compute ATR(14) from last 14 candles
+        const atrLen = Math.min(14, candles.length - 1);
+        let atrSum = 0;
+        for (let i = candles.length - atrLen; i < candles.length; i++) {
+          const c = candles[i];
+          const p = candles[i - 1];
+          if (!p) continue;
+          atrSum += Math.max(c.high - c.low, Math.abs(c.high - p.close), Math.abs(c.low - p.close));
+        }
+        const atr = atrLen > 0 ? atrSum / atrLen : price * 0.02;
+
+        // Strategy-specific entry/SL/TP
+        let slPrice: number;
+        let tp1Price: number;
+        let tp2Price: number | null = null;
+        let signalBias: "BUY" | "WAIT" | "AVOID" = "WAIT";
+
+        if (activeStrategy === "vpb3") {
+          // VPB3: SL = swing low of last N bars (atrSlMult = lookback)
+          const lookback = Math.round(atrSlMult);
+          const recentLows = candles.slice(-lookback).map(c => c.low);
+          slPrice = Math.min(...recentLows);
+          const risk = price - slPrice;
+          tp1Price = price + risk * tp1RMult;
+          tp2Price = null;
+        } else {
+          // TPC / HPB: ATR-based SL/TP
+          slPrice = price - atr * atrSlMult;
+          const risk = atr * atrSlMult;
+          tp1Price = price + risk * tp1RMult;
+          tp2Price = activeStrategy === "tpc" ? price + risk * tp2RMult : null;
+        }
+
+        // Signal bias from indicators
+        const stBull = last.st_dir === 1;
+        const htBull = last.ht_dir === 1;
+        const emaUp = last.ema_fast != null && last.ema_slow != null && last.ema_fast > last.ema_slow;
+        const rsiOk = last.rsi != null && last.rsi > 40 && last.rsi < 72;
+
+        if (activeStrategy === "tpc") {
+          signalBias = stBull && htBull ? "BUY" : stBull || htBull ? "WAIT" : "AVOID";
+        } else if (activeStrategy === "hpb") {
+          signalBias = emaUp && rsiOk ? "BUY" : emaUp ? "WAIT" : "AVOID";
+        } else {
+          signalBias = emaUp && rsiOk ? "BUY" : emaUp ? "WAIT" : "AVOID";
+        }
+
+        const riskPct = ((price - slPrice) / price * 100);
+        const rrRatio = tp1Price > price && slPrice < price ? ((tp1Price - price) / (price - slPrice)) : 0;
+
+        return (
+          <div className="shrink-0 border-b border-slate-800/40">
+            <div className="px-2.5 py-2 space-y-1.5">
+              {/* Bias badge */}
+              <div className="flex items-center justify-between">
+                <span className="text-[8px] text-slate-500 uppercase tracking-widest font-bold">Trade Suggestion</span>
+                <span className={`text-[9px] px-2 py-[2px] rounded-full font-bold ${
+                  signalBias === "BUY" ? "bg-emerald-500/20 text-emerald-400" :
+                  signalBias === "WAIT" ? "bg-amber-500/20 text-amber-400" :
+                  "bg-red-500/20 text-red-400"
+                }`}>
+                  {signalBias === "BUY" ? "▲ BUY Setup" : signalBias === "WAIT" ? "◆ Wait" : "▼ Avoid"}
+                </span>
+              </div>
+
+              {/* Entry price */}
+              <div className="bg-slate-800/40 rounded-lg p-2 border border-slate-700/30">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[9px] text-slate-400 font-medium">Entry Price</span>
+                  <span className="text-[13px] font-bold text-cyan-400 tabular-nums">RM{price.toFixed(2)}</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-1.5">
+                  {/* SL */}
+                  <div className="bg-red-500/8 rounded px-2 py-1.5 border border-red-500/15">
+                    <div className="text-[7px] text-red-400/70 uppercase tracking-wider font-bold">Stop Loss</div>
+                    <div className="text-[11px] font-bold text-red-400 tabular-nums">RM{slPrice.toFixed(2)}</div>
+                    <div className="text-[8px] text-red-400/50 tabular-nums">-{riskPct.toFixed(1)}%</div>
+                  </div>
+
+                  {/* TP1 */}
+                  <div className="bg-emerald-500/8 rounded px-2 py-1.5 border border-emerald-500/15">
+                    <div className="text-[7px] text-emerald-400/70 uppercase tracking-wider font-bold">{tp2Price ? "TP1 (50%)" : "Take Profit"}</div>
+                    <div className="text-[11px] font-bold text-emerald-400 tabular-nums">RM{tp1Price.toFixed(2)}</div>
+                    <div className="text-[8px] text-emerald-400/50 tabular-nums">+{((tp1Price - price) / price * 100).toFixed(1)}%</div>
+                  </div>
+
+                  {/* TP2 if applicable */}
+                  {tp2Price && (
+                    <div className="bg-emerald-500/8 rounded px-2 py-1.5 border border-emerald-500/15">
+                      <div className="text-[7px] text-emerald-400/70 uppercase tracking-wider font-bold">TP2 (Full)</div>
+                      <div className="text-[11px] font-bold text-emerald-400 tabular-nums">RM{tp2Price.toFixed(2)}</div>
+                      <div className="text-[8px] text-emerald-400/50 tabular-nums">+{((tp2Price - price) / price * 100).toFixed(1)}%</div>
+                    </div>
+                  )}
+
+                  {/* R:R */}
+                  <div className="bg-slate-800/60 rounded px-2 py-1.5 border border-slate-700/20">
+                    <div className="text-[7px] text-slate-500 uppercase tracking-wider font-bold">Risk:Reward</div>
+                    <div className={`text-[11px] font-bold tabular-nums ${rrRatio >= 2 ? "text-emerald-400" : rrRatio >= 1 ? "text-amber-400" : "text-red-400"}`}>
+                      1:{rrRatio.toFixed(1)}
+                    </div>
+                    <div className="text-[8px] text-slate-600 tabular-nums">ATR: {atr.toFixed(3)}</div>
+                  </div>
+                </div>
+
+                {/* Indicator status */}
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  {activeStrategy === "tpc" && (
+                    <>
+                      <span className={`text-[7px] px-1.5 py-[2px] rounded font-bold ${stBull ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}>
+                        W.ST {stBull ? "▲" : "▼"}
+                      </span>
+                      <span className={`text-[7px] px-1.5 py-[2px] rounded font-bold ${htBull ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}>
+                        HT {htBull ? "▲" : "▼"}
+                      </span>
+                    </>
+                  )}
+                  <span className={`text-[7px] px-1.5 py-[2px] rounded font-bold ${emaUp ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}>
+                    EMA {emaUp ? "▲" : "▼"}
+                  </span>
+                  {last.rsi != null && (
+                    <span className={`text-[7px] px-1.5 py-[2px] rounded font-bold ${rsiOk ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400"}`}>
+                      RSI {last.rsi.toFixed(0)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto">
