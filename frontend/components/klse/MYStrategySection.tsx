@@ -131,6 +131,8 @@ type Props = {
   onStrategyChange: (s: StrategyType) => void;
   btData?: US1HBacktestResponse | null;
   stockTags?: { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null }[];
+  onTagStrategy?: () => void;
+  onUntagStrategy?: (strategyType: string) => void;
 };
 
 // ── Collapsible Section ──
@@ -176,6 +178,8 @@ export default function MYStrategySection({
   onStrategyChange,
   btData,
   stockTags,
+  onTagStrategy,
+  onUntagStrategy,
 }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
@@ -238,6 +242,22 @@ export default function MYStrategySection({
               </div>
               <div className="text-[9px] text-slate-500 mt-0.5">{strat.subtitle}</div>
             </div>
+            {/* Tag / Untag button */}
+            {taggedStrategies.has(activeStrategy) ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); onUntagStrategy?.(activeStrategy); }}
+                className="shrink-0 p-1 rounded hover:bg-amber-500/20 text-amber-400 transition" title="Remove tag"
+              >
+                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M17.707 9.293a1 1 0 010 1.414l-7 7a1 1 0 01-1.414 0l-7-7A.997.997 0 012 10V5a3 3 0 013-3h5c.256 0 .512.098.707.293l7 7zM5 6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
+              </button>
+            ) : btData && btData.metrics ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); onTagStrategy?.(); }}
+                className="shrink-0 p-1 rounded hover:bg-slate-700/60 text-slate-500 hover:text-amber-400 transition" title="Tag this strategy"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5a1.99 1.99 0 011.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.99 1.99 0 013 12V7a4 4 0 014-4z" /></svg>
+              </button>
+            ) : null}
             <svg className={`w-3.5 h-3.5 text-slate-500 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
