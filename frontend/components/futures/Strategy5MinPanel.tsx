@@ -577,57 +577,11 @@ export type BuiltInPreset = {
 
 export const BUILT_IN_PRESETS: BuiltInPreset[] = [
   {
-    name: "⚡ Scalper 1m",
-    desc: "Ultra-fast 1m scalp — trend + breakout + MACD, tight SL, 2:1 R:R",
-    interval: "1m",
-    sl: 1,
-    tp: 2,
-    toggles: {
-      ema_trend: true,
-      ema_slope: true,
-      pullback: false,
-      breakout: true,
-      supertrend: true,
-      macd_momentum: true,
-      rsi_momentum: false,
-      volume_spike: false,
-      atr_range: false,
-      session_ok: false,
-      adx_ok: false,
-      smc_bos: false,
-      smc_ob: false,
-      smc_fvg: false,
-    },
-  },
-  {
-    name: "⚡ Scalper 2m",
-    desc: "Fast 2m scalp — trend + momentum, slightly wider stops",
-    interval: "2m",
-    sl: 2,
-    tp: 3,
-    toggles: {
-      ema_trend: true,
-      ema_slope: true,
-      pullback: true,
-      breakout: true,
-      supertrend: true,
-      macd_momentum: true,
-      rsi_momentum: false,
-      volume_spike: false,
-      atr_range: false,
-      session_ok: false,
-      adx_ok: false,
-      smc_bos: false,
-      smc_ob: false,
-      smc_fvg: false,
-    },
-  },
-  {
     name: "⚡ Keep GOING",
     desc: "Always-in-market scalp — EMA5/13 + SuperTrend + RSI, 5m",
-    interval: "1m",
-    sl: 2.5,
-    tp: 1.5,
+    interval: "2m",
+    sl: 1,
+    tp: 1,
     toggles: {
       ema_trend: true,
       ema_slope: false,
@@ -1387,8 +1341,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     // 1m data limited to 7d max — clamp period
     if (v === "1m" && parseInt(period) > 7) setPeriod("3d");
   };
-  const [slMult, setSlMult] = useState(defaultRisk.sl);
-  const [tpMult, setTpMult] = useState(defaultRisk.tp);
+  const _keepGoing = BUILT_IN_PRESETS.find((p) => p.name === "⚡ Keep GOING");
+  const [slMult, setSlMult] = useState(_keepGoing?.sl ?? defaultRisk.sl);
+  const [tpMult, setTpMult] = useState(_keepGoing?.tp ?? defaultRisk.tp);
 
   // Date range filter
   const fmtDate = (d: Date) => fmtInputDateSGT(d);
@@ -1424,7 +1379,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const [presets, setPresets] = useState<ConditionPreset[]>([]);
   const [presetName, setPresetName] = useState("");
   const [showPresetSave, setShowPresetSave] = useState(false);
-  const [activePreset, setActivePreset] = useState<string | null>(null);
+  const [activePreset, setActivePreset] = useState<string | null>("⚡ Keep GOING");
 
   // ── Load persisted config on mount / symbol change ──
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -1958,14 +1913,12 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                       setSlMult(bp.sl);
                       setTpMult(bp.tp);
                       handleIntervalChange(bp.interval);
-                      setPendingOptRun(true);
                       return;
                     }
                     const p = presets.find((x) => x.name === val);
                     if (p) {
                       setConditionToggles((prev) => ({ ...prev, ...p.toggles }));
                       setActivePreset(p.name);
-                      setPendingOptRun(true);
                     }
                   }}
                   className="w-full bg-slate-900/60 ring-1 ring-slate-700/50 rounded-md pl-2 pr-6 py-1.5 text-[10px] text-slate-300 font-bold
@@ -1984,13 +1937,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                 </svg>
               </div>
-              <button
-                onClick={() => setShowPresetSave(!showPresetSave)}
-                className="px-2 py-1.5 text-[9px] font-bold rounded-md bg-slate-800/60 text-blue-400 hover:text-blue-300 ring-1 ring-slate-700/50 hover:ring-blue-600/30 transition-all shrink-0"
-                title="Save current conditions as preset"
-              >
-                {showPresetSave ? "✕" : "💾"}
-              </button>
               {activePreset && !BUILT_IN_PRESETS.some((bp) => bp.name === activePreset) && (
                 <button
                   onClick={() => {
@@ -2006,6 +1952,13 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   🗑
                 </button>
               )}
+              <button
+                onClick={() => setShowPresetSave(!showPresetSave)}
+                className="px-2 py-1.5 text-[9px] font-bold rounded-md bg-slate-800/60 text-blue-400 hover:text-blue-300 ring-1 ring-slate-700/50 hover:ring-blue-600/30 transition-all shrink-0"
+                title="Save current conditions as preset"
+              >
+                {showPresetSave ? "✕" : "💾"}
+              </button>
             </div>
             {showPresetSave && (
               <div className="flex gap-1 mt-1">

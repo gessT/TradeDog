@@ -22,8 +22,12 @@ const CONDITION_KEYS: (keyof Scan5MinConditions)[] = [
   "halftrend",
 ];
 const DEFAULT_TOGGLES: Record<string, boolean> = Object.fromEntries(
-  CONDITION_KEYS.map((k) => [k, true])
+  CONDITION_KEYS.map((k) => [k, false])
 );
+// Keep Going defaults: EMA trend + SuperTrend + RSI
+DEFAULT_TOGGLES["ema_trend"] = true;
+DEFAULT_TOGGLES["supertrend"] = true;
+DEFAULT_TOGGLES["rsi_momentum"] = true;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Futures Dashboard — multi-commodity trading workspace
@@ -121,7 +125,7 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
   }, []);
 
   // ── Shared interval (used by both backtest & auto-trader) ──
-  const [interval, setInterval_] = useState("5m");
+  const [interval, setInterval_] = useState("2m");
 
   // ── Shared SL/TP multipliers (synced from backtest → auto-trader) ──
   const [slMult, setSlMult] = useState(4.0);
