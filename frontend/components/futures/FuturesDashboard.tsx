@@ -249,7 +249,7 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
           Trader
         </button>
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <AutoTraderPanel symbol={selectedSymbol} lockedConfig={lockedConfig} tradeExecutedTick={tradeExecutedTick} />
+          <AutoTraderPanel symbol={selectedSymbol} lockedConfig={lockedConfig} tradeExecutedTick={tradeExecutedTick} onTradeExecuted={() => setTradeExecutedTick((n) => n + 1)} />
         </div>
       </section>
       )}

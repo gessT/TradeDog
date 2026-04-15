@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -15,6 +16,18 @@ import yfinance as yf
 from .config import CONTRACT_SIZE, DATA_PERIOD, DEFAULT_INTERVAL, SYMBOL_YF
 
 logger = logging.getLogger(__name__)
+
+# Requested period → days to fetch
+_PERIOD_DAYS: dict[str, int] = {
+    "1d": 2, "2d": 3, "3d": 5, "5d": 7, "7d": 9,
+    "30d": 32, "60d": 60,
+}
+
+# yfinance hard limits on how far back intraday data goes
+_INTERVAL_MAX_DAYS: dict[str, int] = {
+    "1m": 7, "2m": 58, "5m": 58, "15m": 58, "30m": 58,
+    "60m": 58, "1h": 58, "90m": 58,
+}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -30,10 +43,25 @@ def load_yfinance(
 
     Returns DataFrame with columns: open, high, low, close, volume
     and a DatetimeIndex.
+
+    Uses explicit start/end datetimes instead of the period= string so that
+    yfinance's internal requests cache is bypassed on every call (the cache
+    key includes the exact start/end values, not the period alias).  This
+    ensures the "keep-going" strategy always receives up-to-the-minute data
+    instead of a stale snapshot from hours ago.
     """
     logger.info("Fetching %s  interval=%s  period=%s", symbol, interval, period)
+
+    days_back = _PERIOD_DAYS.get(period, 60)
+    # Clamp to yfinance's per-interval hard limits to avoid empty responses
+    max_days = _INTERVAL_MAX_DAYS.get(interval, 365)
+    days_back = min(days_back, max_days)
+
+    end_dt = datetime.now(timezone.utc)
+    start_dt = end_dt - timedelta(days=days_back)
+
     ticker = yf.Ticker(symbol)
-    df = ticker.history(period=period, interval=interval, auto_adjust=False)
+    df = ticker.history(start=start_dt, end=end_dt, interval=interval, auto_adjust=False)
 
     if df is None or df.empty:
         raise ValueError(f"No data returned for {symbol} ({interval}, {period})")

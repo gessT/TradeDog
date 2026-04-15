@@ -83,9 +83,10 @@ type Props = {
   symbol?: string;
   lockedConfig?: LockedTradingConfig | null;
   tradeExecutedTick?: number;
+  onTradeExecuted?: () => void;
 };
 
-export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExecutedTick = 0 }: Props) {
+export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExecutedTick = 0, onTradeExecuted }: Props) {
   const { price: livePrice } = useLivePrice();
   const [snap, setSnap] = useState<AutoTraderSnapshot | null>(null);
   const [trades, setTrades] = useState<AutoTraderTrade[]>([]);
@@ -159,11 +160,13 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
         } else if (result.action === "ENTRY") {
           pushLog(result.message || "Entry filled", "entry");
           notifyEntry();
+          onTradeExecuted?.();
         } else if (result.action === "EXIT") {
           pushLog(result.message || "Position exited", "exit");
           notifyExit();
           const t = await autoTraderGetDbTrades(symbol);
           setTrades(t);
+          onTradeExecuted?.();
         } else if (result.action === "BLOCKED") {
           pushLog(result.message || "BLOCKED", "error");
         } else if (result.action === "COOLDOWN") {
