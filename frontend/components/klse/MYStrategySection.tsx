@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // ═══════════════════════════════════════════════════════════
 // MY Strategy Section — multi-strategy with dropdown
@@ -74,6 +74,15 @@ const STRATEGIES: StrategyDef[] = [
   },
 ];
 
+// Default parameter values per strategy (the single source of truth)
+export const STRATEGY_DEFAULTS: Record<StrategyType, {
+  sl: number; tp1: number; tp2: number; capital: number;
+  disabledConditions: string[];   // conditions OFF by default (empty = all ON)
+}> = {
+  tpc: { sl: 2, tp1: 1, tp2: 2.5, capital: 5000, disabledConditions: [] },
+  hpb: { sl: 2, tp1: 4, tp2: 4,   capital: 5000, disabledConditions: [] },
+};
+
 type Props = {
   disabledConditions: Set<string>;
   onToggleCondition: (key: string) => void;
@@ -86,6 +95,7 @@ type Props = {
   capital: number;
   onCapitalChange: (v: number) => void;
   onRunBacktest: () => void;
+  onResetDefaults: () => void;
   loading: boolean;
   symbol?: string;
   symbolName?: string;
@@ -127,6 +137,7 @@ export default function MYStrategySection({
   capital,
   onCapitalChange,
   onRunBacktest,
+  onResetDefaults,
   loading,
   symbol,
   symbolName,
@@ -134,7 +145,13 @@ export default function MYStrategySection({
   onStrategyChange,
 }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const handleConfirmReset = useCallback(() => {
+    setConfirmResetOpen(false);
+    onResetDefaults();
+  }, [onResetDefaults]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -288,10 +305,62 @@ export default function MYStrategySection({
               ))}
             </div>
           </div>
+
+          {/* ── Reset to Defaults ── */}
+          {(() => {
+            const d = STRATEGY_DEFAULTS[activeStrategy];
+            const defaultDisabled = new Set(d.disabledConditions);
+            const condMatch = disabledConditions.size === defaultDisabled.size
+              && [...disabledConditions].every(k => defaultDisabled.has(k));
+            const isDefault = atrSlMult === d.sl && tp1RMult === d.tp1 && tp2RMult === d.tp2
+              && capital === d.capital && condMatch;
+            if (isDefault) return null;
+            return (
+              <button
+                onClick={() => setConfirmResetOpen(true)}
+                className="w-full py-1.5 rounded-lg text-[9px] font-bold border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition flex items-center justify-center gap-1"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Reset to Defaults
+              </button>
+            );
+          })()}
         </div>
       </div>
 
-      {/* Run Backtest button */}
+      {/* ═══ Confirm Reset Dialog ═══ */}
+      {confirmResetOpen && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setConfirmResetOpen(false)}>
+          <div className="bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/50 p-5 w-72 max-w-[90vw]" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-lg">⚠️</span>
+              <h3 className="text-[13px] font-bold text-slate-100">Reset to Defaults?</h3>
+            </div>
+            <p className="text-[11px] text-slate-400 mb-1">This will reset <span className="text-amber-400 font-semibold">{strat.label}</span> to default values:</p>
+            <ul className="text-[10px] text-slate-500 mb-4 space-y-0.5 pl-4 list-disc">
+              <li>SL: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].sl.toFixed(1)}</span></li>
+              <li>{activeStrategy === "hpb" ? "TP" : "TP1"}: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].tp1.toFixed(1)}</span></li>
+              {activeStrategy === "tpc" && <li>TP2: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].tp2.toFixed(1)}</span></li>}
+              <li>Capital: <span className="text-slate-300 font-mono">RM{STRATEGY_DEFAULTS[activeStrategy].capital.toLocaleString()}</span></li>
+              <li>All conditions: <span className="text-emerald-400 font-semibold">enabled</span></li>
+            </ul>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setConfirmResetOpen(false)}
+                className="flex-1 py-2 rounded-lg text-[10px] font-bold text-slate-400 border border-slate-700/50 hover:bg-slate-800/50 transition"
+              >Cancel</button>
+              <button
+                onClick={handleConfirmReset}
+                className="flex-1 py-2 rounded-lg text-[10px] font-bold text-white bg-amber-500/80 hover:bg-amber-500 transition"
+              >Reset</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Run Backtest button ═══ */}
       <div className="shrink-0 p-2 border-t border-slate-800/40">
         <button
           onClick={onRunBacktest}
@@ -302,7 +371,7 @@ export default function MYStrategySection({
           <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.15),transparent_70%)]" />
           <span className="relative flex items-center justify-center gap-1.5">
             {loading ? (
-              <><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg> Running\u2026</>
+              <><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg> Running {symbolName ?? symbol?.replace(".KL", "") ?? ""}…</>
             ) : (
               <><svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.84A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.27l9.344-5.891a1.5 1.5 0 000-2.538L6.3 2.841z" /></svg> Run {symbolName ?? symbol?.replace(".KL", "") ?? "Backtest"}</>
             )}

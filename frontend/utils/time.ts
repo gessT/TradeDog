@@ -46,13 +46,14 @@ function fmtDateObj(d: Date): string {
     timeZone: getTimezone(),
     day: "2-digit",
     month: "2-digit",
+    year: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
   }).replace(",", "");
 }
 
-/** Format a raw timestamp string to "DD/MM/YYYY" in configured timezone */
+/** Format a raw timestamp string to "DD/MM/YY" in configured timezone */
 export function fmtDateSGT(raw: string): string {
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
@@ -60,7 +61,7 @@ export function fmtDateSGT(raw: string): string {
     timeZone: getTimezone(),
     day: "2-digit",
     month: "2-digit",
-    year: "numeric",
+    year: "2-digit",
   });
 }
 

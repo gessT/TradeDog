@@ -146,11 +146,9 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
   const displayList = (() => {
     const q = searchQuery.toLowerCase();
 
-    if (!q && viewMode === "favs") {
-      return items.filter((i) => {
-        if (sectorFilter !== "ALL" && i.sector !== sectorFilter) return false;
-        return true;
-      }).map((i) => {
+    // When a specific sector is selected, always show ALL stocks in that sector (ignore watchlist)
+    if (!q && viewMode === "favs" && sectorFilter === "ALL") {
+      return items.map((i) => {
         const qt = quotes[i.symbol];
         return qt ? { ...i, price: qt.price, change_pct: qt.change_pct } : i;
       });
@@ -175,9 +173,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
   })();
 
   const sectorCount = sectorFilter !== "ALL"
-    ? (viewMode === "favs"
-      ? items.filter((i) => i.sector === sectorFilter).length
-      : MY_STOCKS.filter((s) => s.sector === sectorFilter).length)
+    ? MY_STOCKS.filter((s) => s.sector === sectorFilter).length
     : 0;
 
   return (
@@ -261,10 +257,8 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                   <span className="text-[9px] text-slate-600">{viewMode === "favs" ? items.length : MY_STOCKS.length}</span>
                 </button>
                 {MY_SECTORS.map((s) => {
-                  const count = viewMode === "favs"
-                    ? items.filter((i) => i.sector === s).length
-                    : MY_STOCKS.filter((st) => st.sector === s).length;
-                  if (viewMode === "favs" && count === 0) return null;
+                  const count = MY_STOCKS.filter((st) => st.sector === s).length;
+                  if (count === 0) return null;
                   return (
                     <button
                       key={s}

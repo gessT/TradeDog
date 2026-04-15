@@ -112,7 +112,10 @@ function TradeTable({
         ? trades.filter((t) => t.pnl >= 0)
         : trades.filter((t) => t.pnl < 0);
 
-  if (filtered.length === 0) {
+  // Latest trades first
+  const sorted = [...filtered].reverse();
+
+  if (sorted.length === 0) {
     return (
       <div className="text-center text-[10px] text-slate-600 py-4">
         No trades match filter
@@ -122,7 +125,7 @@ function TradeTable({
 
   return (
     <div className="overflow-auto flex-1">
-      <table className="w-full text-left text-xs min-w-[640px]">
+      <table className="w-full text-left text-xs min-w-[720px]">
         <thead className="sticky top-0 bg-slate-900/95 z-10">
           <tr className="text-[10px] text-slate-500 uppercase border-b border-slate-700/50">
             <th className="px-2.5 py-2">#</th>
@@ -130,6 +133,7 @@ function TradeTable({
             <th className="px-2.5 py-2">Exit</th>
             <th className="px-2.5 py-2 text-right">Entry$</th>
             <th className="px-2.5 py-2 text-right">Exit$</th>
+            <th className="px-2.5 py-2 text-right">SL</th>
             <th className="px-2.5 py-2 text-right">P&L</th>
             <th className="px-2.5 py-2 text-right">P&L%</th>
             <th className="px-2.5 py-2 text-center">Dir</th>
@@ -138,8 +142,10 @@ function TradeTable({
           </tr>
         </thead>
         <tbody>
-          {filtered.map((t, i) => {
+          {sorted.map((t, i) => {
+            const origIdx = filtered.length - i;
             const win = t.pnl >= 0;
+            const isOpen = t.reason === "EOD" && i === 0;
             const reasonStyle: Record<string, string> = {
               TP1: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
               TP2: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
@@ -159,13 +165,22 @@ function TradeTable({
               <tr
                 key={`${t.entry_time}-${i}`}
                 onClick={() => onTradeClick(t)}
-                className="cursor-pointer hover:bg-blue-500/8 transition border-b border-slate-800/20"
+                className={`cursor-pointer hover:bg-blue-500/8 transition border-b border-slate-800/20 ${isOpen ? "bg-cyan-500/5" : ""}`}
               >
-                <td className="px-2.5 py-1.5 text-slate-600 tabular-nums">{i + 1}</td>
+                <td className="px-2.5 py-1.5 text-slate-600 tabular-nums">{origIdx}</td>
                 <td className="px-2.5 py-1.5 text-slate-400 tabular-nums whitespace-nowrap">{fmtDateTimeSGT(t.entry_time)}</td>
-                <td className="px-2.5 py-1.5 text-slate-400 tabular-nums whitespace-nowrap">{fmtDateTimeSGT(t.exit_time)}</td>
+                <td className="px-2.5 py-1.5 tabular-nums whitespace-nowrap">
+                  {isOpen
+                    ? <span className="text-[9px] px-2 py-0.5 rounded border text-cyan-400 bg-cyan-500/10 border-cyan-500/30 font-bold">OPEN</span>
+                    : <span className="text-slate-400">{fmtDateTimeSGT(t.exit_time)}</span>}
+                </td>
                 <td className="px-2.5 py-1.5 text-right tabular-nums">{t.entry_price.toFixed(2)}</td>
-                <td className="px-2.5 py-1.5 text-right tabular-nums">{t.exit_price.toFixed(2)}</td>
+                <td className="px-2.5 py-1.5 text-right tabular-nums">
+                  {isOpen ? <span className="text-cyan-400">—</span> : t.exit_price.toFixed(2)}
+                </td>
+                <td className="px-2.5 py-1.5 text-right tabular-nums text-rose-400/70">
+                  {t.sl_price ? t.sl_price.toFixed(2) : "—"}
+                </td>
                 <td className={`px-2.5 py-1.5 text-right font-bold tabular-nums ${win ? "text-emerald-400" : "text-rose-400"}`}>
                   {win ? "+" : ""}{t.pnl.toFixed(2)}
                 </td>
@@ -178,7 +193,9 @@ function TradeTable({
                   </span>
                 </td>
                 <td className="px-2.5 py-1.5 text-center">
-                  <span className={`text-[9px] px-2 py-0.5 rounded border ${rs}`}>{t.reason}</span>
+                  {isOpen
+                    ? <span className="text-[9px] px-2 py-0.5 rounded border text-cyan-400 bg-cyan-500/10 border-cyan-500/30 font-bold">OPEN</span>
+                    : <span className={`text-[9px] px-2 py-0.5 rounded border ${rs}`}>{t.reason}</span>}
                 </td>
                 <td className="px-2.5 py-1.5 text-right text-slate-500 tabular-nums">{t.mae.toFixed(2)}</td>
               </tr>

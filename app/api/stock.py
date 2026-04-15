@@ -1751,6 +1751,7 @@ class US1HTrade(BaseModel):
     direction: str = "CALL"
     mae: float = 0.0
     mkt_structure: int = 0
+    sl_price: float = 0.0
 
 
 class US1HMetrics(BaseModel):
@@ -3088,6 +3089,7 @@ async def us_stock_backtest_tpc(
                 signal_type="TPC",
                 direction="CALL",
                 mae=round(t.mae, 2),
+                sl_price=round(t.sl_price, 2),
             )
             for t in filtered_trades
         ]
@@ -3223,6 +3225,7 @@ async def klse_backtest_hpb(
                 reason=t.exit_reason,
                 signal_type="HPB",
                 direction="CALL",
+                sl_price=t.sl_price,
             )
             for t in result.trades
         ]

@@ -1658,6 +1658,7 @@ export type US1HTrade = {
   direction: string;
   mae: number;
   mkt_structure: number;
+  sl_price: number;
 };
 
 export type US1HMetrics = {

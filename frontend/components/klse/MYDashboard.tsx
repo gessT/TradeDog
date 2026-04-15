@@ -4,7 +4,7 @@ import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useSta
 import { fetchTPCBacktest, fetchHPBBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
-import MYStrategySection, { type StrategyType } from "./MYStrategySection";
+import MYStrategySection, { type StrategyType, STRATEGY_DEFAULTS } from "./MYStrategySection";
 import MYBottomPanel, { MetricsGrid } from "./MYBottomPanel";
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
@@ -65,24 +65,31 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   // ── TPC strategy conditions & params
   const [disabledConditions, setDisabledConditions] = useState<Set<string>>(() => new Set());
   const [atrSlMult, setAtrSlMult] = useState(2);
-  const [tp1RMult, setTp1RMult] = useState(1);
-  const [tp2RMult, setTp2RMult] = useState(2.5);
+  const [tp1RMult, setTp1RMult] = useState(4);
+  const [tp2RMult, setTp2RMult] = useState(4);
   const [capital, setCapital] = useState(5000);
 
   // ── Active strategy type
-  const [activeStrategy, setActiveStrategy] = useState<StrategyType>("tpc");
-  const activeStrategyRef = useRef<StrategyType>("tpc");
+  const [activeStrategy, setActiveStrategy] = useState<StrategyType>("hpb");
+  const activeStrategyRef = useRef<StrategyType>("hpb");
+  const applyDefaults = useCallback((s: StrategyType) => {
+    const d = STRATEGY_DEFAULTS[s];
+    setDisabledConditions(new Set(d.disabledConditions));
+    setAtrSlMult(d.sl);
+    setTp1RMult(d.tp1);
+    setTp2RMult(d.tp2);
+    setCapital(d.capital);
+  }, []);
+
   const handleStrategyChange = useCallback((s: StrategyType) => {
     setActiveStrategy(s);
     activeStrategyRef.current = s;
-    setDisabledConditions(new Set());
-    // Reset params to strategy defaults
-    if (s === "hpb") {
-      setAtrSlMult(2); setTp1RMult(4); setTp2RMult(4);
-    } else {
-      setAtrSlMult(2); setTp1RMult(1); setTp2RMult(2.5);
-    }
-  }, []);
+    applyDefaults(s);
+  }, [applyDefaults]);
+
+  const handleResetDefaults = useCallback(() => {
+    applyDefaults(activeStrategyRef.current);
+  }, [applyDefaults]);
 
   const toggleCondition = useCallback((key: string) => {
     setDisabledConditions((prev) => {
@@ -454,6 +461,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             capital={capital}
             onCapitalChange={setCapital}
             onRunBacktest={runBacktest}
+            onResetDefaults={handleResetDefaults}
             loading={btLoading}
             activeStrategy={activeStrategy}
             onStrategyChange={handleStrategyChange}
