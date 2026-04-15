@@ -12,7 +12,7 @@ export type MYStock = {
   /** Market cap tier: L=Large, M=Mid, S=Small */
   cap: "L" | "M" | "S";
   /** Default strategy for this stock (auto-selects on stock pick) */
-  strategy?: "tpc" | "hpb" | "vpb3" | "smp";
+  strategy?: "tpc" | "hpb" | "vpb3" | "smp" | "psniper";
 };
 
 export const MY_STOCKS: MYStock[] = [

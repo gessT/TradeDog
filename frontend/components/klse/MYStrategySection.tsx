@@ -7,7 +7,7 @@ import type { US1HBacktestResponse } from "../../services/api";
 // MY Strategy Section — multi-strategy with dropdown
 // ═══════════════════════════════════════════════════════════
 
-export type StrategyType = "tpc" | "hpb" | "vpb3" | "smp";
+export type StrategyType = "tpc" | "hpb" | "vpb3" | "smp" | "psniper";
 
 type StrategyDef = {
   key: StrategyType;
@@ -123,6 +123,34 @@ const STRATEGIES: StrategyDef[] = [
       tp1: { label: "TP R \u00D7", min: 0.5, max: 5, step: 0.5 },
     },
   },
+  {
+    key: "psniper",
+    label: "PrecSniper",
+    subtitle: "Precision Sniper — EMA Cross + 10pt Confluence",
+    icon: "\u{1F3AF}",
+    color: "rose",
+    conditions: [
+      { key: "ema_cross", label: "EMA Cross Trigger", icon: "\u26A1", desc: "EMA 8 crosses above EMA 21" },
+      { key: "ema_trend", label: "EMA Trend", icon: "\u{1F4C8}", desc: "Close > EMA 55 trend" },
+      { key: "rsi_filter", label: "RSI Filter", icon: "\u{1F3AF}", desc: "RSI 50-75 sweet zone" },
+      { key: "macd_hist", label: "MACD Histogram", icon: "\u{1F4CA}", desc: "MACD histogram > 0" },
+      { key: "macd_cross", label: "MACD Cross", icon: "\u{1F504}", desc: "MACD line > signal" },
+      { key: "vwap_above", label: "Above VWAP", icon: "\u{1F4B9}", desc: "Close > 20-bar rolling VWAP" },
+      { key: "vol_confirm", label: "Volume Surge", icon: "\u{1F4CA}", desc: "Vol > 1.2\u00D7 20-day avg" },
+      { key: "adx_trend", label: "ADX Trend", icon: "\u{1F4AA}", desc: "ADX > 20 and DI+ > DI-" },
+      { key: "htf_bias", label: "Weekly HTF Bias", icon: "\u{1F310}", desc: "Weekly EMA fast > slow (1.5 pts)" },
+      { key: "close_above_fast", label: "Close > EMA Fast", icon: "\u2B06\uFE0F", desc: "Close above fast EMA (0.5 pts)" },
+    ],
+    exitRules: [
+      { key: "sl_exit", icon: "\u{1F6D1}", label: "Stop Loss", desc: "ATR \u00D7 3.5 or swing low" },
+      { key: "tp_exit", icon: "\u{1F3AF}", label: "Take Profit", desc: "R \u00D7 1.2 above entry" },
+    ],
+    sliders: {
+      sl: { label: "SL ATR \u00D7", min: 1, max: 5, step: 0.5 },
+      tp1: { label: "TP R \u00D7", min: 0.5, max: 3, step: 0.1 },
+      tp2: { label: "Min Score", min: 3, max: 9, step: 1 },
+    },
+  },
 ];
 
 // Default parameter values per strategy (the single source of truth)
@@ -134,6 +162,7 @@ export const STRATEGY_DEFAULTS: Record<StrategyType, {
   hpb:  { sl: 2,   tp1: 4,   tp2: 4,   capital: 5000, disabledConditions: [] },
   vpb3: { sl: 5,   tp1: 3.0, tp2: 3.0, capital: 5000, disabledConditions: [] },
   smp:  { sl: 4,   tp1: 2.0, tp2: 2.0, capital: 5000, disabledConditions: [] },
+  psniper: { sl: 3.5,  tp1: 1.2, tp2: 6, capital: 5000, disabledConditions: [] },
 };
 
 type Props = {

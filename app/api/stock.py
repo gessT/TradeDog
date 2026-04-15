@@ -3773,6 +3773,136 @@ async def klse_backtest_smp(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# PrecSniper (Precision Sniper) Backtest
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/backtest_psniper")
+async def klse_backtest_psniper(
+    symbol: _Ann[str, Query()] = "0208.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 5000.0,
+    disabled_conditions: _Ann[_Opt[str], Query()] = None,
+    min_score: _Ann[_Opt[int], Query(ge=1, le=10)] = None,
+    sl_atr_mult: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    tp1_rr: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+) -> US1HBacktestResponse:
+    """Run PrecSniper backtest — EMA cross + 10-pt confluence scoring."""
+
+    from strategies.klse.psniper.strategy import VALID_CONDITIONS
+
+    _disabled: set[str] = set()
+    if disabled_conditions:
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in VALID_CONDITIONS}
+
+    def _run():
+        from strategies.futures.data_loader import load_yfinance
+        from strategies.klse.psniper.strategy import DEFAULT_PARAMS, build_indicators
+        from strategies.klse.psniper.backtest import run_backtest as ps_backtest
+
+        param_overrides: dict = {}
+        if min_score is not None:
+            param_overrides["min_score"] = min_score
+        if sl_atr_mult is not None:
+            param_overrides["sl_atr_mult"] = sl_atr_mult
+        if tp1_rr is not None:
+            param_overrides["tp1_rr"] = tp1_rr
+
+        full_params = {**DEFAULT_PARAMS, **param_overrides}
+
+        df = load_yfinance(symbol=symbol, interval="1d", period=period)
+        if df.empty or len(df) < 60:
+            raise ValueError(f"Not enough daily data for {symbol} (need 60+ bars).")
+
+        result = ps_backtest(df, params=full_params, capital=capital,
+                             disabled_conditions=_disabled or None)
+
+        df_ind = build_indicators(df.copy(), full_params)
+
+        candles = []
+        for ts_val, row in df_ind.iterrows():
+            candles.append(US1HCandle(
+                time=ts_val.isoformat() if hasattr(ts_val, "isoformat") else str(ts_val),
+                open=round(float(row["open"]), 4),
+                high=round(float(row["high"]), 4),
+                low=round(float(row["low"]), 4),
+                close=round(float(row["close"]), 4),
+                volume=float(row.get("volume", 0)),
+                ema_fast=round(float(row.get("ema_fast", 0)), 4) if not _isnan(row.get("ema_fast")) else None,
+                ema_slow=round(float(row.get("ema_slow", 0)), 4) if not _isnan(row.get("ema_slow")) else None,
+                rsi=round(float(row.get("rsi", 0)), 1) if not _isnan(row.get("rsi")) else None,
+                st_dir=int(row.get("htf_bias", 0)),
+                st_line=round(float(row.get("swing_low", 0)), 4) if not _isnan(row.get("swing_low")) else None,
+                ht_line=round(float(row.get("vwap", 0)), 4) if not _isnan(row.get("vwap")) else None,
+                ht_dir=1 if not _isnan(row.get("vwap")) else 0,
+                signal=0,
+            ))
+
+        n_trades = len(result.trades)
+        metrics = US1HMetrics(
+            initial_capital=result.initial_capital,
+            final_equity=result.final_equity,
+            total_return_pct=result.total_return_pct,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            total_trades=n_trades,
+            winners=result.winners,
+            losers=result.losers,
+            win_rate=result.win_rate,
+            avg_win=result.avg_win_pct,
+            avg_loss=result.avg_loss_pct,
+            profit_factor=result.profit_factor,
+            risk_reward_ratio=result.risk_reward,
+        )
+
+        trades_out = [
+            US1HTrade(
+                entry_time=t.entry_date,
+                exit_time=t.exit_date,
+                entry_price=t.entry_price,
+                exit_price=t.exit_price,
+                qty=0,
+                pnl=t.pnl,
+                pnl_pct=t.return_pct,
+                reason=t.exit_reason,
+                signal_type="PSNIPER",
+                direction="CALL",
+                sl_price=t.sl_price,
+            )
+            for t in result.trades
+        ]
+
+        out_params = {
+            "min_score": full_params["min_score"],
+            "sl_atr_mult": full_params["sl_atr_mult"],
+            "tp1_rr": full_params["tp1_rr"],
+            "ema_fast": full_params["ema_fast"],
+            "ema_slow": full_params["ema_slow"],
+        }
+
+        return candles, trades_out, result.equity_curve, metrics, out_params
+
+    try:
+        candles, trades, eq_curve, metrics, params_out = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("PrecSniper backtest failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return US1HBacktestResponse(
+        symbol=symbol,
+        interval="1d",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        params=params_out,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Scan Best Strategy — run all 3 KLSE strategies and grade them
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -3966,6 +4096,34 @@ async def scan_best_strategy(
         except Exception as exc:
             logger.debug("SMP scan failed for %s: %s", symbol, exc)
             results.append({"strategy": "smp", "label": "SMP", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
+
+        # --- PrecSniper ---
+        try:
+            from strategies.klse.psniper.strategy import DEFAULT_PARAMS as PS_PARAMS
+            from strategies.klse.psniper.backtest import run_backtest as ps_backtest
+
+            df = load_yfinance(symbol=symbol, interval="1d", period=period)
+            if df.empty or len(df) < 60:
+                raise ValueError("Not enough data")
+
+            result = ps_backtest(df, params=PS_PARAMS, capital=capital, disabled_conditions=None)
+            n = len(result.trades)
+
+            m = {
+                "total_return_pct": result.total_return_pct,
+                "win_rate": result.win_rate,
+                "profit_factor": result.profit_factor,
+                "sharpe_ratio": result.sharpe_ratio,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "total_trades": n,
+                "winners": result.winners,
+                "losers": result.losers,
+            }
+            grade, score = _grade_metrics(m)
+            results.append({"strategy": "psniper", "label": "PrecSniper", "grade": grade, "score": score, "metrics": m})
+        except Exception as exc:
+            logger.debug("PrecSniper scan failed for %s: %s", symbol, exc)
+            results.append({"strategy": "psniper", "label": "PrecSniper", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
 
         # Sort by score descending
         results.sort(key=lambda x: -x["score"])
@@ -4244,6 +4402,18 @@ def _run_strategy_backtest(strategy: str, df: pd.DataFrame, capital: float):
         from strategies.klse.smp.strategy import DEFAULT_PARAMS
         from strategies.klse.smp.backtest import run_backtest as smp_backtest
         raw = smp_backtest(df, params=DEFAULT_PARAMS, capital=capital)
+        trades = [_NormTrade(
+            entry_date=t.entry_date, exit_date=t.exit_date,
+            entry_price=t.entry_price, exit_price=t.exit_price,
+            sl_price=t.sl_price, tp_price=t.tp_price,
+            pnl=t.pnl, exit_reason=t.exit_reason, win=t.win,
+        ) for t in raw.trades]
+        return _NormResult(trades=trades, win_rate=raw.win_rate,
+                           total_return_pct=raw.total_return_pct, total_trades=raw.total_trades)
+    elif strategy == "psniper":
+        from strategies.klse.psniper.strategy import DEFAULT_PARAMS as PS_PARAMS
+        from strategies.klse.psniper.backtest import run_backtest as ps_backtest
+        raw = ps_backtest(df, params=PS_PARAMS, capital=capital)
         trades = [_NormTrade(
             entry_date=t.entry_date, exit_date=t.exit_date,
             entry_price=t.entry_price, exit_price=t.exit_price,

@@ -317,6 +317,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
     { key: "hpb", label: "HPB", icon: "🔥", color: "amber" },
     { key: "vpb3", label: "VPB3", icon: "📊", color: "emerald" },
     { key: "smp", label: "SMP", icon: "🧠", color: "violet" },
+    { key: "psniper", label: "PrecSniper", icon: "🎯", color: "rose" },
   ] as const;
 
   const handleScanOpportunities = useCallback(async () => {
