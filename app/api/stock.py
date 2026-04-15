@@ -3985,3 +3985,271 @@ async def scan_best_strategy(
         "best_grade": best["grade"] if best else "F",
         "strategies": strategies,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Scan Strategy Opportunities — find stocks with active buy signals
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/scan_opportunities")
+async def scan_opportunities(
+    strategy: _Ann[str, Query()] = "smp",
+    period: _Ann[str, Query()] = "6mo",
+    capital: _Ann[float, Query()] = 5000.0,
+) -> dict:
+    """Scan all KLSE stocks for a given strategy. Return those with an active signal
+    or currently open position (i.e. buy opportunity near entry)."""
+
+    def _scan() -> list[dict]:
+        from strategies.futures.data_loader import load_yfinance
+
+        all_symbols = [s.symbol for s in _get_my_stocks()]
+
+        hits: list[dict] = []
+
+        for sym in all_symbols:
+            try:
+                df = load_yfinance(symbol=sym, interval="1d", period=period)
+                if df.empty or len(df) < 60:
+                    continue
+                df.attrs["symbol"] = sym
+
+                result = _run_strategy_backtest(strategy, df, capital)
+                if result is None:
+                    continue
+
+                # Check: is there a currently open position? (last trade has no proper exit / EOD)
+                has_open = False
+                entry_price = 0.0
+                sl_price = 0.0
+                tp_price = 0.0
+                entry_date = ""
+                last_close = float(df["close"].iloc[-1]) if "close" in df.columns else float(df["Close"].iloc[-1])
+
+                if result.trades:
+                    last_trade = result.trades[-1]
+                    # EOD exit means position was still open at end of data
+                    if last_trade.exit_reason == "EOD":
+                        has_open = True
+                        entry_price = last_trade.entry_price
+                        sl_price = last_trade.sl_price
+                        tp_price = last_trade.tp_price
+                        entry_date = last_trade.entry_date
+
+                # Also check: is there a signal on the last bar (meaning entry tomorrow)?
+                has_signal = False
+                if hasattr(result, "last_signal") and result.last_signal:
+                    has_signal = True
+
+                if not has_open and not has_signal:
+                    # Also check if there's a very recent signal (last 3 bars)
+                    if result.trades:
+                        last_t = result.trades[-1]
+                        # Recent entry (within last 5 trading days)
+                        if isinstance(df.index, pd.DatetimeIndex):
+                            last_date = df.index[-1]
+                            try:
+                                entry_dt = pd.Timestamp(last_t.entry_date)
+                                if hasattr(last_date, 'tz') and last_date.tz and entry_dt.tz is None:
+                                    entry_dt = entry_dt.tz_localize(last_date.tz)
+                                days_since = (last_date - entry_dt).days
+                                if days_since <= 5 and last_t.win:
+                                    has_open = True
+                                    entry_price = last_t.entry_price
+                                    sl_price = last_t.sl_price
+                                    tp_price = last_t.tp_price
+                                    entry_date = last_t.entry_date
+                            except Exception:
+                                pass
+
+                if has_open or has_signal:
+                    # Compute distance to entry price as %
+                    dist_pct = round((last_close - entry_price) / entry_price * 100, 2) if entry_price > 0 else 0
+                    risk_pct = round((entry_price - sl_price) / entry_price * 100, 2) if entry_price > 0 and sl_price > 0 else 0
+                    reward_pct = round((tp_price - entry_price) / entry_price * 100, 2) if entry_price > 0 and tp_price > 0 else 0
+
+                    hits.append({
+                        "symbol": sym,
+                        "name": _get_stock_name(sym),
+                        "price": round(last_close, 4),
+                        "entry_price": round(entry_price, 4),
+                        "sl_price": round(sl_price, 4),
+                        "tp_price": round(tp_price, 4),
+                        "entry_date": entry_date,
+                        "dist_pct": dist_pct,
+                        "risk_pct": risk_pct,
+                        "reward_pct": reward_pct,
+                        "status": "OPEN" if has_open else "SIGNAL",
+                        "win_rate": result.win_rate,
+                        "total_return": result.total_return_pct,
+                        "total_trades": result.total_trades,
+                    })
+            except Exception as exc:
+                logger.debug("Scan opp skip %s: %s", sym, exc)
+                continue
+
+        # Sort: OPEN first, then by distance to entry (closest first)
+        hits.sort(key=lambda x: (0 if x["status"] == "OPEN" else 1, abs(x["dist_pct"])))
+        return hits
+
+    try:
+        results = await run_in_threadpool(_scan)
+    except Exception as exc:
+        logger.exception("Scan opportunities failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return {
+        "strategy": strategy,
+        "period": period,
+        "total_scanned": len(_get_my_stocks()),
+        "hits": len(results),
+        "results": results,
+    }
+
+
+def _get_my_stocks() -> list:
+    """Return list of stock objects with .symbol attribute from MY_STOCKS constant."""
+    # Parse from the TypeScript file is not practical; use a Python-side list
+    from dataclasses import dataclass
+
+    @dataclass
+    class _Stock:
+        symbol: str
+        name: str
+
+    # Major KLSE stocks — same as frontend/constants/myStocks.ts
+    _symbols = [
+        ("1155.KL", "Maybank"), ("1295.KL", "Public Bank"), ("1023.KL", "CIMB"),
+        ("5819.KL", "Hong Leong Bank"), ("1066.KL", "RHB Bank"), ("1015.KL", "Ambank"),
+        ("1082.KL", "Hong Leong Financial"), ("2488.KL", "Alliance Bank"),
+        ("1818.KL", "Bursa Malaysia"), ("5185.KL", "AFFIN Bank"),
+        ("5031.KL", "TIME dotCom"), ("0097.KL", "ViTrox"), ("0128.KL", "Frontken"),
+        ("0166.KL", "Inari Amertron"), ("5005.KL", "Unisem"), ("5340.KL", "UMS Integration"),
+        ("0270.KL", "Nationgate"), ("7100.KL", "Uchi Technologies"),
+        ("7160.KL", "Pentamaster"), ("3867.KL", "MPI"),
+        ("8869.KL", "Press Metal"), ("0208.KL", "Greatech"), ("5292.KL", "UWC"),
+        ("5168.KL", "Hartalega"), ("7153.KL", "Kossan Rubber"),
+        ("5286.KL", "Mi Technovation"), ("0225.KL", "Southern Cable"),
+        ("6963.KL", "VS Industry"), ("0233.KL", "Pekat Group"), ("0167.KL", "MClean Technologies"),
+        ("6947.KL", "CelcomDigi"), ("4863.KL", "Telekom Malaysia"),
+        ("6012.KL", "Maxis"), ("6888.KL", "Axiata"),
+        ("5326.KL", "99 Speed Mart"), ("4707.KL", "Nestle Malaysia"),
+        ("7084.KL", "QL Resources"), ("5296.KL", "MR DIY"),
+        ("4715.KL", "Genting Malaysia"), ("3182.KL", "Genting Bhd"),
+        ("7052.KL", "Padini"), ("5248.KL", "Bermaz Auto"),
+        ("5225.KL", "IHH Healthcare"), ("5878.KL", "KPJ Healthcare"),
+        ("7113.KL", "Top Glove"),
+        ("5211.KL", "Sunway Bhd"), ("5398.KL", "Gamuda"),
+        ("3336.KL", "IJM Corp"), ("0151.KL", "Kelington Group"),
+        ("5249.KL", "IOI Properties"), ("5288.KL", "Sime Darby Property"),
+        ("8583.KL", "Mah Sing"), ("5236.KL", "Matrix Concepts"),
+        ("5183.KL", "Petronas Chemicals"), ("5285.KL", "SD Guthrie"),
+        ("1961.KL", "IOI Corp"), ("4731.KL", "Scientex"),
+        ("7277.KL", "Dialog Group"), ("5199.KL", "Hibiscus Petroleum"),
+        ("7293.KL", "Yinson Holdings"),
+        ("5347.KL", "Tenaga Nasional"), ("6033.KL", "Petronas Gas"),
+        ("6742.KL", "YTL Power"), ("4677.KL", "YTL Corp"),
+        ("3816.KL", "MISC"), ("5246.KL", "Westports"),
+        ("5099.KL", "Capital A"),
+    ]
+    return [_Stock(s, n) for s, n in _symbols]
+
+
+def _get_stock_name(symbol: str) -> str:
+    for s in _get_my_stocks():
+        if s.symbol == symbol:
+            return s.name
+    return symbol.replace(".KL", "")
+
+
+def _run_strategy_backtest(strategy: str, df: pd.DataFrame, capital: float):
+    """Run a specific strategy backtest and return a normalised result object."""
+    from dataclasses import dataclass, field
+
+    @dataclass
+    class _NormTrade:
+        entry_date: str
+        exit_date: str
+        entry_price: float
+        exit_price: float
+        sl_price: float
+        tp_price: float
+        pnl: float
+        exit_reason: str
+        win: bool
+
+    @dataclass
+    class _NormResult:
+        trades: list[_NormTrade] = field(default_factory=list)
+        win_rate: float = 0.0
+        total_return_pct: float = 0.0
+        total_trades: int = 0
+
+    if strategy == "tpc":
+        from strategies.us_stock.tpc.backtest import TPCBacktester
+        from strategies.us_stock.tpc.config import DEFAULT_TPC_PARAMS, RISK_PER_TRADE
+        from strategies.futures.data_loader import load_yfinance as _lf
+        # TPC needs weekly data; for scan speed use daily as trade TF
+        try:
+            df_weekly = _lf(symbol=df.attrs.get("symbol", "0208.KL"), interval="1wk", period="5y")
+        except Exception:
+            return None
+        bt = TPCBacktester(capital=capital, risk_per_trade=RISK_PER_TRADE)
+        sym = df.attrs.get("symbol", "0208.KL")
+        raw = bt.run(symbol=sym, period="6mo", params={},
+                     disabled_conditions=None,
+                     df_weekly=df_weekly, df_daily=df, df_1h=df)
+        trades = []
+        for t in raw.trades:
+            e_date = t.entry_time.strftime("%Y-%m-%d") if hasattr(t.entry_time, "strftime") else str(t.entry_time)[:10]
+            x_date = t.exit_time.strftime("%Y-%m-%d") if hasattr(t.exit_time, "strftime") else str(t.exit_time)[:10]
+            trades.append(_NormTrade(
+                entry_date=e_date, exit_date=x_date,
+                entry_price=round(t.entry_price, 4), exit_price=round(t.exit_price, 4),
+                sl_price=round(t.sl_price, 4), tp_price=round(t.tp1_price, 4),
+                pnl=t.pnl, exit_reason=t.reason, win=t.pnl > 0,
+            ))
+        n = len(trades)
+        wins = sum(1 for t in trades if t.win)
+        total_pnl = sum(t.pnl for t in trades)
+        return _NormResult(trades=trades,
+                           win_rate=round(wins / n * 100, 1) if n else 0,
+                           total_return_pct=round(total_pnl / capital * 100, 2),
+                           total_trades=n)
+    elif strategy == "hpb":
+        from strategies.klse.hpb.config import HPBParams
+        from strategies.klse.hpb.backtest import run_backtest as hpb_backtest
+        raw = hpb_backtest(df, HPBParams(), capital=capital)
+        trades = [_NormTrade(
+            entry_date=t.entry_date, exit_date=t.exit_date,
+            entry_price=t.entry_price, exit_price=t.exit_price,
+            sl_price=t.sl_price, tp_price=t.tp_price,
+            pnl=t.pnl, exit_reason=t.exit_reason, win=t.win,
+        ) for t in raw.trades]
+        return _NormResult(trades=trades, win_rate=raw.win_rate,
+                           total_return_pct=raw.total_return_pct, total_trades=raw.total_trades)
+    elif strategy == "vpb3":
+        from strategies.klse.vpb3.strategy import DEFAULT_PARAMS
+        from strategies.klse.vpb3.backtest import run_backtest as vpb3_backtest
+        raw = vpb3_backtest(df, params=DEFAULT_PARAMS, capital=capital)
+        trades = [_NormTrade(
+            entry_date=t.entry_date, exit_date=t.exit_date,
+            entry_price=t.entry_price, exit_price=t.exit_price,
+            sl_price=t.sl_price, tp_price=t.tp_price,
+            pnl=t.pnl, exit_reason=t.exit_reason, win=t.win,
+        ) for t in raw.trades]
+        return _NormResult(trades=trades, win_rate=raw.win_rate,
+                           total_return_pct=raw.total_return_pct, total_trades=raw.total_trades)
+    elif strategy == "smp":
+        from strategies.klse.smp.strategy import DEFAULT_PARAMS
+        from strategies.klse.smp.backtest import run_backtest as smp_backtest
+        raw = smp_backtest(df, params=DEFAULT_PARAMS, capital=capital)
+        trades = [_NormTrade(
+            entry_date=t.entry_date, exit_date=t.exit_date,
+            entry_price=t.entry_price, exit_price=t.exit_price,
+            sl_price=t.sl_price, tp_price=t.tp_price,
+            pnl=t.pnl, exit_reason=t.exit_reason, win=t.win,
+        ) for t in raw.trades]
+        return _NormResult(trades=trades, win_rate=raw.win_rate,
+                           total_return_pct=raw.total_return_pct, total_trades=raw.total_trades)
+    return None

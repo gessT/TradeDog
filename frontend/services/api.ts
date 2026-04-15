@@ -316,6 +316,48 @@ export async function fetchVolBreakout(
 }
 
 
+// ── Strategy Opportunity Scanner ────────────────────────────────────
+
+export type OpportunityStock = {
+  symbol: string;
+  name: string;
+  price: number;
+  entry_price: number;
+  sl_price: number;
+  tp_price: number;
+  entry_date: string;
+  dist_pct: number;
+  risk_pct: number;
+  reward_pct: number;
+  status: "OPEN" | "SIGNAL";
+  win_rate: number;
+  total_return: number;
+  total_trades: number;
+};
+
+export type OpportunityScanResponse = {
+  strategy: string;
+  period: string;
+  total_scanned: number;
+  hits: number;
+  results: OpportunityStock[];
+};
+
+export async function fetchOpportunities(
+  strategy: string = "smp",
+  period: string = "6mo",
+  capital: number = 5000,
+): Promise<OpportunityScanResponse> {
+  const params = new URLSearchParams({ strategy, period, capital: String(capital) });
+  const response = await fetch(`${API_BASE}/stock/scan_opportunities?${params}`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as OpportunityScanResponse;
+}
+
+
 // ── Top Volume Scanner ──────────────────────────────────────────────
 
 export type TopVolumeStock = {

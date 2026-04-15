@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { MY_STOCKS, MY_SECTORS, MY_DEFAULT_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
-import { fetchNearATH, type NearATHStock, fetchVolBreakout, type VolBreakoutStock } from "../../services/api";
+import { fetchNearATH, type NearATHStock, fetchVolBreakout, type VolBreakoutStock, fetchOpportunities, type OpportunityStock } from "../../services/api";
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 const API_BASE = RAW_API_BASE
@@ -304,6 +304,33 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
     setVbScanning(false);
   }, []);
 
+  // ── Opportunity (Strategy) Scanner ──
+  const [oppDialogOpen, setOppDialogOpen] = useState(false);
+  const [oppResults, setOppResults] = useState<OpportunityStock[]>([]);
+  const [oppScanning, setOppScanning] = useState(false);
+  const [oppScanned, setOppScanned] = useState(0);
+  const [oppStrategy, setOppStrategy] = useState<string>("smp");
+  const [oppStrategyDropdown, setOppStrategyDropdown] = useState(false);
+
+  const STRATEGY_OPTIONS = [
+    { key: "tpc", label: "TPC", icon: "📈", color: "cyan" },
+    { key: "hpb", label: "HPB", icon: "🔥", color: "amber" },
+    { key: "vpb3", label: "VPB3", icon: "📊", color: "emerald" },
+    { key: "smp", label: "SMP", icon: "🧠", color: "violet" },
+  ] as const;
+
+  const handleScanOpportunities = useCallback(async () => {
+    setOppDialogOpen(true);
+    setOppScanning(true);
+    setOppResults([]);
+    try {
+      const res = await fetchOpportunities(oppStrategy, "6mo", 5000);
+      setOppResults(res.results);
+      setOppScanned(res.total_scanned);
+    } catch { /* ignore */ }
+    setOppScanning(false);
+  }, [oppStrategy]);
+
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/60">
       {/* ═══ SEARCH BAR ═══ */}
@@ -486,6 +513,51 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                 <svg className="w-3.5 h-3.5 text-slate-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
               )}
             </button>
+
+            {/* Strategy Opportunity Scanner */}
+            <div className="flex items-center gap-1">
+              <div className="relative flex-1">
+                <button
+                  onClick={() => setOppStrategyDropdown(p => !p)}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition bg-cyan-500/8 border border-cyan-500/20 hover:bg-cyan-500/15"
+                >
+                  <span className="text-sm shrink-0">{STRATEGY_OPTIONS.find(s => s.key === oppStrategy)?.icon ?? "🎯"}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[10px] font-semibold text-slate-200">Buy Opportunity</div>
+                    <div className="text-[8px] text-slate-600">{STRATEGY_OPTIONS.find(s => s.key === oppStrategy)?.label ?? "Select"} — scan active signals</div>
+                  </div>
+                  <svg className={`w-3 h-3 text-slate-500 transition-transform ${oppStrategyDropdown ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {oppStrategyDropdown && (
+                  <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700/60 rounded-lg shadow-xl overflow-hidden">
+                    {STRATEGY_OPTIONS.map(s => (
+                      <button
+                        key={s.key}
+                        onClick={() => { setOppStrategy(s.key); setOppStrategyDropdown(false); }}
+                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition hover:bg-slate-800/60 ${
+                          oppStrategy === s.key ? `bg-${s.color}-500/10 text-${s.color}-400` : "text-slate-300"
+                        }`}
+                      >
+                        <span className="text-xs">{s.icon}</span>
+                        <span className="text-[10px] font-semibold">{s.label}</span>
+                        {oppStrategy === s.key && <span className="ml-auto text-[10px]">✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={handleScanOpportunities}
+                disabled={oppScanning}
+                className="shrink-0 px-2.5 py-2 rounded-lg bg-cyan-500/20 border border-cyan-500/30 hover:bg-cyan-500/30 text-cyan-400 text-[10px] font-bold transition disabled:opacity-50"
+              >
+                {oppScanning ? (
+                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                ) : "RUN"}
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -945,6 +1017,123 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                   <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-emerald-500/40" /> Breakout</span>
                   <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-amber-500/40" /> In Range</span>
                   <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-red-500/40" /> Breakdown</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ OPPORTUNITY SCANNER DIALOG ═══ */}
+      {oppDialogOpen && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setOppDialogOpen(false)}>
+          <div className="bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/50 w-[620px] max-w-[94vw] max-h-[80vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/60">
+              <div className="flex items-center gap-2">
+                <span className="text-base">{STRATEGY_OPTIONS.find(s => s.key === oppStrategy)?.icon ?? "🎯"}</span>
+                <div>
+                  <h3 className="text-[13px] font-bold text-slate-100">Buy Opportunity — {STRATEGY_OPTIONS.find(s => s.key === oppStrategy)?.label}</h3>
+                  <p className="text-[9px] text-slate-500">
+                    {oppScanning ? "Scanning all stocks…" : `${oppResults.length} opportunities from ${oppScanned} stocks`}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setOppDialogOpen(false)} className="text-slate-500 hover:text-slate-300 p-1 rounded hover:bg-slate-800/50 transition">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto">
+              {oppScanning ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3">
+                  <svg className="w-8 h-8 text-cyan-400 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                  <p className="text-[11px] text-slate-400">Scanning {oppScanned || "all"} stocks with {STRATEGY_OPTIONS.find(s => s.key === oppStrategy)?.label} strategy…</p>
+                  <p className="text-[9px] text-slate-600">This may take a few minutes</p>
+                </div>
+              ) : oppResults.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-2">
+                  <span className="text-2xl opacity-30">📭</span>
+                  <p className="text-[11px] text-slate-600">No active opportunities found</p>
+                </div>
+              ) : (
+                <table className="w-full text-[10px]">
+                  <thead className="sticky top-0 bg-slate-900/95 backdrop-blur">
+                    <tr className="text-[8px] text-slate-500 uppercase tracking-wider">
+                      <th className="text-left px-3 py-2 font-bold">#</th>
+                      <th className="text-left px-2 py-2 font-bold">Stock</th>
+                      <th className="text-right px-2 py-2 font-bold">Price</th>
+                      <th className="text-right px-2 py-2 font-bold">Entry</th>
+                      <th className="text-right px-2 py-2 font-bold">SL</th>
+                      <th className="text-right px-2 py-2 font-bold">TP</th>
+                      <th className="text-center px-2 py-2 font-bold">Status</th>
+                      <th className="text-right px-2 py-2 font-bold">WR%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {oppResults.map((s, i) => {
+                      const inProfit = s.price >= s.entry_price;
+                      return (
+                        <tr
+                          key={s.symbol}
+                          onClick={() => {
+                            const stock = MY_STOCKS.find(st => st.symbol === s.symbol);
+                            if (stock) onSelectSymbol(stock.symbol, stock.name);
+                            setOppDialogOpen(false);
+                          }}
+                          className="cursor-pointer transition hover:bg-slate-800/50 border-b border-slate-800/20"
+                        >
+                          <td className="px-3 py-2 text-slate-600 tabular-nums">{i + 1}</td>
+                          <td className="px-2 py-2">
+                            <div className="text-[10px] font-semibold text-slate-200">{s.name}</div>
+                            <div className="text-[8px] text-slate-500">{s.symbol.replace(".KL", "")} · {s.entry_date}</div>
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums font-medium text-slate-300">
+                            {s.price.toFixed(s.price < 1 ? 4 : 2)}
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums">
+                            <div className={`text-[10px] font-medium ${inProfit ? "text-emerald-400" : "text-amber-400"}`}>
+                              {s.entry_price.toFixed(s.entry_price < 1 ? 4 : 2)}
+                            </div>
+                            <div className="text-[8px] text-slate-600">{s.dist_pct >= 0 ? "+" : ""}{s.dist_pct.toFixed(1)}%</div>
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums text-red-400/80 text-[9px]">
+                            {s.sl_price.toFixed(s.sl_price < 1 ? 4 : 2)}
+                            <div className="text-[7px] text-slate-600">-{s.risk_pct.toFixed(1)}%</div>
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums text-emerald-400/80 text-[9px]">
+                            {s.tp_price.toFixed(s.tp_price < 1 ? 4 : 2)}
+                            <div className="text-[7px] text-slate-600">+{s.reward_pct.toFixed(1)}%</div>
+                          </td>
+                          <td className="px-2 py-2 text-center">
+                            <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${
+                              s.status === "OPEN" ? "bg-emerald-500/20 text-emerald-400" : "bg-cyan-500/20 text-cyan-400"
+                            }`}>
+                              {s.status === "OPEN" ? "● OPEN" : "◆ SIGNAL"}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums">
+                            <div className={`text-[10px] font-semibold ${s.win_rate >= 60 ? "text-emerald-400" : s.win_rate >= 50 ? "text-amber-400" : "text-slate-400"}`}>
+                              {s.win_rate.toFixed(0)}%
+                            </div>
+                            <div className="text-[7px] text-slate-600">{s.total_trades}t</div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Footer */}
+            {!oppScanning && oppResults.length > 0 && (
+              <div className="px-4 py-2 border-t border-slate-800/40 flex items-center justify-between">
+                <span className="text-[8px] text-slate-600">Click to select stock · {oppResults.length} opportunities</span>
+                <div className="flex items-center gap-3 text-[8px]">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-emerald-500/40" /> Open position</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-cyan-500/40" /> Signal active</span>
                 </div>
               </div>
             )}
