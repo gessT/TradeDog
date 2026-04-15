@@ -2,10 +2,14 @@
 
 import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState } from "react";
 import { fetchTPCBacktest, fetchHPBBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, type US1HBacktestResponse, type US1HTrade } from "../../services/api";
+import { MY_STOCKS } from "../../constants/myStocks";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
 import MYStrategySection, { type StrategyType, STRATEGY_DEFAULTS } from "./MYStrategySection";
 import MYBottomPanel, { MetricsGrid } from "./MYBottomPanel";
+
+type StockTag = { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null };
+type RunAllRow = { symbol: string; name: string; win_rate: number; total_trades: number; return_pct: number; profit_factor: number; max_dd: number; sharpe: number; status: "pending" | "running" | "done" | "error"; saved?: boolean };
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 const API_BASE = RAW_API_BASE
@@ -197,6 +201,95 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     }
   }, [favSymbols]);
 
+  // ── Stock tags (MY)
+  const [stockTags, setStockTags] = useState<StockTag[]>([]);
+  const fetchTags = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/stock/my-stock-tags`);
+      if (res.ok) setStockTags(await res.json());
+    } catch { /* offline */ }
+  }, []);
+  useEffect(() => { fetchTags(); }, [fetchTags]);
+
+  // ── Run All Favs
+  const [runAllOpen, setRunAllOpen] = useState(false);
+  const [runAllRunning, setRunAllRunning] = useState(false);
+  const [runAllRows, setRunAllRows] = useState<RunAllRow[]>([]);
+  const runAllAbort = useRef<AbortController | null>(null);
+
+  const cancelRunAll = useCallback(() => {
+    if (runAllAbort.current) {
+      runAllAbort.current.abort();
+      runAllAbort.current = null;
+    }
+    setRunAllRunning(false);
+    // Mark remaining pending/running rows as error
+    setRunAllRows((prev) => prev.map((r) => r.status === "pending" || r.status === "running" ? { ...r, status: "error" as const } : r));
+  }, []);
+
+  const runAllFavs = useCallback(async () => {
+    if (favSymbols.length === 0) return;
+    // Cancel any previous run
+    if (runAllAbort.current) runAllAbort.current.abort();
+    const ac = new AbortController();
+    runAllAbort.current = ac;
+    setRunAllOpen(true);
+    setRunAllRunning(true);
+    const strat = activeStrategyRef.current;
+    const initial: RunAllRow[] = favSymbols.map((sym) => {
+      const stock = MY_STOCKS.find((s) => s.symbol === sym);
+      return { symbol: sym, name: stock?.name ?? sym.replace(".KL", ""), win_rate: 0, total_trades: 0, return_pct: 0, profit_factor: 0, max_dd: 0, sharpe: 0, status: "pending" as const };
+    });
+    setRunAllRows(initial);
+
+    const promises = favSymbols.map(async (sym, idx) => {
+      if (ac.signal.aborted) return;
+      setRunAllRows((prev) => { const n = [...prev]; n[idx] = { ...n[idx], status: "running" }; return n; });
+      try {
+        let data: US1HBacktestResponse;
+        if (strat === "hpb") {
+          data = await fetchHPBBacktest(sym, backtestPeriod, undefined, { sl_atr_mult: atrSlMult, tp_atr_mult: tp1RMult }, capital);
+        } else {
+          data = await fetchTPCBacktest(sym, backtestPeriod, undefined, { atr_sl_mult: atrSlMult, tp1_r_mult: tp1RMult, tp2_r_mult: tp2RMult }, capital);
+        }
+        if (ac.signal.aborted) return;
+        const m = data.metrics;
+        setRunAllRows((prev) => { const n = [...prev]; n[idx] = { ...n[idx], win_rate: m.win_rate, total_trades: m.total_trades, return_pct: m.total_return_pct, profit_factor: m.profit_factor, max_dd: m.max_drawdown_pct, sharpe: m.sharpe_ratio, status: "done" }; return n; });
+      } catch {
+        if (!ac.signal.aborted) {
+          setRunAllRows((prev) => { const n = [...prev]; n[idx] = { ...n[idx], status: "error" }; return n; });
+        }
+      }
+    });
+    await Promise.all(promises);
+    if (!ac.signal.aborted) setRunAllRunning(false);
+  }, [favSymbols, backtestPeriod, atrSlMult, tp1RMult, tp2RMult, capital]);
+
+  const saveRunAllTag = useCallback(async (row: RunAllRow) => {
+    const strat = activeStrategyRef.current;
+    try {
+      await fetch(`${API_BASE}/stock/my-stock-tags`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol: row.symbol,
+          strategy_type: strat,
+          strategy_name: strat.toUpperCase(),
+          period: backtestPeriod,
+          capital,
+          win_rate: row.win_rate,
+          return_pct: row.return_pct,
+          profit_factor: row.profit_factor,
+          max_dd_pct: row.max_dd,
+          sharpe: row.sharpe,
+          total_trades: row.total_trades,
+        }),
+      });
+      setRunAllRows((prev) => prev.map((r) => r.symbol === row.symbol ? { ...r, saved: true } : r));
+      fetchTags();
+    } catch { /* offline */ }
+  }, [backtestPeriod, capital, fetchTags]);
+
   // ── Run backtest (routes to TPC or HPB based on active strategy)
   const runBacktest = useCallback(async () => {
     setBtLoading(true);
@@ -357,9 +450,11 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
               handleSymbolChange(sym, name);
               setMobilePanel("chart");
             }}
-            stockTags={[]}
+            stockTags={stockTags}
             favSymbols={favSymbols}
             onToggleFav={toggleFav}
+            onRunAllFavs={runAllFavs}
+            runAllRunning={runAllRunning}
           />
         </aside>
 
@@ -468,6 +563,139 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           />
         </aside>
       </div>
+
+      {/* ═══ RUN ALL FAVS DIALOG ═══ */}
+      {runAllOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => { if (runAllRunning) cancelRunAll(); setRunAllOpen(false); }}>
+          <div className="w-full max-w-2xl bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-800/60">
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] font-black text-cyan-300">{activeStrategy.toUpperCase()}</span>
+                <span className="text-[11px] text-slate-500">— All Favorites ({favSymbols.length})</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-medium">{backtestPeriod.toUpperCase()}</span>
+              </div>
+              <button onClick={() => { if (runAllRunning) cancelRunAll(); setRunAllOpen(false); }} className="text-slate-500 hover:text-slate-300 text-lg leading-none">&times;</button>
+            </div>
+            {/* Table */}
+            <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+              <table className="w-full text-[10px]">
+                <thead className="sticky top-0 bg-slate-900">
+                  <tr className="text-slate-500 border-b border-slate-800/40">
+                    <th className="text-left px-4 py-2.5 font-semibold">Stock</th>
+                    <th className="text-center px-3 py-2.5 font-semibold">WR%</th>
+                    <th className="text-center px-3 py-2.5 font-semibold">Return%</th>
+                    <th className="text-center px-3 py-2.5 font-semibold">PF</th>
+                    <th className="text-center px-3 py-2.5 font-semibold">DD%</th>
+                    <th className="text-center px-3 py-2.5 font-semibold">Sharpe</th>
+                    <th className="text-center px-3 py-2.5 font-semibold">Trades</th>
+                    <th className="text-center px-3 py-2.5 font-semibold">Grade</th>
+                    <th className="text-center px-3 py-2.5 font-semibold">Tag</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runAllRows.map((row) => {
+                    const grade = row.status !== "done" ? "—"
+                      : row.return_pct >= 40 && row.win_rate >= 55 && row.profit_factor >= 2 ? "A+"
+                      : row.return_pct >= 25 && row.win_rate >= 50 && row.profit_factor >= 1.5 ? "A"
+                      : row.return_pct >= 15 && row.win_rate >= 45 ? "B+"
+                      : row.return_pct >= 5 ? "B"
+                      : row.return_pct >= 0 ? "C"
+                      : "D";
+                    const gradeColor = grade.startsWith("A") ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
+                      : grade.startsWith("B") ? "text-blue-400 border-blue-500/30 bg-blue-500/10"
+                      : grade === "C" ? "text-amber-400 border-amber-500/30 bg-amber-500/10"
+                      : grade === "D" ? "text-rose-400 border-rose-500/30 bg-rose-500/10"
+                      : "text-slate-600 border-slate-700 bg-slate-800/30";
+                    return (
+                      <tr key={row.symbol} className="border-b border-slate-800/20 hover:bg-slate-800/30 transition">
+                        <td className="px-4 py-2.5">
+                          <div className="flex flex-col">
+                            <span className="text-[11px] font-bold text-slate-200">{row.name}</span>
+                            <span className="text-[8px] text-slate-500">{row.symbol.replace(".KL", "")}</span>
+                          </div>
+                        </td>
+                        <td className="text-center px-3 py-2.5">
+                          {row.status === "done" ? <span className={row.win_rate >= 50 ? "text-emerald-400 font-bold" : "text-slate-400"}>{row.win_rate.toFixed(1)}</span>
+                            : row.status === "running" ? <span className="text-blue-400 animate-pulse">···</span>
+                            : row.status === "error" ? <span className="text-rose-500">err</span>
+                            : <span className="text-slate-700">—</span>}
+                        </td>
+                        <td className="text-center px-3 py-2.5">
+                          {row.status === "done" ? <span className={row.return_pct >= 0 ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>{row.return_pct.toFixed(1)}</span>
+                            : row.status === "running" ? <span className="text-blue-400 animate-pulse">···</span>
+                            : row.status === "error" ? <span className="text-rose-500">err</span>
+                            : <span className="text-slate-700">—</span>}
+                        </td>
+                        <td className="text-center px-3 py-2.5">
+                          {row.status === "done" ? <span className="text-slate-300">{row.profit_factor.toFixed(2)}</span> : ""}
+                        </td>
+                        <td className="text-center px-3 py-2.5">
+                          {row.status === "done" ? <span className={row.max_dd < -15 ? "text-rose-400" : "text-slate-400"}>{row.max_dd.toFixed(1)}</span> : ""}
+                        </td>
+                        <td className="text-center px-3 py-2.5">
+                          {row.status === "done" ? <span className="text-slate-400">{row.sharpe.toFixed(2)}</span> : ""}
+                        </td>
+                        <td className="text-center px-3 py-2.5">
+                          {row.status === "done" ? <span className="text-slate-500">{row.total_trades}</span> : ""}
+                        </td>
+                        <td className="text-center px-3 py-2.5">
+                          <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg border text-[11px] font-black ${gradeColor}`}>{grade}</span>
+                        </td>
+                        <td className="text-center px-3 py-2.5">
+                          {row.status === "done" && (
+                            <button
+                              onClick={() => saveRunAllTag(row)}
+                              disabled={row.saved}
+                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${
+                                row.saved
+                                  ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 cursor-default"
+                                  : "bg-blue-500/80 hover:bg-blue-400 text-white active:scale-95"
+                              }`}
+                            >
+                              {row.saved ? "✓" : "Tag"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {/* Footer */}
+            <div className="flex items-center justify-between px-5 py-3 border-t border-slate-800/40">
+              <span className="text-[9px] text-slate-600">
+                {runAllRunning ? `Testing… ${runAllRows.filter((r) => r.status === "done").length}/${runAllRows.length}` : `${runAllRows.filter((r) => r.status === "done").length}/${runAllRows.length} done`}
+              </span>
+              <div className="flex gap-2">
+                {runAllRunning && (
+                  <button
+                    onClick={() => cancelRunAll()}
+                    className="px-3 py-1.5 rounded-lg text-[10px] font-bold bg-rose-500/80 hover:bg-rose-400 text-white transition active:scale-95"
+                  >
+                    Stop
+                  </button>
+                )}
+                {!runAllRunning && runAllRows.some((r) => r.status === "done" && !r.saved) && (
+                  <button
+                    onClick={() => { runAllRows.filter((r) => r.status === "done" && !r.saved).forEach((r) => saveRunAllTag(r)); }}
+                    className="px-3 py-1.5 rounded-lg text-[10px] font-bold bg-blue-500/80 hover:bg-blue-400 text-white transition active:scale-95"
+                  >
+                    Tag All
+                  </button>
+                )}
+                <button
+                  onClick={() => { if (runAllRunning) cancelRunAll(); setRunAllOpen(false); }}
+                  className="px-3 py-1.5 rounded-lg text-[10px] font-bold bg-slate-700 hover:bg-slate-600 text-slate-300 transition"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });

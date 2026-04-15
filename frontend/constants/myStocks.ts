@@ -80,6 +80,7 @@ export const MY_STOCKS: MYStock[] = [
   { symbol: "2836.KL", name: "Carlsberg", sector: "Consumer", refPrice: 22.0, cap: "M" },
   { symbol: "4065.KL", name: "PPB Group", sector: "Consumer", refPrice: 15.0, cap: "L" },
   { symbol: "3026.KL", name: "Dutch Lady", sector: "Consumer", refPrice: 28.0, cap: "M" },
+  { symbol: "5248.KL", name: "Bermaz Auto", sector: "Consumer", refPrice: 2.0, cap: "M" },
 
   // ── Healthcare ────────────────────────────────────────
   { symbol: "5225.KL", name: "IHH Healthcare", sector: "Healthcare", refPrice: 7.0, cap: "L" },
