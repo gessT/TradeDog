@@ -2138,6 +2138,136 @@ async def mgc_backtest_2min(
     )
 
 
+# ── 5min Locked Strategy Backtest endpoint ───────────────────────────
+
+@router.get("/backtest_5min_locked")
+async def mgc_backtest_5min_locked(
+    symbol: Annotated[str, Query()] = "MGC=F",
+    capital: Annotated[float, Query()] = INITIAL_CAPITAL,
+    sl_atr_mult: Annotated[float, Query(ge=0.3, le=5.0)] = 1.2,
+    tp_atr_mult: Annotated[float, Query(ge=0.3, le=5.0)] = 1.5,
+    bos_lookback: Annotated[int, Query(ge=3, le=50)] = 5,
+    st_period: Annotated[int, Query(ge=5, le=30)] = 14,
+    st_mult: Annotated[float, Query(ge=0.5, le=5.0)] = 1.5,
+    rsi_min: Annotated[int, Query(ge=0, le=70)] = 50,
+    use_trailing: Annotated[bool, Query()] = False,
+    trail_atr_mult: Annotated[float, Query(ge=0.3, le=3.0)] = 1.0,
+    use_htf: Annotated[bool, Query()] = True,
+) -> MGC5MinBacktestResponse:
+    """Run the GMC 5-min Locked BoS strategy (LONG-only, HTF bias, Supertrend)."""
+
+    def _run():
+        from strategies.futures.strategy_5min_locked import LockedStrategy5Min, DEFAULT_LOCKED_PARAMS
+        from strategies.futures.backtest_5min_locked import BacktesterLocked5Min
+
+        df_5m = load_yfinance(symbol=symbol, interval="5m", period="60d")
+        if df_5m.empty or len(df_5m) < 100:
+            raise ValueError("Not enough 5m data from yfinance.")
+
+        df_1h = None
+        if use_htf:
+            try:
+                df_1h = load_yfinance(symbol=symbol, interval="1h", period="90d")
+            except Exception:
+                df_1h = None
+
+        params = {
+            **DEFAULT_LOCKED_PARAMS,
+            "sl_atr_mult":   sl_atr_mult,
+            "tp_atr_mult":   tp_atr_mult,
+            "bos_lookback":  bos_lookback,
+            "st_period":     st_period,
+            "st_mult":       st_mult,
+            "rsi_min":       rsi_min,
+            "use_trailing":  use_trailing,
+            "trail_atr_mult":trail_atr_mult,
+        }
+
+        bt     = BacktesterLocked5Min(capital=capital, contracts=1)
+        result = bt.run(df_5m, df_1h, params=params)
+
+        # Build strategy object for indicator columns
+        strat  = LockedStrategy5Min(params)
+        df_ind = strat.compute_indicators(df_5m, df_1h)
+
+        # Candles
+        candles = []
+        for ts, row in df_ind.iterrows():
+            candles.append(MGC5MinCandle(
+                time=str(ts),
+                open=round(float(row["open"]), 2),
+                high=round(float(row["high"]), 2),
+                low=round(float(row["low"]), 2),
+                close=round(float(row["close"]), 2),
+                volume=int(row.get("volume", 0) or 0),
+                ema_fast=round(float(row.get("ema20", 0) or 0), 2),
+                ema_slow=round(float(row.get("ema50", 0) or 0), 2),
+                rsi=round(float(row.get("rsi", 50) or 50), 2),
+                st_dir=int(row.get("st_dir", 0) or 0),
+                macd_hist=0.0,
+            ))
+
+        # Trades
+        trades = []
+        for t in result.trades:
+            trades.append(MGC5MinTrade(
+                entry_time=str(t.entry_time),
+                exit_time=str(t.exit_time),
+                entry_price=round(t.entry_price, 2),
+                exit_price=round(t.exit_price, 2),
+                qty=t.qty,
+                pnl=round(t.pnl, 2),
+                pnl_pct=round(t.pnl / capital * 100, 4),
+                reason=t.reason,
+                signal_type="CALL",
+                direction="CALL",
+                mae=0.0,
+                sl=round(t.sl_price, 2),
+                tp=round(t.tp_price, 2),
+            ))
+
+        m = result
+        metrics = MGC5MinMetrics(
+            total_trades=m.total_trades,
+            winners=m.winners,
+            losers=m.losers,
+            win_rate=round(m.win_rate, 2),
+            total_return_pct=round(m.total_return_pct, 2),
+            profit_factor=round(m.profit_factor, 2),
+            max_drawdown_pct=round(m.max_drawdown_pct, 2),
+            sharpe_ratio=round(m.sharpe_ratio, 2),
+            risk_reward_ratio=round(m.risk_reward, 2),
+            avg_win=round(m.avg_win_usd, 2),
+            avg_loss=round(m.avg_loss_usd, 2),
+            initial_capital=capital,
+            final_equity=round(m.final_equity, 2),
+        )
+
+        return candles, trades, result.equity_curve, metrics, params
+
+    try:
+        candles, trades, eq_curve, metrics, params = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("5min_locked backtest failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return MGC5MinBacktestResponse(
+        symbol=symbol,
+        interval="5m",
+        period="60d",
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        daily_pnl=[],
+        params=params,
+        open_position=None,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
 # ── 5min Scan endpoint ──────────────────────────────────────────────
 
 class Scan5MinSignal(BaseModel):

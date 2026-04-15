@@ -18,6 +18,7 @@ import OptimizationDialog from "./OptimizationDialog";
 import {
   fetchMGC5MinBacktest,
   fetchMGC2MinBacktest,
+  fetchMGC5MinLockedBacktest,
   execute5Min,
   getMgcPosition,
   optimize5MinConditions,
@@ -573,10 +574,35 @@ export type BuiltInPreset = {
   sl: number;
   tp: number;
   desc: string;
-  endpoint?: "5min" | "2min";  // which backend endpoint to use (default: 5min)
+  endpoint?: "5min" | "2min" | "5min_locked";  // which backend endpoint to use (default: 5min)
 };
 
 export const BUILT_IN_PRESETS: BuiltInPreset[] = [
+  {
+    name: "🔒 Locked 5Min BoS",
+    desc: "1H HTF bias · BoS breakout · EMA50 · Supertrend · SL1.2×TP1.5×",
+    interval: "5m",
+    sl: 1.2,
+    tp: 1.5,
+    endpoint: "5min_locked",
+    toggles: {
+      ema_trend: true,
+      ema_slope: false,
+      pullback: false,
+      breakout: true,
+      supertrend: true,
+      macd_momentum: false,
+      rsi_momentum: true,
+      volume_spike: false,
+      atr_range: true,
+      session_ok: true,
+      adx_ok: false,
+      smc_bos: false,
+      smc_ob: false,
+      smc_fvg: false,
+      halftrend: false,
+    },
+  },
   {
     name: "🎯 2Min Pullback",
     desc: "EMA20/50 pullback · RSI>50 · ATR filter · 2m bars",
@@ -1499,6 +1525,32 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       const activeBuiltIn = BUILT_IN_PRESETS.find((bp) => bp.name === activePreset);
       if (activeBuiltIn?.endpoint === "2min") {
         const res = await fetchMGC2MinBacktest(symbol, slMult, tpMult);
+        setBtData(res);
+        onTradesUpdate?.(res.trades);
+        setHasRunBacktest(true);
+        if (res.metrics && onConfigLock) {
+          onConfigLock({
+            conditionToggles: { ...conditionToggles },
+            slMult, tpMult, interval, preset: activePreset, symbol,
+            metrics: {
+              win_rate: res.metrics.win_rate ?? 0,
+              total_return_pct: res.metrics.total_return_pct ?? 0,
+              max_drawdown_pct: res.metrics.max_drawdown_pct ?? 0,
+              sharpe_ratio: res.metrics.sharpe_ratio ?? 0,
+              profit_factor: res.metrics.profit_factor ?? 0,
+              total_trades: res.metrics.total_trades ?? 0,
+              winners: res.metrics.winners ?? 0,
+              losers: res.metrics.losers ?? 0,
+              risk_reward_ratio: res.metrics.risk_reward_ratio ?? 0,
+            },
+            lockedAt: Date.now(),
+          });
+        }
+        return;
+      }
+
+      if (activeBuiltIn?.endpoint === "5min_locked") {
+        const res = await fetchMGC5MinLockedBacktest(symbol, slMult, tpMult);
         setBtData(res);
         onTradesUpdate?.(res.trades);
         setHasRunBacktest(true);
