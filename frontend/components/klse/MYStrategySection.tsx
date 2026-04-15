@@ -185,6 +185,7 @@ type Props = {
   activeStrategy: StrategyType;
   onStrategyChange: (s: StrategyType) => void;
   btData?: US1HBacktestResponse | null;
+  livePrice?: number;
   stockTags?: { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null }[];
   onTagStrategy?: () => void;
   onUntagStrategy?: (strategyType: string) => void;
@@ -232,6 +233,7 @@ export default function MYStrategySection({
   activeStrategy,
   onStrategyChange,
   btData,
+  livePrice,
   stockTags,
   onTagStrategy,
   onUntagStrategy,
@@ -354,9 +356,10 @@ export default function MYStrategySection({
       {btData && btData.candles.length > 0 && (() => {
         const candles = btData.candles;
         const last = candles[candles.length - 1];
-        const price = last.close;
+        const entryPrice = last.close;
+        const currentPrice = (livePrice && livePrice > 0) ? livePrice : entryPrice;
 
-        // Compute ATR(14) from last 14 candles
+        // Compute ATR(14)
         const atrLen = Math.min(14, candles.length - 1);
         let atrSum = 0;
         for (let i = candles.length - atrLen; i < candles.length; i++) {
@@ -365,31 +368,27 @@ export default function MYStrategySection({
           if (!p) continue;
           atrSum += Math.max(c.high - c.low, Math.abs(c.high - p.close), Math.abs(c.low - p.close));
         }
-        const atr = atrLen > 0 ? atrSum / atrLen : price * 0.02;
+        const atr = atrLen > 0 ? atrSum / atrLen : entryPrice * 0.02;
 
-        // Strategy-specific entry/SL/TP
+        // Strategy-specific SL/TP
         let slPrice: number;
         let tp1Price: number;
         let tp2Price: number | null = null;
         let signalBias: "BUY" | "WAIT" | "AVOID" = "WAIT";
 
         if (activeStrategy === "vpb3") {
-          // VPB3: SL = swing low of last N bars (atrSlMult = lookback)
           const lookback = Math.round(atrSlMult);
           const recentLows = candles.slice(-lookback).map(c => c.low);
           slPrice = Math.min(...recentLows);
-          const risk = price - slPrice;
-          tp1Price = price + risk * tp1RMult;
-          tp2Price = null;
+          const risk = entryPrice - slPrice;
+          tp1Price = entryPrice + risk * tp1RMult;
         } else {
-          // TPC / HPB: ATR-based SL/TP
-          slPrice = price - atr * atrSlMult;
+          slPrice = entryPrice - atr * atrSlMult;
           const risk = atr * atrSlMult;
-          tp1Price = price + risk * tp1RMult;
-          tp2Price = activeStrategy === "tpc" ? price + risk * tp2RMult : null;
+          tp1Price = entryPrice + risk * tp1RMult;
+          tp2Price = activeStrategy === "tpc" ? entryPrice + risk * tp2RMult : null;
         }
 
-        // Signal bias from indicators
         const stBull = last.st_dir === 1;
         const htBull = last.ht_dir === 1;
         const emaUp = last.ema_fast != null && last.ema_slow != null && last.ema_fast > last.ema_slow;
@@ -397,92 +396,147 @@ export default function MYStrategySection({
 
         if (activeStrategy === "tpc") {
           signalBias = stBull && htBull ? "BUY" : stBull || htBull ? "WAIT" : "AVOID";
-        } else if (activeStrategy === "hpb") {
-          signalBias = emaUp && rsiOk ? "BUY" : emaUp ? "WAIT" : "AVOID";
         } else {
           signalBias = emaUp && rsiOk ? "BUY" : emaUp ? "WAIT" : "AVOID";
         }
 
-        const riskPct = ((price - slPrice) / price * 100);
-        const rrRatio = tp1Price > price && slPrice < price ? ((tp1Price - price) / (price - slPrice)) : 0;
+        const riskPct = ((entryPrice - slPrice) / entryPrice * 100);
+        const rrRatio = tp1Price > entryPrice && slPrice < entryPrice
+          ? ((tp1Price - entryPrice) / (entryPrice - slPrice)) : 0;
+
+        // Live price status vs levels
+        const hitsTP = currentPrice >= tp1Price;
+        const hitsSL = currentPrice <= slPrice;
+        const priceDiff = currentPrice - entryPrice;
+        const priceDiffPct = (priceDiff / entryPrice) * 100;
+        const isLive = livePrice && livePrice > 0 && livePrice !== entryPrice;
+
+        // Card colour theme
+        const theme = hitsTP
+          ? { card: "bg-emerald-950/80 border-emerald-500/50", glow: "shadow-emerald-500/20", accent: "text-emerald-300", sub: "text-emerald-500", badge: "bg-emerald-500/25 text-emerald-300 border-emerald-500/40", bar: "bg-emerald-500" }
+          : hitsSL
+          ? { card: "bg-rose-950/80 border-rose-500/50", glow: "shadow-rose-500/20", accent: "text-rose-300", sub: "text-rose-500", badge: "bg-rose-500/25 text-rose-300 border-rose-500/40", bar: "bg-rose-500" }
+          : signalBias === "BUY"
+          ? { card: "bg-emerald-950/50 border-emerald-500/30", glow: "shadow-emerald-500/10", accent: "text-emerald-400", sub: "text-emerald-600", badge: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30", bar: "bg-emerald-500" }
+          : signalBias === "AVOID"
+          ? { card: "bg-rose-950/50 border-rose-500/30", glow: "shadow-rose-500/10", accent: "text-rose-400", sub: "text-rose-600", badge: "bg-rose-500/20 text-rose-400 border-rose-500/30", bar: "bg-rose-500" }
+          : { card: "bg-amber-950/30 border-amber-500/25", glow: "shadow-amber-500/10", accent: "text-amber-400", sub: "text-amber-600", badge: "bg-amber-500/20 text-amber-400 border-amber-500/30", bar: "bg-amber-500" };
+
+        // TP progress bar (how far price is from SL to TP1)
+        const range = tp1Price - slPrice;
+        const progress = range > 0 ? Math.min(100, Math.max(0, ((currentPrice - slPrice) / range) * 100)) : 50;
 
         return (
           <div className="shrink-0 border-b border-slate-800/40">
-            <div className="px-2.5 py-2 space-y-1.5">
-              {/* Bias badge */}
-              <div className="flex items-center justify-between">
-                <span className="text-[8px] text-slate-500 uppercase tracking-widest font-bold">Trade Suggestion</span>
-                <span className={`text-[9px] px-2 py-[2px] rounded-full font-bold ${
-                  signalBias === "BUY" ? "bg-emerald-500/20 text-emerald-400" :
-                  signalBias === "WAIT" ? "bg-amber-500/20 text-amber-400" :
-                  "bg-red-500/20 text-red-400"
-                }`}>
-                  {signalBias === "BUY" ? "▲ BUY Setup" : signalBias === "WAIT" ? "◆ Wait" : "▼ Avoid"}
-                </span>
-              </div>
+            <div className="px-2.5 py-2">
+              <div className={`rounded-xl border shadow-lg ${theme.card} ${theme.glow} p-2.5 space-y-2`}>
 
-              {/* Entry price */}
-              <div className="bg-slate-800/40 rounded-lg p-2 border border-slate-700/30">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[9px] text-slate-400 font-medium">Entry Price</span>
-                  <span className="text-[13px] font-bold text-cyan-400 tabular-nums">RM{price.toFixed(2)}</span>
+                {/* ── Header: bias + live price ── */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[8px] text-slate-500 uppercase tracking-widest font-bold">Trade Suggestion</span>
+                    {isLive && <span className="text-[7px] px-1 py-px rounded bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 font-bold animate-pulse">LIVE</span>}
+                  </div>
+                  <span className={`text-[9px] px-2 py-[2px] rounded-full font-bold border ${theme.badge}`}>
+                    {hitsTP ? "✅ Take Profit" : hitsSL ? "🛑 Stop Loss Hit" : signalBias === "BUY" ? "▲ BUY Setup" : signalBias === "WAIT" ? "◆ Wait" : "▼ Avoid"}
+                  </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-1.5">
-                  {/* SL */}
-                  <div className="bg-red-500/8 rounded px-2 py-1.5 border border-red-500/15">
-                    <div className="text-[7px] text-red-400/70 uppercase tracking-wider font-bold">Stop Loss</div>
-                    <div className="text-[11px] font-bold text-red-400 tabular-nums">RM{slPrice.toFixed(2)}</div>
-                    <div className="text-[8px] text-red-400/50 tabular-nums">-{riskPct.toFixed(1)}%</div>
+                {/* ── Live price row ── */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-[7px] text-slate-500 uppercase tracking-wider">Current Price</div>
+                    <div className={`text-[18px] font-black tabular-nums leading-tight ${theme.accent}`}>
+                      RM{currentPrice.toFixed(3)}
+                    </div>
                   </div>
-
-                  {/* TP1 */}
-                  <div className="bg-emerald-500/8 rounded px-2 py-1.5 border border-emerald-500/15">
-                    <div className="text-[7px] text-emerald-400/70 uppercase tracking-wider font-bold">{tp2Price ? "TP1 (50%)" : "Take Profit"}</div>
-                    <div className="text-[11px] font-bold text-emerald-400 tabular-nums">RM{tp1Price.toFixed(2)}</div>
-                    <div className="text-[8px] text-emerald-400/50 tabular-nums">+{((tp1Price - price) / price * 100).toFixed(1)}%</div>
+                  <div className="text-right">
+                    <div className="text-[7px] text-slate-500 uppercase tracking-wider">vs Entry</div>
+                    <div className={`text-[11px] font-bold tabular-nums ${priceDiff >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {priceDiff >= 0 ? "+" : ""}{priceDiff.toFixed(3)}
+                    </div>
+                    <div className={`text-[9px] font-semibold tabular-nums ${priceDiff >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                      {priceDiff >= 0 ? "+" : ""}{priceDiffPct.toFixed(2)}%
+                    </div>
                   </div>
+                </div>
 
-                  {/* TP2 if applicable */}
-                  {tp2Price && (
-                    <div className="bg-emerald-500/8 rounded px-2 py-1.5 border border-emerald-500/15">
-                      <div className="text-[7px] text-emerald-400/70 uppercase tracking-wider font-bold">TP2 (Full)</div>
+                {/* ── Progress bar: SL → TP ── */}
+                <div>
+                  <div className="flex justify-between text-[7px] text-slate-500 mb-0.5">
+                    <span>🛑 SL {slPrice.toFixed(2)}</span>
+                    <span>🎯 TP {tp1Price.toFixed(2)}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-800/60 overflow-hidden relative">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${theme.bar}`}
+                      style={{ width: `${progress}%` }}
+                    />
+                    {/* entry marker */}
+                    <div
+                      className="absolute top-0 h-full w-0.5 bg-cyan-400/80"
+                      style={{ left: `${Math.min(100, Math.max(0, ((entryPrice - slPrice) / range) * 100))}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[7px] text-slate-600 mt-0.5">
+                    <span>-{riskPct.toFixed(1)}%</span>
+                    <span className="text-cyan-500">Entry {entryPrice.toFixed(2)}</span>
+                    <span>+{((tp1Price - entryPrice) / entryPrice * 100).toFixed(1)}%</span>
+                  </div>
+                </div>
+
+                {/* ── SL / TP / RR tiles ── */}
+                <div className="grid grid-cols-3 gap-1">
+                  <div className="bg-rose-500/10 rounded-lg px-2 py-1.5 border border-rose-500/20 text-center">
+                    <div className="text-[7px] text-rose-400/70 uppercase font-bold">Stop Loss</div>
+                    <div className="text-[10px] font-bold text-rose-400 tabular-nums">RM{slPrice.toFixed(2)}</div>
+                    <div className="text-[7px] text-rose-500 tabular-nums">-{riskPct.toFixed(1)}%</div>
+                  </div>
+                  <div className="bg-emerald-500/10 rounded-lg px-2 py-1.5 border border-emerald-500/20 text-center">
+                    <div className="text-[7px] text-emerald-400/70 uppercase font-bold">{tp2Price ? "TP1" : "Take Profit"}</div>
+                    <div className="text-[10px] font-bold text-emerald-400 tabular-nums">RM{tp1Price.toFixed(2)}</div>
+                    <div className="text-[7px] text-emerald-500 tabular-nums">+{((tp1Price - entryPrice) / entryPrice * 100).toFixed(1)}%</div>
+                  </div>
+                  <div className={`rounded-lg px-2 py-1.5 border text-center ${rrRatio >= 2 ? "bg-emerald-500/10 border-emerald-500/20" : rrRatio >= 1 ? "bg-amber-500/10 border-amber-500/20" : "bg-slate-800/40 border-slate-700/20"}`}>
+                    <div className="text-[7px] text-slate-500 uppercase font-bold">R:R</div>
+                    <div className={`text-[10px] font-bold tabular-nums ${rrRatio >= 2 ? "text-emerald-400" : rrRatio >= 1 ? "text-amber-400" : "text-rose-400"}`}>1:{rrRatio.toFixed(1)}</div>
+                    <div className="text-[7px] text-slate-600 tabular-nums">ATR {atr.toFixed(3)}</div>
+                  </div>
+                </div>
+
+                {/* TP2 if TPC */}
+                {tp2Price && (
+                  <div className="bg-emerald-500/10 rounded-lg px-2.5 py-1.5 border border-emerald-500/20 flex items-center justify-between">
+                    <div>
+                      <div className="text-[7px] text-emerald-400/70 uppercase font-bold">TP2 (Full target)</div>
                       <div className="text-[11px] font-bold text-emerald-400 tabular-nums">RM{tp2Price.toFixed(2)}</div>
-                      <div className="text-[8px] text-emerald-400/50 tabular-nums">+{((tp2Price - price) / price * 100).toFixed(1)}%</div>
                     </div>
-                  )}
-
-                  {/* R:R */}
-                  <div className="bg-slate-800/60 rounded px-2 py-1.5 border border-slate-700/20">
-                    <div className="text-[7px] text-slate-500 uppercase tracking-wider font-bold">Risk:Reward</div>
-                    <div className={`text-[11px] font-bold tabular-nums ${rrRatio >= 2 ? "text-emerald-400" : rrRatio >= 1 ? "text-amber-400" : "text-red-400"}`}>
-                      1:{rrRatio.toFixed(1)}
-                    </div>
-                    <div className="text-[8px] text-slate-600 tabular-nums">ATR: {atr.toFixed(3)}</div>
+                    <div className="text-[9px] text-emerald-500 tabular-nums font-semibold">+{((tp2Price - entryPrice) / entryPrice * 100).toFixed(1)}%</div>
                   </div>
-                </div>
+                )}
 
-                {/* Indicator status */}
-                <div className="flex flex-wrap gap-1 mt-1.5">
+                {/* ── Indicator pills ── */}
+                <div className="flex flex-wrap gap-1">
                   {activeStrategy === "tpc" && (
                     <>
-                      <span className={`text-[7px] px-1.5 py-[2px] rounded font-bold ${stBull ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}>
-                        W.ST {stBull ? "▲" : "▼"}
+                      <span className={`text-[7px] px-1.5 py-[2px] rounded font-bold border ${stBull ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25" : "bg-rose-500/15 text-rose-400 border-rose-500/25"}`}>
+                        ⚡ W.ST {stBull ? "▲" : "▼"}
                       </span>
-                      <span className={`text-[7px] px-1.5 py-[2px] rounded font-bold ${htBull ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}>
-                        HT {htBull ? "▲" : "▼"}
+                      <span className={`text-[7px] px-1.5 py-[2px] rounded font-bold border ${htBull ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25" : "bg-rose-500/15 text-rose-400 border-rose-500/25"}`}>
+                        📈 HT {htBull ? "▲" : "▼"}
                       </span>
                     </>
                   )}
-                  <span className={`text-[7px] px-1.5 py-[2px] rounded font-bold ${emaUp ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}>
+                  <span className={`text-[7px] px-1.5 py-[2px] rounded font-bold border ${emaUp ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25" : "bg-rose-500/15 text-rose-400 border-rose-500/25"}`}>
                     EMA {emaUp ? "▲" : "▼"}
                   </span>
                   {last.rsi != null && (
-                    <span className={`text-[7px] px-1.5 py-[2px] rounded font-bold ${rsiOk ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400"}`}>
+                    <span className={`text-[7px] px-1.5 py-[2px] rounded font-bold border ${rsiOk ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25" : "bg-amber-500/15 text-amber-400 border-amber-500/25"}`}>
                       RSI {last.rsi.toFixed(0)}
                     </span>
                   )}
                 </div>
+
               </div>
             </div>
           </div>

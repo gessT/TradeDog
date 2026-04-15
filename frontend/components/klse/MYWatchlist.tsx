@@ -228,18 +228,30 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
   const displayList = (() => {
     const q = searchQuery.toLowerCase();
 
-    let list: WatchlistItem[];
-
-    // When a specific sector is selected, always show ALL stocks in that sector (ignore watchlist)
-    if (!q && viewMode === "favs" && sectorFilter === "ALL") {
-      list = items.map((i) => {
-        const qt = quotes[i.symbol];
-        return qt ? { ...i, price: qt.price, change_pct: qt.change_pct } : i;
+    // Search is fully independent — ignores viewMode, sector, color, everything
+    if (q) {
+      return MY_STOCKS.filter((s) =>
+        s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
+      ).map((s) => {
+        const qt = quotes[s.symbol];
+        return {
+          symbol: s.symbol,
+          name: s.name,
+          sector: s.sector,
+          cap: s.cap,
+          price: qt?.price ?? 0,
+          change_pct: qt?.change_pct ?? 0,
+          signal: "—" as const,
+        };
       });
-    } else {
-      list = MY_STOCKS.filter((s) => {
+    }
+
+    // Color filter always sources from ALL stocks (independent of viewMode)
+    if (colorFilter) {
+      const coloredSymbols = new Set(colorLabels.filter((l) => l.color === colorFilter).map((l) => l.symbol));
+      return MY_STOCKS.filter((s) => {
+        if (!coloredSymbols.has(s.symbol)) return false;
         if (sectorFilter !== "ALL" && s.sector !== sectorFilter) return false;
-        if (q) return s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q);
         return true;
       }).map((s) => {
         const qt = quotes[s.symbol];
@@ -255,12 +267,29 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
       });
     }
 
-    // Apply color filter
-    if (colorFilter) {
-      list = list.filter((item) => colorMap.get(item.symbol) === colorFilter);
+    // Normal view: favs or all
+    if (viewMode === "favs" && sectorFilter === "ALL") {
+      return items.map((i) => {
+        const qt = quotes[i.symbol];
+        return qt ? { ...i, price: qt.price, change_pct: qt.change_pct } : i;
+      });
     }
 
-    return list;
+    return MY_STOCKS.filter((s) => {
+      if (sectorFilter !== "ALL" && s.sector !== sectorFilter) return false;
+      return true;
+    }).map((s) => {
+      const qt = quotes[s.symbol];
+      return {
+        symbol: s.symbol,
+        name: s.name,
+        sector: s.sector,
+        cap: s.cap,
+        price: qt?.price ?? 0,
+        change_pct: qt?.change_pct ?? 0,
+        signal: "—" as const,
+      };
+    });
   })();
 
   const sectorCount = sectorFilter !== "ALL"

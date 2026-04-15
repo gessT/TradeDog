@@ -66,6 +66,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   // ── Backtest state
   const [btData, setBtData] = useState<US1HBacktestResponse | null>(null);
   const [btLoading, setBtLoading] = useState(false);
+  const [selectedTrade, setSelectedTrade] = useState<US1HTrade | null>(null);
 
   // ── Scan Best Strategy state
   const [scanDialogOpen, setScanDialogOpen] = useState(false);
@@ -392,8 +393,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
         );
       }
       setBtData(data);
-
-      // Update price from latest candle
+      setSelectedTrade(null);
       if (data.candles.length > 0) {
         const last = data.candles[data.candles.length - 1];
         const prev = data.candles.length > 1 ? data.candles[data.candles.length - 2] : last;
@@ -516,6 +516,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   const handleTradeClick = useCallback((t: US1HTrade) => {
     const ts = Math.floor(new Date(t.entry_time).getTime() / 1000);
     setFocusTime(ts);
+    setSelectedTrade((prev) => (prev?.entry_time === t.entry_time ? null : t));
   }, []);
 
   return (
@@ -670,6 +671,8 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
                   overlays={overlays}
                   indicators={indicators}
                   focusTime={focusTime}
+                  selectedTrade={selectedTrade}
+                  strategy={activeStrategy}
                 />
               )}
             </div>
@@ -690,6 +693,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             <MYBottomPanel
               btData={btData}
               onTradeClick={handleTradeClick}
+              selectedTrade={selectedTrade}
               onRunBacktest={runBacktest}
               onScanBest={handleScanBest}
               scanLoading={scanLoading}
@@ -725,6 +729,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             activeStrategy={activeStrategy}
             onStrategyChange={handleStrategyChange}
             btData={btData}
+            livePrice={price}
             stockTags={stockTags}
             onTagStrategy={handleTagCurrentStrategy}
             onUntagStrategy={handleUntagStrategy}

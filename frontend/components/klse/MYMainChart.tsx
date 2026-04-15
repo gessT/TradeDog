@@ -80,7 +80,8 @@ type Props = {
   overlays: Set<Overlay>;
   indicators: Set<Indicator>;
   focusTime?: number | null;
-  showMarkers?: boolean;
+  selectedTrade?: US1HTrade | null;
+  strategy?: string;
 };
 
 export default function MYMainChart({
@@ -90,16 +91,14 @@ export default function MYMainChart({
   overlays,
   indicators,
   focusTime,
-  showMarkers = false,
+  selectedTrade = null,
+  strategy = "tpc",
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
-  // Trade markers toggle (default off)
-  const [markersOn, setMarkersOn] = useState(showMarkers);
-
   // Weekly SuperTrend overlay toggle
-  const [wSuperTrendOn, setWSuperTrendOn] = useState(overlays.has("w_supertrend"));
+  const [wSuperTrendOn, setWSuperTrendOn] = useState(false);
 
   // HalfTrend overlay toggle
   const [htOn, setHtOn] = useState(overlays.has("halftrend"));
@@ -283,9 +282,9 @@ export default function MYMainChart({
       );
     }
 
-    // ── Trade Markers (entry/exit with P&L) ──
-    const visibleTrades = markersOn
-      ? trades.filter((t) => {
+    // ── Trade Markers (selected trade only) ──
+    const visibleTrades = selectedTrade
+      ? [selectedTrade].filter((t) => {
           const ts = parseTS(t.entry_time);
           const first = parseTS(visibleCandles[0].time);
           const last = parseTS(visibleCandles[visibleCandles.length - 1].time);
@@ -355,7 +354,7 @@ export default function MYMainChart({
       ro.disconnect();
       chart.remove();
     };
-  }, [visibleCandles, trades, overlays, indicators, focusTime, markersOn, wSuperTrendOn, htOn, emaOn, chartTF]);
+  }, [visibleCandles, selectedTrade, overlays, indicators, focusTime, wSuperTrendOn, htOn, emaOn, chartTF]);
 
   // ── Replay controls ──
   useEffect(() => {
@@ -401,20 +400,18 @@ export default function MYMainChart({
           {mode === "Replay" && "▷ Replay Mode"}
         </span>
 
-        {/* Trade markers toggle */}
-        <button
-          onClick={() => setMarkersOn((v) => !v)}
-          className={`text-[10px] px-2 py-0.5 rounded border transition font-medium ${
-            markersOn
-              ? "border-blue-500/50 bg-blue-500/15 text-blue-400"
-              : "border-slate-700 text-slate-600 hover:text-slate-400 hover:border-slate-600"
-          }`}
-        >
-          {markersOn ? "⚑ Trades" : "⚐ Trades"}
-        </button>
+        {selectedTrade && (
+          <span className="text-[9px] px-2 py-0.5 rounded border border-blue-500/40 bg-blue-500/10 text-blue-400 font-medium">
+            ⚑ {selectedTrade.direction === "CALL" ? "▲ BUY" : "▼ SELL"} {selectedTrade.entry_price.toFixed(2)}
+            {" → "}
+            <span className={selectedTrade.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}>
+              {selectedTrade.pnl >= 0 ? "+" : ""}RM{selectedTrade.pnl.toFixed(0)}
+            </span>
+          </span>
+        )}
 
-        {/* Weekly SuperTrend toggle — only show if strategy has ST data */}
-        {candles.some((c) => c.st_dir != null) && (
+        {/* Weekly SuperTrend toggle — TPC only */}
+        {strategy === "tpc" && candles.some((c) => c.st_dir != null) && (
         <button
           onClick={() => setWSuperTrendOn((v) => !v)}
           className={`text-[10px] px-2 py-0.5 rounded border transition font-medium ${
@@ -427,8 +424,8 @@ export default function MYMainChart({
         </button>
         )}
 
-        {/* HalfTrend toggle — only show if candles have ht_line data */}
-        {candles.some((c) => c.ht_line != null) && (
+        {/* HalfTrend toggle — TPC only */}
+        {strategy === "tpc" && candles.some((c) => c.ht_line != null) && (
         <button
           onClick={() => setHtOn((v) => !v)}
           className={`text-[10px] px-2 py-0.5 rounded border transition font-medium ${

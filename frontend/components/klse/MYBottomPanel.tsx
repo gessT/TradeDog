@@ -18,6 +18,7 @@ type Tab = (typeof TABS)[number];
 type Props = {
   btData: US1HBacktestResponse | null;
   onTradeClick: (t: US1HTrade) => void;
+  selectedTrade?: US1HTrade | null;
   onRunBacktest: () => void;
   onScanBest?: () => void;
   scanLoading?: boolean;
@@ -101,10 +102,12 @@ export function MetricsGrid({ m }: { m: US1HMetrics }) {
 function TradeTable({
   trades,
   onTradeClick,
+  selectedTrade = null,
   filter,
 }: {
   trades: US1HTrade[];
   onTradeClick: (t: US1HTrade) => void;
+  selectedTrade?: US1HTrade | null;
   filter: "ALL" | "WIN" | "LOSS";
 }) {
   const filtered =
@@ -167,7 +170,13 @@ function TradeTable({
               <tr
                 key={`${t.entry_time}-${i}`}
                 onClick={() => onTradeClick(t)}
-                className={`cursor-pointer hover:bg-blue-500/8 transition border-b border-slate-800/20 ${isOpen ? "bg-cyan-500/5" : ""}`}
+                className={`cursor-pointer transition border-b border-slate-800/20 ${
+                  selectedTrade?.entry_time === t.entry_time
+                    ? "bg-blue-500/15 border-blue-500/30"
+                    : isOpen
+                      ? "bg-cyan-500/5 hover:bg-blue-500/8"
+                      : "hover:bg-blue-500/8"
+                }`}
               >
                 <td className="px-2.5 py-1.5 text-slate-600 tabular-nums">{origIdx}</td>
                 <td className="px-2.5 py-1.5 text-slate-400 tabular-nums whitespace-nowrap">{fmtDateTimeSGT(t.entry_time)}</td>
@@ -291,6 +300,7 @@ function AnalyticsTab({ trades, metrics }: { trades: US1HTrade[]; metrics: US1HM
 export default function MYBottomPanel({
   btData,
   onTradeClick,
+  selectedTrade = null,
   onRunBacktest,
   onScanBest,
   scanLoading = false,
@@ -411,6 +421,7 @@ export default function MYBottomPanel({
                       <TradeTable
                         trades={trades}
                         onTradeClick={onTradeClick}
+                        selectedTrade={selectedTrade}
                         filter={tradeFilter}
                       />
                     </div>
@@ -443,6 +454,7 @@ export default function MYBottomPanel({
               <TradeTable
                 trades={trades}
                 onTradeClick={onTradeClick}
+                selectedTrade={selectedTrade}
                 filter={tradeFilter}
               />
             )}
