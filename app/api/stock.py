@@ -3903,6 +3903,299 @@ async def klse_backtest_psniper(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# CM MACD — MACD(12,26,9) Crossover Strategy (KLSE Daily)
+# Entry: MACD line crosses ABOVE signal → long
+# Exit:  MACD line crosses BELOW signal  OR ATR SL/TP
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/backtest_cm_macd")
+async def klse_backtest_cm_macd(
+    symbol: _Ann[str, Query()] = "0208.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 5000.0,
+    sl_atr_mult: _Ann[float, Query(ge=0.5, le=10.0)] = 2.0,
+    tp_r_mult: _Ann[float, Query(ge=0.5, le=10.0)] = 3.0,
+    macd_fast: _Ann[int, Query(ge=2, le=50)] = 12,
+    macd_slow: _Ann[int, Query(ge=5, le=100)] = 26,
+    macd_signal: _Ann[int, Query(ge=2, le=30)] = 9,
+    risk_pct: _Ann[float, Query(ge=1.0, le=20.0)] = 2.0,
+) -> US1HBacktestResponse:
+    """Run CM MACD crossover backtest on a KLSE stock (daily timeframe).
+
+    Entry:  MACD line crosses above signal line (bullish crossover)
+    Exit:   MACD line crosses below signal line  OR  ATR-based SL/TP hit
+    """
+
+    def _run():
+        import math as _m
+        from strategies.futures.data_loader import load_yfinance
+
+        df = load_yfinance(symbol=symbol, interval="1d", period=period)
+        if df.empty or len(df) < macd_slow + macd_signal + 20:
+            raise ValueError(f"Not enough daily data for {symbol}.")
+
+        df = df[["open", "high", "low", "close", "volume"]].copy()
+        c = df["close"].tolist()
+        h = df["high"].tolist()
+        lo = df["low"].tolist()
+        n = len(c)
+
+        # ── EMA helper ──────────────────────────────────────────────
+        def _ema_arr(src: list[float], period: int) -> list[float]:
+            k = 2.0 / (period + 1)
+            out = [_m.nan] * n
+            start = next((i for i, v in enumerate(src) if not _m.isnan(v)), None)
+            if start is None:
+                return out
+            out[start] = src[start]
+            for i in range(start + 1, n):
+                out[i] = src[i] * k + out[i - 1] * (1 - k)
+            return out
+
+        # ── MACD ────────────────────────────────────────────────────
+        ema_fast = _ema_arr(c, macd_fast)
+        ema_slow = _ema_arr(c, macd_slow)
+        macd_line = [
+            ema_fast[i] - ema_slow[i]
+            if not (_m.isnan(ema_fast[i]) or _m.isnan(ema_slow[i]))
+            else _m.nan
+            for i in range(n)
+        ]
+        sig_line = _ema_arr(macd_line, macd_signal)
+        macd_hist_v = [
+            macd_line[i] - sig_line[i]
+            if not (_m.isnan(macd_line[i]) or _m.isnan(sig_line[i]))
+            else _m.nan
+            for i in range(n)
+        ]
+
+        # ── ATR (Wilder RMA) ─────────────────────────────────────────
+        tr = [0.0] * n
+        tr[0] = h[0] - lo[0]
+        for i in range(1, n):
+            tr[i] = max(h[i] - lo[i], abs(h[i] - c[i - 1]), abs(lo[i] - c[i - 1]))
+        atr_arr = [_m.nan] * n
+        atr_arr[0] = tr[0]
+        alpha = 1.0 / 14
+        for i in range(1, n):
+            atr_arr[i] = alpha * tr[i] + (1 - alpha) * atr_arr[i - 1]
+
+        # ── Bar-by-bar backtest ──────────────────────────────────────
+        COMMISSION = 0.001   # 0.1% per side
+
+        equity = float(capital)
+        equity_curve: list[float] = []
+        trades_raw: list[dict] = []
+
+        in_position = False
+        entry_price = 0.0
+        entry_date = ""
+        sl = 0.0
+        tp = 0.0
+
+        dates = df.index.tolist()
+
+        for i in range(1, n):
+            equity_curve.append(equity)
+            if _m.isnan(macd_line[i]) or _m.isnan(sig_line[i]):
+                continue
+            if _m.isnan(macd_line[i - 1]) or _m.isnan(sig_line[i - 1]):
+                continue
+
+            crossover = macd_line[i] > sig_line[i] and macd_line[i - 1] <= sig_line[i - 1]
+            crossunder = macd_line[i] < sig_line[i] and macd_line[i - 1] >= sig_line[i - 1]
+            bar_open = float(df["open"].iloc[i])
+            bar_high = float(df["high"].iloc[i])
+            bar_low = float(df["low"].iloc[i])
+            bar_close = float(c[i])
+            atr_val = atr_arr[i] if not _m.isnan(atr_arr[i]) else 0.0
+
+            if in_position:
+                # Check SL hit
+                exit_price: float | None = None
+                exit_reason = ""
+                if bar_low <= sl:
+                    exit_price = sl
+                    exit_reason = "SL"
+                elif bar_high >= tp:
+                    exit_price = tp
+                    exit_reason = "TP"
+                elif crossunder:
+                    exit_price = bar_close
+                    exit_reason = "MACD Cross"
+
+                if exit_price is not None:
+                    risk_amount = equity * (risk_pct / 100.0)
+                    risk_per_share = entry_price - sl
+                    if risk_per_share <= 0:
+                        risk_per_share = entry_price * 0.02
+                    qty_shares = risk_amount / risk_per_share
+                    gross = (exit_price - entry_price) * qty_shares
+                    cost = (entry_price + exit_price) * qty_shares * COMMISSION
+                    pnl = gross - cost
+                    equity += pnl
+                    pnl_pct = (exit_price - entry_price) / entry_price * 100.0
+                    exit_date_str = dates[i].isoformat() if hasattr(dates[i], "isoformat") else str(dates[i])
+                    trades_raw.append({
+                        "entry_time": entry_date,
+                        "exit_time": exit_date_str,
+                        "entry_price": round(entry_price, 4),
+                        "exit_price": round(exit_price, 4),
+                        "pnl": round(pnl, 2),
+                        "pnl_pct": round(pnl_pct, 2),
+                        "reason": exit_reason,
+                        "sl_price": round(sl, 4),
+                        "win": pnl > 0,
+                    })
+                    in_position = False
+
+            else:
+                # Entry on next-bar open after crossover signal (no lookahead)
+                if crossover and atr_val > 0:
+                    entry_price = bar_open
+                    entry_date = dates[i].isoformat() if hasattr(dates[i], "isoformat") else str(dates[i])
+                    sl = entry_price - sl_atr_mult * atr_val
+                    tp = entry_price + (entry_price - sl) * tp_r_mult
+                    in_position = True
+
+        equity_curve.append(equity)
+
+        # Close any open position at last bar close
+        if in_position:
+            last_close = float(c[-1])
+            risk_amount = equity * (risk_pct / 100.0)
+            risk_per_share = entry_price - sl
+            if risk_per_share <= 0:
+                risk_per_share = entry_price * 0.02
+            qty_shares = risk_amount / risk_per_share
+            gross = (last_close - entry_price) * qty_shares
+            cost = (entry_price + last_close) * qty_shares * COMMISSION
+            pnl = gross - cost
+            equity += pnl
+            pnl_pct = (last_close - entry_price) / entry_price * 100.0
+            trades_raw.append({
+                "entry_time": entry_date,
+                "exit_time": dates[-1].isoformat() if hasattr(dates[-1], "isoformat") else str(dates[-1]),
+                "entry_price": round(entry_price, 4),
+                "exit_price": round(last_close, 4),
+                "pnl": round(pnl, 2),
+                "pnl_pct": round(pnl_pct, 2),
+                "reason": "EOD",
+                "sl_price": round(sl, 4),
+                "win": pnl > 0,
+            })
+
+        # ── Metrics ─────────────────────────────────────────────────
+        n_trades = len(trades_raw)
+        wins = [t for t in trades_raw if t["win"]]
+        losses = [t for t in trades_raw if not t["win"]]
+        total_pnl = sum(t["pnl"] for t in trades_raw)
+        gross_win = sum(t["pnl"] for t in wins)
+        gross_loss = abs(sum(t["pnl"] for t in losses))
+
+        # Max drawdown
+        peak = capital
+        max_dd = 0.0
+        running = capital
+        for t in trades_raw:
+            running += t["pnl"]
+            if running > peak:
+                peak = running
+            dd = (peak - running) / peak * 100 if peak > 0 else 0
+            if dd > max_dd:
+                max_dd = dd
+
+        # Sharpe (simplified daily returns)
+        returns = [t["pnl_pct"] for t in trades_raw]
+        if len(returns) > 1:
+            avg_r = sum(returns) / len(returns)
+            std_r = (sum((r - avg_r) ** 2 for r in returns) / len(returns)) ** 0.5
+            sharpe = (avg_r / std_r * (252 ** 0.5)) if std_r > 0 else 0.0
+        else:
+            sharpe = 0.0
+
+        metrics = US1HMetrics(
+            initial_capital=capital,
+            final_equity=round(capital + total_pnl, 2),
+            total_return_pct=round(total_pnl / capital * 100, 2) if capital else 0,
+            max_drawdown_pct=round(max_dd, 2),
+            sharpe_ratio=round(sharpe, 2),
+            total_trades=n_trades,
+            winners=len(wins),
+            losers=len(losses),
+            win_rate=round(len(wins) / n_trades * 100, 1) if n_trades else 0,
+            avg_win=round(gross_win / len(wins), 2) if wins else 0,
+            avg_loss=round(-gross_loss / len(losses), 2) if losses else 0,
+            profit_factor=round(gross_win / gross_loss, 2) if gross_loss > 0 else 999.0,
+            risk_reward_ratio=round(
+                (gross_win / len(wins)) / (gross_loss / len(losses)), 2
+            ) if wins and losses else 999.0,
+        )
+
+        trades_out = [
+            US1HTrade(
+                entry_time=t["entry_time"],
+                exit_time=t["exit_time"],
+                entry_price=t["entry_price"],
+                exit_price=t["exit_price"],
+                qty=0,
+                pnl=t["pnl"],
+                pnl_pct=t["pnl_pct"],
+                reason=t["reason"],
+                signal_type="CM_MACD",
+                direction="CALL",
+                sl_price=t["sl_price"],
+            )
+            for t in trades_raw
+        ]
+
+        # ── Candles with MACD line / signal / hist ───────────────────
+        candles = []
+        for i, (ts_val, row) in enumerate(df.iterrows()):
+            candles.append(US1HCandle(
+                time=ts_val.isoformat() if hasattr(ts_val, "isoformat") else str(ts_val),
+                open=round(float(row["open"]), 4),
+                high=round(float(row["high"]), 4),
+                low=round(float(row["low"]), 4),
+                close=round(float(row["close"]), 4),
+                volume=float(row.get("volume", 0)),
+                ema_fast=round(macd_line[i], 6) if not _m.isnan(macd_line[i]) else None,
+                ema_slow=round(sig_line[i], 6) if not _m.isnan(sig_line[i]) else None,
+                macd_hist=round(macd_hist_v[i], 6) if not _m.isnan(macd_hist_v[i]) else None,
+                signal=0,
+            ))
+
+        out_params = {
+            "macd_fast": macd_fast, "macd_slow": macd_slow,
+            "macd_signal": macd_signal,
+            "sl_atr_mult": sl_atr_mult, "tp_r_mult": tp_r_mult,
+            "risk_pct": risk_pct,
+        }
+
+        return candles, trades_out, equity_curve, metrics, out_params
+
+    try:
+        candles, trades, eq_curve, metrics, params_out = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("CM MACD backtest failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return US1HBacktestResponse(
+        symbol=symbol,
+        interval="1d",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        params=params_out,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Scan Best Strategy — run all 3 KLSE strategies and grade them
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -4124,6 +4417,125 @@ async def scan_best_strategy(
         except Exception as exc:
             logger.debug("PrecSniper scan failed for %s: %s", symbol, exc)
             results.append({"strategy": "psniper", "label": "PrecSniper", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
+
+        # --- CM MACD ---
+        try:
+            import math as _m
+
+            df = load_yfinance(symbol=symbol, interval="1d", period=period)
+            if df.empty or len(df) < 50:
+                raise ValueError("Not enough data")
+
+            c_arr = df["close"].tolist() if "close" in df.columns else df["Close"].tolist()
+            h_arr = df["high"].tolist() if "high" in df.columns else df["High"].tolist()
+            lo_arr = df["low"].tolist() if "low" in df.columns else df["Low"].tolist()
+            n_pts = len(c_arr)
+
+            def _ema_s(src, p):
+                k = 2.0 / (p + 1)
+                out = [_m.nan] * n_pts
+                st = next((i for i, v in enumerate(src) if not _m.isnan(v)), None)
+                if st is None: return out
+                out[st] = src[st]
+                for i in range(st + 1, n_pts):
+                    out[i] = src[i] * k + out[i - 1] * (1 - k)
+                return out
+
+            ef = _ema_s(c_arr, 12); es = _ema_s(c_arr, 26)
+            ml = [ef[i] - es[i] if not (_m.isnan(ef[i]) or _m.isnan(es[i])) else _m.nan for i in range(n_pts)]
+            sl_line = _ema_s(ml, 9)
+            tr = [0.0] * n_pts
+            tr[0] = h_arr[0] - lo_arr[0]
+            for i in range(1, n_pts):
+                tr[i] = max(h_arr[i] - lo_arr[i], abs(h_arr[i] - c_arr[i-1]), abs(lo_arr[i] - c_arr[i-1]))
+            atr_v = [_m.nan] * n_pts; atr_v[0] = tr[0]
+            for i in range(1, n_pts): atr_v[i] = (1/14)*tr[i] + (13/14)*atr_v[i-1]
+
+            SL_MULT, TP_MULT, COMM = 2.0, 3.0, 0.001
+            equity = float(capital)
+            trades_cm = []; in_pos = False
+            entry_px = sl_px = tp_px = 0.0
+            dates = df.index.tolist()
+
+            for i in range(1, n_pts):
+                if _m.isnan(ml[i]) or _m.isnan(sl_line[i]) or _m.isnan(ml[i-1]) or _m.isnan(sl_line[i-1]):
+                    continue
+                crossover = ml[i] > sl_line[i] and ml[i-1] <= sl_line[i-1]
+                crossunder = ml[i] < sl_line[i] and ml[i-1] >= sl_line[i-1]
+                bar_high = float(h_arr[i]); bar_low = float(lo_arr[i]); bar_close = float(c_arr[i])
+                atr_val = atr_v[i] if not _m.isnan(atr_v[i]) else 0.0
+
+                if in_pos:
+                    ex_px = None; ex_reason = ""
+                    if bar_low <= sl_px: ex_px = sl_px; ex_reason = "SL"
+                    elif bar_high >= tp_px: ex_px = tp_px; ex_reason = "TP"
+                    elif crossunder: ex_px = bar_close; ex_reason = "MACD Cross"
+                    if ex_px is not None:
+                        risk_ps = entry_px - sl_px
+                        if risk_ps <= 0: risk_ps = entry_px * 0.02
+                        qty = (equity * 0.02) / risk_ps
+                        pnl = (ex_px - entry_px) * qty - (entry_px + ex_px) * qty * COMM
+                        equity += pnl
+                        trades_cm.append({"pnl": pnl, "win": pnl > 0})
+                        in_pos = False
+                else:
+                    if crossover and atr_val > 0:
+                        entry_px = float(df["open"].iloc[i]) if "open" in df.columns else float(df["Open"].iloc[i])
+                        sl_px = entry_px - SL_MULT * atr_val
+                        tp_px = entry_px + (entry_px - sl_px) * TP_MULT
+                        in_pos = True
+
+            if in_pos:
+                lc = float(c_arr[-1])
+                risk_ps = entry_px - sl_px
+                if risk_ps <= 0: risk_ps = entry_px * 0.02
+                qty = (equity * 0.02) / risk_ps
+                pnl = (lc - entry_px) * qty - (entry_px + lc) * qty * COMM
+                equity += pnl
+                trades_cm.append({"pnl": pnl, "win": pnl > 0})
+
+            nt = len(trades_cm)
+            wins_cm = [t for t in trades_cm if t["win"]]
+            losses_cm = [t for t in trades_cm if not t["win"]]
+            total_pnl_cm = sum(t["pnl"] for t in trades_cm)
+            wr_cm = round(len(wins_cm) / nt * 100, 1) if nt else 0
+            pf_cm = round(abs(sum(t["pnl"] for t in wins_cm) / sum(t["pnl"] for t in losses_cm)), 2) if losses_cm and sum(t["pnl"] for t in losses_cm) != 0 else 999.0
+
+            # Sharpe
+            pnls = [t["pnl"] for t in trades_cm]
+            import statistics as _stats
+            if len(pnls) >= 2:
+                avg_r = sum(pnls) / len(pnls)
+                std_r = _stats.stdev(pnls)
+                sharpe_cm = round(avg_r / std_r * (252 ** 0.5) if std_r > 0 else 0, 2)
+            else:
+                sharpe_cm = 0.0
+
+            # Max drawdown
+            eq_curve = [float(capital)]
+            for t in trades_cm:
+                eq_curve.append(eq_curve[-1] + t["pnl"])
+            peak = eq_curve[0]; max_dd = 0.0
+            for v in eq_curve:
+                if v > peak: peak = v
+                dd = (peak - v) / peak * 100 if peak > 0 else 0
+                if dd > max_dd: max_dd = dd
+
+            m_cm = {
+                "total_return_pct": round(total_pnl_cm / capital * 100, 2),
+                "win_rate": wr_cm,
+                "profit_factor": pf_cm,
+                "sharpe_ratio": sharpe_cm,
+                "max_drawdown_pct": -round(max_dd, 2),
+                "total_trades": nt,
+                "winners": len(wins_cm),
+                "losers": len(losses_cm),
+            }
+            grade_cm, score_cm = _grade_metrics(m_cm)
+            results.append({"strategy": "cm_macd", "label": "CM MACD", "grade": grade_cm, "score": score_cm, "metrics": m_cm})
+        except Exception as exc:
+            logger.debug("CM MACD scan failed for %s: %s", symbol, exc)
+            results.append({"strategy": "cm_macd", "label": "CM MACD", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
 
         # Sort by score descending
         results.sort(key=lambda x: -x["score"])
@@ -4422,4 +4834,88 @@ def _run_strategy_backtest(strategy: str, df: pd.DataFrame, capital: float):
         ) for t in raw.trades]
         return _NormResult(trades=trades, win_rate=raw.win_rate,
                            total_return_pct=raw.total_return_pct, total_trades=raw.total_trades)
+    elif strategy == "cm_macd":
+        import math as _m
+        c_arr = df["close"].tolist() if "close" in df.columns else df["Close"].tolist()
+        h_arr = df["high"].tolist() if "high" in df.columns else df["High"].tolist()
+        lo_arr = df["low"].tolist() if "low" in df.columns else df["Low"].tolist()
+        n = len(c_arr)
+        def _ema_s(src, p):
+            k = 2.0 / (p + 1)
+            out = [_m.nan] * n
+            st = next((i for i, v in enumerate(src) if not _m.isnan(v)), None)
+            if st is None: return out
+            out[st] = src[st]
+            for i in range(st + 1, n):
+                out[i] = src[i] * k + out[i - 1] * (1 - k)
+            return out
+        ef = _ema_s(c_arr, 12); es = _ema_s(c_arr, 26)
+        ml = [ef[i] - es[i] if not (_m.isnan(ef[i]) or _m.isnan(es[i])) else _m.nan for i in range(n)]
+        sl_line = _ema_s(ml, 9)
+        tr = [0.0] * n
+        tr[0] = h_arr[0] - lo_arr[0]
+        for i in range(1, n):
+            tr[i] = max(h_arr[i] - lo_arr[i], abs(h_arr[i] - c_arr[i-1]), abs(lo_arr[i] - c_arr[i-1]))
+        atr_v = [_m.nan] * n; atr_v[0] = tr[0]
+        for i in range(1, n): atr_v[i] = (1/14) * tr[i] + (13/14) * atr_v[i-1]
+        SL_MULT, TP_MULT = 2.0, 3.0
+        COMM = 0.001
+        equity = float(capital)
+        trades = []; in_pos = False
+        entry_px = sl_px = tp_px = 0.0; entry_dt_str = ""
+        dates = df.index.tolist()
+        for i in range(1, n):
+            if _m.isnan(ml[i]) or _m.isnan(sl_line[i]) or _m.isnan(ml[i-1]) or _m.isnan(sl_line[i-1]):
+                continue
+            crossover = ml[i] > sl_line[i] and ml[i-1] <= sl_line[i-1]
+            crossunder = ml[i] < sl_line[i] and ml[i-1] >= sl_line[i-1]
+            bar_open = float(df["open"].iloc[i]) if "open" in df.columns else float(df["Open"].iloc[i])
+            bar_high = float(h_arr[i]); bar_low = float(lo_arr[i]); bar_close = float(c_arr[i])
+            atr_val = atr_v[i] if not _m.isnan(atr_v[i]) else 0.0
+            d_str = dates[i].strftime("%Y-%m-%d") if hasattr(dates[i], "strftime") else str(dates[i])[:10]
+            if in_pos:
+                ex_px = None; ex_reason = ""
+                if bar_low <= sl_px: ex_px = sl_px; ex_reason = "SL"
+                elif bar_high >= tp_px: ex_px = tp_px; ex_reason = "TP"
+                elif crossunder: ex_px = bar_close; ex_reason = "MACD Cross"
+                if ex_px is not None:
+                    risk_amt = equity * 0.02; risk_ps = entry_px - sl_px
+                    if risk_ps <= 0: risk_ps = entry_px * 0.02
+                    qty = risk_amt / risk_ps
+                    pnl = (ex_px - entry_px) * qty - (entry_px + ex_px) * qty * COMM
+                    equity += pnl
+                    trades.append(_NormTrade(
+                        entry_date=entry_dt_str, exit_date=d_str,
+                        entry_price=round(entry_px, 4), exit_price=round(ex_px, 4),
+                        sl_price=round(sl_px, 4), tp_price=round(tp_px, 4),
+                        pnl=round(pnl, 2), exit_reason=ex_reason, win=pnl > 0,
+                    ))
+                    in_pos = False
+            else:
+                if crossover and atr_val > 0:
+                    entry_px = bar_open
+                    sl_px = entry_px - SL_MULT * atr_val
+                    tp_px = entry_px + (entry_px - sl_px) * TP_MULT
+                    entry_dt_str = d_str
+                    in_pos = True
+        if in_pos:
+            lc = float(c_arr[-1])
+            risk_amt = equity * 0.02; risk_ps = entry_px - sl_px
+            if risk_ps <= 0: risk_ps = entry_px * 0.02
+            qty = risk_amt / risk_ps
+            pnl = (lc - entry_px) * qty - (entry_px + lc) * qty * COMM
+            equity += pnl
+            trades.append(_NormTrade(
+                entry_date=entry_dt_str,
+                exit_date=dates[-1].strftime("%Y-%m-%d") if hasattr(dates[-1], "strftime") else str(dates[-1])[:10],
+                entry_price=round(entry_px, 4), exit_price=round(lc, 4),
+                sl_price=round(sl_px, 4), tp_price=round(tp_px, 4),
+                pnl=round(pnl, 2), exit_reason="EOD", win=pnl > 0,
+            ))
+        nt = len(trades); wins_n = sum(1 for t in trades if t.win)
+        total_pnl = sum(t.pnl for t in trades)
+        return _NormResult(trades=trades,
+                           win_rate=round(wins_n / nt * 100, 1) if nt else 0,
+                           total_return_pct=round(total_pnl / capital * 100, 2),
+                           total_trades=nt)
     return None

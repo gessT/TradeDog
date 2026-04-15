@@ -21,12 +21,17 @@ logger = logging.getLogger(__name__)
 _PERIOD_DAYS: dict[str, int] = {
     "1d": 2, "2d": 3, "3d": 5, "5d": 7, "7d": 9,
     "30d": 32, "60d": 60,
+    # Standard yfinance-style period strings used by KLSE / US daily backtests
+    "1mo": 35, "3mo": 95, "6mo": 185,
+    "1y": 370, "2y": 740, "5y": 1830,
 }
 
 # yfinance hard limits on how far back intraday data goes
 _INTERVAL_MAX_DAYS: dict[str, int] = {
     "1m": 7, "2m": 58, "5m": 58, "15m": 58, "30m": 58,
-    "60m": 58, "1h": 58, "90m": 58,
+    "60m": 58, "1h": 730, "90m": 58,
+    # Daily / weekly / monthly — no practical hard limit in yfinance
+    "1d": 3650, "5d": 3650, "1wk": 3650, "1mo": 3650,
 }
 
 

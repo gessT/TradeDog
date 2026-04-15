@@ -1420,6 +1420,7 @@ export type Scan5MinConditions = {
   smc_ob: boolean;
   smc_fvg: boolean;
   smc_bos: boolean;
+  cm_macd: boolean;
   mkt_structure: number;  // 1=BULL, -1=BEAR, 0=SIDEWAYS
 };
 
@@ -1978,6 +1979,28 @@ export async function fetchPSniperBacktest(
 ): Promise<US1HBacktestResponse> {
   let url = `${API_BASE}/stock/backtest_psniper?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&capital=${capital}`;
   if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) url += `&${k}=${v}`;
+    }
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as US1HBacktestResponse;
+}
+
+// ── CM MACD Crossover Backtest (KLSE Daily) ────────────────────────
+export async function fetchCMMACDBacktest(
+  symbol: string = "0208.KL",
+  period: string = "2y",
+  _disabledConditions?: string[],
+  params?: Record<string, unknown>,
+  capital: number = 5000,
+): Promise<US1HBacktestResponse> {
+  let url = `${API_BASE}/stock/backtest_cm_macd?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&capital=${capital}`;
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       if (v !== undefined && v !== null) url += `&${k}=${v}`;

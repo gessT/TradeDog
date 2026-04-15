@@ -7,7 +7,7 @@ import type { US1HBacktestResponse } from "../../services/api";
 // MY Strategy Section — multi-strategy with dropdown
 // ═══════════════════════════════════════════════════════════
 
-export type StrategyType = "tpc" | "hpb" | "vpb3" | "smp" | "psniper";
+export type StrategyType = "tpc" | "hpb" | "vpb3" | "smp" | "psniper" | "cm_macd";
 
 type StrategyDef = {
   key: StrategyType;
@@ -151,6 +151,25 @@ const STRATEGIES: StrategyDef[] = [
       tp2: { label: "Min Score", min: 3, max: 9, step: 1 },
     },
   },
+  {
+    key: "cm_macd",
+    label: "CM MACD",
+    subtitle: "MACD(12,26,9) Crossover",
+    icon: "\u{1F4CA}",
+    color: "cyan",
+    conditions: [
+      { key: "macd_cross", label: "MACD Crossover", icon: "\u{1F504}", desc: "MACD line (12/26) crosses above signal (9) — entry long" },
+    ],
+    exitRules: [
+      { key: "sl_exit", icon: "\u{1F6D1}", label: "Stop Loss", desc: "ATR \u00D7 SL multiplier below entry" },
+      { key: "tp_exit", icon: "\u{1F3AF}", label: "Take Profit", desc: "R \u00D7 TP multiplier above entry" },
+      { key: "macd_crossunder", icon: "\u{1F534}", label: "MACD Crossunder", desc: "Exit when MACD crosses below signal" },
+    ],
+    sliders: {
+      sl: { label: "SL ATR \u00D7", min: 0.5, max: 5, step: 0.5 },
+      tp1: { label: "TP R \u00D7", min: 0.5, max: 8, step: 0.5 },
+    },
+  },
 ];
 
 // Default parameter values per strategy (the single source of truth)
@@ -162,7 +181,8 @@ export const STRATEGY_DEFAULTS: Record<StrategyType, {
   hpb:  { sl: 2,   tp1: 4,   tp2: 4,   capital: 5000, disabledConditions: [] },
   vpb3: { sl: 5,   tp1: 3.0, tp2: 3.0, capital: 5000, disabledConditions: [] },
   smp:  { sl: 4,   tp1: 2.0, tp2: 2.0, capital: 5000, disabledConditions: [] },
-  psniper: { sl: 3.5,  tp1: 1.2, tp2: 6, capital: 5000, disabledConditions: [] },
+  psniper: { sl: 3.5,  tp1: 1.2, tp2: 6,   capital: 5000, disabledConditions: [] },
+  cm_macd: { sl: 2.0,  tp1: 3.0, tp2: 3.0, capital: 5000, disabledConditions: [] },
 };
 
 type Props = {

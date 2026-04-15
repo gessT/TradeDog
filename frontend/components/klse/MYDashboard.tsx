@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState } from "react";
-import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, fetchSMPBacktest, fetchPSniperBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, fetchBestStrategy, type US1HBacktestResponse, type US1HTrade, type StrategyGradeResult } from "../../services/api";
+import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, fetchSMPBacktest, fetchPSniperBacktest, fetchCMMACDBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, fetchBestStrategy, type US1HBacktestResponse, type US1HTrade, type StrategyGradeResult } from "../../services/api";
 import { MY_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
@@ -303,6 +303,8 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           data = await fetchSMPBacktest(sym, backtestPeriod, undefined, { sl_lookback: atrSlMult, tp_r_multiple: tp1RMult, trailing_atr_mult: tp2RMult }, capital);
         } else if (strat === "psniper") {
           data = await fetchPSniperBacktest(sym, backtestPeriod, undefined, { sl_atr_mult: atrSlMult, tp1_rr: tp1RMult, min_score: Math.round(tp2RMult) }, capital);
+        } else if (strat === "cm_macd") {
+          data = await fetchCMMACDBacktest(sym, backtestPeriod, undefined, { sl_atr_mult: atrSlMult, tp_r_mult: tp1RMult }, capital);
         } else {
           data = await fetchTPCBacktest(sym, backtestPeriod, undefined, { atr_sl_mult: atrSlMult, tp1_r_mult: tp1RMult, tp2_r_mult: tp2RMult }, capital);
         }
@@ -381,6 +383,14 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           backtestPeriod,
           disabledArr.length > 0 ? disabledArr : undefined,
           { sl_atr_mult: atrSlMult, tp1_rr: tp1RMult, min_score: Math.round(tp2RMult) },
+          capital,
+        );
+      } else if (strat === "cm_macd") {
+        data = await fetchCMMACDBacktest(
+          selectedSymbol,
+          backtestPeriod,
+          undefined,
+          { sl_atr_mult: atrSlMult, tp_r_mult: tp1RMult },
           capital,
         );
       } else {
@@ -762,7 +772,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
               {scanLoading ? (
                 <div className="flex flex-col items-center justify-center py-12 gap-3">
                   <svg className="w-8 h-8 text-violet-400 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-                  <p className="text-[11px] text-slate-400">Running TPC, HPB, VPB3 backtests…</p>
+                  <p className="text-[11px] text-slate-400">Running TPC, HPB, VPB3, CM MACD backtests…</p>
                   <p className="text-[9px] text-slate-600">This may take a minute</p>
                 </div>
               ) : scanResults.length === 0 ? (
