@@ -865,22 +865,22 @@ class Backtester5Min:
         if position is None:
             return None
 
-        # Compute scanner-consistent SL/TP using signal bar's close (not next bar's open)
-        sig_close = position.get("signal_close", position["entry_price"])
+        # Use actual entry price (bar open) to stay consistent with trade log
+        entry_px = position["entry_price"]
         atr = position["entry_atr"]
         d = position["direction"]
         if d == 1:
-            scanner_sl = sig_close - full_params["atr_sl_mult"] * atr
-            scanner_tp = sig_close + full_params["atr_tp_mult"] * atr
+            pos_sl = entry_px - full_params["atr_sl_mult"] * atr
+            pos_tp = entry_px + full_params["atr_tp_mult"] * atr
         else:
-            scanner_sl = sig_close + full_params["atr_sl_mult"] * atr
-            scanner_tp = sig_close - full_params["atr_tp_mult"] * atr
+            pos_sl = entry_px + full_params["atr_sl_mult"] * atr
+            pos_tp = entry_px - full_params["atr_tp_mult"] * atr
 
         return {
             "direction": "CALL" if d == 1 else "PUT",
-            "entry_price": round(sig_close, 2),
-            "sl": round(scanner_sl, 2),
-            "tp": round(scanner_tp, 2),
+            "entry_price": round(entry_px, 2),
+            "sl": round(pos_sl, 2),
+            "tp": round(pos_tp, 2),
             "qty": position["qty"],
             "entry_time": str(position["entry_time"]),
             "signal_type": position.get("signal_type", ""),

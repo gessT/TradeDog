@@ -2537,6 +2537,7 @@ async def backtest_position(
     atr_sl_mult: Annotated[float, Query()] = 3.0,
     atr_tp_mult: Annotated[float, Query()] = 2.5,
     disabled_conditions: Annotated[Optional[str], Query()] = None,
+    interval: Annotated[str, Query()] = "5m",
 ):
     """Run backtest to current bar and return open position (if any).
 
@@ -2547,7 +2548,11 @@ async def backtest_position(
         from strategies.futures.backtest_5min import Backtester5Min
 
         effective_period = period if period in ("1d", "2d", "5d", "7d", "30d", "60d") else "60d"
-        df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
+        _max_period = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d"}
+        max_allowed = _max_period.get(interval, "60d")
+        if int(effective_period.replace("d", "")) > int(max_allowed.replace("d", "")):
+            effective_period = max_allowed
+        df = load_yfinance(symbol=symbol, interval=interval, period=effective_period)
 
         params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult}
         disabled = set(disabled_conditions.split(",")) if disabled_conditions else None
@@ -2757,8 +2762,9 @@ async def mgc_trade_log_5min(
     symbol: Annotated[str, Query()] = "MGC=F",
     period: Annotated[str, Query()] = "60d",
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    interval: Annotated[str, Query()] = "5m",
 ) -> TradeLog5MinResponse:
-    """Return the last N trades from 5-minute backtest."""
+    """Return the last N trades from backtest."""
 
     def _run():
         from strategies.futures.backtest_5min import Backtester5Min
@@ -2766,8 +2772,12 @@ async def mgc_trade_log_5min(
         effective_period = period
         if period not in ("1d", "2d", "5d", "7d", "30d", "60d"):
             effective_period = "60d"
+        _max_period = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d"}
+        max_allowed = _max_period.get(interval, "60d")
+        if int(effective_period.replace("d", "")) > int(max_allowed.replace("d", "")):
+            effective_period = max_allowed
 
-        df = load_yfinance(symbol=symbol, interval="5m", period=effective_period)
+        df = load_yfinance(symbol=symbol, interval=interval, period=effective_period)
         bt = Backtester5Min()
         result = bt.run(df)
 

@@ -1635,9 +1635,10 @@ export async function getBacktestPosition(
   slMult: number = 3.0,
   tpMult: number = 2.5,
   disabledConditions?: string[],
+  interval: string = "5m",
 ): Promise<BacktestPositionResponse> {
   const yf = toYF(symbol);
-  let url = `${API_BASE}/mgc/backtest_position?symbol=${encodeURIComponent(yf)}&atr_sl_mult=${slMult}&atr_tp_mult=${tpMult}`;
+  let url = `${API_BASE}/mgc/backtest_position?symbol=${encodeURIComponent(yf)}&atr_sl_mult=${slMult}&atr_tp_mult=${tpMult}&interval=${encodeURIComponent(interval)}`;
   if (disabledConditions && disabledConditions.length > 0) {
     url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
   }
@@ -1659,8 +1660,9 @@ export type TradeLog5MinResponse = {
 
 export async function fetchTradeLog5Min(
   limit: number = 50,
+  interval: string = "5m",
 ): Promise<TradeLog5MinResponse> {
-  const url = `${API_BASE}/mgc/trade_log_5min?limit=${limit}`;
+  const url = `${API_BASE}/mgc/trade_log_5min?limit=${limit}&interval=${encodeURIComponent(interval)}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
