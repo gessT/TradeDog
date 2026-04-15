@@ -151,6 +151,17 @@ class MYStockStrategyTag(Base):
     tagged_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
 
+class StockColorLabel(Base):
+    """Color label assigned to a stock in the watchlist (like TradingView)."""
+    __tablename__ = "stock_color_labels"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    color: Mapped[str] = mapped_column(String(16), nullable=False)  # red, orange, yellow, green, cyan, blue, purple, pink
+    market: Mapped[str] = mapped_column(String(8), default="MY")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+
 class FuturesTraderConfig(Base):
     """Persisted auto-trader configuration for futures (shared by paper & live)."""
     __tablename__ = "futures_trader_configs"

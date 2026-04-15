@@ -59,6 +59,7 @@ export const MY_STOCKS: MYStock[] = [
   { symbol: "6963.KL", name: "VS Industry", sector: "Industrial", refPrice: 1.0, cap: "M" },
   { symbol: "7172.KL", name: "PMB Technology", sector: "Industrial", refPrice: 1.5, cap: "S" },
   { symbol: "0233.KL", name: "Pekat Group", sector: "Industrial", refPrice: 1.0, cap: "S" },
+  { symbol: "0167.KL", name: "MClean Technologies", sector: "Industrial", refPrice: 1.0, cap: "S" },
 
   // ── Telecommunications ────────────────────────────────
   { symbol: "6947.KL", name: "CelcomDigi", sector: "Telecom", refPrice: 3.5, cap: "L" },

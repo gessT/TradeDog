@@ -10,6 +10,7 @@ import MYBottomPanel, { MetricsGrid } from "./MYBottomPanel";
 
 type StockTag = { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null };
 type RunAllRow = { symbol: string; name: string; win_rate: number; total_trades: number; return_pct: number; profit_factor: number; max_dd: number; sharpe: number; status: "pending" | "running" | "done" | "error"; saved?: boolean };
+export type ColorLabel = { id: number; symbol: string; color: string; market: string };
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 const API_BASE = RAW_API_BASE
@@ -228,6 +229,34 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     } catch { /* offline */ }
   }, []);
   useEffect(() => { fetchTags(); }, [fetchTags]);
+
+  // ── Color labels (TradingView-style)
+  const [colorLabels, setColorLabels] = useState<ColorLabel[]>([]);
+  const fetchColorLabels = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/stock/color-labels?market=MY`);
+      if (res.ok) setColorLabels(await res.json());
+    } catch { /* offline */ }
+  }, []);
+  useEffect(() => { fetchColorLabels(); }, [fetchColorLabels]);
+
+  const setColorLabel = useCallback(async (symbol: string, color: string) => {
+    try {
+      await fetch(`${API_BASE}/stock/color-labels`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol, color, market: "MY" }),
+      });
+      fetchColorLabels();
+    } catch { /* offline */ }
+  }, [fetchColorLabels]);
+
+  const removeColorLabel = useCallback(async (symbol: string) => {
+    try {
+      await fetch(`${API_BASE}/stock/color-labels?symbol=${encodeURIComponent(symbol)}&market=MY`, { method: "DELETE" });
+      fetchColorLabels();
+    } catch { /* offline */ }
+  }, [fetchColorLabels]);
 
   // ── Run All Favs
   const [runAllOpen, setRunAllOpen] = useState(false);
@@ -528,6 +557,9 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             onToggleFav={toggleFav}
             onRunAllFavs={runAllFavs}
             runAllRunning={runAllRunning}
+            colorLabels={colorLabels}
+            onSetColor={setColorLabel}
+            onRemoveColor={removeColorLabel}
           />
         </aside>
 

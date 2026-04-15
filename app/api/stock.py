@@ -1596,6 +1596,55 @@ async def daily_scan(top: int = Query(default=6, ge=1, le=20), market: str = Que
     }
 
 
+# ── Search Bursa Stocks (dynamic Yahoo Finance lookup) ───────────────
+
+@router.get("/search-bursa")
+async def search_bursa(q: str = Query(min_length=1, max_length=32)):
+    """Search for any Bursa Malaysia stock by code or name via Yahoo Finance."""
+    q = q.strip()
+
+    def _search():
+        results = []
+        # If query looks like a stock code (digits, possibly with .KL)
+        code = q.upper().replace(".KL", "")
+        candidates = []
+        if code.isdigit():
+            candidates.append(f"{code}.KL")
+            # Also try with leading zeros (4-digit Bursa codes)
+            if len(code) < 4:
+                candidates.append(f"{code.zfill(4)}.KL")
+        else:
+            # Try as-is with .KL suffix
+            candidates.append(f"{code}.KL")
+
+        for sym in candidates:
+            try:
+                t = yf.Ticker(sym)
+                info = t.info
+                name = info.get("shortName") or info.get("longName")
+                if not name:
+                    continue
+                price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+                sector = info.get("sector", "Other")
+                mcap = info.get("marketCap", 0)
+                cap_tier = "L" if mcap and mcap > 5_000_000_000 else "M" if mcap and mcap > 1_000_000_000 else "S"
+                results.append({
+                    "symbol": sym,
+                    "name": name,
+                    "sector": sector,
+                    "refPrice": round(price, 2),
+                    "cap": cap_tier,
+                    "price": round(price, 2),
+                    "change_pct": info.get("regularMarketChangePercent", 0) or 0,
+                })
+            except Exception:
+                continue
+        return results
+
+    results = await run_in_threadpool(_search)
+    return {"results": results}
+
+
 # ── Starred Stocks ───────────────────────────────────────────────────
 
 
@@ -1628,6 +1677,52 @@ def remove_starred(symbol: str = Query(min_length=1), db: Session = Depends(get_
     row = db.query(StarredStock).filter(StarredStock.symbol == symbol).first()
     if not row:
         raise HTTPException(status_code=404, detail="Not starred")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+# ── Stock Color Labels (TradingView-style) ───────────────────────────
+
+from app.models.condition_preference import StockColorLabel
+
+
+class ColorLabelPayload(BaseModel):
+    symbol: str = Field(min_length=1, max_length=16)
+    color: str = Field(min_length=1, max_length=16)
+    market: str = Field(default="MY", max_length=8)
+
+
+@router.get("/color-labels")
+def list_color_labels(market: str = Query(default="MY"), db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.query(StockColorLabel).filter(StockColorLabel.market == market).all()
+    return [{"id": r.id, "symbol": r.symbol, "color": r.color, "market": r.market} for r in rows]
+
+
+@router.put("/color-labels")
+def set_color_label(payload: ColorLabelPayload, db: Session = Depends(get_db)) -> dict:
+    existing = db.query(StockColorLabel).filter(
+        StockColorLabel.symbol == payload.symbol,
+        StockColorLabel.market == payload.market,
+    ).first()
+    if existing:
+        existing.color = payload.color
+    else:
+        existing = StockColorLabel(symbol=payload.symbol, color=payload.color, market=payload.market)
+        db.add(existing)
+    db.commit()
+    db.refresh(existing)
+    return {"id": existing.id, "symbol": existing.symbol, "color": existing.color, "market": existing.market}
+
+
+@router.delete("/color-labels")
+def remove_color_label(symbol: str = Query(min_length=1), market: str = Query(default="MY"), db: Session = Depends(get_db)) -> dict:
+    row = db.query(StockColorLabel).filter(
+        StockColorLabel.symbol == symbol,
+        StockColorLabel.market == market,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="No color label found")
     db.delete(row)
     db.commit()
     return {"ok": True}
