@@ -30,6 +30,26 @@ const STATE_BG: Record<string, string> = {
   COOLDOWN: "from-amber-500/10 to-orange-600/5",
   BLOCKED: "from-red-500/10 to-rose-600/5",
 };
+
+/**
+ * Format a timestamp string in the app's configured timezone.
+ * Backend stores times as "YYYY-MM-DD HH:MM:SS" (UTC, no suffix).
+ * We append "Z" so the Date constructor treats it as UTC, then
+ * toLocaleString renders it in the user's configured timezone.
+ */
+function fmtTZ(raw: string | null | undefined): string {
+  if (!raw) return "";
+  // If already has timezone info (+HH:MM / Z), use as-is; otherwise treat as UTC
+  const normalized = /[Z+\-]\d{0,2}:?\d{0,2}$/.test(raw.trim()) ? raw : raw.trim().replace(" ", "T") + "Z";
+  const d = new Date(normalized);
+  if (isNaN(d.getTime())) return raw;
+  return d.toLocaleString("en-GB", {
+    timeZone: getTimezone(),
+    day: "2-digit", month: "2-digit", year: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  });
+}
 const STATE_DOT: Record<string, string> = {
   IDLE: "bg-emerald-400 shadow-emerald-400/50",
   IN_TRADE: "bg-violet-400 shadow-violet-400/50 animate-pulse",
@@ -259,11 +279,11 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
             ?
           </button>
           {started && (
-            <span className="text-[8px] text-violet-400/70 truncate" title={activeConfig?.preset ?? "Custom"}>
+            <span className="text-[9px] text-violet-300 truncate" title={activeConfig?.preset ?? "Custom"}>
               · {activeConfig?.preset ?? "Custom"}
             </span>
           )}
-          <span className="text-[8px] font-medium text-white/30 uppercase tracking-widest shrink-0">
+          <span className="text-[8px] font-medium text-white/60 uppercase tracking-widest shrink-0">
             {STATE_LABEL[state] ?? state}
             {state === "COOLDOWN" && snap?.cooldown_remaining ? ` ${Math.ceil(snap.cooldown_remaining)}s` : ""}
           </span>
@@ -333,10 +353,10 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
 
       {/* ═══ Scan info bar ═══ */}
       {started && snap && (
-        <div className="mx-2 mt-1.5 flex items-center gap-2 text-[8px] text-white/40">
-          <span>Interval: <span className="text-white/60 font-medium">{currentInterval}</span></span>
-          <span>Scans: <span className="text-white/60 font-medium">{snap.scan_count ?? 0}</span></span>
-          <span>Daily: <span className="text-white/60 font-medium">{snap.daily_trades ?? 0}</span></span>
+        <div className="mx-2 mt-1.5 flex items-center gap-2 text-[8px] text-white/60">
+          <span>Interval: <span className="text-white/85 font-bold">{currentInterval}</span></span>
+          <span>Scans: <span className="text-white/85 font-bold">{snap.scan_count ?? 0}</span></span>
+          <span>Daily: <span className="text-white/85 font-bold">{snap.daily_trades ?? 0}</span></span>
         </div>
       )}
 
@@ -345,8 +365,8 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
         {!started ? (
           /* ── Not Running ── */
           <div className="rounded-lg ring-1 ring-slate-700/40 bg-slate-800/20 p-3 text-center space-y-1">
-            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Not Running</div>
-            <div className="text-[8px] text-slate-600 leading-relaxed">
+            <div className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">Not Running</div>
+            <div className="text-[9px] text-slate-400 leading-relaxed">
               Start paper or live trading below.<br />
               Strategy follows backtest conditions &amp; same SL/TP.
             </div>
@@ -396,18 +416,18 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                 <div className={`text-xl font-black tabular-nums tracking-tight ${unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                   {unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl.toFixed(2)}
                 </div>
-                <div className="text-[8px] text-white/25 mt-0.5">Unrealized P&L</div>
+                <div className="text-[9px] text-white/55 mt-0.5">Unrealized P&L</div>
               </div>
             )}
 
             {/* Entry / SL / TP */}
             <div className="px-3 py-1.5 space-y-1.5">
               <div className="flex items-center justify-between text-[9px]">
-                <span className="text-white/30">Entry</span>
-                <span className="text-white/60 font-mono font-bold">${snap.position.entry_price.toFixed(2)}</span>
+                <span className="text-white/60">Entry</span>
+                <span className="text-white/90 font-mono font-bold">${snap.position.entry_price.toFixed(2)}</span>
               </div>
               <div className="flex items-center gap-1 text-[8px] font-mono">
-                <span className="text-red-400/70">SL {snap.position.stop_loss.toFixed(2)}</span>
+                <span className="text-red-400">SL {snap.position.stop_loss.toFixed(2)}</span>
                 <div className="flex-1 h-1 bg-slate-800/60 rounded-full overflow-hidden relative">
                   {(() => {
                     const sl = snap.position.stop_loss;
@@ -430,17 +450,17 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                     );
                   })()}
                 </div>
-                <span className="text-emerald-400/70">TP {snap.position.take_profit.toFixed(2)}</span>
+                <span className="text-emerald-400">TP {snap.position.take_profit.toFixed(2)}</span>
               </div>
-              <div className="flex items-center justify-between text-[7px] text-white/20">
-                <span>{snap.position.entry_time?.slice(0, 16)}</span>
+              <div className="flex items-center justify-between text-[8px] text-white/55">
+                <span>{fmtTZ(snap.position.entry_time)}</span>
                 <span>SL {activeConfig?.slMult ?? 0}× · TP {activeConfig?.tpMult ?? 0}× ATR</span>
               </div>
             </div>
 
             {/* What happens next */}
-            <div className="px-3 py-1.5 border-t border-white/[0.04] text-center">
-              <span className="text-[7px] text-white/25">Monitoring — will auto-exit on SL/TP hit or signal flip</span>
+            <div className="px-3 py-1.5 border-t border-white/[0.06] text-center">
+              <span className="text-[8px] text-white/55">Monitoring — will auto-exit on SL/TP hit or signal flip</span>
             </div>
           </div>
         ) : (
@@ -455,7 +475,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                 </span>
                 <span className="text-[11px] text-emerald-400 font-bold uppercase tracking-widest">Waiting for Entry</span>
               </div>
-              <div className="text-[8px] text-white/30">
+              <div className="text-[9px] text-white/60">
                 Scanning every bar close · same strategy as backtest
               </div>
               {activeConfig && (
@@ -593,8 +613,8 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
             { label: "Streak", value: snap.consecutive_losses > 0 ? `−${snap.consecutive_losses}` : "0", color: snap.consecutive_losses > 0 ? "text-red-400" : "text-white/40" },
           ].map((s, i) => (
             <div key={i} className="bg-white/[0.02] py-1 text-center">
-              <div className="text-[7px] uppercase tracking-widest text-white/20 font-medium">{s.label}</div>
-              <div className={`text-[10px] font-bold mt-px ${s.color}`}>{s.value}</div>
+              <div className="text-[8px] uppercase tracking-widest text-white/50 font-medium">{s.label}</div>
+              <div className={`text-[11px] font-bold mt-px ${s.color}`}>{s.value}</div>
             </div>
           ))}
         </div>
@@ -608,8 +628,8 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
               ${tab === t
                 ? t === "tiger"
                   ? "text-amber-300/90 bg-amber-500/[0.06] border-b-2 border-amber-400/60"
-                  : "text-white/80 bg-white/[0.04] border-b-2 border-violet-400/60"
-                : "text-white/25 hover:text-white/40"}`}>
+                  : "text-white/90 bg-white/[0.04] border-b-2 border-violet-400/60"
+                : "text-white/50 hover:text-white/70"}`}>
             {t === "log" ? `Log (${logs.length})` : t === "trades" ? `Trades (${trades.length})` : t === "tiger" ? "🐯 Tiger" : t}
           </button>
         ))}
@@ -625,8 +645,8 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
             {/* ── Live Session Card ── */}
             {snap && (
               <div className="rounded-lg ring-1 ring-white/[0.06] bg-white/[0.02] overflow-hidden">
-                <div className="px-2 py-1 border-b border-white/[0.04]">
-                  <span className="text-[7px] uppercase tracking-widest text-white/25 font-bold">Live Session</span>
+                <div className="px-2 py-1 border-b border-white/[0.06]">
+                  <span className="text-[8px] uppercase tracking-widest text-white/55 font-bold">Live Session</span>
                 </div>
                 <div className="p-2 space-y-1.5 text-[9px]">
                   <Row label="State" value={STATE_LABEL[state] ?? state} />
@@ -685,11 +705,11 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
               </div>
             )}
             {logs.length === 0 && !snap?.started && (
-              <div className="text-white/15 text-center py-4 text-[9px]">No activity yet - start the auto-trader</div>
+              <div className="text-white/45 text-center py-4 text-[10px]">No activity yet — start the auto-trader</div>
             )}
             {logs.map((l, i) => (
               <div key={l.ts + i} className={`flex gap-1.5 px-1.5 py-0.5 rounded hover:bg-white/[0.02] ${i === 0 && snap?.started ? "at-log-entry" : ""}`}>
-                <span className="text-white/15 shrink-0">{new Date(l.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: getTimezone() })}</span>
+                <span className="text-white/45 shrink-0">{new Date(l.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: getTimezone() })}</span>
                 <span className={
                   l.type === "entry" ? "text-violet-400" :
                   l.type === "exit" ? "text-amber-300" :
@@ -698,7 +718,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                   l.type === "warn" ? "text-amber-400" :
                   "text-white/40"
                 }>{LOG_PREFIX[l.type]}</span>
-                <span className="text-white/50 break-all">{l.msg}</span>
+                <span className="text-white/80 break-all">{l.msg}</span>
               </div>
             ))}
           </div>
@@ -713,12 +733,12 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
               const wr = trades.length > 0 ? (wins / trades.length * 100) : 0;
               return (
                 <div className="flex items-center justify-between px-1.5 py-1 rounded-md bg-white/[0.03] ring-1 ring-white/[0.06] mb-0.5">
-                  <div className="flex items-center gap-2 text-[8px]">
-                    <span className="text-white/30">{trades.length} trades</span>
+                  <div className="flex items-center gap-2 text-[9px]">
+                    <span className="text-white/60">{trades.length} trades</span>
                     <span className={`font-bold ${totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                       {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
                     </span>
-                    <span className="text-white/30">WR {wr.toFixed(0)}%</span>
+                    <span className="text-white/60">WR {wr.toFixed(0)}%</span>
                   </div>
                   <button
                     onClick={async () => {
@@ -734,7 +754,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
               );
             })()}
             {trades.length === 0 && !snap?.position && (
-              <div className="text-white/15 text-center py-4 text-[9px]">No trades yet</div>
+              <div className="text-white/45 text-center py-4 text-[10px]">No trades yet</div>
             )}
             {/* Open position */}
             {snap?.position && (
@@ -744,14 +764,14 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1">
-                    <span className="text-[8px] text-white/60 font-mono">${snap.position.entry_price.toFixed(2)}</span>
-                    <span className="text-[7px] px-0.5 py-px rounded bg-violet-500/20 text-violet-300 ring-1 ring-violet-500/30 font-bold">OPEN</span>
-                    <span className="text-[7px] text-white/20">×{snap.position.qty}</span>
+                    <span className="text-[9px] text-white/85 font-mono font-bold">${snap.position.entry_price.toFixed(2)}</span>
+                    <span className="text-[8px] px-0.5 py-px rounded bg-violet-500/20 text-violet-300 ring-1 ring-violet-500/30 font-bold">OPEN</span>
+                    <span className="text-[8px] text-white/50">×{snap.position.qty}</span>
                   </div>
-                  <div className="flex items-center gap-1.5 text-[7px] text-white/20 mt-px">
-                    <span className="text-red-400/60">SL ${snap.position.stop_loss.toFixed(2)}</span>
-                    <span className="text-emerald-400/60">TP ${snap.position.take_profit.toFixed(2)}</span>
-                    <span>{snap.position.entry_time?.slice(0, 16)}</span>
+                  <div className="flex items-center gap-1.5 text-[8px] text-white/55 mt-px">
+                    <span className="text-red-400">SL ${snap.position.stop_loss.toFixed(2)}</span>
+                    <span className="text-emerald-400">TP ${snap.position.take_profit.toFixed(2)}</span>
+                    <span>{fmtTZ(snap.position.entry_time)}</span>
                   </div>
                 </div>
                 {unrealizedPnl !== null && (
@@ -769,15 +789,15 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1">
-                    <span className="text-[8px] text-white/50 font-mono">${t.entry_price.toFixed(2)} → ${t.exit_price.toFixed(2)}</span>
-                    {t.is_paper && <span className="text-[7px] px-0.5 py-px rounded bg-emerald-500/10 text-emerald-400/60 ring-1 ring-emerald-500/15">PAPER</span>}
+                    <span className="text-[9px] text-white/80 font-mono font-bold">${t.entry_price.toFixed(2)} → ${t.exit_price.toFixed(2)}</span>
+                    {t.is_paper && <span className="text-[8px] px-0.5 py-px rounded bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/25 font-bold">PAPER</span>}
                   </div>
-                  <div className="flex items-center gap-1.5 text-[7px] text-white/20 mt-px">
+                  <div className="flex items-center gap-1.5 text-[8px] text-white/60 mt-0.5">
                     <span>{t.exit_reason}</span>
                     <span>str {t.strength}</span>
                     {t.slippage > 0 && <span>slip ${t.slippage.toFixed(2)}</span>}
-                    {(t as Record<string, unknown>).strategy_preset ? <span className="text-violet-400/50">{String((t as Record<string, unknown>).strategy_preset)}</span> : null}
-                    <span>{t.entry_time?.slice(0, 16)}</span>
+                    {(t as Record<string, unknown>).strategy_preset ? <span className="text-violet-300">{String((t as Record<string, unknown>).strategy_preset)}</span> : null}
+                    <span title={t.exit_time ? fmtTZ(t.exit_time) : ""}>{fmtTZ(t.entry_time)}{t.exit_time ? ` → ${fmtTZ(t.exit_time)}` : ""}</span>
                   </div>
                 </div>
                 <span className={`font-mono text-[10px] font-bold shrink-0 ${t.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
@@ -875,8 +895,8 @@ const LOG_PREFIX: Record<string, string> = {
 function Row({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-white/25">{label}</span>
-      <span className={`font-mono ${valueColor ?? "text-white/60"}`}>{value}</span>
+      <span className="text-white/55">{label}</span>
+      <span className={`font-mono ${valueColor ?? "text-white/85"}`}>{value}</span>
     </div>
   );
 }

@@ -254,10 +254,10 @@ function TradeRow5Min({ t, idx, onTradeClick, livePrice }: Readonly<{ t: MGC5Min
       className={`${isOpen ? "bg-blue-950/30 border-l-2 border-blue-500" : idx % 2 === 0 ? "bg-slate-900/30" : ""} ${onTradeClick ? "cursor-pointer hover:bg-cyan-900/20 transition-colors" : ""}`}
       onClick={() => onTradeClick?.(t)}
     >
-      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{fmtDateTime(t.entry_time)}</td>
-      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{isOpen ? <span className="text-blue-400 animate-pulse">LIVE</span> : fmtDateTime(t.exit_time)}</td>
-      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{n(t.entry_price).toFixed(2)}</td>
-      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">
+      <td className="px-2 py-1 text-[10px] text-slate-300 whitespace-nowrap">{fmtDateTime(t.entry_time)}</td>
+      <td className="px-2 py-1 text-[10px] text-slate-300 whitespace-nowrap">{isOpen ? <span className="text-blue-400 animate-pulse">LIVE</span> : fmtDateTime(t.exit_time)}</td>
+      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-200">{n(t.entry_price).toFixed(2)}</td>
+      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-200">
         {isOpen
           ? (livePrice != null ? <span className="text-yellow-400 animate-pulse">{livePrice.toFixed(2)}</span> : <span className="text-slate-600">—</span>)
           : n(t.exit_price).toFixed(2)}
@@ -340,13 +340,60 @@ function TradeLogByDate({ trades, onTradeClick, livePrice }: Readonly<{ trades: 
     return Object.entries(map).sort((a, b) => b[0].localeCompare(a[0]));
   })();
 
+  // Compute daily P&L totals for bar chart (across ALL trades, not just filtered)
+  const allGrouped = (() => {
+    const map: Record<string, MGC5MinTrade[]> = {};
+    for (const t of trades) {
+      const datePart = t.entry_time.slice(0, 10);
+      const hour = parseInt(t.entry_time.slice(11, 13), 10);
+      if (hour >= 18) {
+        const d = new Date(datePart + "T12:00:00Z");
+        d.setUTCDate(d.getUTCDate() + 1);
+        (map[d.toISOString().slice(0, 10)] ??= []).push(t);
+      } else {
+        (map[datePart] ??= []).push(t);
+      }
+    }
+    return map;
+  })();
+  const dayPnlMap: Record<string, number> = {};
+  for (const [day, dayTrades] of Object.entries(allGrouped)) {
+    dayPnlMap[day] = dayTrades.reduce((s, t) => {
+      if (t.reason === "OPEN" && livePrice != null) {
+        const isLong = t.direction !== "PUT";
+        return s + (isLong ? livePrice - n(t.entry_price) : n(t.entry_price) - livePrice) * n(t.qty) * 10;
+      }
+      return s + n(t.pnl);
+    }, 0);
+  }
+  const maxDayPnl = Math.max(...Object.values(dayPnlMap).map(Math.abs), 1);
+  const totalPnl = Object.values(dayPnlMap).reduce((s, v) => s + v, 0);
+  const totalWins = trades.filter(t => t.reason !== "OPEN" && t.pnl > 0).length;
+  const closedCount = trades.filter(t => t.reason !== "OPEN").length;
+
   const toggle = (d: string) => setExpanded((p) => ({ ...p, [d]: !p[d] }));
 
   return (
     <div>
+      {/* ── Daily P&L summary header ── */}
+      {grouped.length > 0 && (
+        <div className="flex items-center gap-3 px-3 py-2 border-b border-slate-700/40 bg-slate-900/60">
+          <span className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">
+            Trade Log
+          </span>
+          <span className="text-slate-700">·</span>
+          <span className="text-[9px] text-slate-400">{trades.length} trades · {grouped.length} day{grouped.length !== 1 ? "s" : ""}</span>
+          {closedCount > 0 && (
+            <span className="text-[9px] text-slate-400">WR {Math.round(totalWins / closedCount * 100)}%</span>
+          )}
+          <span className={`ml-auto text-[12px] font-black tabular-nums tracking-tight ${totalPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+            {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(0)}
+          </span>
+        </div>
+      )}
       {/* Filter bar */}
       <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-slate-800/30 flex-wrap">
-        <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mr-1">Trade Log ({trades.length})</span>
+        <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mr-1">Filter</span>
         <span className="text-slate-700 mr-0.5">|</span>
         {/* P&L filter */}
         {(["all", "win", "loss"] as const).map((f) => (
@@ -415,22 +462,33 @@ function TradeLogByDate({ trades, onTradeClick, livePrice }: Readonly<{ trades: 
                     className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-slate-800/40 transition-colors border-b border-slate-800/30"
                     onClick={() => toggle(date)}
                   >
-                    <span className="text-[10px] text-slate-500 w-3">{open ? "▼" : "▶"}</span>
-                    <span className="text-[10px] font-semibold text-slate-300 w-[70px]">{date.slice(5).replace("-", "/")}</span>
-                    <span className="text-[9px] text-slate-500">{dayTrades.length} trade{dayTrades.length > 1 ? "s" : ""}</span>
-                    <span className={`text-[9px] font-semibold ${wr >= 60 ? "text-emerald-400" : wr >= 50 ? "text-amber-400" : "text-rose-400"}`}>
-                      WR {wr}%
+                    <span className="text-[10px] text-slate-400 w-3">{open ? "▼" : "▶"}</span>
+                    <span className="text-[11px] font-bold text-slate-200 w-[44px] shrink-0">{date.slice(5).replace("-", "/")}</span>
+                    {/* P&L bar */}
+                    <div className="flex-1 h-2 bg-slate-800/60 rounded-full overflow-hidden mx-1 min-w-0">
+                      {(() => {
+                        const dp = dayPnlMap[date] ?? dayPnl;
+                        const pct = Math.min(100, (Math.abs(dp) / maxDayPnl) * 100);
+                        return dp >= 0 ? (
+                          <div className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded-full" style={{ width: `${pct}%` }} />
+                        ) : (
+                          <div className="h-full bg-gradient-to-l from-rose-600 to-rose-400 rounded-full ml-auto" style={{ width: `${pct}%` }} />
+                        );
+                      })()}
+                    </div>
+                    <span className="text-[9px] text-slate-400 shrink-0">{dayTrades.length}t</span>
+                    <span className={`text-[9px] font-semibold shrink-0 ${wr >= 60 ? "text-emerald-400" : wr >= 50 ? "text-amber-400" : "text-rose-400"}`}>
+                      {wr}%
                     </span>
-                    <span className="text-[9px] text-slate-500">({wins}W/{dayTrades.length - wins}L)</span>
-                    <span className={`ml-auto text-[10px] font-bold tabular-nums ${dayPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                      {dayPnl >= 0 ? "+" : ""}{dayPnl.toFixed(2)}
+                    <span className={`ml-auto text-[10px] font-bold tabular-nums shrink-0 ${dayPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {dayPnl >= 0 ? "+" : ""}{dayPnl.toFixed(0)}
                     </span>
                   </button>
                   {/* Expanded trade rows */}
                   {open && (
                     <table className="w-full text-left">
                       <thead>
-                        <tr className="text-[8px] text-slate-600 uppercase bg-slate-900/80">
+                        <tr className="text-[9px] text-slate-400 uppercase bg-slate-900/80">
                           <th className="px-2 py-0.5">Entry</th>
                           <th className="px-2 py-0.5">Exit</th>
                           <th className="px-2 py-0.5 text-right">In$</th>
@@ -2358,44 +2416,10 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 const pnlPct = unrealPnl != null && displayEntry > 0 ? ((isLong ? livePrice! - displayEntry : displayEntry - livePrice!) / displayEntry) * 100 : null;
 
                 return (
-                  <div className={`flex gap-2 ${hasOpen ? "" : ""}`}>
-                    {/* ─── Daily P&L ─── */}
-                    {hasDays && (
-                      <div className={`${hasOpen ? "w-1/2" : "w-full"} rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/80 to-slate-950/60 overflow-hidden`}>
-                        <div className="px-3 py-2 flex items-center justify-between border-b border-slate-800/30">
-                          <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">
-                            Daily P&L · {days.length} day{days.length > 1 ? "s" : ""}
-                          </span>
-                          <span className={`text-sm font-bold tabular-nums ${totalPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                            {totalPnl >= 0 ? "+" : ""}${n(totalPnl).toFixed(0)}
-                          </span>
-                        </div>
-                        <div className="px-3 py-2 space-y-1 max-h-[200px] overflow-y-auto">
-                          {[...days].reverse().map((d: { date: string; pnl: number; win_rate: number }) => (
-                            <div key={d.date} className="flex items-center gap-2">
-                              <span className="text-[9px] text-slate-500 tabular-nums w-[52px] shrink-0">{d.date.slice(5)}</span>
-                              <div className="flex-1 h-2 bg-slate-800/60 rounded-full overflow-hidden">
-                                {d.pnl >= 0 ? (
-                                  <div className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded-full transition-all" style={{ width: `${Math.min(100, (d.pnl / maxAbs) * 100)}%` }} />
-                                ) : (
-                                  <div className="h-full bg-gradient-to-l from-rose-600 to-rose-400 rounded-full ml-auto transition-all" style={{ width: `${Math.min(100, (Math.abs(d.pnl) / maxAbs) * 100)}%` }} />
-                                )}
-                              </div>
-                              <span className={`text-[10px] font-bold tabular-nums w-[50px] text-right ${d.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                                {d.pnl >= 0 ? "+" : ""}${n(d.pnl).toFixed(0)}
-                              </span>
-                              <span className={`text-[8px] font-bold tabular-nums w-[28px] text-right ${d.win_rate >= 60 ? "text-emerald-500/70" : d.win_rate >= 40 ? "text-amber-500/70" : "text-rose-500/70"}`}>
-                                {d.win_rate.toFixed(0)}%
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
+                  <div>
                     {/* ─── Currently Holding ─── */}
                     {pos ? (
-                      <div className={`${hasDays ? "w-1/2" : "w-full"} rounded-xl border ${unrealPnl != null && unrealPnl >= 0 ? "border-emerald-500/20" : "border-rose-500/20"} bg-gradient-to-b from-slate-900/90 to-slate-950/95 overflow-hidden flex flex-col`}>
+                      <div className={`w-full rounded-xl border ${unrealPnl != null && unrealPnl >= 0 ? "border-emerald-500/20" : "border-rose-500/20"} bg-gradient-to-b from-slate-900/90 to-slate-950/95 overflow-hidden flex flex-col`}>
                         {/* Header strip */}
                         <div className={`px-3 py-1.5 flex items-center justify-between ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-500/5" : "bg-rose-500/5"}`}>
                           <div className="flex items-center gap-2">
@@ -2525,7 +2549,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 );
               })()}
 
-              {/* Trade log — grouped by date */}
+              {/* Trade log — merged with Daily P&L bars */}
               <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 relative">
                 {loading && (
                   <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm rounded-lg">
