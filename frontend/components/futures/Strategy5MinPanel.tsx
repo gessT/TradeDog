@@ -298,14 +298,17 @@ function TradeRow5Min({ t, idx, onTradeClick, livePrice }: Readonly<{ t: MGC5Min
 // Trade Log grouped by date (expandable rows)
 // ═══════════════════════════════════════════════════════════════════════
 
-function TradeLogByDate({ trades, onTradeClick, livePrice }: Readonly<{ trades: MGC5MinTrade[]; onTradeClick?: (t: MGC5MinTrade) => void; livePrice?: number | null }>) {
+function TradeLogByDate({ trades, onTradeClick, livePrice, dateFrom, dateTo }: Readonly<{ trades: MGC5MinTrade[]; onTradeClick?: (t: MGC5MinTrade) => void; livePrice?: number | null; dateFrom?: string; dateTo?: string }>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [pnlFilter, setPnlFilter] = useState<"all" | "win" | "loss">("all");
   const [dirFilter, setDirFilter] = useState<"all" | "CALL" | "PUT">("all");
   const [reasonFilter, setReasonFilter] = useState<"all" | "TP" | "SL" | "TRAILING">("all");
 
-  // Apply filters
+  // Apply date range + other filters
   const filtered = trades.filter((t) => {
+    const d = t.entry_time.slice(0, 10);
+    if (dateFrom && d < dateFrom) return false;
+    if (dateTo && d > dateTo) return false;
     if (pnlFilter === "win" && t.pnl < 0) return false;
     if (pnlFilter === "loss" && t.pnl >= 0) return false;
     if (dirFilter !== "all" && (t.direction || "CALL") !== dirFilter) return false;
@@ -424,8 +427,6 @@ function TradeLogByDate({ trades, onTradeClick, livePrice }: Readonly<{ trades: 
               : "text-slate-500 hover:text-slate-300"
           }`}>{f === "all" ? "Exit" : f}</button>
         ))}
-        {/* Count */}
-        <span className="ml-auto text-[8px] text-slate-600">{filtered.length}/{trades.length}</span>
       </div>
 
       {grouped.length === 0 ? (
@@ -1483,8 +1484,15 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     d.setDate(d.getDate() - parseInt(p));
     return fmtDate(d);
   };
-  const [dateFrom, setDateFrom] = useState(() => calcFrom("3"));
+  const [dateFrom, setDateFrom] = useState(() => calcFrom("14"));
   const [dateTo, setDateTo] = useState(() => fmtDate(new Date()));
+  const setLogQuickDays = (days: number) => {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - days);
+    setDateTo(to.toISOString().slice(0, 10));
+    setDateFrom(from.toISOString().slice(0, 10));
+  };
 
   // Auto-switch SL/TP when symbol changes
   useEffect(() => {
@@ -2186,6 +2194,12 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 }`}
               >{p}</button>
             ))}
+            <span className="text-slate-700">|</span>
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+              className="bg-slate-900 border border-slate-700/60 text-slate-300 text-[9px] rounded px-1 py-0.5 w-[90px] focus:outline-none focus:border-violet-600" />
+            <span className="text-[9px] text-slate-600">→</span>
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+              className="bg-slate-900 border border-slate-700/60 text-slate-300 text-[9px] rounded px-1 py-0.5 w-[90px] focus:outline-none focus:border-violet-600" />
             <button
               onClick={runBacktest}
               disabled={loading}
@@ -2820,7 +2834,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   </div>
                 )}
                 <div className="max-h-[420px] overflow-y-auto">
-                  <TradeLogByDate trades={btData.trades} onTradeClick={(t) => { setZoomTrade(t); onTradeClick?.(t); }} livePrice={livePrice} />
+                  <TradeLogByDate trades={btData.trades} onTradeClick={(t) => { setZoomTrade(t); onTradeClick?.(t); }} livePrice={livePrice} dateFrom={dateFrom} dateTo={dateTo} />
                 </div>
               </div>
 

@@ -292,18 +292,34 @@ def _load_tiger_or_yf(symbol: str, interval: str, period: str) -> "pd.DataFrame"
         bars_pd = _bars_per_day.get(interval, 78)
         limit = min(days * bars_pd + 50, 1750)
     except Exception:
+        days = 60
         limit = 800
 
     _, df_tiger = _tiger_bars(symbol, interval, limit)
     if df_tiger is not None and not df_tiger.empty:
-        logger.debug("Tiger data used for %s/%s (%d bars)", symbol, interval, len(df_tiger))
-        return df_tiger
+        # Validate Tiger data covers the requested period.
+        # Tiger intraday history is typically limited to ~15 days.
+        # If the earliest bar is less than 80% of the requested window, fall through to yfinance.
+        try:
+            earliest = df_tiger.index[0]
+            latest   = df_tiger.index[-1]
+            tiger_span_days = (latest - earliest).total_seconds() / 86400
+            if tiger_span_days >= days * 0.7:
+                logger.debug("Tiger data used for %s/%s (%d bars, %.0fd span)", symbol, interval, len(df_tiger), tiger_span_days)
+                return df_tiger
+            else:
+                logger.debug("Tiger only has %.0fd of %sd requested — falling back to yfinance", tiger_span_days, days)
+        except Exception:
+            pass  # index comparison failed — fall through to yfinance
 
     # Fallback: yfinance
     commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": f"{symbol}=F"})
     yf_symbol = commodity.get("yf", f"{symbol}=F")
     logger.debug("Tiger unavailable — falling back to yfinance for %s/%s", symbol, interval)
-    df_yf = load_yfinance(symbol=yf_symbol, interval=interval, period=period)
+    # Map non-standard periods to valid yfinance ones
+    _valid_yf_5m = {"1d", "2d", "5d", "7d", "14d", "30d", "60d"}
+    yf_period = period if period in _valid_yf_5m else "60d"
+    df_yf = load_yfinance(symbol=yf_symbol, interval=interval, period=yf_period)
     if df_yf is None or df_yf.empty:
         raise ValueError(f"No data available for {symbol} ({interval}, {period})")
     return df_yf
