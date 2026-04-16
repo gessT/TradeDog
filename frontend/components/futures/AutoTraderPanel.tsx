@@ -359,8 +359,8 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                         <span className={`flex-1 text-[9px] font-semibold truncate ${isActive ? "text-violet-200" : ""}`}>{p.name}</span>
                         <div className="shrink-0 flex items-center gap-0.5">
                           <span className="text-[7px] text-slate-500 font-mono">{p.interval}</span>
-                          {p.sl > 0 && <span className="text-[7px] px-1 py-px rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15">SL{p.sl}×</span>}
-                          {p.tp > 0 && <span className="text-[7px] px-1 py-px rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15">TP{p.tp}×</span>}
+                          {p.sl > 0 && <span className="text-[8px] px-1.5 py-px rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15">SL{p.sl}x</span>}
+                          {p.tp > 0 && <span className="text-[8px] px-1.5 py-px rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15">TP{p.tp}x</span>}
                         </div>
                         {isActive && <span className="shrink-0 text-violet-400 text-[8px]">✓</span>}
                       </button>
@@ -468,21 +468,21 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
       <div className="mx-2 mt-2">
         {!started ? (
           /* ── Not Running ── */
-          <div className="rounded-lg ring-1 ring-slate-700/40 bg-slate-800/20 p-3 text-center space-y-1">
-            <div className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">Not Running</div>
-            <div className="text-[9px] text-slate-400 leading-relaxed">
-              Select a strategy above ▲, then start paper or live trading.
+          <div className="rounded-lg ring-1 ring-slate-700/40 bg-slate-800/20 p-5 text-center space-y-2">
+            <div className="text-xs text-slate-300 font-bold uppercase tracking-widest">Not Running</div>
+            <div className="text-[11px] text-slate-400 leading-relaxed">
+              Select a strategy above, then start paper or live trading.
             </div>
             {pendingConfig ? (
-              <div className="flex items-center justify-center gap-1.5 mt-1.5">
-                <span className="text-[7px] px-1.5 py-px rounded bg-slate-800 text-slate-400 ring-1 ring-slate-700/50 font-bold">{pendingConfig.interval}</span>
-                <span className="text-[7px] px-1.5 py-px rounded bg-violet-500/10 text-violet-300 ring-1 ring-violet-500/20 font-bold">{pendingConfig.preset ?? "Custom"}</span>
-                <span className="text-[7px] px-1.5 py-px rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15 font-bold">SL {pendingConfig.slMult}×</span>
-                <span className="text-[7px] px-1.5 py-px rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15 font-bold">TP {pendingConfig.tpMult}×</span>
+              <div className="flex items-center justify-center gap-2 mt-2 flex-wrap">
+                <span className="text-[9px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 ring-1 ring-slate-700/50 font-bold">{pendingConfig.interval}</span>
+                <span className="text-[9px] px-2 py-0.5 rounded bg-violet-500/10 text-violet-300 ring-1 ring-violet-500/20 font-bold">{pendingConfig.preset ?? "Custom"}</span>
+                <span className="text-[9px] px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15 font-bold">SL {pendingConfig.slMult}x</span>
+                <span className="text-[9px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15 font-bold">TP {pendingConfig.tpMult}x</span>
               </div>
             ) : (
-              <div className="flex items-center justify-center gap-1 mt-1.5 text-[8px] text-amber-400/60">
-                <span>▲</span><span>Pick a strategy from the dropdown in the header</span>
+              <div className="flex items-center justify-center gap-1 mt-2 text-[10px] text-amber-400/60">
+                <span>Pick a strategy from the dropdown in the header</span>
               </div>
             )}
           </div>
@@ -507,7 +507,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                 <span className={`text-xs font-black tracking-tight ${snap.position.direction === "CALL" ? "text-emerald-400" : "text-red-400"}`}>
                   {snap.position.direction === "CALL" ? "▲ LONG" : "▼ SHORT"}
                 </span>
-                <span className="text-[8px] text-white/25 font-mono">×{snap.position.qty}</span>
+                <span className="text-[9px] text-white/30 font-mono">x{snap.position.qty}</span>
               </div>
               <div className="flex items-center gap-1">
                 {mode === "live"
@@ -519,21 +519,21 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
 
             {/* P&L hero */}
             {unrealizedPnl !== null && (
-              <div className={`px-3 py-2 text-center ${unrealizedPnl >= 0 ? "bg-emerald-500/[0.03]" : "bg-red-500/[0.03]"}`}>
-                <div className={`text-xl font-black tabular-nums tracking-tight ${unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+              <div className={`px-4 py-3 text-center ${unrealizedPnl >= 0 ? "bg-emerald-500/[0.03]" : "bg-red-500/[0.03]"}`}>
+                <div className={`text-2xl font-black tabular-nums tracking-tight ${unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                   {unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl.toFixed(2)}
                 </div>
-                <div className="text-[9px] text-white/55 mt-0.5">Unrealized P&L</div>
+                <div className="text-[10px] text-white/55 mt-0.5">Unrealized P&L</div>
               </div>
             )}
 
             {/* Entry / SL / TP */}
-            <div className="px-3 py-1.5 space-y-1.5">
-              <div className="flex items-center justify-between text-[9px]">
+            <div className="px-3 py-2 space-y-2">
+              <div className="flex items-center justify-between text-[10px]">
                 <span className="text-white/60">Entry</span>
                 <span className="text-white/90 font-mono font-bold">${snap.position.entry_price.toFixed(2)}</span>
               </div>
-              <div className="flex items-center gap-1 text-[8px] font-mono">
+              <div className="flex items-center gap-1.5 text-[9px] font-mono">
                 <span className="text-red-400">SL {snap.position.stop_loss.toFixed(2)}</span>
                 <div className="flex-1 h-1 bg-slate-800/60 rounded-full overflow-hidden relative">
                   {(() => {
@@ -559,43 +559,44 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                 </div>
                 <span className="text-emerald-400">TP {snap.position.take_profit.toFixed(2)}</span>
               </div>
-              <div className="flex items-center justify-between text-[8px] text-white/55">
+              <div className="flex items-center justify-between text-[9px] text-white/55">
                 <span>{fmtTZ(snap.position.entry_time)}</span>
-                <span>SL {activeConfig?.slMult ?? 0}× · TP {activeConfig?.tpMult ?? 0}× ATR</span>
+                <span>SL {activeConfig?.slMult ?? 0}x / TP {activeConfig?.tpMult ?? 0}x ATR</span>
               </div>
             </div>
 
             {/* What happens next */}
-            <div className="px-3 py-1.5 border-t border-white/[0.06] text-center">
-              <span className="text-[8px] text-white/55">Monitoring — will auto-exit on SL/TP hit or signal flip</span>
+            <div className="px-3 py-2 border-t border-white/[0.06] text-center">
+              <span className="text-[9px] text-white/55">Monitoring — will auto-exit on SL/TP hit or signal flip</span>
             </div>
           </div>
         ) : (
           /* ── Scanning / Waiting for Entry ── */
           <div className="rounded-lg ring-1 ring-emerald-500/15 bg-emerald-500/[0.03] overflow-hidden">
-            <div className="relative px-3 py-3 text-center overflow-hidden">
+            <div className="relative px-4 py-4 text-center overflow-hidden">
               <div className="at-scan-sweep" />
-              <div className="flex items-center justify-center gap-2 mb-1">
-                <span className="relative flex h-2 w-2">
+              <div className="flex items-center justify-center gap-2 mb-1.5">
+                <span className="relative flex h-2.5 w-2.5">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400" />
                 </span>
-                <span className="text-[11px] text-emerald-400 font-bold uppercase tracking-widest">Waiting for Entry</span>
+                <span className="text-sm text-emerald-400 font-bold uppercase tracking-widest">Waiting for Entry</span>
               </div>
-              <div className="text-[9px] text-white/60">
-                Scanning every bar close · same strategy as backtest
+              <div className="text-[11px] text-white/60 mb-2">
+                Scanning every bar close
               </div>
               {activeConfig && (
-                <div className="flex items-center justify-center gap-1.5 mt-2">
-                  <span className="text-[7px] px-1.5 py-px rounded bg-slate-800 text-slate-400 ring-1 ring-slate-700/50 font-bold">{activeConfig.interval}</span>
-                  <span className="text-[7px] px-1.5 py-px rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15 font-bold">SL {activeConfig.slMult}×</span>
-                  <span className="text-[7px] px-1.5 py-px rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15 font-bold">TP {activeConfig.tpMult}×</span>
+                <div className="flex items-center justify-center gap-2 mt-2 flex-wrap">
+                  <span className="text-[9px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 ring-1 ring-slate-700/50 font-bold">{activeConfig.preset ?? "Custom"}</span>
+                  <span className="text-[9px] px-2 py-0.5 rounded bg-slate-800/60 text-slate-400 ring-1 ring-slate-700/40 font-bold">{activeConfig.interval}</span>
+                  <span className="text-[9px] px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15 font-bold">SL {activeConfig.slMult}x</span>
+                  <span className="text-[9px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15 font-bold">TP {activeConfig.tpMult}x</span>
                 </div>
               )}
             </div>
             {state === "COOLDOWN" && snap?.cooldown_remaining && (
-              <div className="px-3 py-1 border-t border-amber-500/10 text-center">
-                <span className="text-[8px] text-amber-400/70 font-bold">Cooldown — {Math.ceil(snap.cooldown_remaining)}s remaining</span>
+              <div className="px-3 py-1.5 border-t border-amber-500/10 text-center">
+                <span className="text-[9px] text-amber-400/70 font-bold">Cooldown — {Math.ceil(snap.cooldown_remaining)}s remaining</span>
               </div>
             )}
           </div>
@@ -873,7 +874,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                   <div className="flex items-center gap-1">
                     <span className="text-[9px] text-white/85 font-mono font-bold">${snap.position.entry_price.toFixed(2)}</span>
                     <span className="text-[8px] px-0.5 py-px rounded bg-violet-500/20 text-violet-300 ring-1 ring-violet-500/30 font-bold">OPEN</span>
-                    <span className="text-[8px] text-white/50">×{snap.position.qty}</span>
+                    <span className="text-[9px] text-white/50">x{snap.position.qty}</span>
                   </div>
                   <div className="flex items-center gap-1.5 text-[8px] text-white/55 mt-px">
                     <span className="text-red-400">SL ${snap.position.stop_loss.toFixed(2)}</span>
