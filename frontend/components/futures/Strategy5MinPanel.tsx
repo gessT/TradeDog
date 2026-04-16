@@ -579,7 +579,7 @@ export type BuiltInPreset = {
 
 export const BUILT_IN_PRESETS: BuiltInPreset[] = [
   {
-    name: "🔒 Locked 5Min BoS",
+    name: "🔒 BoS Config",
     desc: "1H HTF bias · BoS breakout · EMA50 · Supertrend · SL1.2×TP1.5×",
     interval: "5m",
     sl: 1.2,
@@ -604,7 +604,7 @@ export const BUILT_IN_PRESETS: BuiltInPreset[] = [
     },
   },
   {
-    name: "🎯 2Min Pullback",
+    name: "🎯 Pullback Config",
     desc: "EMA20/50 pullback · RSI>50 · ATR filter · 2m bars",
     interval: "2m",
     sl: 1.0,
@@ -1433,6 +1433,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const [presetName, setPresetName] = useState("");
   const [showPresetSave, setShowPresetSave] = useState(false);
   const [activePreset, setActivePreset] = useState<string | null>("⚡ Keep GOING");
+  // Editable strategy label (shown in header, independent from preset names)
+  const [strategyLabel, setStrategyLabel] = useState("⚡ Keep GOING");
+  const [editingLabel, setEditingLabel] = useState(false);
 
   // ── Load persisted config on mount / symbol change ──
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -1509,6 +1512,17 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     [symbol, period, slMult, tpMult, dateFrom, dateTo, conditionToggles, riskFilters]
   );
 
+  // ── Apply a built-in preset ────────────────────────────
+  const applyBuiltInPreset = useCallback((bp: BuiltInPreset) => {
+    setConditionToggles((prev) => ({ ...prev, ...bp.toggles }));
+    setActivePreset(bp.name);
+    setStrategyLabel(bp.name);
+    setSlMult(bp.sl);
+    setTpMult(bp.tp);
+    handleIntervalChange(bp.interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Backtest ──────────────────────────────────────────
   const [hasRunBacktest, setHasRunBacktest] = useState(false);
 
@@ -1524,7 +1538,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       // Check if active preset uses a different endpoint
       const activeBuiltIn = BUILT_IN_PRESETS.find((bp) => bp.name === activePreset);
       if (activeBuiltIn?.endpoint === "2min") {
-        const res = await fetchMGC2MinBacktest(symbol, slMult, tpMult);
+        const res = await fetchMGC2MinBacktest(symbol, slMult, tpMult, period);
         setBtData(res);
         onTradesUpdate?.(res.trades);
         setHasRunBacktest(true);
@@ -1550,7 +1564,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       }
 
       if (activeBuiltIn?.endpoint === "5min_locked") {
-        const res = await fetchMGC5MinLockedBacktest(symbol, slMult, tpMult);
+        const res = await fetchMGC5MinLockedBacktest(symbol, slMult, tpMult, period);
         setBtData(res);
         onTradesUpdate?.(res.trades);
         setHasRunBacktest(true);
@@ -1869,6 +1883,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         exitConditions.use_sma28_cut ?? false,
         skipHours.length > 0 ? skipHours : undefined,
         maxLossPerTrade,
+        interval,
       );
       setOptimizationResults(results);
       if (results.length > 0) {
@@ -1898,7 +1913,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     } finally {
       setOptimizing(false);
     }
-  }, [symbol, period, slMult, tpMult, riskFilters]);
+  }, [symbol, period, slMult, tpMult, riskFilters, interval]);
 
   const m = btData?.metrics;
 
@@ -1913,17 +1928,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="text-sm font-bold text-slate-100 tracking-tight">{symbolName}</span>
-                <select
-                  value={interval}
-                  onChange={(e) => handleIntervalChange(e.target.value)}
-                  className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700/50 text-slate-400 uppercase tracking-wider appearance-none cursor-pointer hover:border-cyan-600/50 focus:outline-none focus:border-cyan-600/50 transition-colors"
-                  style={{ colorScheme: "dark" }}
-                >
-                  <option value="1m">1min</option>
-                  <option value="2m">2min</option>
-                  <option value="5m">5min</option>
-                  <option value="15m">15min</option>
-                </select>
               </div>
               <div className="text-[9px] text-slate-500 -mt-0.5">{symbol}=F · Futures</div>
             </div>
@@ -1958,6 +1962,129 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             >
               🧪 Exam
             </button>
+            <button
+              disabled={!btData}
+              onClick={() => {
+                if (!btData) return;
+                const compact = {
+                  ...btData,
+                  candles: btData.candles.slice(-200).map((c) => ({
+                    time: c.time,
+                    ohlc: [c.open, c.high, c.low, c.close] as [number, number, number, number],
+                    volume: c.volume,
+                    ema_fast: c.ema_fast,
+                    ema_slow: c.ema_slow,
+                    rsi: c.rsi,
+                    macd_hist: c.macd_hist,
+                    st_dir: c.st_dir,
+                    signal: c.signal,
+                    mkt_structure: c.mkt_structure,
+                    sma_28: c.sma_28,
+                    adx: c.adx,
+                    ht_dir: c.ht_dir,
+                    ht_line: c.ht_line,
+                  })),
+                };
+                const jsonStr = JSON.stringify(compact, null, 2).replace(
+                  /"ohlc": \[\n\s+([\d.]+),\n\s+([\d.]+),\n\s+([\d.]+),\n\s+([\d.]+)\n\s+\]/g,
+                  (_, o, h, l, c2) => `"ohlc": [${o},${h},${l},${c2}]`
+                );
+                const blob = new Blob([jsonStr], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${btData.symbol}_${btData.interval}_${btData.period}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all ${
+                btData
+                  ? "bg-slate-700 text-slate-200 hover:bg-slate-600 active:scale-95 shadow-md"
+                  : "bg-slate-800 text-slate-600 cursor-not-allowed"
+              }`}
+              title="Download backtest data as JSON (compact OHLC arrays)"
+            >
+              ⬇ JSON
+            </button>
+          </div>
+        </div>
+
+        {/* ── Strategy quick-config row ─────────────────────── */}
+        <div className="flex items-center gap-2 mb-2 flex-wrap">
+          {/* Quick-pick strategy buttons */}
+          {BUILT_IN_PRESETS.filter((bp) => bp.name === "🎯 Pullback Config" || bp.name === "🔒 BoS Config").map((bp) => (
+            <button
+              key={bp.name}
+              onClick={() => applyBuiltInPreset(bp)}
+              className={`px-2 py-1 text-[9px] font-bold rounded-md border transition-all ${
+                activePreset === bp.name
+                  ? "bg-cyan-900/40 border-cyan-600/60 text-cyan-300"
+                  : "bg-slate-800/60 border-slate-700/50 text-slate-400 hover:border-slate-500/60 hover:text-slate-200"
+              }`}
+              title={bp.desc}
+            >
+              {bp.name}
+            </button>
+          ))}
+
+          {/* Editable strategy label */}
+          <div className="flex items-center gap-1 ml-1">
+            {editingLabel ? (
+              <input
+                autoFocus
+                value={strategyLabel}
+                onChange={(e) => setStrategyLabel(e.target.value)}
+                onBlur={() => setEditingLabel(false)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingLabel(false); }}
+                className="bg-slate-900 border border-cyan-600/50 rounded px-2 py-0.5 text-[10px] text-slate-100 font-bold w-40 focus:outline-none"
+              />
+            ) : (
+              <button
+                onClick={() => setEditingLabel(true)}
+                className="text-[10px] font-bold text-slate-300 hover:text-cyan-300 transition-colors px-1 py-0.5 rounded hover:bg-slate-800/60"
+                title="Click to rename"
+              >
+                ✏ {strategyLabel}
+              </button>
+            )}
+          </div>
+
+          {/* SL / TP inline number inputs */}
+          <div className="ml-auto flex items-center gap-2">
+            <label className="flex items-center gap-1 text-[9px]">
+              <span className="text-rose-400 font-bold">SL</span>
+              <input
+                type="number" min="0.5" max="10" step="0.5"
+                value={slMult}
+                onChange={(e) => setSlMult(parseFloat(e.target.value) || slMult)}
+                className="w-14 bg-slate-900 border border-slate-700/60 rounded px-1.5 py-0.5 text-[10px] text-rose-300 font-bold text-right focus:outline-none focus:border-rose-500/60"
+                style={{ colorScheme: "dark" }}
+              />
+              <span className="text-slate-500">×</span>
+            </label>
+            <label className="flex items-center gap-1 text-[9px]">
+              <span className="text-emerald-400 font-bold">TP</span>
+              <input
+                type="number" min="0.5" max="10" step="0.5"
+                value={tpMult}
+                onChange={(e) => setTpMult(parseFloat(e.target.value) || tpMult)}
+                className="w-14 bg-slate-900 border border-slate-700/60 rounded px-1.5 py-0.5 text-[10px] text-emerald-300 font-bold text-right focus:outline-none focus:border-emerald-500/60"
+                style={{ colorScheme: "dark" }}
+              />
+              <span className="text-slate-500">×</span>
+            </label>
+            {/* Interval */}
+            <select
+              value={interval}
+              onChange={(e) => handleIntervalChange(e.target.value)}
+              className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700/50 text-slate-400 uppercase tracking-wider appearance-none cursor-pointer hover:border-cyan-600/50 focus:outline-none focus:border-cyan-600/50 transition-colors"
+              style={{ colorScheme: "dark" }}
+            >
+              <option value="1m">1min</option>
+              <option value="2m">2min</option>
+              <option value="5m">5min</option>
+              <option value="15m">15min</option>
+            </select>
           </div>
         </div>
       </div>
@@ -2034,7 +2161,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 >
                   <option value="__custom__">Custom</option>
                   {BUILT_IN_PRESETS.map((bp) => (
-                    <option key={bp.name} value={bp.name}>🔒 {bp.name} ({bp.interval} · SL{bp.sl}× TP{bp.tp}×)</option>
+                    <option key={bp.name} value={bp.name}>{bp.name} ({bp.interval} · SL{bp.sl}× TP{bp.tp}×)</option>
                   ))}
                   {presets.map((p) => (
                     <option key={p.name} value={p.name}>{p.name}</option>

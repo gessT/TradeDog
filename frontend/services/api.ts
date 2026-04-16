@@ -1325,13 +1325,14 @@ export async function fetchMGC2MinBacktest(
   symbol: string = "MGC",
   sl_mult: number = 1.0,
   tp_mult: number = 1.5,
+  period: string = "60d",
   rsi_min: number = 50,
   ema_fast: number = 20,
   ema_slow: number = 50,
   capital: number = 10000,
   direction: string = "SHORT",
 ): Promise<MGC5MinBacktestResponse> {
-  const url = `${API_BASE}/mgc/backtest_2min?symbol=${encodeURIComponent(toYF(symbol))}&sl_mult=${sl_mult}&tp_mult=${tp_mult}&rsi_min=${rsi_min}&ema_fast=${ema_fast}&ema_slow=${ema_slow}&capital=${capital}&direction=${encodeURIComponent(direction)}`;
+  const url = `${API_BASE}/mgc/backtest_2min?symbol=${encodeURIComponent(toYF(symbol))}&sl_mult=${sl_mult}&tp_mult=${tp_mult}&period=${encodeURIComponent(period)}&rsi_min=${rsi_min}&ema_fast=${ema_fast}&ema_slow=${ema_slow}&capital=${capital}&direction=${encodeURIComponent(direction)}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
@@ -1344,6 +1345,7 @@ export async function fetchMGC5MinLockedBacktest(
   symbol: string = "MGC",
   sl_atr_mult: number = 1.0,
   tp_atr_mult: number = 2.0,
+  period: string = "60d",
   bos_lookback: number = 10,
   st_period: number = 10,
   st_mult: number = 2.0,
@@ -1351,7 +1353,7 @@ export async function fetchMGC5MinLockedBacktest(
   use_htf: boolean = true,
   capital: number = 10000,
 ): Promise<MGC5MinBacktestResponse> {
-  const url = `${API_BASE}/mgc/backtest_5min_locked?symbol=${encodeURIComponent(toYF(symbol))}&sl_atr_mult=${sl_atr_mult}&tp_atr_mult=${tp_atr_mult}&bos_lookback=${bos_lookback}&st_period=${st_period}&st_mult=${st_mult}&rsi_min=${rsi_min}&use_htf=${use_htf}&capital=${capital}`;
+  const url = `${API_BASE}/mgc/backtest_5min_locked?symbol=${encodeURIComponent(toYF(symbol))}&sl_atr_mult=${sl_atr_mult}&tp_atr_mult=${tp_atr_mult}&period=${encodeURIComponent(period)}&bos_lookback=${bos_lookback}&st_period=${st_period}&st_mult=${st_mult}&rsi_min=${rsi_min}&use_htf=${use_htf}&capital=${capital}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
@@ -1392,8 +1394,9 @@ export async function optimize5MinConditions(
   useSma28Cut: boolean = false,
   skipHours?: number[],
   maxLossPerTrade: number = 0,
+  interval: string = "5m",
 ): Promise<ConditionOptimizationResult[]> {
-  let url = `${API_BASE}/mgc/optimize_conditions_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&top_n=${top_n}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  let url = `${API_BASE}/mgc/optimize_conditions_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&top_n=${top_n}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}&interval=${encodeURIComponent(interval)}`;
   if (skipFlat) url += `&skip_flat=true`;
   url += `&skip_counter_trend=${skipCounterTrend}`;
   if (useEmaExit) url += `&use_ema_exit=true`;

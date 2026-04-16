@@ -2043,7 +2043,7 @@ async def mgc_backtest_2min(
         from strategies.futures.strategy_2min import GMCPullbackStrategy, DEFAULT_PARAMS
         from strategies.futures.backtest_2min import Backtester2Min
 
-        df = load_yfinance(symbol=symbol, interval="2m", period="60d")
+        df = load_yfinance(symbol=symbol, interval="2m", period=period)
         if df.empty or len(df) < 100:
             raise ValueError("Not enough 2m data from yfinance.")
 
@@ -2143,6 +2143,7 @@ async def mgc_backtest_2min(
 @router.get("/backtest_5min_locked")
 async def mgc_backtest_5min_locked(
     symbol: Annotated[str, Query()] = "MGC=F",
+    period: Annotated[str, Query()] = "60d",
     capital: Annotated[float, Query()] = INITIAL_CAPITAL,
     sl_atr_mult: Annotated[float, Query(ge=0.3, le=5.0)] = 1.2,
     tp_atr_mult: Annotated[float, Query(ge=0.3, le=5.0)] = 1.5,
@@ -2160,7 +2161,7 @@ async def mgc_backtest_5min_locked(
         from strategies.futures.strategy_5min_locked import LockedStrategy5Min, DEFAULT_LOCKED_PARAMS
         from strategies.futures.backtest_5min_locked import BacktesterLocked5Min
 
-        df_5m = load_yfinance(symbol=symbol, interval="5m", period="60d")
+        df_5m = load_yfinance(symbol=symbol, interval="5m", period=period)
         if df_5m.empty or len(df_5m) < 100:
             raise ValueError("Not enough 5m data from yfinance.")
 
@@ -3448,8 +3449,9 @@ async def optimize_5min_conditions(
     use_sma28_cut: Annotated[bool, Query()] = False,
     skip_hours: Annotated[Optional[str], Query()] = None,
     max_loss_per_trade: Annotated[float, Query(ge=0, le=2000)] = 0.0,
+    interval: Annotated[str, Query()] = "5m",
 ) -> list[dict]:
-    """Optimize 5-minute condition combinations using current risk filters and SL/TP."""
+    """Optimize condition combinations using current risk filters and SL/TP for the selected interval."""
     
     def _run():
         import pandas as _pd
@@ -3457,10 +3459,12 @@ async def optimize_5min_conditions(
         from strategies.futures.strategy_5min import DEFAULT_5MIN_PARAMS
         from itertools import combinations
 
-        # Load 5m data
-        df = load_yfinance(symbol=symbol, interval="5m", period="60d")
+        # Load data for the selected interval
+        _max_period = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d"}
+        fetch_period = _max_period.get(interval, "60d")
+        df = load_yfinance(symbol=symbol, interval=interval, period=fetch_period)
         if df.empty or len(df) < 20:
-            raise ValueError("Not enough 5m data from yfinance.")
+            raise ValueError(f"Not enough {interval} data from yfinance.")
 
         # Determine display window (same logic as backtest_5min endpoint)
         display_start: str | None = None
