@@ -282,18 +282,8 @@ function TradeRow5Min({ t, idx, onTradeClick, livePrice }: Readonly<{ t: MGC5Min
           <span className={win ? "text-emerald-400" : "text-rose-400"}>{win ? "+" : ""}{n(t.pnl).toFixed(2)}</span>
         )}
       </td>
-      <td className="px-2 py-1 text-right text-[10px] font-bold text-rose-400/80">
-        {n(t.mae) < 0 ? `${n(t.mae).toFixed(2)}` : "—"}
-      </td>
       <td className="px-2 py-1 text-center">
         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${t.direction === "PUT" ? "bg-rose-900/40 text-rose-400" : "bg-emerald-900/40 text-emerald-400"}`}>{t.direction || "CALL"}</span>
-      </td>
-      <td className="px-2 py-1 text-center">
-        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-          t.mkt_structure === 1 ? "bg-emerald-900/40 text-emerald-400" :
-          t.mkt_structure === -1 ? "bg-rose-900/40 text-rose-400" :
-          "bg-slate-700/40 text-slate-400"
-        }`}>{t.mkt_structure === 1 ? "BULL" : t.mkt_structure === -1 ? "BEAR" : "FLAT"}</span>
       </td>
       <td className="px-2 py-1 text-center">
         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${reasonStyle(t.reason)}`}>{t.reason}</span>
@@ -499,9 +489,7 @@ function TradeLogByDate({ trades, onTradeClick, livePrice }: Readonly<{ trades: 
                           <th className="px-2 py-0.5 text-right">Out$</th>
                           <th className="px-2 py-0.5 text-right">Pip$</th>
                           <th className="px-2 py-0.5 text-right">P&L</th>
-                          <th className="px-2 py-0.5 text-right">MAE$</th>
                           <th className="px-2 py-0.5 text-center">Dir</th>
-                          <th className="px-2 py-0.5 text-center">Struct</th>
                           <th className="px-2 py-0.5 text-center">Type</th>
                         </tr>
                       </thead>
@@ -1398,7 +1386,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const [error, setError] = useState<string | null>(null);
 
   // ── Auto-Trading state (persisted in backend) ─────────────────────
-  const [autoTrading, setAutoTrading] = useState(false);
+  const [autoTrading, setAutoTrading] = useState(true);
   const autoTradingRef = useRef(false);
   autoTradingRef.current = autoTrading;
   const lastAutoEntryRef = useRef<string>(""); // prevent double-exec on same entry_time
@@ -1491,9 +1479,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         }
       }
       setPresets(loadedPresets);
-      // Restore auto-trading state from backend
-      if (autoSettings?.enabled) {
-        setAutoTrading(true);
+      // Restore auto-trading state from backend (default ON if backend hasn't saved a setting)
+      if (autoSettings?.enabled !== undefined) {
+        setAutoTrading(autoSettings.enabled);
       }
       autoTradingLoaded.current = true;
       setConfigLoaded(true);
@@ -1862,7 +1850,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       setSyncing(false);
       setTimeout(() => setSyncStatus(null), 4000);
     }
-  }, [btData?.open_position, btData?.trades, symbol, syncing, onDirectExecute, activePreset]);
+  }, [btData?.open_position?.entry_time, btData?.trades, symbol, syncing, onDirectExecute, activePreset]);
 
   // ── Auto-Trading: periodic backtest re-run (every 5min candle close) ──
   const autoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -2217,7 +2205,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   setActivePreset(p.name);
                 }
               }}
-              className="rounded pl-1.5 pr-5 py-1 text-[9px] bg-slate-900/60 border border-slate-700/50 text-slate-300 font-bold appearance-none cursor-pointer hover:border-slate-600/60 focus:outline-none transition-colors"
+              className="rounded pl-1.5 pr-5 py-1 text-[9px] bg-slate-900/60 border border-slate-700/50 text-slate-300 font-bold appearance-none cursor-pointer hover:border-slate-600/60 focus:outline-none focus:border-cyan-600/50 transition-colors"
               style={{ colorScheme: "dark" }}
             >
               {BUILT_IN_PRESETS.map((bp) => (
@@ -2692,8 +2680,20 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                         </div>
                       ) : (
                         <div className="rounded-xl border border-slate-800/40 bg-slate-900/40 flex flex-col items-center justify-center py-6 gap-2">
-                          <span className="text-2xl animate-pulse">🪬</span>
+                          <span className={`text-2xl ${autoTrading ? "animate-pulse" : "opacity-30"}`}>🪬</span>
                           <span className="text-[9px] text-slate-500 font-semibold text-center leading-tight">Waiting for<br/>signal</span>
+                          {/* Auto-scanner toggle */}
+                          <button
+                            onClick={() => setAutoTrading(v => !v)}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-[9px] font-bold transition-all duration-200 ${
+                              autoTrading
+                                ? "bg-emerald-900/50 border-emerald-500/60 text-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.25)]"
+                                : "bg-slate-800/60 border-slate-700/60 text-slate-500"
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${autoTrading ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`} />
+                            {autoTrading ? "Scanner ON" : "Scanner OFF"}
+                          </button>
                           <span className="text-[8px] text-slate-700">No position open</span>
                         </div>
                       )}
