@@ -664,7 +664,7 @@ export default function MYStrategySection({
             const d = STRATEGY_DEFAULTS[activeStrategy];
             const defaultDisabled = new Set(d.disabledConditions);
             const condMatch = disabledConditions.size === defaultDisabled.size
-              && [...disabledConditions].every(k => defaultDisabled.has(k));
+              && Array.from(disabledConditions).every(k => defaultDisabled.has(k));
             const isDefault = atrSlMult === d.sl && tp1RMult === d.tp1 && tp2RMult === d.tp2
               && capital === d.capital && condMatch;
             return (
