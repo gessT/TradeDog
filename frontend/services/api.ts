@@ -1400,6 +1400,20 @@ export async function fetchMGCSyncTestBacktest(
   return (await response.json()) as MGC5MinBacktestResponse;
 }
 
+export async function fetchMGCAlwaysOpenBacktest(
+  symbol: string = "MGC",
+  period: string = "1d",
+  capital: number = 10000,
+): Promise<MGC5MinBacktestResponse> {
+  const url = `${API_BASE}/mgc/backtest_always_open?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&capital=${capital}`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as MGC5MinBacktestResponse;
+}
+
 
 // ── 5min Condition Optimization ──────────────────────────────────────
 

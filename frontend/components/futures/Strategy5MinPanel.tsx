@@ -21,6 +21,7 @@ import {
   fetchMGC5MinLockedBacktest,
   fetchMGC5MinLockedShortBacktest,
   fetchMGCSyncTestBacktest,
+  fetchMGCAlwaysOpenBacktest,
   execute5Min,
   getMgcPosition,
   optimize5MinConditions,
@@ -565,7 +566,7 @@ export type BuiltInPreset = {
   sl: number;
   tp: number;
   desc: string;
-  endpoint?: "5min" | "2min" | "5min_locked" | "5min_locked_short" | "5min_mix" | "sync_test";  // which backend endpoint to use (default: 5min)
+  endpoint?: "5min" | "2min" | "5min_locked" | "5min_locked_short" | "5min_mix" | "sync_test" | "always_open";  // which backend endpoint to use (default: 5min)
 };
 
 export const BUILT_IN_PRESETS: BuiltInPreset[] = [
@@ -651,6 +652,31 @@ export const BUILT_IN_PRESETS: BuiltInPreset[] = [
     sl: 0,
     tp: 0,
     endpoint: "sync_test",
+    toggles: {
+      ema_trend: false,
+      ema_slope: false,
+      pullback: false,
+      breakout: false,
+      supertrend: false,
+      macd_momentum: false,
+      rsi_momentum: false,
+      volume_spike: false,
+      atr_range: false,
+      session_ok: false,
+      adx_ok: false,
+      smc_bos: false,
+      smc_ob: false,
+      smc_fvg: false,
+      halftrend: false,
+    },
+  },
+  {
+    name: "🟢 Always Open",
+    desc: "TEST ONLY · Always opens 1 LONG position · Entry = price 5 min ago · No SL/TP",
+    interval: "5m",
+    sl: 0,
+    tp: 0,
+    endpoint: "always_open",
     toggles: {
       ema_trend: false,
       ema_slope: false,
@@ -1752,6 +1778,14 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         return;
       }
 
+      if (activeBuiltIn?.endpoint === "always_open") {
+        const res = await fetchMGCAlwaysOpenBacktest(symbol, "1d", 10000);
+        setBtData(res);
+        onTradesUpdate?.(res.trades);
+        setHasRunBacktest(true);
+        return;
+      }
+
       // Compute disabled conditions from toggles (OFF = disabled)
       const disabled = CONDITION_DEFS
         .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
@@ -1931,6 +1965,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         let res: MGC5MinBacktestResponse;
         if (currentBuiltIn?.endpoint === "sync_test") {
           res = await fetchMGCSyncTestBacktest(symbol, curPeriod, 2, "both", 10000, 2.0);
+        } else if (currentBuiltIn?.endpoint === "always_open") {
+          res = await fetchMGCAlwaysOpenBacktest(symbol, "1d", 10000);
         } else if (currentBuiltIn?.endpoint === "5min_locked") {
           res = await fetchMGC5MinLockedBacktest(symbol, Math.max(0.3, slMult), Math.max(0.3, tpMult), curPeriod, 10, 10, 2.0, 50, false);
         } else if (currentBuiltIn?.endpoint === "5min_locked_short") {
@@ -2148,19 +2184,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 }`}
               >{p}</button>
             ))}
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="bg-slate-900 border border-slate-700 text-slate-300 text-[9px] rounded px-1 py-0.5 w-[90px]"
-            />
-            <span className="text-[9px] text-slate-600">→</span>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="bg-slate-900 border border-slate-700 text-slate-300 text-[9px] rounded px-1 py-0.5 w-[90px]"
-            />
             <button
               onClick={runBacktest}
               disabled={loading}
@@ -2254,7 +2277,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         {/* ── Strategy quick-config strip ─────────────────────── */}
         <div className="rounded-lg border border-slate-600/50 bg-slate-800/70 px-2 py-1.5 flex items-center gap-1.5 mb-1.5 flex-wrap">
           {/* Quick-pick preset buttons */}
-          {BUILT_IN_PRESETS.filter((bp) => bp.name === "⬆ BoS Long" || bp.name === "⬇ BoS Short" || bp.name === "⇅ BoS Mix" || bp.name === "🔬 Sync Test").map((bp) => (
+          {BUILT_IN_PRESETS.map((bp) => (
             <button
               key={bp.name}
               onClick={() => applyBuiltInPreset(bp)}
@@ -2550,39 +2573,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         </div>
       )}
 
-      {/* ── Scanner Status ──────────────────────────────────── */}
-      <div className={`mx-2 mb-1 rounded-lg border px-2 py-1.5 flex items-center gap-2 ${
-        autoTrading ? "border-emerald-800/40 bg-emerald-950/10" : "border-slate-800/30 bg-slate-900/20"
-      }`}>
-        <span className="text-[8px] uppercase tracking-widest text-slate-500 font-bold shrink-0">Scanner</span>
-        <div className="flex items-center gap-1.5 flex-1 min-w-0">
-          <div className="relative w-3.5 h-3.5 flex items-center justify-center shrink-0">
-            {autoTrading && (
-              <span className="absolute inset-0 rounded-full border border-emerald-500/30 animate-ping" style={{ animationDuration: "1.8s" }} />
-            )}
-            <span className={`w-1.5 h-1.5 rounded-full ${autoTrading ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`} />
-          </div>
-          <span className={`text-[9px] font-semibold truncate ${autoTrading ? "text-emerald-400" : "text-slate-600"}`}>
-            {autoTrading ? (autoTraderRunning ? "Auto-Trader Running" : "Waiting for Signal") : "Scanner OFF"}
-          </span>
-          {autoTrading && <span className="text-[8px] text-slate-600 shrink-0">· 5m bar</span>}
-        </div>
-        <div className="flex items-center gap-1 text-[8px] shrink-0">
-          <span className="text-rose-400/60 font-bold">SL {slMult}x</span>
-          <span className="text-slate-700">·</span>
-          <span className="text-emerald-400/60 font-bold">TP {tpMult}x</span>
-          <button
-            onClick={() => setAutoTrading((v) => !v)}
-            className={`ml-1.5 px-2 py-0.5 rounded text-[8px] font-bold border transition-all ${
-              autoTrading
-                ? "border-emerald-700/50 bg-emerald-900/30 text-emerald-300 hover:bg-emerald-900/50"
-                : "border-slate-700/50 bg-slate-800/50 text-slate-500 hover:text-slate-200"
-            }`}
-          >
-            {autoTrading ? "ON" : "OFF"}
-          </button>
-        </div>
-      </div>
       {/* ═════════════════════════════════════════════════════ */}
       {/* TAB: Backtest                                        */}
       {/* ═════════════════════════════════════════════════════ */}
@@ -2641,31 +2631,95 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   <div className={`rounded-xl border overflow-hidden ${pos ? (unrealPnl != null && unrealPnl >= 0 ? "border-emerald-600/20" : "border-rose-600/20") : "border-slate-800/50"} bg-gradient-to-br from-slate-900/80 to-slate-950/95`}>
                     {/* Card header bar */}
                     <div className="flex items-center border-b border-slate-800/50 px-2 py-1 gap-2 bg-slate-900/40">
-                      <span className={`text-[8px] uppercase tracking-widest font-bold w-[40%] ${pos ? (isLong ? "text-emerald-500" : "text-rose-500") : autoTrading ? "text-emerald-600/80" : "text-slate-600"}`}>
+                      <span className="text-[8px] uppercase tracking-widest text-slate-500 font-bold w-[60%]">Performance</span>
+                      <div className="w-px h-3 bg-slate-700/60 shrink-0" />
+                      <span className={`text-[8px] uppercase tracking-widest font-bold flex-1 ${pos ? (isLong ? "text-emerald-500" : "text-rose-500") : autoTrading ? "text-emerald-600/80" : "text-slate-600"}`}>
                         {pos ? "Position" : "Signal"}
                       </span>
-                      <div className="w-px h-3 bg-slate-700/60 shrink-0" />
-                      <span className="text-[8px] uppercase tracking-widest text-slate-500 font-bold flex-1">Performance</span>
                     </div>
 
                     {/* Body: two columns */}
                     <div className="flex">
-                      {/* ── LEFT 40%: Position / Waiting ── */}
-                      <div className="w-[40%] shrink-0 border-r border-slate-800/40">
+                      {/* ── LEFT 60%: Performance metrics ── */}
+                      <div className="w-[60%] shrink-0 border-r border-slate-800/40 p-1.5 flex flex-col justify-between">
+                        {/* 2×2 primary grid — grows to fill available height */}
+                        <div className="grid grid-cols-2 gap-1 flex-1 auto-rows-fr mb-1">
+                          <div className="rounded-md bg-slate-800/60 px-2 py-1.5 relative group/wr flex flex-col justify-center">
+                            <div className="text-[7px] text-slate-500 uppercase font-semibold tracking-wide">Win Rate</div>
+                            <div className={`text-sm font-black tabular-nums ${winRateColor(m.win_rate)}`}>{n(m.win_rate).toFixed(1)}%</div>
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/wr:block w-44 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none"><b className="text-cyan-400">Win Rate</b> — Percentage of trades that were profitable. Above 55% is good, 60%+ is strong.</div>
+                          </div>
+                          <div className="rounded-md bg-slate-800/60 px-2 py-1.5 relative group/ret flex flex-col justify-center">
+                            <div className="text-[7px] text-slate-500 uppercase font-semibold tracking-wide">Return</div>
+                            <div className={`text-sm font-black tabular-nums ${m.total_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{m.total_return_pct >= 0 ? "+" : ""}{n(m.total_return_pct).toFixed(2)}%</div>
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/ret:block w-44 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none"><b className="text-emerald-400">Total Return</b> — Net profit as % of initial capital ($50K).</div>
+                          </div>
+                          <div className="rounded-md bg-slate-800/60 px-2 py-1.5 relative group/dd flex flex-col justify-center">
+                            <div className="text-[7px] text-slate-500 uppercase font-semibold tracking-wide">Max DD</div>
+                            <div className="text-sm font-black tabular-nums text-rose-400">{n(m.max_drawdown_pct).toFixed(2)}%</div>
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/dd:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none"><b className="text-rose-400">Max Drawdown</b> — Largest peak-to-trough equity drop. Below 10% safe, above 20% risky.</div>
+                          </div>
+                          <div className="rounded-md bg-slate-800/60 px-2 py-1.5 relative group/sh flex flex-col justify-center">
+                            <div className="text-[7px] text-slate-500 uppercase font-semibold tracking-wide">Sharpe</div>
+                            <div className={`text-sm font-black tabular-nums ${m.sharpe_ratio >= 1 ? "text-emerald-400" : "text-slate-300"}`}>{n(m.sharpe_ratio).toFixed(2)}</div>
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/sh:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none"><b className="text-cyan-400">Sharpe Ratio</b> — Return per unit of risk. 1.0–2.0 good, 2.0+ excellent.</div>
+                          </div>
+                        </div>
+                        {/* Secondary stats row — pinned to bottom */}
+                        <div className="flex gap-1">
+                          {[
+                            { key: "tr", label: "Trades", value: m.total_trades, color: "text-slate-200", tip: "Total completed trades." },
+                            { key: "wl", label: "W:L", value: `${m.winners}/${m.losers}`, color: "text-slate-200", tip: "Winners vs losers." },
+                            { key: "pf", label: "PF", value: n(m.profit_factor).toFixed(2), color: m.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400", tip: "Profit Factor — gross profit ÷ gross loss. 1.5+ good." },
+                            { key: "rr", label: "R:R", value: `1:${n(m.risk_reward_ratio).toFixed(2)}`, color: "text-cyan-400", tip: "Risk:Reward ratio." },
+                          ].map(({ key, label, value, color, tip }) => (
+                            <div key={key} className={`flex-1 rounded bg-slate-900/60 px-1 py-1 text-center relative group/s${key}`}>
+                              <div className="text-[7px] text-slate-600 uppercase">{label}</div>
+                              <div className={`text-[9px] font-bold tabular-nums ${color}`}>{value}</div>
+                              <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/s${key}:block w-40 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none`}>{tip}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* ── RIGHT 40%: Position / Signal + Scanner ── */}
+                      <div className="flex-1 min-w-0 flex flex-col">
+                        {/* Scanner status strip — always visible, with toggle */}
+                        <div className={`flex items-center gap-1.5 px-2 py-1 border-b border-slate-800/40 ${autoTrading ? "bg-emerald-950/20" : "bg-slate-900/30"}`}>
+                          <div className="relative w-3 h-3 flex items-center justify-center shrink-0">
+                            {autoTrading && (
+                              <span className="absolute inset-0 rounded-full border border-emerald-500/30 animate-ping" style={{ animationDuration: "1.8s" }} />
+                            )}
+                            <span className={`w-1.5 h-1.5 rounded-full ${autoTrading ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`} />
+                          </div>
+                          <span className={`text-[7px] font-bold uppercase tracking-wider flex-1 truncate ${autoTrading ? "text-emerald-500" : "text-slate-600"}`}>
+                            {autoTrading ? (autoTraderRunning ? "Auto-Trader" : "Scanning 5m") : "Scanner OFF"}
+                          </span>
+                          {pos && unrealPnl != null && (
+                            <span className={`text-[9px] font-black tabular-nums shrink-0 mr-1 ${unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{unrealPnl >= 0 ? "+" : ""}${unrealPnl.toFixed(0)}</span>
+                          )}
+                          <button
+                            onClick={() => setAutoTrading((v) => !v)}
+                            className={`px-1.5 py-0.5 rounded text-[7px] font-bold border transition-all shrink-0 ${
+                              autoTrading
+                                ? "border-emerald-700/50 bg-emerald-900/30 text-emerald-300 hover:bg-emerald-900/50"
+                                : "border-slate-700/50 bg-slate-800/50 text-slate-500 hover:text-slate-300"
+                            }`}
+                          >
+                            {autoTrading ? "ON" : "OFF"}
+                          </button>
+                        </div>
+
+                        {/* Position card or waiting state */}
                         {pos ? (
-                          <>
-                            {/* Direction + P&L header */}
-                            <div className={`px-2 py-1.5 flex items-center justify-between ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-500/5" : "bg-rose-500/5"}`}>
-                              <div className="flex items-center gap-1.5">
-                                <div className="relative">
-                                  <span className={`block w-1.5 h-1.5 rounded-full ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-400" : "bg-rose-400"}`} />
-                                  <span className={`absolute inset-0 w-1.5 h-1.5 rounded-full animate-ping ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-400/40" : "bg-rose-400/40"}`} />
-                                </div>
-                                <span className={`text-[9px] font-extrabold ${isLong ? "text-emerald-400" : "text-rose-400"}`}>{isLong ? "▲ LONG" : "▼ SHORT"}</span>
+                          <div className="flex-1 flex flex-col min-h-0">
+                            {/* Direction header */}
+                            <div className={`px-2 py-1 flex items-center gap-1.5 ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-500/5" : "bg-rose-500/5"}`}>
+                              <div className="relative shrink-0">
+                                <span className={`block w-1.5 h-1.5 rounded-full ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-400" : "bg-rose-400"}`} />
+                                <span className={`absolute inset-0 w-1.5 h-1.5 rounded-full animate-ping ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-400/40" : "bg-rose-400/40"}`} />
                               </div>
-                              {unrealPnl != null && (
-                                <span className={`text-xs font-black tabular-nums ${unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{unrealPnl >= 0 ? "+" : ""}${unrealPnl.toFixed(0)}</span>
-                              )}
+                              <span className={`text-[9px] font-extrabold ${isLong ? "text-emerald-400" : "text-rose-400"}`}>{isLong ? "▲ LONG" : "▼ SHORT"}</span>
                             </div>
                             {/* Mini chart */}
                             <div className="px-1 pt-0.5">
@@ -2716,77 +2770,34 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                               );
                             })()}
                             {/* Footer */}
-                            <div className="px-2 pb-1.5">
+                            <div className="px-2 pb-1.5 mt-auto">
                               <div className="flex items-center justify-between gap-1">
                                 <span className="text-[7px] text-slate-500 truncate">{pos.signal_type}</span>
                                 <span className="text-[7px] text-slate-600 shrink-0">{fmtDateTime(pos.entry_time)}</span>
                               </div>
                               {syncStatus && <div className="text-[7px] font-bold text-orange-400 animate-pulse truncate">{syncStatus}</div>}
                             </div>
-                          </>
+                          </div>
                         ) : (
-                          <div className={`h-full flex flex-col items-center justify-center py-5 gap-2 ${autoTrading ? "bg-emerald-950/10" : ""}`}>
-                            <div className="relative w-10 h-10 flex items-center justify-center">
+                          /* No position — show scanner waiting state */
+                          <div className="flex-1 flex flex-col items-center justify-center gap-2 py-3">
+                            <div className="relative w-9 h-9 flex items-center justify-center">
                               {autoTrading && (
                                 <>
-                                  <span className="absolute w-10 h-10 rounded-full border border-emerald-500/15 animate-ping" style={{ animationDuration: "3s" }} />
-                                  <span className="absolute w-6 h-6 rounded-full border border-emerald-500/20 animate-ping" style={{ animationDuration: "2.2s", animationDelay: "0.5s" }} />
-                                  <span className="absolute w-3 h-3 rounded-full border border-emerald-500/35 animate-ping" style={{ animationDuration: "1.6s", animationDelay: "0.2s" }} />
+                                  <span className="absolute w-9 h-9 rounded-full border border-emerald-500/15 animate-ping" style={{ animationDuration: "3s" }} />
+                                  <span className="absolute w-5 h-5 rounded-full border border-emerald-500/20 animate-ping" style={{ animationDuration: "2.2s", animationDelay: "0.5s" }} />
                                 </>
                               )}
-                              <span className={`relative text-lg z-10 ${autoTrading ? "animate-pulse" : "opacity-25"}`}>🪬</span>
+                              <span className={`relative text-base z-10 ${autoTrading ? "animate-pulse" : "opacity-20"}`}>🪬</span>
                             </div>
-                            <span className={`text-[9px] font-semibold text-center leading-snug px-1 ${autoTrading ? "text-emerald-400" : "text-slate-600"}`}>
-                              {autoTrading ? (autoTraderRunning ? "Auto-Trader\nRunning" : "Waiting for\nSignal") : "Scanner\nOFF"}
+                            <span className={`text-[8px] font-semibold text-center leading-snug px-1 ${autoTrading ? "text-emerald-400" : "text-slate-600"}`}>
+                              {autoTrading ? (autoTraderRunning ? "Auto-Trader\nRunning" : "Waiting for\nSignal") : "No Position"}
                             </span>
-                            <div className="flex items-center gap-1">
-                              <span className={`w-1.5 h-1.5 rounded-full ${autoTrading ? "bg-emerald-400 animate-pulse" : "bg-slate-700"}`} />
-                              <span className={`text-[7px] font-semibold ${autoTrading ? "text-emerald-500" : "text-slate-700"}`}>{autoTrading ? "5m scan" : "OFF"}</span>
-                            </div>
+                            {livePrice != null && (
+                              <span className="text-[9px] font-mono text-slate-500 tabular-nums">${livePrice.toFixed(2)}</span>
+                            )}
                           </div>
                         )}
-                      </div>
-
-                      {/* ── RIGHT 60%: Performance metrics ── */}
-                      <div className="flex-1 min-w-0 p-1.5">
-                        {/* 2×2 primary grid */}
-                        <div className="grid grid-cols-2 gap-1 mb-1">
-                          <div className="rounded-md bg-slate-800/60 px-2 py-1 relative group/wr">
-                            <div className="text-[7px] text-slate-500 uppercase font-semibold tracking-wide">Win Rate</div>
-                            <div className={`text-sm font-black tabular-nums ${winRateColor(m.win_rate)}`}>{n(m.win_rate).toFixed(1)}%</div>
-                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/wr:block w-44 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none"><b className="text-cyan-400">Win Rate</b> — Percentage of trades that were profitable. Above 55% is good, 60%+ is strong.</div>
-                          </div>
-                          <div className="rounded-md bg-slate-800/60 px-2 py-1 relative group/ret">
-                            <div className="text-[7px] text-slate-500 uppercase font-semibold tracking-wide">Return</div>
-                            <div className={`text-sm font-black tabular-nums ${m.total_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{m.total_return_pct >= 0 ? "+" : ""}{n(m.total_return_pct).toFixed(2)}%</div>
-                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/ret:block w-44 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none"><b className="text-emerald-400">Total Return</b> — Net profit as % of initial capital ($50K).</div>
-                          </div>
-                          <div className="rounded-md bg-slate-800/60 px-2 py-1 relative group/dd">
-                            <div className="text-[7px] text-slate-500 uppercase font-semibold tracking-wide">Max DD</div>
-                            <div className="text-sm font-black tabular-nums text-rose-400">{n(m.max_drawdown_pct).toFixed(2)}%</div>
-                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/dd:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none"><b className="text-rose-400">Max Drawdown</b> — Largest peak-to-trough equity drop. Below 10% safe, above 20% risky.</div>
-                          </div>
-                          <div className="rounded-md bg-slate-800/60 px-2 py-1 relative group/sh">
-                            <div className="text-[7px] text-slate-500 uppercase font-semibold tracking-wide">Sharpe</div>
-                            <div className={`text-sm font-black tabular-nums ${m.sharpe_ratio >= 1 ? "text-emerald-400" : "text-slate-300"}`}>{n(m.sharpe_ratio).toFixed(2)}</div>
-                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/sh:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none"><b className="text-cyan-400">Sharpe Ratio</b> — Return per unit of risk. 1.0–2.0 good, 2.0+ excellent.</div>
-                          </div>
-                        </div>
-                        {/* Secondary stats row */}
-                        <div className="flex gap-1">
-                          {[
-                            { key: "tr", label: "Trades", value: m.total_trades, color: "text-slate-200", tip: "Total completed trades." },
-                            { key: "wl", label: "W:L", value: `${m.winners}/${m.losers}`, color: "text-slate-200", tip: "Winners vs losers." },
-                            { key: "pf", label: "PF", value: n(m.profit_factor).toFixed(2), color: m.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400", tip: "Profit Factor — gross profit ÷ gross loss. 1.5+ good." },
-                            { key: "rr", label: "R:R", value: `1:${n(m.risk_reward_ratio).toFixed(2)}`, color: "text-cyan-400", tip: "Risk:Reward ratio." },
-                          ].map(({ key, label, value, color, tip }) => (
-                            <div key={key} className={`flex-1 rounded bg-slate-900/60 px-1 py-0.5 text-center relative group/s${key}`}>
-                              <div className="text-[7px] text-slate-600 uppercase">{label}</div>
-                              <div className={`text-[9px] font-bold tabular-nums ${color}`}>{value}</div>
-                              <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/s${key}:block w-40 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none`}>{tip}</div>
-                            </div>
-                          ))}
-                        </div>
                       </div>
                     </div>
                   </div>

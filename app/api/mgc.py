@@ -2588,6 +2588,118 @@ async def mgc_backtest_sync_test(
     )
 
 
+# ── Always Open Strategy endpoint ────────────────────────────────────
+
+@router.get("/backtest_always_open")
+async def mgc_backtest_always_open(
+    symbol: Annotated[str, Query()] = "MGC=F",
+    period: Annotated[str, Query()] = "1d",
+    capital: Annotated[float, Query()] = 10_000.0,
+) -> MGC5MinBacktestResponse:
+    """
+    ALWAYS OPEN — Test strategy that immediately opens ONE position.
+
+    Entry price = close of the 5-min bar from 5 minutes ago (1 completed bar back).
+    No SL / TP. Useful for validating execution pipeline connectivity.
+    """
+
+    def _run():
+        _sym_key = symbol.replace("=F", "").replace("=f", "")
+        df = _load_tiger_or_yf(_sym_key, "5m", period)
+        if df.empty or len(df) < 3:
+            raise ValueError("Not enough 5m data for Always Open strategy.")
+
+        # Entry bar: the last COMPLETED bar (index -2; index -1 may be forming)
+        entry_bar = df.iloc[-2]
+        entry_ts  = df.index[-2]
+        entry_price = round(float(entry_bar["close"]), 2)
+
+        # Build a single candle list (last 60 bars for chart context)
+        tail = df.tail(60)
+        candles = []
+        for ts, row in tail.iterrows():
+            candles.append(MGC5MinCandle(
+                time=str(ts),
+                open=round(float(row["open"]), 2),
+                high=round(float(row["high"]), 2),
+                low=round(float(row["low"]), 2),
+                close=round(float(row["close"]), 2),
+                volume=int(row.get("volume", 0) or 0),
+                ema_fast=None,
+                ema_slow=None,
+                rsi=None,
+                st_dir=None,
+                macd_hist=None,
+            ))
+
+        # Single open trade
+        trade = MGC5MinTrade(
+            entry_time=str(entry_ts),
+            exit_time=str(entry_ts),   # still open — same timestamp
+            entry_price=entry_price,
+            exit_price=entry_price,
+            qty=1,
+            pnl=0.0,
+            pnl_pct=0.0,
+            reason="OPEN",
+            signal_type="ALWAYS_OPEN",
+            direction="CALL",
+            mae=0.0,
+            sl=0.0,
+            tp=0.0,
+        )
+
+        open_pos = {
+            "direction": "CALL",
+            "entry_price": entry_price,
+            "sl": 0.0,
+            "tp": 0.0,
+            "entry_time": str(entry_ts),
+            "signal_type": "ALWAYS_OPEN",
+            "bar_time": str(entry_ts),
+        }
+
+        metrics = MGC5MinMetrics(
+            initial_capital=capital,
+            final_equity=capital,
+            total_return_pct=0.0,
+            max_drawdown_pct=0.0,
+            sharpe_ratio=0.0,
+            total_trades=1,
+            winners=0,
+            losers=0,
+            win_rate=0.0,
+            avg_win=0.0,
+            avg_loss=0.0,
+            profit_factor=0.0,
+            risk_reward_ratio=0.0,
+        )
+
+        return candles, [trade], [capital], metrics, open_pos
+
+    try:
+        candles, trades, eq_curve, metrics, open_pos = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("always_open backtest failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return MGC5MinBacktestResponse(
+        symbol=symbol,
+        interval="5m",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        daily_pnl=[],
+        params={"strategy": "always_open"},
+        open_position=open_pos,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
 # ── 5min Scan endpoint ──────────────────────────────────────────────
 
 class Scan5MinSignal(BaseModel):
