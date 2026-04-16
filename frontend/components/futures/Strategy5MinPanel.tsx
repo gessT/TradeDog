@@ -580,10 +580,10 @@ export type BuiltInPreset = {
 export const BUILT_IN_PRESETS: BuiltInPreset[] = [
   {
     name: "🔒 BoS Config",
-    desc: "1H HTF bias · BoS breakout · EMA50 · Supertrend · SL1.2×TP1.5×",
+    desc: "1H HTF bias · BoS breakout · EMA50 · Supertrend · SL2.0×TP2.5×",
     interval: "5m",
-    sl: 1.2,
-    tp: 1.5,
+    sl: 2.0,
+    tp: 2.5,
     endpoint: "5min_locked",
     toggles: {
       ema_trend: true,
