@@ -40,6 +40,10 @@ DEFAULT_5MIN_PARAMS: dict = {
     "macd_fast": 8,
     "macd_slow": 17,
     "macd_signal": 9,
+    # CM MACD — standard crossover strategy (12/26/9)
+    "cm_macd_fast": 12,
+    "cm_macd_slow": 26,
+    "cm_macd_signal": 9,
     # ATR — asymmetric: wider SL for noise, tighter TP for quicker wins
     "atr_period": 14,
     "atr_sl_mult": 3.0,        # SL = 3.0× ATR
@@ -132,6 +136,15 @@ class MGCStrategy5Min:
 
         # MACD bearish momentum
         df["macd_mom_bear"] = ind5.macd_momentum_bear(macd_hist)
+
+        # CM MACD — standard 12/26/9 crossover (Pine Script compatible)
+        cm_ml, cm_si, _ = ind5.macd(
+            c, p.get("cm_macd_fast", 12), p.get("cm_macd_slow", 26), p.get("cm_macd_signal", 9)
+        )
+        df["cm_macd_line"] = cm_ml
+        df["cm_macd_sig"] = cm_si
+        df["cm_macd_bull"] = ind5.macd_crossover_bull(cm_ml, cm_si)
+        df["cm_macd_bear"] = ind5.macd_crossover_bear(cm_ml, cm_si)
 
         # Breakout (long)
         df["breakout"] = ind5.breakout_high(c, df["high"], p["breakout_lookback"])
@@ -288,7 +301,14 @@ class MGCStrategy5Min:
         call_htf = df["htf_trend"] == 1 if htf_ema_period < 500 else True
         call_ht = _true if "halftrend" in off else (df["ht_dir"] == 0)  # HalfTrend bullish
 
-        call_signal = call_trend & call_slope & call_entry & call_st & call_mom & filters & call_bos & smc_entry_call & call_ht
+        # CM MACD crossover condition (overrides other momentum when active)
+        # Defensive: skip if columns not yet computed (backward compat)
+        if "cm_macd_bull" in df.columns:
+            call_cm_macd = _true if "cm_macd" in off else (df["cm_macd_bull"] == 1)
+        else:
+            call_cm_macd = _true
+
+        call_signal = call_trend & call_slope & call_entry & call_st & call_mom & filters & call_bos & smc_entry_call & call_ht & call_cm_macd
         if htf_ema_period < 500:
             call_signal = call_signal & call_htf
 
@@ -312,7 +332,13 @@ class MGCStrategy5Min:
         put_mom = _or_group(put_mom_parts)
         put_ht = _true if "halftrend" in off else (df["ht_dir"] == 1)  # HalfTrend bearish
 
-        put_signal = put_trend & put_slope & put_entry & put_st & put_mom & filters & put_bos & smc_entry_put & put_ht
+        # CM MACD crossover condition for PUT
+        if "cm_macd_bear" in df.columns:
+            put_cm_macd = _true if "cm_macd" in off else (df["cm_macd_bear"] == 1)
+        else:
+            put_cm_macd = _true
+
+        put_signal = put_trend & put_slope & put_entry & put_st & put_mom & filters & put_bos & smc_entry_put & put_ht & put_cm_macd
 
         # ── Combine: +1 = CALL, -1 = PUT ──────────────────────
         signal = pd.Series(0, index=df.index, dtype=int)

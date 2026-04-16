@@ -584,6 +584,88 @@ def save_stock_configuration(payload: StockConfigurationPayload, db: Session = D
     return {"status": "ok"}
 
 
+# ── KLSE TPC Strategy Config (per-symbol, persisted) ─────────────────
+
+class KLSEStrategyConfigPayload(BaseModel):
+    disabled_conditions: list[str] | None = None
+    atr_sl_mult: float | None = None
+    tp1_r_mult: float | None = None
+    tp2_r_mult: float | None = None
+    capital: float | None = None
+    period: str | None = None
+
+
+@router.get("/klse_strategy_config")
+def get_klse_strategy_config(
+    strategy: str = Query("tpc"),
+) -> dict:
+    """Load persisted KLSE strategy config (per-strategy, global)."""
+    import json
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    sym = f"KLSE_{strategy.upper()}"
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT config_json FROM strategy_configs WHERE symbol = :sym"),
+            {"sym": sym},
+        ).fetchone()
+    if row:
+        try:
+            return json.loads(row[0])
+        except Exception:
+            pass
+    return {}
+
+
+@router.post("/klse_strategy_config")
+def save_klse_strategy_config(
+    payload: KLSEStrategyConfigPayload,
+    strategy: str = Query("tpc"),
+) -> dict[str, str]:
+    """Save KLSE strategy config (per-strategy, global — merge with existing)."""
+    import json
+    from sqlalchemy import text
+    from app.db.database import engine
+
+    sym = f"KLSE_{strategy.upper()}"
+    new_fields = {k: v for k, v in {
+        "disabled_conditions": payload.disabled_conditions,
+        "atr_sl_mult": payload.atr_sl_mult,
+        "tp1_r_mult": payload.tp1_r_mult,
+        "tp2_r_mult": payload.tp2_r_mult,
+        "capital": payload.capital,
+        "period": payload.period,
+    }.items() if v is not None}
+
+    existing = {}
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT config_json FROM strategy_configs WHERE symbol = :sym"),
+            {"sym": sym},
+        ).fetchone()
+    if row:
+        try:
+            existing = json.loads(row[0])
+        except Exception:
+            pass
+    merged = {**existing, **new_fields}
+    config = json.dumps(merged)
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO strategy_configs (symbol, config_json, updated_at)
+                VALUES (:sym, :cfg, CURRENT_TIMESTAMP)
+                ON CONFLICT (symbol) DO UPDATE SET
+                    config_json = EXCLUDED.config_json,
+                    updated_at = CURRENT_TIMESTAMP
+            """),
+            {"sym": sym, "cfg": config},
+        )
+    return {"status": "ok"}
+
+
 def _normalize_column_name(column: object) -> str:
     if isinstance(column, tuple):
         parts = [str(part) for part in column if part not in (None, "")]
@@ -719,6 +801,135 @@ async def near_ath(top: int = 10, market: str = Query(default="MY")) -> dict:
     return {
         "count": len(stocks),
         "scanned": len(stocks_dict),
+        "stocks": stocks,
+    }
+
+
+# ── Volume Breakout Scanner ─────────────────────────────────────────
+
+def _scan_vol_breakout(code: str, name: str, lookback: int = 10, vol_mult: float = 2.0) -> dict | None:
+    """
+    Find stocks with big-volume day(s) in last `lookback` bars,
+    then classify current price vs the big-volume day's price range.
+    Returns: breakout / range / breakdown status, or None on failure.
+    """
+    try:
+        ticker = yf.Ticker(code)
+        hist = ticker.history(period="3mo", auto_adjust=False)
+        if hist is None or hist.empty or len(hist) < lookback + 20:
+            return None
+
+        cols = hist.columns
+        if isinstance(cols[0], tuple):
+            hist.columns = [c[0] if isinstance(c, tuple) else str(c) for c in cols]
+
+        for col in ("Close", "High", "Low", "Volume"):
+            if col not in hist.columns:
+                return None
+
+        close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+        high = pd.to_numeric(hist["High"], errors="coerce").dropna()
+        low = pd.to_numeric(hist["Low"], errors="coerce").dropna()
+        vol = pd.to_numeric(hist["Volume"], errors="coerce").dropna()
+
+        if len(vol) < lookback + 20:
+            return None
+
+        # Average volume over 20 days BEFORE the lookback window
+        avg_vol = float(vol.iloc[-(lookback + 20):-(lookback)].mean())
+        if avg_vol <= 0:
+            return None
+
+        # Scan last `lookback` bars for big-volume days (>= vol_mult × avg)
+        recent = hist.iloc[-lookback:]
+        big_vol_mask = pd.to_numeric(recent["Volume"], errors="coerce") >= avg_vol * vol_mult
+        big_vol_days = recent[big_vol_mask]
+
+        if big_vol_days.empty:
+            return None
+
+        # Build price range from all big-volume days
+        bv_highs = pd.to_numeric(big_vol_days["High"], errors="coerce").dropna()
+        bv_lows = pd.to_numeric(big_vol_days["Low"], errors="coerce").dropna()
+        if bv_highs.empty or bv_lows.empty:
+            return None
+
+        range_high = float(bv_highs.max())
+        range_low = float(bv_lows.min())
+        if range_high <= 0 or range_low <= 0:
+            return None
+
+        current_price = float(close.iloc[-1])
+        max_vol_ratio = float((pd.to_numeric(big_vol_days["Volume"], errors="coerce") / avg_vol).max())
+        days_ago = len(hist) - hist.index.get_loc(big_vol_days.index[-1]) - 1
+        if isinstance(days_ago, slice):
+            days_ago = 1
+
+        # Classify
+        if current_price > range_high:
+            status = "breakout"
+        elif current_price < range_low:
+            status = "breakdown"
+        else:
+            status = "range"
+
+        pct_from_high = ((current_price - range_high) / range_high) * 100
+        pct_from_low = ((current_price - range_low) / range_low) * 100
+
+        return {
+            "symbol": code,
+            "name": name,
+            "current_price": round(current_price, 4),
+            "range_high": round(range_high, 4),
+            "range_low": round(range_low, 4),
+            "status": status,
+            "pct_from_high": round(pct_from_high, 2),
+            "pct_from_low": round(pct_from_low, 2),
+            "big_vol_days": int(big_vol_mask.sum()),
+            "max_vol_ratio": round(max_vol_ratio, 1),
+            "last_big_vol_days_ago": int(days_ago),
+        }
+    except Exception as exc:
+        logger.debug("Vol-breakout scan failed for %s: %s", code, exc)
+        return None
+
+
+@router.get("/vol-breakout")
+async def vol_breakout_scan(
+    top: int = 30,
+    market: str = Query(default="MY"),
+    lookback: int = Query(default=10, ge=3, le=30),
+    vol_mult: float = Query(default=2.0, ge=1.2, le=5.0),
+) -> dict:
+    """Scan stocks for big-volume days in last N bars and classify breakout/range/breakdown."""
+    import concurrent.futures
+
+    stocks_dict, _ = _get_stock_universe(market)
+    top = min(max(top, 1), 100)
+
+    def _scan_all() -> list[dict]:
+        results: list[dict] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {
+                pool.submit(_scan_vol_breakout, code, name, lookback, vol_mult): code
+                for code, name in stocks_dict.items()
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                res = fut.result()
+                if res is not None:
+                    results.append(res)
+        # Sort: breakouts first, then range, then breakdown; within each group by vol ratio desc
+        status_order = {"breakout": 0, "range": 1, "breakdown": 2}
+        results.sort(key=lambda x: (status_order.get(x["status"], 9), -x["max_vol_ratio"]))
+        return results[:top]
+
+    stocks = await run_in_threadpool(_scan_all)
+
+    return {
+        "count": len(stocks),
+        "scanned": len(stocks_dict),
+        "lookback": lookback,
+        "vol_mult": vol_mult,
         "stocks": stocks,
     }
 
@@ -1385,6 +1596,55 @@ async def daily_scan(top: int = Query(default=6, ge=1, le=20), market: str = Que
     }
 
 
+# ── Search Bursa Stocks (dynamic Yahoo Finance lookup) ───────────────
+
+@router.get("/search-bursa")
+async def search_bursa(q: str = Query(min_length=1, max_length=32)):
+    """Search for any Bursa Malaysia stock by code or name via Yahoo Finance."""
+    q = q.strip()
+
+    def _search():
+        results = []
+        # If query looks like a stock code (digits, possibly with .KL)
+        code = q.upper().replace(".KL", "")
+        candidates = []
+        if code.isdigit():
+            candidates.append(f"{code}.KL")
+            # Also try with leading zeros (4-digit Bursa codes)
+            if len(code) < 4:
+                candidates.append(f"{code.zfill(4)}.KL")
+        else:
+            # Try as-is with .KL suffix
+            candidates.append(f"{code}.KL")
+
+        for sym in candidates:
+            try:
+                t = yf.Ticker(sym)
+                info = t.info
+                name = info.get("shortName") or info.get("longName")
+                if not name:
+                    continue
+                price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+                sector = info.get("sector", "Other")
+                mcap = info.get("marketCap", 0)
+                cap_tier = "L" if mcap and mcap > 5_000_000_000 else "M" if mcap and mcap > 1_000_000_000 else "S"
+                results.append({
+                    "symbol": sym,
+                    "name": name,
+                    "sector": sector,
+                    "refPrice": round(price, 2),
+                    "cap": cap_tier,
+                    "price": round(price, 2),
+                    "change_pct": info.get("regularMarketChangePercent", 0) or 0,
+                })
+            except Exception:
+                continue
+        return results
+
+    results = await run_in_threadpool(_search)
+    return {"results": results}
+
+
 # ── Starred Stocks ───────────────────────────────────────────────────
 
 
@@ -1417,6 +1677,52 @@ def remove_starred(symbol: str = Query(min_length=1), db: Session = Depends(get_
     row = db.query(StarredStock).filter(StarredStock.symbol == symbol).first()
     if not row:
         raise HTTPException(status_code=404, detail="Not starred")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+# ── Stock Color Labels (TradingView-style) ───────────────────────────
+
+from app.models.condition_preference import StockColorLabel
+
+
+class ColorLabelPayload(BaseModel):
+    symbol: str = Field(min_length=1, max_length=16)
+    color: str = Field(min_length=1, max_length=16)
+    market: str = Field(default="MY", max_length=8)
+
+
+@router.get("/color-labels")
+def list_color_labels(market: str = Query(default="MY"), db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.query(StockColorLabel).filter(StockColorLabel.market == market).all()
+    return [{"id": r.id, "symbol": r.symbol, "color": r.color, "market": r.market} for r in rows]
+
+
+@router.put("/color-labels")
+def set_color_label(payload: ColorLabelPayload, db: Session = Depends(get_db)) -> dict:
+    existing = db.query(StockColorLabel).filter(
+        StockColorLabel.symbol == payload.symbol,
+        StockColorLabel.market == payload.market,
+    ).first()
+    if existing:
+        existing.color = payload.color
+    else:
+        existing = StockColorLabel(symbol=payload.symbol, color=payload.color, market=payload.market)
+        db.add(existing)
+    db.commit()
+    db.refresh(existing)
+    return {"id": existing.id, "symbol": existing.symbol, "color": existing.color, "market": existing.market}
+
+
+@router.delete("/color-labels")
+def remove_color_label(symbol: str = Query(min_length=1), market: str = Query(default="MY"), db: Session = Depends(get_db)) -> dict:
+    row = db.query(StockColorLabel).filter(
+        StockColorLabel.symbol == symbol,
+        StockColorLabel.market == market,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="No color label found")
     db.delete(row)
     db.commit()
     return {"ok": True}
@@ -1483,41 +1789,140 @@ async def us_stock_quotes(
 
 
 @router.get("/us-fear-greed")
-async def us_fear_greed_index() -> dict:
-    """Return latest US Fear & Greed index via Alternative.me API."""
+async def us_fear_greed_index(
+    date: str | None = Query(default=None, description="UTC date in YYYY-MM-DD format"),
+) -> dict:
+    """Return latest or selected-date US Fear & Greed index via Alternative.me API."""
+
+    requested_date = None
+    if date:
+        try:
+            requested_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    def _row_to_payload(row: dict, selected_date: str | None = None) -> dict:
+        value_raw = row.get("value")
+        value = int(value_raw) if value_raw is not None else None
+        classification = (row.get("value_classification") or "Unknown").strip() or "Unknown"
+        ts_raw = row.get("timestamp")
+        updated_at = None
+        date_utc = None
+        if ts_raw:
+            try:
+                dt_utc = datetime.fromtimestamp(int(ts_raw), tz=timezone.utc)
+                date_utc = dt_utc.date().isoformat()
+                updated_at = dt_utc.astimezone(SGT).isoformat()
+            except Exception:
+                updated_at = None
+                date_utc = None
+
+        return {
+            "value": value,
+            "classification": classification,
+            "updated_at": updated_at,
+            "date_utc": date_utc,
+            "selected_date": selected_date,
+            "source": "alternative.me",
+        }
 
     def _fetch() -> dict:
         url = "https://api.alternative.me/fng/?limit=1&format=json"
+        if requested_date:
+            # Need history to locate exact requested day.
+            url = "https://api.alternative.me/fng/?limit=0&format=json"
         try:
             res = http_requests.get(url, timeout=8)
             res.raise_for_status()
             payload = res.json() if res.content else {}
             data = payload.get("data") or []
+
+            if requested_date:
+                found = None
+                for row in data:
+                    ts_raw = row.get("timestamp")
+                    if not ts_raw:
+                        continue
+                    try:
+                        day = datetime.fromtimestamp(int(ts_raw), tz=timezone.utc).date()
+                    except Exception:
+                        continue
+                    if day == requested_date:
+                        found = row
+                        break
+                if found is None:
+                    return {
+                        "value": None,
+                        "classification": "Not Found",
+                        "updated_at": None,
+                        "date_utc": requested_date.isoformat(),
+                        "selected_date": requested_date.isoformat(),
+                        "source": "alternative.me",
+                    }
+                return _row_to_payload(found, requested_date.isoformat())
+
             row = data[0] if data else {}
-
-            value_raw = row.get("value")
-            value = int(value_raw) if value_raw is not None else None
-            classification = (row.get("value_classification") or "Unknown").strip() or "Unknown"
-            ts_raw = row.get("timestamp")
-            updated_at = None
-            if ts_raw:
-                try:
-                    updated_at = datetime.fromtimestamp(int(ts_raw), tz=timezone.utc).astimezone(SGT).isoformat()
-                except Exception:
-                    updated_at = None
-
-            return {
-                "value": value,
-                "classification": classification,
-                "updated_at": updated_at,
-                "source": "alternative.me",
-            }
+            return _row_to_payload(row)
         except Exception as exc:
             logger.warning("FearGreed fetch failed: %s", exc)
             return {
                 "value": None,
                 "classification": "Unavailable",
                 "updated_at": None,
+                "date_utc": requested_date.isoformat() if requested_date else None,
+                "selected_date": requested_date.isoformat() if requested_date else None,
+                "source": "alternative.me",
+            }
+
+    return await run_in_threadpool(_fetch)
+
+
+@router.get("/us-fear-greed-history")
+async def us_fear_greed_history(
+    days: int = Query(default=5, ge=1, le=30, description="Number of latest days to return"),
+) -> dict:
+    """Return latest Fear & Greed daily history (newest first)."""
+
+    def _fetch() -> dict:
+        url = "https://api.alternative.me/fng/?limit=0&format=json"
+        try:
+            res = http_requests.get(url, timeout=8)
+            res.raise_for_status()
+            payload = res.json() if res.content else {}
+            data = payload.get("data") or []
+
+            items = []
+            for row in data[:days]:
+                ts_raw = row.get("timestamp")
+                date_utc = None
+                updated_at = None
+                if ts_raw:
+                    try:
+                        dt_utc = datetime.fromtimestamp(int(ts_raw), tz=timezone.utc)
+                        date_utc = dt_utc.date().isoformat()
+                        updated_at = dt_utc.astimezone(SGT).isoformat()
+                    except Exception:
+                        date_utc = None
+                        updated_at = None
+
+                value_raw = row.get("value")
+                items.append({
+                    "value": int(value_raw) if value_raw is not None else None,
+                    "classification": (row.get("value_classification") or "Unknown").strip() or "Unknown",
+                    "date_utc": date_utc,
+                    "updated_at": updated_at,
+                })
+
+            return {
+                "days": days,
+                "items": items,
+                "source": "alternative.me",
+            }
+        except Exception as exc:
+            logger.warning("FearGreed history fetch failed: %s", exc)
+            return {
+                "days": days,
+                "items": [],
                 "source": "alternative.me",
             }
 
@@ -1572,6 +1977,7 @@ class US1HTrade(BaseModel):
     direction: str = "CALL"
     mae: float = 0.0
     mkt_structure: int = 0
+    sl_price: float = 0.0
 
 
 class US1HMetrics(BaseModel):
@@ -1610,7 +2016,7 @@ class US1HBacktestResponse(BaseModel):
 # US Strategy Presets — save / load / delete
 # ═══════════════════════════════════════════════════════════════════════
 import json as _json
-from app.models.condition_preference import USStrategyPreset, USStockStrategyTag
+from app.models.condition_preference import USStrategyPreset, USStockStrategyTag, MYStrategyPreset, MYStockStrategyTag
 
 
 class StrategyPresetPayload(BaseModel):
@@ -1823,6 +2229,183 @@ def delete_stock_tag(tag_id: int, db: Session = Depends(get_db)):
     return {"status": "deleted", "id": tag_id}
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# MY (Bursa) Strategy Presets — separate from US presets
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/my-strategy-presets")
+def list_my_strategy_presets(db: Session = Depends(get_db)):
+    rows = db.query(MYStrategyPreset).order_by(MYStrategyPreset.name).all()
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "conditions": _json.loads(r.conditions_json),
+            "atr_sl_mult": r.atr_sl_mult,
+            "atr_tp_mult": r.atr_tp_mult,
+            "period": r.period,
+            "skip_flat": r.skip_flat,
+            "capital": getattr(r, "capital", 5000.0) or 5000.0,
+            "bt_symbol": r.bt_symbol,
+            "bt_win_rate": r.bt_win_rate,
+            "bt_return_pct": r.bt_return_pct,
+            "bt_max_dd_pct": r.bt_max_dd_pct,
+            "bt_profit_factor": r.bt_profit_factor,
+            "bt_sharpe": r.bt_sharpe,
+            "bt_total_trades": r.bt_total_trades,
+            "bt_tested_at": r.bt_tested_at.isoformat() if r.bt_tested_at else None,
+            "strategy_type": getattr(r, "strategy_type", "breakout_1h") or "breakout_1h",
+            "is_favorite": getattr(r, "is_favorite", False) or False,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/my-strategy-presets")
+def save_my_strategy_preset(payload: StrategyPresetPayload, db: Session = Depends(get_db)):
+    existing = db.query(MYStrategyPreset).filter(MYStrategyPreset.name == payload.name).first()
+    if existing:
+        existing.conditions_json = _json.dumps(payload.conditions)
+        existing.atr_sl_mult = payload.atr_sl_mult
+        existing.atr_tp_mult = payload.atr_tp_mult
+        existing.period = payload.period
+        existing.skip_flat = payload.skip_flat
+        existing.strategy_type = payload.strategy_type
+        existing.capital = payload.capital
+    else:
+        db.add(MYStrategyPreset(
+            name=payload.name,
+            conditions_json=_json.dumps(payload.conditions),
+            atr_sl_mult=payload.atr_sl_mult,
+            atr_tp_mult=payload.atr_tp_mult,
+            period=payload.period,
+            skip_flat=payload.skip_flat,
+            strategy_type=payload.strategy_type,
+            capital=payload.capital,
+        ))
+    db.commit()
+    return {"status": "ok", "name": payload.name}
+
+
+@router.put("/my-strategy-presets/{preset_id}/metrics")
+def update_my_preset_metrics(preset_id: int, payload: PresetMetricsPayload, db: Session = Depends(get_db)):
+    preset = db.query(MYStrategyPreset).filter(MYStrategyPreset.id == preset_id).first()
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    preset.bt_symbol = payload.symbol
+    preset.bt_win_rate = payload.win_rate
+    preset.bt_return_pct = payload.total_return_pct
+    preset.bt_max_dd_pct = payload.max_drawdown_pct
+    preset.bt_profit_factor = payload.profit_factor
+    preset.bt_sharpe = payload.sharpe_ratio
+    preset.bt_total_trades = payload.total_trades
+    preset.bt_tested_at = func.now()
+    db.commit()
+    return {"status": "ok", "id": preset_id}
+
+
+@router.delete("/my-strategy-presets/{preset_id}")
+def delete_my_strategy_preset(preset_id: int, db: Session = Depends(get_db)):
+    row = db.query(MYStrategyPreset).filter(MYStrategyPreset.id == preset_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    db.delete(row)
+    db.commit()
+    return {"status": "deleted", "id": preset_id}
+
+
+@router.put("/my-strategy-presets/{preset_id}/favorite")
+def toggle_my_preset_favorite(preset_id: int, db: Session = Depends(get_db)):
+    preset = db.query(MYStrategyPreset).filter(MYStrategyPreset.id == preset_id).first()
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    preset.is_favorite = not (preset.is_favorite or False)
+    db.commit()
+    return {"status": "ok", "id": preset_id, "is_favorite": preset.is_favorite}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# MY (Bursa) Stock Strategy Tags
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/my-stock-tags")
+def list_my_stock_tags(
+    symbol: _Opt[str] = None,
+    strategy_type: _Opt[str] = None,
+    db: Session = Depends(get_db),
+):
+    q = db.query(MYStockStrategyTag)
+    if symbol:
+        q = q.filter(MYStockStrategyTag.symbol == symbol.upper())
+    if strategy_type:
+        q = q.filter(MYStockStrategyTag.strategy_type == strategy_type)
+    rows = q.order_by(MYStockStrategyTag.symbol, MYStockStrategyTag.tagged_at.desc()).all()
+    return [
+        {
+            "id": r.id,
+            "symbol": r.symbol,
+            "strategy_type": r.strategy_type,
+            "strategy_name": r.strategy_name,
+            "period": r.period,
+            "capital": r.capital,
+            "win_rate": r.win_rate,
+            "return_pct": r.return_pct,
+            "profit_factor": r.profit_factor,
+            "max_dd_pct": r.max_dd_pct,
+            "sharpe": r.sharpe,
+            "total_trades": r.total_trades,
+            "tagged_at": r.tagged_at.isoformat() if r.tagged_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/my-stock-tags")
+def save_my_stock_tag(payload: StrategyTagPayload, db: Session = Depends(get_db)):
+    sym = payload.symbol.upper()
+    existing = db.query(MYStockStrategyTag).filter(
+        MYStockStrategyTag.symbol == sym,
+        MYStockStrategyTag.strategy_type == payload.strategy_type,
+    ).first()
+    if existing:
+        existing.strategy_name = payload.strategy_name
+        existing.period = payload.period
+        existing.capital = payload.capital
+        existing.win_rate = payload.win_rate
+        existing.return_pct = payload.return_pct
+        existing.profit_factor = payload.profit_factor
+        existing.max_dd_pct = payload.max_dd_pct
+        existing.sharpe = payload.sharpe
+        existing.total_trades = payload.total_trades
+        existing.tagged_at = func.now()
+    else:
+        db.add(MYStockStrategyTag(
+            symbol=sym,
+            strategy_type=payload.strategy_type,
+            strategy_name=payload.strategy_name,
+            period=payload.period,
+            capital=payload.capital,
+            win_rate=payload.win_rate,
+            return_pct=payload.return_pct,
+            profit_factor=payload.profit_factor,
+            max_dd_pct=payload.max_dd_pct,
+            sharpe=payload.sharpe,
+            total_trades=payload.total_trades,
+        ))
+    db.commit()
+    return {"status": "ok", "symbol": sym, "strategy_type": payload.strategy_type}
+
+
+@router.delete("/my-stock-tags/{tag_id}")
+def delete_my_stock_tag(tag_id: int, db: Session = Depends(get_db)):
+    row = db.query(MYStockStrategyTag).filter(MYStockStrategyTag.id == tag_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    db.delete(row)
+    db.commit()
+    return {"status": "deleted", "id": tag_id}
+
+
 @router.get("/backtest_1h")
 async def us_stock_backtest_1h(
     symbol: _Ann[str, Query()] = "AAPL",
@@ -1942,6 +2525,7 @@ async def us_stock_backtest_1h(
                 rsi=round(float(row["rsi"]), 1) if not _isnan(row.get("rsi")) else None,
                 macd_hist=round(float(row["macd_hist"]), 4) if not _isnan(row.get("macd_hist")) else None,
                 st_dir=int(row["st_dir"]) if not _isnan(row.get("st_dir")) else None,
+                st_line=round(float(row["st_line"]), 2) if not _isnan(row.get("st_line")) else None,
                 ht_line=round(float(row["ht_line"]), 2) if not _isnan(row.get("ht_line")) else None,
                 ht_dir=int(row["ht_dir"]) if not _isnan(row.get("ht_dir")) else None,
                 ht_high=round(float(row["ht_high"]), 2) if not _isnan(row.get("ht_high")) else None,
@@ -2586,7 +3170,9 @@ async def us_stock_backtest_tpc(
 
     _disabled: set[str] = set()
     if disabled_conditions:
-        _valid = {"w_st_trend", "ht_trend"}
+        _valid = {"w_st_trend", "ht_trend",
+                  "sl_exit", "tp1_exit", "tp2_exit", "trail_exit",
+                  "wst_flip_exit", "ema28_break_exit", "ht_flip_exit"}
         _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
 
     def _run():
@@ -2596,9 +3182,17 @@ async def us_stock_backtest_tpc(
         from strategies.us_stock.tpc.config import DEFAULT_TPC_PARAMS, RISK_PER_TRADE as TPC_RISK
 
         # Load weekly + daily + 1H data
-        df_weekly = load_yfinance(symbol=symbol, interval="1wk", period="5y")
-        df_daily = load_yfinance(symbol=symbol, interval="1d", period="5y")
-        df_1h = load_yfinance(symbol=symbol, interval="1h", period=period)
+        # Yahoo Finance limits 1h data to ~730 days; for longer periods use daily as trade timeframe
+        _period_days_map = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730, "4y": 1460, "5y": 1825}
+        _req_days = _period_days_map.get(period, 730)
+        _use_daily = _req_days > 730
+
+        df_weekly = load_yfinance(symbol=symbol, interval="1wk", period="10y" if _use_daily else "5y")
+        df_daily = load_yfinance(symbol=symbol, interval="1d", period=period if _use_daily else "5y")
+        if _use_daily:
+            df_1h = df_daily.copy()  # use daily bars as the trade timeframe
+        else:
+            df_1h = load_yfinance(symbol=symbol, interval="1h", period=period)
 
         if df_1h.empty or len(df_1h) < 50:
             raise ValueError(f"Not enough 1H data for {symbol}.")
@@ -2640,7 +3234,7 @@ async def us_stock_backtest_tpc(
         display_start: _Opt[str] = None
         if date_from:
             display_start = date_from
-        elif period not in ("2y", "max"):
+        elif period not in ("2y", "4y", "5y", "max"):
             _period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
             _days = _period_days.get(period, 730)
             if _days < 730:
@@ -2721,6 +3315,7 @@ async def us_stock_backtest_tpc(
                 signal_type="TPC",
                 direction="CALL",
                 mae=round(t.mae, 2),
+                sl_price=round(t.sl_price, 2),
             )
             for t in filtered_trades
         ]
@@ -2747,3 +3342,1580 @@ async def us_stock_backtest_tpc(
         params=params,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# HPB — HeatPulse Breakout Strategy (KLSE Daily)
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/backtest_hpb")
+async def klse_backtest_hpb(
+    symbol: _Ann[str, Query()] = "0208.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 10000.0,
+    disabled_conditions: _Ann[_Opt[str], Query()] = None,
+    heat_threshold: _Ann[_Opt[float], Query()] = None,
+    sl_atr_mult: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    tp_atr_mult: _Ann[_Opt[float], Query(ge=0.5, le=10.0)] = None,
+    trailing_atr_mult: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    vol_mult: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    risk_pct: _Ann[_Opt[float], Query(ge=1.0, le=20.0)] = None,
+    cooldown_bars: _Ann[_Opt[int], Query(ge=0, le=20)] = None,
+) -> US1HBacktestResponse:
+    """Run HeatPulse Breakout backtest on a KLSE stock (daily timeframe)."""
+
+    _disabled: set[str] = set()
+    if disabled_conditions:
+        _valid = {"heat_filter", "ema_filter", "breakout_filter", "volume_filter",
+                  "atr_filter", "sl_exit", "tp_exit", "trail_exit"}
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in _valid}
+
+    def _run():
+        from strategies.futures.data_loader import load_yfinance
+        from strategies.klse.hpb.config import HPBParams
+        from strategies.klse.hpb.backtest import run_backtest as hpb_backtest
+        from strategies.klse.hpb.signals import build_indicators
+
+        params = HPBParams()
+        if heat_threshold is not None:
+            params.heat_threshold = heat_threshold
+        if sl_atr_mult is not None:
+            params.sl_atr_mult = sl_atr_mult
+        if tp_atr_mult is not None:
+            params.tp_atr_mult = tp_atr_mult
+        if trailing_atr_mult is not None:
+            params.trailing_atr_mult = trailing_atr_mult
+        if vol_mult is not None:
+            params.vol_mult = vol_mult
+        if risk_pct is not None:
+            params.risk_pct = risk_pct
+        if cooldown_bars is not None:
+            params.cooldown_bars = cooldown_bars
+
+        df = load_yfinance(symbol=symbol, interval="1d", period=period)
+        if df.empty or len(df) < 200:
+            raise ValueError(f"Not enough daily data for {symbol} (need 200+ bars for EMA200).")
+
+        result = hpb_backtest(df, params, capital=capital, disabled_conditions=_disabled or None)
+
+        # Build candles with indicators for chart
+        df_ind = build_indicators(df.copy(), params)
+
+        candles = []
+        for ts_val, row in df_ind.iterrows():
+            candles.append(US1HCandle(
+                time=ts_val.isoformat() if hasattr(ts_val, "isoformat") else str(ts_val),
+                open=round(float(row["open"]), 4),
+                high=round(float(row["high"]), 4),
+                low=round(float(row["low"]), 4),
+                close=round(float(row["close"]), 4),
+                volume=float(row.get("volume", 0)),
+                ema_fast=round(float(row["ema50"]), 4) if not _isnan(row.get("ema50")) else None,
+                ema_slow=round(float(row["ema200"]), 4) if not _isnan(row.get("ema200")) else None,
+                rsi=round(float(row["rsi"]), 1) if not _isnan(row.get("rsi")) else None,
+                signal=0,
+            ))
+
+        wins = [t for t in result.trades if t.win]
+        losses = [t for t in result.trades if not t.win]
+        n_trades = len(result.trades)
+        total_pnl = sum(t.pnl for t in result.trades)
+
+        metrics = US1HMetrics(
+            initial_capital=capital,
+            final_equity=round(capital + total_pnl, 2),
+            total_return_pct=round(total_pnl / capital * 100, 2) if capital else 0,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            total_trades=n_trades,
+            winners=len(wins),
+            losers=len(losses),
+            win_rate=round(len(wins) / n_trades * 100, 1) if n_trades else 0,
+            avg_win=round(sum(t.pnl for t in wins) / len(wins), 2) if wins else 0,
+            avg_loss=round(sum(t.pnl for t in losses) / len(losses), 2) if losses else 0,
+            profit_factor=round(
+                abs(sum(t.pnl for t in wins) / sum(t.pnl for t in losses)), 2
+            ) if losses and sum(t.pnl for t in losses) != 0 else 999.0,
+            risk_reward_ratio=result.risk_reward,
+        )
+
+        trades_out = [
+            US1HTrade(
+                entry_time=t.entry_date,
+                exit_time=t.exit_date,
+                entry_price=t.entry_price,
+                exit_price=t.exit_price,
+                qty=0,
+                pnl=t.pnl,
+                pnl_pct=t.return_pct,
+                reason=t.exit_reason,
+                signal_type="HPB",
+                direction="CALL",
+                sl_price=t.sl_price,
+            )
+            for t in result.trades
+        ]
+
+        out_params = {
+            "heat_threshold": params.heat_threshold,
+            "sl_atr_mult": params.sl_atr_mult,
+            "tp_atr_mult": params.tp_atr_mult,
+            "trailing_atr_mult": params.trailing_atr_mult,
+            "vol_mult": params.vol_mult,
+            "risk_pct": params.risk_pct,
+            "cooldown_bars": params.cooldown_bars,
+        }
+
+        return candles, trades_out, result.equity_curve, metrics, out_params
+
+    try:
+        candles, trades, eq_curve, metrics, params_out = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("HPB backtest failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return US1HBacktestResponse(
+        symbol=symbol,
+        interval="1d",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        params=params_out,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# KLSE VPB3 Malaysia — 量价突破 Daily Volume-Price Breakout
+# ═══════════════════════════════════════════════════════════
+
+
+@router.get("/backtest_vpb3")
+async def klse_backtest_vpb3(
+    symbol: _Ann[str, Query()] = "0208.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 5000.0,
+    disabled_conditions: _Ann[_Opt[str], Query()] = None,
+    tp_r_multiple: _Ann[_Opt[float], Query(ge=0.3, le=5.0)] = None,
+    vol_multiplier: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    sl_lookback: _Ann[_Opt[int], Query(ge=1, le=20)] = None,
+    rsi_min: _Ann[_Opt[float], Query(ge=10, le=60)] = None,
+    rsi_max: _Ann[_Opt[float], Query(ge=50, le=90)] = None,
+    cooldown_bars: _Ann[_Opt[int], Query(ge=0, le=20)] = None,
+    risk_pct: _Ann[_Opt[float], Query(ge=1.0, le=20.0)] = None,
+    breakout_lookback: _Ann[_Opt[int], Query(ge=3, le=30)] = None,
+) -> US1HBacktestResponse:
+    """Run VPB3 Malaysia (量价突破) backtest on a KLSE stock — daily bars."""
+
+    from strategies.klse.vpb3.strategy import VALID_CONDITIONS
+
+    _disabled: set[str] = set()
+    if disabled_conditions:
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in VALID_CONDITIONS}
+
+    def _run():
+        from strategies.futures.data_loader import load_yfinance
+        from strategies.klse.vpb3.strategy import DEFAULT_PARAMS, build_indicators
+        from strategies.klse.vpb3.backtest import run_backtest as vpb3_backtest
+
+        # Build param overrides
+        param_overrides: dict = {}
+        if tp_r_multiple is not None:
+            param_overrides["tp_r_multiple"] = tp_r_multiple
+        if vol_multiplier is not None:
+            param_overrides["vol_multiplier"] = vol_multiplier
+        if sl_lookback is not None:
+            param_overrides["sl_lookback"] = sl_lookback
+        if rsi_min is not None:
+            param_overrides["rsi_min"] = rsi_min
+        if rsi_max is not None:
+            param_overrides["rsi_max"] = rsi_max
+        if cooldown_bars is not None:
+            param_overrides["cooldown_bars"] = cooldown_bars
+        if risk_pct is not None:
+            param_overrides["risk_pct"] = risk_pct
+        if breakout_lookback is not None:
+            param_overrides["breakout_lookback"] = breakout_lookback
+
+        full_params = {**DEFAULT_PARAMS, **param_overrides}
+
+        df = load_yfinance(symbol=symbol, interval="1d", period=period)
+        if df.empty or len(df) < 60:
+            raise ValueError(f"Not enough daily data for {symbol} (need 60+ bars).")
+
+        result = vpb3_backtest(df, params=full_params, capital=capital,
+                               disabled_conditions=_disabled or None)
+
+        # Build candles with indicators
+        df_ind = build_indicators(df.copy(), full_params)
+
+        candles = []
+        for ts_val, row in df_ind.iterrows():
+            candles.append(US1HCandle(
+                time=ts_val.isoformat() if hasattr(ts_val, "isoformat") else str(ts_val),
+                open=round(float(row["open"]), 4),
+                high=round(float(row["high"]), 4),
+                low=round(float(row["low"]), 4),
+                close=round(float(row["close"]), 4),
+                volume=float(row.get("volume", 0)),
+                ema_fast=round(float(row.get("ema_fast", 0)), 4) if not _isnan(row.get("ema_fast")) else None,
+                ema_slow=round(float(row.get("ema_slow", 0)), 4) if not _isnan(row.get("ema_slow")) else None,
+                rsi=round(float(row.get("rsi", 0)), 1) if not _isnan(row.get("rsi")) else None,
+                signal=0,
+            ))
+
+        wins = [t for t in result.trades if t.win]
+        losses = [t for t in result.trades if not t.win]
+        n_trades = len(result.trades)
+
+        metrics = US1HMetrics(
+            initial_capital=capital,
+            final_equity=result.final_equity,
+            total_return_pct=result.total_return_pct,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            total_trades=n_trades,
+            winners=result.winners,
+            losers=result.losers,
+            win_rate=result.win_rate,
+            avg_win=result.avg_win_pct,
+            avg_loss=result.avg_loss_pct,
+            profit_factor=result.profit_factor,
+            risk_reward_ratio=result.risk_reward,
+        )
+
+        trades_out = [
+            US1HTrade(
+                entry_time=t.entry_date,
+                exit_time=t.exit_date,
+                entry_price=t.entry_price,
+                exit_price=t.exit_price,
+                qty=0,
+                pnl=t.pnl,
+                pnl_pct=t.return_pct,
+                reason=t.exit_reason,
+                signal_type="VPB3MY",
+                direction="CALL",
+                sl_price=t.sl_price,
+            )
+            for t in result.trades
+        ]
+
+        out_params = {
+            "tp_r_multiple": full_params["tp_r_multiple"],
+            "vol_multiplier": full_params["vol_multiplier"],
+            "sl_lookback": full_params["sl_lookback"],
+            "rsi_min": full_params["rsi_min"],
+            "rsi_max": full_params["rsi_max"],
+            "breakout_lookback": full_params["breakout_lookback"],
+            "cooldown_bars": full_params["cooldown_bars"],
+            "risk_pct": full_params["risk_pct"],
+        }
+
+        return candles, trades_out, result.equity_curve, metrics, out_params
+
+    try:
+        candles, trades, eq_curve, metrics, params_out = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("VPB3 Malaysia backtest failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return US1HBacktestResponse(
+        symbol=symbol,
+        interval="1d",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        params=params_out,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SMP — Smart Money Pivot Strategy (KLSE Daily)
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/backtest_smp")
+async def klse_backtest_smp(
+    symbol: _Ann[str, Query()] = "0233.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 5000.0,
+    disabled_conditions: _Ann[_Opt[str], Query()] = None,
+    tp_r_multiple: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    sl_lookback: _Ann[_Opt[int], Query(ge=1, le=20)] = None,
+    trailing_atr_mult: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+) -> US1HBacktestResponse:
+    """Run SMP (Smart Money Pivot) backtest — Pivot Points + Order Blocks + FVG."""
+
+    from strategies.klse.smp.strategy import VALID_CONDITIONS
+
+    _disabled: set[str] = set()
+    if disabled_conditions:
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in VALID_CONDITIONS}
+
+    def _run():
+        from strategies.futures.data_loader import load_yfinance
+        from strategies.klse.smp.strategy import DEFAULT_PARAMS, build_indicators
+        from strategies.klse.smp.backtest import run_backtest as smp_backtest
+
+        param_overrides: dict = {}
+        if tp_r_multiple is not None:
+            param_overrides["tp_r_multiple"] = tp_r_multiple
+        if sl_lookback is not None:
+            param_overrides["sl_lookback"] = sl_lookback
+        if trailing_atr_mult is not None:
+            param_overrides["trailing_atr_mult"] = trailing_atr_mult
+
+        full_params = {**DEFAULT_PARAMS, **param_overrides}
+
+        df = load_yfinance(symbol=symbol, interval="1d", period=period)
+        if df.empty or len(df) < 60:
+            raise ValueError(f"Not enough daily data for {symbol} (need 60+ bars).")
+
+        result = smp_backtest(df, params=full_params, capital=capital,
+                              disabled_conditions=_disabled or None)
+
+        # Build candles with indicators
+        df_ind = build_indicators(df.copy(), full_params)
+
+        candles = []
+        for ts_val, row in df_ind.iterrows():
+            candles.append(US1HCandle(
+                time=ts_val.isoformat() if hasattr(ts_val, "isoformat") else str(ts_val),
+                open=round(float(row["open"]), 4),
+                high=round(float(row["high"]), 4),
+                low=round(float(row["low"]), 4),
+                close=round(float(row["close"]), 4),
+                volume=float(row.get("volume", 0)),
+                ema_fast=round(float(row.get("ema_fast", 0)), 4) if not _isnan(row.get("ema_fast")) else None,
+                ema_slow=round(float(row.get("ema_slow", 0)), 4) if not _isnan(row.get("ema_slow")) else None,
+                rsi=round(float(row.get("rsi", 0)), 1) if not _isnan(row.get("rsi")) else None,
+                st_dir=int(row.get("bos", 0)),
+                st_line=round(float(row.get("swing_low", 0)), 4) if not _isnan(row.get("swing_low")) else None,
+                ht_line=round(float(row.get("ob_top", 0)), 4) if not _isnan(row.get("ob_top")) else None,
+                ht_dir=1 if not _isnan(row.get("ob_top")) else 0,
+                signal=0,
+            ))
+
+        n_trades = len(result.trades)
+        wins = [t for t in result.trades if t.win]
+        losses = [t for t in result.trades if not t.win]
+
+        metrics = US1HMetrics(
+            initial_capital=result.initial_capital,
+            final_equity=result.final_equity,
+            total_return_pct=result.total_return_pct,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            total_trades=n_trades,
+            winners=result.winners,
+            losers=result.losers,
+            win_rate=result.win_rate,
+            avg_win=result.avg_win_pct,
+            avg_loss=result.avg_loss_pct,
+            profit_factor=result.profit_factor,
+            risk_reward_ratio=result.risk_reward,
+        )
+
+        trades_out = [
+            US1HTrade(
+                entry_time=t.entry_date,
+                exit_time=t.exit_date,
+                entry_price=t.entry_price,
+                exit_price=t.exit_price,
+                qty=0,
+                pnl=t.pnl,
+                pnl_pct=t.return_pct,
+                reason=t.exit_reason,
+                signal_type="SMP",
+                direction="CALL",
+                sl_price=t.sl_price,
+            )
+            for t in result.trades
+        ]
+
+        out_params = {
+            "tp_r_multiple": full_params["tp_r_multiple"],
+            "sl_lookback": full_params["sl_lookback"],
+            "trailing_atr_mult": full_params["trailing_atr_mult"],
+            "min_score": full_params["min_score"],
+        }
+
+        return candles, trades_out, result.equity_curve, metrics, out_params
+
+    try:
+        candles, trades, eq_curve, metrics, params_out = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("SMP backtest failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return US1HBacktestResponse(
+        symbol=symbol,
+        interval="1d",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        params=params_out,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# PrecSniper (Precision Sniper) Backtest
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/backtest_psniper")
+async def klse_backtest_psniper(
+    symbol: _Ann[str, Query()] = "0208.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 5000.0,
+    disabled_conditions: _Ann[_Opt[str], Query()] = None,
+    min_score: _Ann[_Opt[int], Query(ge=1, le=10)] = None,
+    sl_atr_mult: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    tp1_rr: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+) -> US1HBacktestResponse:
+    """Run PrecSniper backtest — EMA cross + 10-pt confluence scoring."""
+
+    from strategies.klse.psniper.strategy import VALID_CONDITIONS
+
+    _disabled: set[str] = set()
+    if disabled_conditions:
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in VALID_CONDITIONS}
+
+    def _run():
+        from strategies.futures.data_loader import load_yfinance
+        from strategies.klse.psniper.strategy import DEFAULT_PARAMS, build_indicators
+        from strategies.klse.psniper.backtest import run_backtest as ps_backtest
+
+        param_overrides: dict = {}
+        if min_score is not None:
+            param_overrides["min_score"] = min_score
+        if sl_atr_mult is not None:
+            param_overrides["sl_atr_mult"] = sl_atr_mult
+        if tp1_rr is not None:
+            param_overrides["tp1_rr"] = tp1_rr
+
+        full_params = {**DEFAULT_PARAMS, **param_overrides}
+
+        df = load_yfinance(symbol=symbol, interval="1d", period=period)
+        if df.empty or len(df) < 60:
+            raise ValueError(f"Not enough daily data for {symbol} (need 60+ bars).")
+
+        result = ps_backtest(df, params=full_params, capital=capital,
+                             disabled_conditions=_disabled or None)
+
+        df_ind = build_indicators(df.copy(), full_params)
+
+        candles = []
+        for ts_val, row in df_ind.iterrows():
+            candles.append(US1HCandle(
+                time=ts_val.isoformat() if hasattr(ts_val, "isoformat") else str(ts_val),
+                open=round(float(row["open"]), 4),
+                high=round(float(row["high"]), 4),
+                low=round(float(row["low"]), 4),
+                close=round(float(row["close"]), 4),
+                volume=float(row.get("volume", 0)),
+                ema_fast=round(float(row.get("ema_fast", 0)), 4) if not _isnan(row.get("ema_fast")) else None,
+                ema_slow=round(float(row.get("ema_slow", 0)), 4) if not _isnan(row.get("ema_slow")) else None,
+                rsi=round(float(row.get("rsi", 0)), 1) if not _isnan(row.get("rsi")) else None,
+                st_dir=int(row.get("htf_bias", 0)),
+                st_line=round(float(row.get("swing_low", 0)), 4) if not _isnan(row.get("swing_low")) else None,
+                ht_line=round(float(row.get("vwap", 0)), 4) if not _isnan(row.get("vwap")) else None,
+                ht_dir=1 if not _isnan(row.get("vwap")) else 0,
+                signal=0,
+            ))
+
+        n_trades = len(result.trades)
+        metrics = US1HMetrics(
+            initial_capital=result.initial_capital,
+            final_equity=result.final_equity,
+            total_return_pct=result.total_return_pct,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            total_trades=n_trades,
+            winners=result.winners,
+            losers=result.losers,
+            win_rate=result.win_rate,
+            avg_win=result.avg_win_pct,
+            avg_loss=result.avg_loss_pct,
+            profit_factor=result.profit_factor,
+            risk_reward_ratio=result.risk_reward,
+        )
+
+        trades_out = [
+            US1HTrade(
+                entry_time=t.entry_date,
+                exit_time=t.exit_date,
+                entry_price=t.entry_price,
+                exit_price=t.exit_price,
+                qty=0,
+                pnl=t.pnl,
+                pnl_pct=t.return_pct,
+                reason=t.exit_reason,
+                signal_type="PSNIPER",
+                direction="CALL",
+                sl_price=t.sl_price,
+            )
+            for t in result.trades
+        ]
+
+        out_params = {
+            "min_score": full_params["min_score"],
+            "sl_atr_mult": full_params["sl_atr_mult"],
+            "tp1_rr": full_params["tp1_rr"],
+            "ema_fast": full_params["ema_fast"],
+            "ema_slow": full_params["ema_slow"],
+        }
+
+        return candles, trades_out, result.equity_curve, metrics, out_params
+
+    try:
+        candles, trades, eq_curve, metrics, params_out = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("PrecSniper backtest failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return US1HBacktestResponse(
+        symbol=symbol,
+        interval="1d",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        params=params_out,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# CM MACD — MACD(12,26,9) Crossover Strategy (KLSE Daily)
+# Entry: MACD line crosses ABOVE signal → long
+# Exit:  MACD line crosses BELOW signal  OR ATR SL/TP
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/backtest_cm_macd")
+async def klse_backtest_cm_macd(
+    symbol: _Ann[str, Query()] = "0208.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 5000.0,
+    sl_atr_mult: _Ann[float, Query(ge=0.5, le=10.0)] = 2.0,
+    tp_r_mult: _Ann[float, Query(ge=0.5, le=10.0)] = 3.0,
+    macd_fast: _Ann[int, Query(ge=2, le=50)] = 12,
+    macd_slow: _Ann[int, Query(ge=5, le=100)] = 26,
+    macd_signal: _Ann[int, Query(ge=2, le=30)] = 9,
+    risk_pct: _Ann[float, Query(ge=1.0, le=20.0)] = 2.0,
+) -> US1HBacktestResponse:
+    """Run CM MACD crossover backtest on a KLSE stock (daily timeframe).
+
+    Entry:  MACD line crosses above signal line (bullish crossover)
+    Exit:   MACD line crosses below signal line  OR  ATR-based SL/TP hit
+    """
+
+    def _run():
+        import math as _m
+        from strategies.futures.data_loader import load_yfinance
+
+        df = load_yfinance(symbol=symbol, interval="1d", period=period)
+        if df.empty or len(df) < macd_slow + macd_signal + 20:
+            raise ValueError(f"Not enough daily data for {symbol}.")
+
+        df = df[["open", "high", "low", "close", "volume"]].copy()
+        c = df["close"].tolist()
+        h = df["high"].tolist()
+        lo = df["low"].tolist()
+        n = len(c)
+
+        # ── EMA helper ──────────────────────────────────────────────
+        def _ema_arr(src: list[float], period: int) -> list[float]:
+            k = 2.0 / (period + 1)
+            out = [_m.nan] * n
+            start = next((i for i, v in enumerate(src) if not _m.isnan(v)), None)
+            if start is None:
+                return out
+            out[start] = src[start]
+            for i in range(start + 1, n):
+                out[i] = src[i] * k + out[i - 1] * (1 - k)
+            return out
+
+        # ── MACD ────────────────────────────────────────────────────
+        ema_fast = _ema_arr(c, macd_fast)
+        ema_slow = _ema_arr(c, macd_slow)
+        macd_line = [
+            ema_fast[i] - ema_slow[i]
+            if not (_m.isnan(ema_fast[i]) or _m.isnan(ema_slow[i]))
+            else _m.nan
+            for i in range(n)
+        ]
+        sig_line = _ema_arr(macd_line, macd_signal)
+        macd_hist_v = [
+            macd_line[i] - sig_line[i]
+            if not (_m.isnan(macd_line[i]) or _m.isnan(sig_line[i]))
+            else _m.nan
+            for i in range(n)
+        ]
+
+        # ── ATR (Wilder RMA) ─────────────────────────────────────────
+        tr = [0.0] * n
+        tr[0] = h[0] - lo[0]
+        for i in range(1, n):
+            tr[i] = max(h[i] - lo[i], abs(h[i] - c[i - 1]), abs(lo[i] - c[i - 1]))
+        atr_arr = [_m.nan] * n
+        atr_arr[0] = tr[0]
+        alpha = 1.0 / 14
+        for i in range(1, n):
+            atr_arr[i] = alpha * tr[i] + (1 - alpha) * atr_arr[i - 1]
+
+        # ── Bar-by-bar backtest ──────────────────────────────────────
+        COMMISSION = 0.001   # 0.1% per side
+
+        equity = float(capital)
+        equity_curve: list[float] = []
+        trades_raw: list[dict] = []
+
+        in_position = False
+        entry_price = 0.0
+        entry_date = ""
+        sl = 0.0
+        tp = 0.0
+
+        dates = df.index.tolist()
+
+        for i in range(1, n):
+            equity_curve.append(equity)
+            if _m.isnan(macd_line[i]) or _m.isnan(sig_line[i]):
+                continue
+            if _m.isnan(macd_line[i - 1]) or _m.isnan(sig_line[i - 1]):
+                continue
+
+            crossover = macd_line[i] > sig_line[i] and macd_line[i - 1] <= sig_line[i - 1]
+            crossunder = macd_line[i] < sig_line[i] and macd_line[i - 1] >= sig_line[i - 1]
+            bar_open = float(df["open"].iloc[i])
+            bar_high = float(df["high"].iloc[i])
+            bar_low = float(df["low"].iloc[i])
+            bar_close = float(c[i])
+            atr_val = atr_arr[i] if not _m.isnan(atr_arr[i]) else 0.0
+
+            if in_position:
+                # Check SL hit
+                exit_price: float | None = None
+                exit_reason = ""
+                if bar_low <= sl:
+                    exit_price = sl
+                    exit_reason = "SL"
+                elif bar_high >= tp:
+                    exit_price = tp
+                    exit_reason = "TP"
+                elif crossunder:
+                    exit_price = bar_close
+                    exit_reason = "MACD Cross"
+
+                if exit_price is not None:
+                    risk_amount = equity * (risk_pct / 100.0)
+                    risk_per_share = entry_price - sl
+                    if risk_per_share <= 0:
+                        risk_per_share = entry_price * 0.02
+                    qty_shares = risk_amount / risk_per_share
+                    gross = (exit_price - entry_price) * qty_shares
+                    cost = (entry_price + exit_price) * qty_shares * COMMISSION
+                    pnl = gross - cost
+                    equity += pnl
+                    pnl_pct = (exit_price - entry_price) / entry_price * 100.0
+                    exit_date_str = dates[i].isoformat() if hasattr(dates[i], "isoformat") else str(dates[i])
+                    trades_raw.append({
+                        "entry_time": entry_date,
+                        "exit_time": exit_date_str,
+                        "entry_price": round(entry_price, 4),
+                        "exit_price": round(exit_price, 4),
+                        "pnl": round(pnl, 2),
+                        "pnl_pct": round(pnl_pct, 2),
+                        "reason": exit_reason,
+                        "sl_price": round(sl, 4),
+                        "win": pnl > 0,
+                    })
+                    in_position = False
+
+            else:
+                # Entry on next-bar open after crossover signal (no lookahead)
+                if crossover and atr_val > 0:
+                    entry_price = bar_open
+                    entry_date = dates[i].isoformat() if hasattr(dates[i], "isoformat") else str(dates[i])
+                    sl = entry_price - sl_atr_mult * atr_val
+                    tp = entry_price + (entry_price - sl) * tp_r_mult
+                    in_position = True
+
+        equity_curve.append(equity)
+
+        # Close any open position at last bar close
+        if in_position:
+            last_close = float(c[-1])
+            risk_amount = equity * (risk_pct / 100.0)
+            risk_per_share = entry_price - sl
+            if risk_per_share <= 0:
+                risk_per_share = entry_price * 0.02
+            qty_shares = risk_amount / risk_per_share
+            gross = (last_close - entry_price) * qty_shares
+            cost = (entry_price + last_close) * qty_shares * COMMISSION
+            pnl = gross - cost
+            equity += pnl
+            pnl_pct = (last_close - entry_price) / entry_price * 100.0
+            trades_raw.append({
+                "entry_time": entry_date,
+                "exit_time": dates[-1].isoformat() if hasattr(dates[-1], "isoformat") else str(dates[-1]),
+                "entry_price": round(entry_price, 4),
+                "exit_price": round(last_close, 4),
+                "pnl": round(pnl, 2),
+                "pnl_pct": round(pnl_pct, 2),
+                "reason": "EOD",
+                "sl_price": round(sl, 4),
+                "win": pnl > 0,
+            })
+
+        # ── Metrics ─────────────────────────────────────────────────
+        n_trades = len(trades_raw)
+        wins = [t for t in trades_raw if t["win"]]
+        losses = [t for t in trades_raw if not t["win"]]
+        total_pnl = sum(t["pnl"] for t in trades_raw)
+        gross_win = sum(t["pnl"] for t in wins)
+        gross_loss = abs(sum(t["pnl"] for t in losses))
+
+        # Max drawdown
+        peak = capital
+        max_dd = 0.0
+        running = capital
+        for t in trades_raw:
+            running += t["pnl"]
+            if running > peak:
+                peak = running
+            dd = (peak - running) / peak * 100 if peak > 0 else 0
+            if dd > max_dd:
+                max_dd = dd
+
+        # Sharpe (simplified daily returns)
+        returns = [t["pnl_pct"] for t in trades_raw]
+        if len(returns) > 1:
+            avg_r = sum(returns) / len(returns)
+            std_r = (sum((r - avg_r) ** 2 for r in returns) / len(returns)) ** 0.5
+            sharpe = (avg_r / std_r * (252 ** 0.5)) if std_r > 0 else 0.0
+        else:
+            sharpe = 0.0
+
+        metrics = US1HMetrics(
+            initial_capital=capital,
+            final_equity=round(capital + total_pnl, 2),
+            total_return_pct=round(total_pnl / capital * 100, 2) if capital else 0,
+            max_drawdown_pct=round(max_dd, 2),
+            sharpe_ratio=round(sharpe, 2),
+            total_trades=n_trades,
+            winners=len(wins),
+            losers=len(losses),
+            win_rate=round(len(wins) / n_trades * 100, 1) if n_trades else 0,
+            avg_win=round(gross_win / len(wins), 2) if wins else 0,
+            avg_loss=round(-gross_loss / len(losses), 2) if losses else 0,
+            profit_factor=round(gross_win / gross_loss, 2) if gross_loss > 0 else 999.0,
+            risk_reward_ratio=round(
+                (gross_win / len(wins)) / (gross_loss / len(losses)), 2
+            ) if wins and losses else 999.0,
+        )
+
+        trades_out = [
+            US1HTrade(
+                entry_time=t["entry_time"],
+                exit_time=t["exit_time"],
+                entry_price=t["entry_price"],
+                exit_price=t["exit_price"],
+                qty=0,
+                pnl=t["pnl"],
+                pnl_pct=t["pnl_pct"],
+                reason=t["reason"],
+                signal_type="CM_MACD",
+                direction="CALL",
+                sl_price=t["sl_price"],
+            )
+            for t in trades_raw
+        ]
+
+        # ── Candles with MACD line / signal / hist ───────────────────
+        candles = []
+        for i, (ts_val, row) in enumerate(df.iterrows()):
+            candles.append(US1HCandle(
+                time=ts_val.isoformat() if hasattr(ts_val, "isoformat") else str(ts_val),
+                open=round(float(row["open"]), 4),
+                high=round(float(row["high"]), 4),
+                low=round(float(row["low"]), 4),
+                close=round(float(row["close"]), 4),
+                volume=float(row.get("volume", 0)),
+                ema_fast=round(macd_line[i], 6) if not _m.isnan(macd_line[i]) else None,
+                ema_slow=round(sig_line[i], 6) if not _m.isnan(sig_line[i]) else None,
+                macd_hist=round(macd_hist_v[i], 6) if not _m.isnan(macd_hist_v[i]) else None,
+                signal=0,
+            ))
+
+        out_params = {
+            "macd_fast": macd_fast, "macd_slow": macd_slow,
+            "macd_signal": macd_signal,
+            "sl_atr_mult": sl_atr_mult, "tp_r_mult": tp_r_mult,
+            "risk_pct": risk_pct,
+        }
+
+        return candles, trades_out, equity_curve, metrics, out_params
+
+    try:
+        candles, trades, eq_curve, metrics, params_out = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("CM MACD backtest failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return US1HBacktestResponse(
+        symbol=symbol,
+        interval="1d",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        params=params_out,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Scan Best Strategy — run all 3 KLSE strategies and grade them
+# ═══════════════════════════════════════════════════════════════════════
+
+def _grade_metrics(m: dict) -> tuple[str, float]:
+    """
+    Assign a letter grade (A+ to F) and numeric score based on backtest metrics.
+    Score formula weights: return (30%), win_rate (25%), profit_factor (20%),
+    sharpe (15%), drawdown penalty (10%).
+    """
+    ret = m.get("total_return_pct", 0)
+    wr = m.get("win_rate", 0)
+    pf = min(m.get("profit_factor", 0), 10)  # cap at 10
+    sharpe = m.get("sharpe_ratio", 0)
+    dd = abs(m.get("max_drawdown_pct", 0))
+    trades = m.get("total_trades", 0)
+
+    # If no trades, automatic F
+    if trades == 0:
+        return "F", 0.0
+
+    score = (
+        min(ret, 100) * 0.30       # return % capped at 100 for scoring
+        + min(wr, 100) * 0.25      # win rate
+        + min(pf, 5) * 4 * 0.20    # profit factor (1→4, 5→20 pts, capped)
+        + min(max(sharpe, 0), 3) * 6.67 * 0.15  # sharpe (3→20 pts)
+        - dd * 0.10                 # drawdown penalty
+    )
+
+    if score >= 40:
+        grade = "A+"
+    elif score >= 30:
+        grade = "A"
+    elif score >= 22:
+        grade = "B+"
+    elif score >= 15:
+        grade = "B"
+    elif score >= 10:
+        grade = "C+"
+    elif score >= 5:
+        grade = "C"
+    elif score >= 0:
+        grade = "D"
+    else:
+        grade = "F"
+
+    return grade, round(score, 1)
+
+
+@router.get("/scan_best_strategy")
+async def scan_best_strategy(
+    symbol: _Ann[str, Query()] = "0208.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 5000.0,
+) -> dict:
+    """Run all 4 KLSE strategies (TPC, HPB, VPB3, SMP) with defaults and return graded comparison."""
+
+    def _run_all() -> list[dict]:
+        from strategies.futures.data_loader import load_yfinance
+
+        results = []
+
+        # --- TPC ---
+        try:
+            from strategies.us_stock.tpc.backtest import TPCBacktester
+            from strategies.us_stock.tpc.config import DEFAULT_TPC_PARAMS, RISK_PER_TRADE as TPC_RISK
+
+            _period_days_map = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
+            _req_days = _period_days_map.get(period, 730)
+            _use_daily = _req_days > 730
+
+            df_weekly = load_yfinance(symbol=symbol, interval="1wk", period="10y" if _use_daily else "5y")
+            df_daily = load_yfinance(symbol=symbol, interval="1d", period=period if _use_daily else "5y")
+            df_1h = df_daily.copy() if _use_daily else load_yfinance(symbol=symbol, interval="1h", period=period)
+
+            bt = TPCBacktester(capital=capital, risk_per_trade=TPC_RISK)
+            result = bt.run(
+                symbol=symbol, period=period, params={},
+                disabled_conditions=None,
+                df_weekly=df_weekly, df_daily=df_daily, df_1h=df_1h,
+            )
+
+            wins = [t for t in result.trades if t.pnl > 0]
+            losses = [t for t in result.trades if t.pnl <= 0]
+            n = len(result.trades)
+            total_pnl = sum(t.pnl for t in result.trades)
+            wr = round(len(wins) / n * 100, 1) if n else 0
+            pf = round(abs(sum(t.pnl for t in wins) / sum(t.pnl for t in losses)), 2) if losses and sum(t.pnl for t in losses) != 0 else 999.0
+
+            m = {
+                "total_return_pct": round(total_pnl / capital * 100, 2) if capital else 0,
+                "win_rate": wr,
+                "profit_factor": pf,
+                "sharpe_ratio": result.sharpe_ratio,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "total_trades": n,
+                "winners": len(wins),
+                "losers": len(losses),
+            }
+            grade, score = _grade_metrics(m)
+            results.append({"strategy": "tpc", "label": "TPC", "grade": grade, "score": score, "metrics": m})
+        except Exception as exc:
+            logger.debug("TPC scan failed for %s: %s", symbol, exc)
+            results.append({"strategy": "tpc", "label": "TPC", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
+
+        # --- HPB ---
+        try:
+            from strategies.klse.hpb.config import HPBParams
+            from strategies.klse.hpb.backtest import run_backtest as hpb_backtest
+
+            params = HPBParams()
+            df = load_yfinance(symbol=symbol, interval="1d", period=period)
+            if df.empty or len(df) < 200:
+                raise ValueError("Not enough data")
+
+            result = hpb_backtest(df, params, capital=capital, disabled_conditions=None)
+            wins = [t for t in result.trades if t.win]
+            losses = [t for t in result.trades if not t.win]
+            n = len(result.trades)
+            total_pnl = sum(t.pnl for t in result.trades)
+            wr = round(len(wins) / n * 100, 1) if n else 0
+            pf = round(abs(sum(t.pnl for t in wins) / sum(t.pnl for t in losses)), 2) if losses and sum(t.pnl for t in losses) != 0 else 999.0
+
+            m = {
+                "total_return_pct": round(total_pnl / capital * 100, 2) if capital else 0,
+                "win_rate": wr,
+                "profit_factor": pf,
+                "sharpe_ratio": result.sharpe_ratio,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "total_trades": n,
+                "winners": len(wins),
+                "losers": len(losses),
+            }
+            grade, score = _grade_metrics(m)
+            results.append({"strategy": "hpb", "label": "HPB", "grade": grade, "score": score, "metrics": m})
+        except Exception as exc:
+            logger.debug("HPB scan failed for %s: %s", symbol, exc)
+            results.append({"strategy": "hpb", "label": "HPB", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
+
+        # --- VPB3 ---
+        try:
+            from strategies.klse.vpb3.strategy import DEFAULT_PARAMS
+            from strategies.klse.vpb3.backtest import run_backtest as vpb3_backtest
+
+            df = load_yfinance(symbol=symbol, interval="1d", period=period)
+            if df.empty or len(df) < 60:
+                raise ValueError("Not enough data")
+
+            result = vpb3_backtest(df, params=DEFAULT_PARAMS, capital=capital, disabled_conditions=None)
+            n = len(result.trades)
+
+            m = {
+                "total_return_pct": result.total_return_pct,
+                "win_rate": result.win_rate,
+                "profit_factor": result.profit_factor,
+                "sharpe_ratio": result.sharpe_ratio,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "total_trades": n,
+                "winners": result.winners,
+                "losers": result.losers,
+            }
+            grade, score = _grade_metrics(m)
+            results.append({"strategy": "vpb3", "label": "VPB3", "grade": grade, "score": score, "metrics": m})
+        except Exception as exc:
+            logger.debug("VPB3 scan failed for %s: %s", symbol, exc)
+            results.append({"strategy": "vpb3", "label": "VPB3", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
+
+        # --- SMP ---
+        try:
+            from strategies.klse.smp.strategy import DEFAULT_PARAMS as SMP_PARAMS
+            from strategies.klse.smp.backtest import run_backtest as smp_backtest
+
+            df = load_yfinance(symbol=symbol, interval="1d", period=period)
+            if df.empty or len(df) < 60:
+                raise ValueError("Not enough data")
+
+            result = smp_backtest(df, params=SMP_PARAMS, capital=capital, disabled_conditions=None)
+            n = len(result.trades)
+
+            m = {
+                "total_return_pct": result.total_return_pct,
+                "win_rate": result.win_rate,
+                "profit_factor": result.profit_factor,
+                "sharpe_ratio": result.sharpe_ratio,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "total_trades": n,
+                "winners": result.winners,
+                "losers": result.losers,
+            }
+            grade, score = _grade_metrics(m)
+            results.append({"strategy": "smp", "label": "SMP", "grade": grade, "score": score, "metrics": m})
+        except Exception as exc:
+            logger.debug("SMP scan failed for %s: %s", symbol, exc)
+            results.append({"strategy": "smp", "label": "SMP", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
+
+        # --- PrecSniper ---
+        try:
+            from strategies.klse.psniper.strategy import DEFAULT_PARAMS as PS_PARAMS
+            from strategies.klse.psniper.backtest import run_backtest as ps_backtest
+
+            df = load_yfinance(symbol=symbol, interval="1d", period=period)
+            if df.empty or len(df) < 60:
+                raise ValueError("Not enough data")
+
+            result = ps_backtest(df, params=PS_PARAMS, capital=capital, disabled_conditions=None)
+            n = len(result.trades)
+
+            m = {
+                "total_return_pct": result.total_return_pct,
+                "win_rate": result.win_rate,
+                "profit_factor": result.profit_factor,
+                "sharpe_ratio": result.sharpe_ratio,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "total_trades": n,
+                "winners": result.winners,
+                "losers": result.losers,
+            }
+            grade, score = _grade_metrics(m)
+            results.append({"strategy": "psniper", "label": "PrecSniper", "grade": grade, "score": score, "metrics": m})
+        except Exception as exc:
+            logger.debug("PrecSniper scan failed for %s: %s", symbol, exc)
+            results.append({"strategy": "psniper", "label": "PrecSniper", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
+
+        # --- CM MACD ---
+        try:
+            import math as _m
+
+            df = load_yfinance(symbol=symbol, interval="1d", period=period)
+            if df.empty or len(df) < 50:
+                raise ValueError("Not enough data")
+
+            c_arr = df["close"].tolist() if "close" in df.columns else df["Close"].tolist()
+            h_arr = df["high"].tolist() if "high" in df.columns else df["High"].tolist()
+            lo_arr = df["low"].tolist() if "low" in df.columns else df["Low"].tolist()
+            n_pts = len(c_arr)
+
+            def _ema_s(src, p):
+                k = 2.0 / (p + 1)
+                out = [_m.nan] * n_pts
+                st = next((i for i, v in enumerate(src) if not _m.isnan(v)), None)
+                if st is None: return out
+                out[st] = src[st]
+                for i in range(st + 1, n_pts):
+                    out[i] = src[i] * k + out[i - 1] * (1 - k)
+                return out
+
+            ef = _ema_s(c_arr, 12); es = _ema_s(c_arr, 26)
+            ml = [ef[i] - es[i] if not (_m.isnan(ef[i]) or _m.isnan(es[i])) else _m.nan for i in range(n_pts)]
+            sl_line = _ema_s(ml, 9)
+            tr = [0.0] * n_pts
+            tr[0] = h_arr[0] - lo_arr[0]
+            for i in range(1, n_pts):
+                tr[i] = max(h_arr[i] - lo_arr[i], abs(h_arr[i] - c_arr[i-1]), abs(lo_arr[i] - c_arr[i-1]))
+            atr_v = [_m.nan] * n_pts; atr_v[0] = tr[0]
+            for i in range(1, n_pts): atr_v[i] = (1/14)*tr[i] + (13/14)*atr_v[i-1]
+
+            SL_MULT, TP_MULT, COMM = 2.0, 3.0, 0.001
+            equity = float(capital)
+            trades_cm = []; in_pos = False
+            entry_px = sl_px = tp_px = 0.0
+            dates = df.index.tolist()
+
+            for i in range(1, n_pts):
+                if _m.isnan(ml[i]) or _m.isnan(sl_line[i]) or _m.isnan(ml[i-1]) or _m.isnan(sl_line[i-1]):
+                    continue
+                crossover = ml[i] > sl_line[i] and ml[i-1] <= sl_line[i-1]
+                crossunder = ml[i] < sl_line[i] and ml[i-1] >= sl_line[i-1]
+                bar_high = float(h_arr[i]); bar_low = float(lo_arr[i]); bar_close = float(c_arr[i])
+                atr_val = atr_v[i] if not _m.isnan(atr_v[i]) else 0.0
+
+                if in_pos:
+                    ex_px = None; ex_reason = ""
+                    if bar_low <= sl_px: ex_px = sl_px; ex_reason = "SL"
+                    elif bar_high >= tp_px: ex_px = tp_px; ex_reason = "TP"
+                    elif crossunder: ex_px = bar_close; ex_reason = "MACD Cross"
+                    if ex_px is not None:
+                        risk_ps = entry_px - sl_px
+                        if risk_ps <= 0: risk_ps = entry_px * 0.02
+                        qty = (equity * 0.02) / risk_ps
+                        pnl = (ex_px - entry_px) * qty - (entry_px + ex_px) * qty * COMM
+                        equity += pnl
+                        trades_cm.append({"pnl": pnl, "win": pnl > 0})
+                        in_pos = False
+                else:
+                    if crossover and atr_val > 0:
+                        entry_px = float(df["open"].iloc[i]) if "open" in df.columns else float(df["Open"].iloc[i])
+                        sl_px = entry_px - SL_MULT * atr_val
+                        tp_px = entry_px + (entry_px - sl_px) * TP_MULT
+                        in_pos = True
+
+            if in_pos:
+                lc = float(c_arr[-1])
+                risk_ps = entry_px - sl_px
+                if risk_ps <= 0: risk_ps = entry_px * 0.02
+                qty = (equity * 0.02) / risk_ps
+                pnl = (lc - entry_px) * qty - (entry_px + lc) * qty * COMM
+                equity += pnl
+                trades_cm.append({"pnl": pnl, "win": pnl > 0})
+
+            nt = len(trades_cm)
+            wins_cm = [t for t in trades_cm if t["win"]]
+            losses_cm = [t for t in trades_cm if not t["win"]]
+            total_pnl_cm = sum(t["pnl"] for t in trades_cm)
+            wr_cm = round(len(wins_cm) / nt * 100, 1) if nt else 0
+            pf_cm = round(abs(sum(t["pnl"] for t in wins_cm) / sum(t["pnl"] for t in losses_cm)), 2) if losses_cm and sum(t["pnl"] for t in losses_cm) != 0 else 999.0
+
+            # Sharpe
+            pnls = [t["pnl"] for t in trades_cm]
+            import statistics as _stats
+            if len(pnls) >= 2:
+                avg_r = sum(pnls) / len(pnls)
+                std_r = _stats.stdev(pnls)
+                sharpe_cm = round(avg_r / std_r * (252 ** 0.5) if std_r > 0 else 0, 2)
+            else:
+                sharpe_cm = 0.0
+
+            # Max drawdown
+            eq_curve = [float(capital)]
+            for t in trades_cm:
+                eq_curve.append(eq_curve[-1] + t["pnl"])
+            peak = eq_curve[0]; max_dd = 0.0
+            for v in eq_curve:
+                if v > peak: peak = v
+                dd = (peak - v) / peak * 100 if peak > 0 else 0
+                if dd > max_dd: max_dd = dd
+
+            m_cm = {
+                "total_return_pct": round(total_pnl_cm / capital * 100, 2),
+                "win_rate": wr_cm,
+                "profit_factor": pf_cm,
+                "sharpe_ratio": sharpe_cm,
+                "max_drawdown_pct": -round(max_dd, 2),
+                "total_trades": nt,
+                "winners": len(wins_cm),
+                "losers": len(losses_cm),
+            }
+            grade_cm, score_cm = _grade_metrics(m_cm)
+            results.append({"strategy": "cm_macd", "label": "CM MACD", "grade": grade_cm, "score": score_cm, "metrics": m_cm})
+        except Exception as exc:
+            logger.debug("CM MACD scan failed for %s: %s", symbol, exc)
+            results.append({"strategy": "cm_macd", "label": "CM MACD", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
+
+        # Sort by score descending
+        results.sort(key=lambda x: -x["score"])
+        return results
+
+    try:
+        strategies = await run_in_threadpool(_run_all)
+    except Exception as exc:
+        logger.exception("Scan best strategy failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    best = strategies[0] if strategies else None
+    return {
+        "symbol": symbol,
+        "period": period,
+        "best": best["strategy"] if best else None,
+        "best_grade": best["grade"] if best else "F",
+        "strategies": strategies,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Scan Strategy Opportunities — find stocks with active buy signals
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/scan_opportunities")
+async def scan_opportunities(
+    strategy: _Ann[str, Query()] = "smp",
+    period: _Ann[str, Query()] = "6mo",
+    capital: _Ann[float, Query()] = 5000.0,
+) -> dict:
+    """Scan all KLSE stocks for a given strategy. Return those with an active signal
+    or currently open position (i.e. buy opportunity near entry)."""
+
+    def _scan() -> list[dict]:
+        from strategies.futures.data_loader import load_yfinance
+
+        all_symbols = [s.symbol for s in _get_my_stocks()]
+
+        hits: list[dict] = []
+
+        for sym in all_symbols:
+            try:
+                df = load_yfinance(symbol=sym, interval="1d", period=period)
+                if df.empty or len(df) < 60:
+                    continue
+                df.attrs["symbol"] = sym
+
+                result = _run_strategy_backtest(strategy, df, capital)
+                if result is None:
+                    continue
+
+                # Check: is there a currently open position? (last trade has no proper exit / EOD)
+                has_open = False
+                entry_price = 0.0
+                sl_price = 0.0
+                tp_price = 0.0
+                entry_date = ""
+                last_close = float(df["close"].iloc[-1]) if "close" in df.columns else float(df["Close"].iloc[-1])
+
+                if result.trades:
+                    last_trade = result.trades[-1]
+                    # EOD exit means position was still open at end of data
+                    if last_trade.exit_reason == "EOD":
+                        has_open = True
+                        entry_price = last_trade.entry_price
+                        sl_price = last_trade.sl_price
+                        tp_price = last_trade.tp_price
+                        entry_date = last_trade.entry_date
+
+                # Also check: is there a signal on the last bar (meaning entry tomorrow)?
+                has_signal = False
+                if hasattr(result, "last_signal") and result.last_signal:
+                    has_signal = True
+
+                if not has_open and not has_signal:
+                    # Also check if there's a very recent signal (last 3 bars)
+                    if result.trades:
+                        last_t = result.trades[-1]
+                        # Recent entry (within last 5 trading days)
+                        if isinstance(df.index, pd.DatetimeIndex):
+                            last_date = df.index[-1]
+                            try:
+                                entry_dt = pd.Timestamp(last_t.entry_date)
+                                if hasattr(last_date, 'tz') and last_date.tz and entry_dt.tz is None:
+                                    entry_dt = entry_dt.tz_localize(last_date.tz)
+                                days_since = (last_date - entry_dt).days
+                                if days_since <= 5 and last_t.win:
+                                    has_open = True
+                                    entry_price = last_t.entry_price
+                                    sl_price = last_t.sl_price
+                                    tp_price = last_t.tp_price
+                                    entry_date = last_t.entry_date
+                            except Exception:
+                                pass
+
+                if has_open or has_signal:
+                    # Compute distance to entry price as %
+                    dist_pct = round((last_close - entry_price) / entry_price * 100, 2) if entry_price > 0 else 0
+                    risk_pct = round((entry_price - sl_price) / entry_price * 100, 2) if entry_price > 0 and sl_price > 0 else 0
+                    reward_pct = round((tp_price - entry_price) / entry_price * 100, 2) if entry_price > 0 and tp_price > 0 else 0
+
+                    hits.append({
+                        "symbol": sym,
+                        "name": _get_stock_name(sym),
+                        "price": round(last_close, 4),
+                        "entry_price": round(entry_price, 4),
+                        "sl_price": round(sl_price, 4),
+                        "tp_price": round(tp_price, 4),
+                        "entry_date": entry_date,
+                        "dist_pct": dist_pct,
+                        "risk_pct": risk_pct,
+                        "reward_pct": reward_pct,
+                        "status": "OPEN" if has_open else "SIGNAL",
+                        "win_rate": result.win_rate,
+                        "total_return": result.total_return_pct,
+                        "total_trades": result.total_trades,
+                    })
+            except Exception as exc:
+                logger.debug("Scan opp skip %s: %s", sym, exc)
+                continue
+
+        # Sort: OPEN first, then by distance to entry (closest first)
+        hits.sort(key=lambda x: (0 if x["status"] == "OPEN" else 1, abs(x["dist_pct"])))
+        return hits
+
+    try:
+        results = await run_in_threadpool(_scan)
+    except Exception as exc:
+        logger.exception("Scan opportunities failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return {
+        "strategy": strategy,
+        "period": period,
+        "total_scanned": len(_get_my_stocks()),
+        "hits": len(results),
+        "results": results,
+    }
+
+
+def _get_my_stocks() -> list:
+    """Return list of stock objects with .symbol attribute from MY_STOCKS constant."""
+    # Parse from the TypeScript file is not practical; use a Python-side list
+    from dataclasses import dataclass
+
+    @dataclass
+    class _Stock:
+        symbol: str
+        name: str
+
+    # Major KLSE stocks — same as frontend/constants/myStocks.ts
+    _symbols = [
+        ("1155.KL", "Maybank"), ("1295.KL", "Public Bank"), ("1023.KL", "CIMB"),
+        ("5819.KL", "Hong Leong Bank"), ("1066.KL", "RHB Bank"), ("1015.KL", "Ambank"),
+        ("1082.KL", "Hong Leong Financial"), ("2488.KL", "Alliance Bank"),
+        ("1818.KL", "Bursa Malaysia"), ("5185.KL", "AFFIN Bank"),
+        ("5031.KL", "TIME dotCom"), ("0097.KL", "ViTrox"), ("0128.KL", "Frontken"),
+        ("0166.KL", "Inari Amertron"), ("5005.KL", "Unisem"), ("5340.KL", "UMS Integration"),
+        ("0270.KL", "Nationgate"), ("7100.KL", "Uchi Technologies"),
+        ("7160.KL", "Pentamaster"), ("3867.KL", "MPI"),
+        ("8869.KL", "Press Metal"), ("0208.KL", "Greatech"), ("5292.KL", "UWC"),
+        ("5168.KL", "Hartalega"), ("7153.KL", "Kossan Rubber"),
+        ("5286.KL", "Mi Technovation"), ("0225.KL", "Southern Cable"),
+        ("6963.KL", "VS Industry"), ("0233.KL", "Pekat Group"), ("0167.KL", "MClean Technologies"),
+        ("6947.KL", "CelcomDigi"), ("4863.KL", "Telekom Malaysia"),
+        ("6012.KL", "Maxis"), ("6888.KL", "Axiata"),
+        ("5326.KL", "99 Speed Mart"), ("4707.KL", "Nestle Malaysia"),
+        ("7084.KL", "QL Resources"), ("5296.KL", "MR DIY"),
+        ("4715.KL", "Genting Malaysia"), ("3182.KL", "Genting Bhd"),
+        ("7052.KL", "Padini"), ("5248.KL", "Bermaz Auto"),
+        ("5225.KL", "IHH Healthcare"), ("5878.KL", "KPJ Healthcare"),
+        ("7113.KL", "Top Glove"),
+        ("5211.KL", "Sunway Bhd"), ("5398.KL", "Gamuda"),
+        ("3336.KL", "IJM Corp"), ("0151.KL", "Kelington Group"),
+        ("5249.KL", "IOI Properties"), ("5288.KL", "Sime Darby Property"),
+        ("8583.KL", "Mah Sing"), ("5236.KL", "Matrix Concepts"),
+        ("5183.KL", "Petronas Chemicals"), ("5285.KL", "SD Guthrie"),
+        ("1961.KL", "IOI Corp"), ("4731.KL", "Scientex"),
+        ("7277.KL", "Dialog Group"), ("5199.KL", "Hibiscus Petroleum"),
+        ("7293.KL", "Yinson Holdings"),
+        ("5347.KL", "Tenaga Nasional"), ("6033.KL", "Petronas Gas"),
+        ("6742.KL", "YTL Power"), ("4677.KL", "YTL Corp"),
+        ("3816.KL", "MISC"), ("5246.KL", "Westports"),
+        ("5099.KL", "Capital A"),
+    ]
+    return [_Stock(s, n) for s, n in _symbols]
+
+
+def _get_stock_name(symbol: str) -> str:
+    for s in _get_my_stocks():
+        if s.symbol == symbol:
+            return s.name
+    return symbol.replace(".KL", "")
+
+
+def _run_strategy_backtest(strategy: str, df: pd.DataFrame, capital: float):
+    """Run a specific strategy backtest and return a normalised result object."""
+    from dataclasses import dataclass, field
+
+    @dataclass
+    class _NormTrade:
+        entry_date: str
+        exit_date: str
+        entry_price: float
+        exit_price: float
+        sl_price: float
+        tp_price: float
+        pnl: float
+        exit_reason: str
+        win: bool
+
+    @dataclass
+    class _NormResult:
+        trades: list[_NormTrade] = field(default_factory=list)
+        win_rate: float = 0.0
+        total_return_pct: float = 0.0
+        total_trades: int = 0
+
+    if strategy == "tpc":
+        from strategies.us_stock.tpc.backtest import TPCBacktester
+        from strategies.us_stock.tpc.config import DEFAULT_TPC_PARAMS, RISK_PER_TRADE
+        from strategies.futures.data_loader import load_yfinance as _lf
+        # TPC needs weekly data; for scan speed use daily as trade TF
+        try:
+            df_weekly = _lf(symbol=df.attrs.get("symbol", "0208.KL"), interval="1wk", period="5y")
+        except Exception:
+            return None
+        bt = TPCBacktester(capital=capital, risk_per_trade=RISK_PER_TRADE)
+        sym = df.attrs.get("symbol", "0208.KL")
+        raw = bt.run(symbol=sym, period="6mo", params={},
+                     disabled_conditions=None,
+                     df_weekly=df_weekly, df_daily=df, df_1h=df)
+        trades = []
+        for t in raw.trades:
+            e_date = t.entry_time.strftime("%Y-%m-%d") if hasattr(t.entry_time, "strftime") else str(t.entry_time)[:10]
+            x_date = t.exit_time.strftime("%Y-%m-%d") if hasattr(t.exit_time, "strftime") else str(t.exit_time)[:10]
+            trades.append(_NormTrade(
+                entry_date=e_date, exit_date=x_date,
+                entry_price=round(t.entry_price, 4), exit_price=round(t.exit_price, 4),
+                sl_price=round(t.sl_price, 4), tp_price=round(t.tp1_price, 4),
+                pnl=t.pnl, exit_reason=t.reason, win=t.pnl > 0,
+            ))
+        n = len(trades)
+        wins = sum(1 for t in trades if t.win)
+        total_pnl = sum(t.pnl for t in trades)
+        return _NormResult(trades=trades,
+                           win_rate=round(wins / n * 100, 1) if n else 0,
+                           total_return_pct=round(total_pnl / capital * 100, 2),
+                           total_trades=n)
+    elif strategy == "hpb":
+        from strategies.klse.hpb.config import HPBParams
+        from strategies.klse.hpb.backtest import run_backtest as hpb_backtest
+        raw = hpb_backtest(df, HPBParams(), capital=capital)
+        trades = [_NormTrade(
+            entry_date=t.entry_date, exit_date=t.exit_date,
+            entry_price=t.entry_price, exit_price=t.exit_price,
+            sl_price=t.sl_price, tp_price=t.tp_price,
+            pnl=t.pnl, exit_reason=t.exit_reason, win=t.win,
+        ) for t in raw.trades]
+        return _NormResult(trades=trades, win_rate=raw.win_rate,
+                           total_return_pct=raw.total_return_pct, total_trades=raw.total_trades)
+    elif strategy == "vpb3":
+        from strategies.klse.vpb3.strategy import DEFAULT_PARAMS
+        from strategies.klse.vpb3.backtest import run_backtest as vpb3_backtest
+        raw = vpb3_backtest(df, params=DEFAULT_PARAMS, capital=capital)
+        trades = [_NormTrade(
+            entry_date=t.entry_date, exit_date=t.exit_date,
+            entry_price=t.entry_price, exit_price=t.exit_price,
+            sl_price=t.sl_price, tp_price=t.tp_price,
+            pnl=t.pnl, exit_reason=t.exit_reason, win=t.win,
+        ) for t in raw.trades]
+        return _NormResult(trades=trades, win_rate=raw.win_rate,
+                           total_return_pct=raw.total_return_pct, total_trades=raw.total_trades)
+    elif strategy == "smp":
+        from strategies.klse.smp.strategy import DEFAULT_PARAMS
+        from strategies.klse.smp.backtest import run_backtest as smp_backtest
+        raw = smp_backtest(df, params=DEFAULT_PARAMS, capital=capital)
+        trades = [_NormTrade(
+            entry_date=t.entry_date, exit_date=t.exit_date,
+            entry_price=t.entry_price, exit_price=t.exit_price,
+            sl_price=t.sl_price, tp_price=t.tp_price,
+            pnl=t.pnl, exit_reason=t.exit_reason, win=t.win,
+        ) for t in raw.trades]
+        return _NormResult(trades=trades, win_rate=raw.win_rate,
+                           total_return_pct=raw.total_return_pct, total_trades=raw.total_trades)
+    elif strategy == "psniper":
+        from strategies.klse.psniper.strategy import DEFAULT_PARAMS as PS_PARAMS
+        from strategies.klse.psniper.backtest import run_backtest as ps_backtest
+        raw = ps_backtest(df, params=PS_PARAMS, capital=capital)
+        trades = [_NormTrade(
+            entry_date=t.entry_date, exit_date=t.exit_date,
+            entry_price=t.entry_price, exit_price=t.exit_price,
+            sl_price=t.sl_price, tp_price=t.tp_price,
+            pnl=t.pnl, exit_reason=t.exit_reason, win=t.win,
+        ) for t in raw.trades]
+        return _NormResult(trades=trades, win_rate=raw.win_rate,
+                           total_return_pct=raw.total_return_pct, total_trades=raw.total_trades)
+    elif strategy == "cm_macd":
+        import math as _m
+        c_arr = df["close"].tolist() if "close" in df.columns else df["Close"].tolist()
+        h_arr = df["high"].tolist() if "high" in df.columns else df["High"].tolist()
+        lo_arr = df["low"].tolist() if "low" in df.columns else df["Low"].tolist()
+        n = len(c_arr)
+        def _ema_s(src, p):
+            k = 2.0 / (p + 1)
+            out = [_m.nan] * n
+            st = next((i for i, v in enumerate(src) if not _m.isnan(v)), None)
+            if st is None: return out
+            out[st] = src[st]
+            for i in range(st + 1, n):
+                out[i] = src[i] * k + out[i - 1] * (1 - k)
+            return out
+        ef = _ema_s(c_arr, 12); es = _ema_s(c_arr, 26)
+        ml = [ef[i] - es[i] if not (_m.isnan(ef[i]) or _m.isnan(es[i])) else _m.nan for i in range(n)]
+        sl_line = _ema_s(ml, 9)
+        tr = [0.0] * n
+        tr[0] = h_arr[0] - lo_arr[0]
+        for i in range(1, n):
+            tr[i] = max(h_arr[i] - lo_arr[i], abs(h_arr[i] - c_arr[i-1]), abs(lo_arr[i] - c_arr[i-1]))
+        atr_v = [_m.nan] * n; atr_v[0] = tr[0]
+        for i in range(1, n): atr_v[i] = (1/14) * tr[i] + (13/14) * atr_v[i-1]
+        SL_MULT, TP_MULT = 2.0, 3.0
+        COMM = 0.001
+        equity = float(capital)
+        trades = []; in_pos = False
+        entry_px = sl_px = tp_px = 0.0; entry_dt_str = ""
+        dates = df.index.tolist()
+        for i in range(1, n):
+            if _m.isnan(ml[i]) or _m.isnan(sl_line[i]) or _m.isnan(ml[i-1]) or _m.isnan(sl_line[i-1]):
+                continue
+            crossover = ml[i] > sl_line[i] and ml[i-1] <= sl_line[i-1]
+            crossunder = ml[i] < sl_line[i] and ml[i-1] >= sl_line[i-1]
+            bar_open = float(df["open"].iloc[i]) if "open" in df.columns else float(df["Open"].iloc[i])
+            bar_high = float(h_arr[i]); bar_low = float(lo_arr[i]); bar_close = float(c_arr[i])
+            atr_val = atr_v[i] if not _m.isnan(atr_v[i]) else 0.0
+            d_str = dates[i].strftime("%Y-%m-%d") if hasattr(dates[i], "strftime") else str(dates[i])[:10]
+            if in_pos:
+                ex_px = None; ex_reason = ""
+                if bar_low <= sl_px: ex_px = sl_px; ex_reason = "SL"
+                elif bar_high >= tp_px: ex_px = tp_px; ex_reason = "TP"
+                elif crossunder: ex_px = bar_close; ex_reason = "MACD Cross"
+                if ex_px is not None:
+                    risk_amt = equity * 0.02; risk_ps = entry_px - sl_px
+                    if risk_ps <= 0: risk_ps = entry_px * 0.02
+                    qty = risk_amt / risk_ps
+                    pnl = (ex_px - entry_px) * qty - (entry_px + ex_px) * qty * COMM
+                    equity += pnl
+                    trades.append(_NormTrade(
+                        entry_date=entry_dt_str, exit_date=d_str,
+                        entry_price=round(entry_px, 4), exit_price=round(ex_px, 4),
+                        sl_price=round(sl_px, 4), tp_price=round(tp_px, 4),
+                        pnl=round(pnl, 2), exit_reason=ex_reason, win=pnl > 0,
+                    ))
+                    in_pos = False
+            else:
+                if crossover and atr_val > 0:
+                    entry_px = bar_open
+                    sl_px = entry_px - SL_MULT * atr_val
+                    tp_px = entry_px + (entry_px - sl_px) * TP_MULT
+                    entry_dt_str = d_str
+                    in_pos = True
+        if in_pos:
+            lc = float(c_arr[-1])
+            risk_amt = equity * 0.02; risk_ps = entry_px - sl_px
+            if risk_ps <= 0: risk_ps = entry_px * 0.02
+            qty = risk_amt / risk_ps
+            pnl = (lc - entry_px) * qty - (entry_px + lc) * qty * COMM
+            equity += pnl
+            trades.append(_NormTrade(
+                entry_date=entry_dt_str,
+                exit_date=dates[-1].strftime("%Y-%m-%d") if hasattr(dates[-1], "strftime") else str(dates[-1])[:10],
+                entry_price=round(entry_px, 4), exit_price=round(lc, 4),
+                sl_price=round(sl_px, 4), tp_price=round(tp_px, 4),
+                pnl=round(pnl, 2), exit_reason="EOD", win=pnl > 0,
+            ))
+        nt = len(trades); wins_n = sum(1 for t in trades if t.win)
+        total_pnl = sum(t.pnl for t in trades)
+        return _NormResult(trades=trades,
+                           win_rate=round(wins_n / nt * 100, 1) if nt else 0,
+                           total_return_pct=round(total_pnl / capital * 100, 2),
+                           total_trades=nt)
+    return None

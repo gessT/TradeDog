@@ -11,12 +11,14 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { halfTrend, type HalfTrendPoint } from "../../utils/indicators";
-import { fmtDateTimeSGT, fmtInputDateSGT, SGT_OFFSET_SEC, toSGT } from "../../utils/time";
+import { fmtDateTimeSGT, fmtInputDateSGT, getTzOffsetSec, toLocal as toLocalTz } from "../../utils/time";
 import TradeDetailDialog from "./TradeDetailDialog";
 import HoldingMiniChart from "./HoldingMiniChart";
 import OptimizationDialog from "./OptimizationDialog";
 import {
   fetchMGC5MinBacktest,
+  fetchMGC2MinBacktest,
+  fetchMGC5MinLockedBacktest,
   execute5Min,
   getMgcPosition,
   optimize5MinConditions,
@@ -38,8 +40,7 @@ import {
 import { useLivePrice } from "../../hooks/useLivePrice";
 // ═══════════════════════════════════════════════════════════════════════
 
-/** Offset (seconds) to shift UTC epoch → SGT for lightweight-charts */
-const TZ_OFFSET_SEC = SGT_OFFSET_SEC;
+/** Offset (seconds) to shift UTC epoch → local TZ for lightweight-charts */
 
 // ── Locked config snapshot sent to AutoTraderPanel after backtest ──
 export type LockedTradingConfig = {
@@ -63,7 +64,7 @@ export type LockedTradingConfig = {
   lockedAt: number; // timestamp ms
 };
 
-const toLocal = (utcSec: number) => toSGT(utcSec) as UTCTimestamp;
+const toLocal = (utcSec: number) => toLocalTz(utcSec) as UTCTimestamp;
 
 const n = (v: unknown): number =>
   typeof v === "number" && Number.isFinite(v) ? v : 0;
@@ -255,10 +256,10 @@ function TradeRow5Min({ t, idx, onTradeClick, livePrice }: Readonly<{ t: MGC5Min
       className={`${isOpen ? "bg-blue-950/30 border-l-2 border-blue-500" : idx % 2 === 0 ? "bg-slate-900/30" : ""} ${onTradeClick ? "cursor-pointer hover:bg-cyan-900/20 transition-colors" : ""}`}
       onClick={() => onTradeClick?.(t)}
     >
-      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{fmtDateTime(t.entry_time)}</td>
-      <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{isOpen ? <span className="text-blue-400 animate-pulse">LIVE</span> : fmtDateTime(t.exit_time)}</td>
-      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">{n(t.entry_price).toFixed(2)}</td>
-      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-300">
+      <td className="px-2 py-1 text-[10px] text-slate-300 whitespace-nowrap">{fmtDateTime(t.entry_time)}</td>
+      <td className="px-2 py-1 text-[10px] text-slate-300 whitespace-nowrap">{isOpen ? <span className="text-blue-400 animate-pulse">LIVE</span> : fmtDateTime(t.exit_time)}</td>
+      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-200">{n(t.entry_price).toFixed(2)}</td>
+      <td className="px-2 py-1 text-right text-[10px] font-mono text-slate-200">
         {isOpen
           ? (livePrice != null ? <span className="text-yellow-400 animate-pulse">{livePrice.toFixed(2)}</span> : <span className="text-slate-600">—</span>)
           : n(t.exit_price).toFixed(2)}
@@ -341,13 +342,60 @@ function TradeLogByDate({ trades, onTradeClick, livePrice }: Readonly<{ trades: 
     return Object.entries(map).sort((a, b) => b[0].localeCompare(a[0]));
   })();
 
+  // Compute daily P&L totals for bar chart (across ALL trades, not just filtered)
+  const allGrouped = (() => {
+    const map: Record<string, MGC5MinTrade[]> = {};
+    for (const t of trades) {
+      const datePart = t.entry_time.slice(0, 10);
+      const hour = parseInt(t.entry_time.slice(11, 13), 10);
+      if (hour >= 18) {
+        const d = new Date(datePart + "T12:00:00Z");
+        d.setUTCDate(d.getUTCDate() + 1);
+        (map[d.toISOString().slice(0, 10)] ??= []).push(t);
+      } else {
+        (map[datePart] ??= []).push(t);
+      }
+    }
+    return map;
+  })();
+  const dayPnlMap: Record<string, number> = {};
+  for (const [day, dayTrades] of Object.entries(allGrouped)) {
+    dayPnlMap[day] = dayTrades.reduce((s, t) => {
+      if (t.reason === "OPEN" && livePrice != null) {
+        const isLong = t.direction !== "PUT";
+        return s + (isLong ? livePrice - n(t.entry_price) : n(t.entry_price) - livePrice) * n(t.qty) * 10;
+      }
+      return s + n(t.pnl);
+    }, 0);
+  }
+  const maxDayPnl = Math.max(...Object.values(dayPnlMap).map(Math.abs), 1);
+  const totalPnl = Object.values(dayPnlMap).reduce((s, v) => s + v, 0);
+  const totalWins = trades.filter(t => t.reason !== "OPEN" && t.pnl > 0).length;
+  const closedCount = trades.filter(t => t.reason !== "OPEN").length;
+
   const toggle = (d: string) => setExpanded((p) => ({ ...p, [d]: !p[d] }));
 
   return (
     <div>
+      {/* ── Daily P&L summary header ── */}
+      {grouped.length > 0 && (
+        <div className="flex items-center gap-3 px-3 py-2 border-b border-slate-700/40 bg-slate-900/60">
+          <span className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">
+            Trade Log
+          </span>
+          <span className="text-slate-700">·</span>
+          <span className="text-[9px] text-slate-400">{trades.length} trades · {grouped.length} day{grouped.length !== 1 ? "s" : ""}</span>
+          {closedCount > 0 && (
+            <span className="text-[9px] text-slate-400">WR {Math.round(totalWins / closedCount * 100)}%</span>
+          )}
+          <span className={`ml-auto text-[12px] font-black tabular-nums tracking-tight ${totalPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+            {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(0)}
+          </span>
+        </div>
+      )}
       {/* Filter bar */}
       <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-slate-800/30 flex-wrap">
-        <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mr-1">Trade Log ({trades.length})</span>
+        <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mr-1">Filter</span>
         <span className="text-slate-700 mr-0.5">|</span>
         {/* P&L filter */}
         {(["all", "win", "loss"] as const).map((f) => (
@@ -416,22 +464,33 @@ function TradeLogByDate({ trades, onTradeClick, livePrice }: Readonly<{ trades: 
                     className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-slate-800/40 transition-colors border-b border-slate-800/30"
                     onClick={() => toggle(date)}
                   >
-                    <span className="text-[10px] text-slate-500 w-3">{open ? "▼" : "▶"}</span>
-                    <span className="text-[10px] font-semibold text-slate-300 w-[70px]">{date.slice(5).replace("-", "/")}</span>
-                    <span className="text-[9px] text-slate-500">{dayTrades.length} trade{dayTrades.length > 1 ? "s" : ""}</span>
-                    <span className={`text-[9px] font-semibold ${wr >= 60 ? "text-emerald-400" : wr >= 50 ? "text-amber-400" : "text-rose-400"}`}>
-                      WR {wr}%
+                    <span className="text-[10px] text-slate-400 w-3">{open ? "▼" : "▶"}</span>
+                    <span className="text-[11px] font-bold text-slate-200 w-[44px] shrink-0">{date.slice(5).replace("-", "/")}</span>
+                    {/* P&L bar */}
+                    <div className="flex-1 h-2 bg-slate-800/60 rounded-full overflow-hidden mx-1 min-w-0">
+                      {(() => {
+                        const dp = dayPnlMap[date] ?? dayPnl;
+                        const pct = Math.min(100, (Math.abs(dp) / maxDayPnl) * 100);
+                        return dp >= 0 ? (
+                          <div className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded-full" style={{ width: `${pct}%` }} />
+                        ) : (
+                          <div className="h-full bg-gradient-to-l from-rose-600 to-rose-400 rounded-full ml-auto" style={{ width: `${pct}%` }} />
+                        );
+                      })()}
+                    </div>
+                    <span className="text-[9px] text-slate-400 shrink-0">{dayTrades.length}t</span>
+                    <span className={`text-[9px] font-semibold shrink-0 ${wr >= 60 ? "text-emerald-400" : wr >= 50 ? "text-amber-400" : "text-rose-400"}`}>
+                      {wr}%
                     </span>
-                    <span className="text-[9px] text-slate-500">({wins}W/{dayTrades.length - wins}L)</span>
-                    <span className={`ml-auto text-[10px] font-bold tabular-nums ${dayPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                      {dayPnl >= 0 ? "+" : ""}{dayPnl.toFixed(2)}
+                    <span className={`ml-auto text-[10px] font-bold tabular-nums shrink-0 ${dayPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {dayPnl >= 0 ? "+" : ""}{dayPnl.toFixed(0)}
                     </span>
                   </button>
                   {/* Expanded trade rows */}
                   {open && (
                     <table className="w-full text-left">
                       <thead>
-                        <tr className="text-[8px] text-slate-600 uppercase bg-slate-900/80">
+                        <tr className="text-[9px] text-slate-400 uppercase bg-slate-900/80">
                           <th className="px-2 py-0.5">Entry</th>
                           <th className="px-2 py-0.5">Exit</th>
                           <th className="px-2 py-0.5 text-right">In$</th>
@@ -480,7 +539,6 @@ const CONDITION_DEFS: { key: keyof Scan5MinConditions; label: string; group: "5m
   { key: "session_ok", label: "Session Hours", group: "5m", desc: "Current time is within active trading hours (US market session)." },
   { key: "adx_ok", label: "ADX Filter", group: "5m", desc: "ADX is above threshold, confirming the market is trending (not ranging)." },
   { key: "halftrend", label: "HalfTrend", group: "5m", desc: "HalfTrend indicator direction is aligned with signal — uptrend for CALL, downtrend for PUT." },
-  // Smart Money Concepts
   { key: "smc_bos", label: "Break of Structure", group: "smc", desc: "Recent BOS detected — price broke a swing high (bullish) or swing low (bearish), confirming trend continuation." },
   { key: "smc_ob", label: "Order Block", group: "smc", desc: "Price is in an institutional Order Block zone — the last opposing candle before an impulsive move (demand/supply zone)." },
   { key: "smc_fvg", label: "Fair Value Gap", group: "smc", desc: "Price is filling a Fair Value Gap (imbalance) — a 3-candle gap that tends to get revisited by smart money." },
@@ -516,46 +574,74 @@ export type BuiltInPreset = {
   sl: number;
   tp: number;
   desc: string;
+  endpoint?: "5min" | "2min" | "5min_locked";  // which backend endpoint to use (default: 5min)
 };
 
 export const BUILT_IN_PRESETS: BuiltInPreset[] = [
   {
-    name: "⚡ Scalper 1m",
-    desc: "Ultra-fast 1m scalp — trend + breakout + MACD, tight SL, 2:1 R:R",
-    interval: "1m",
-    sl: 1,
-    tp: 2,
+    name: "🔒 BoS Config",
+    desc: "1H HTF bias · BoS breakout · EMA50 · Supertrend · SL1.2×TP1.5×",
+    interval: "5m",
+    sl: 1.2,
+    tp: 1.5,
+    endpoint: "5min_locked",
     toggles: {
       ema_trend: true,
-      ema_slope: true,
+      ema_slope: false,
       pullback: false,
       breakout: true,
       supertrend: true,
-      macd_momentum: true,
-      rsi_momentum: false,
+      macd_momentum: false,
+      rsi_momentum: true,
       volume_spike: false,
-      atr_range: false,
-      session_ok: false,
+      atr_range: true,
+      session_ok: true,
       adx_ok: false,
       smc_bos: false,
       smc_ob: false,
       smc_fvg: false,
+      halftrend: false,
     },
   },
   {
-    name: "⚡ Scalper 2m",
-    desc: "Fast 2m scalp — trend + momentum, slightly wider stops",
+    name: "🎯 Pullback Config",
+    desc: "EMA20/50 pullback · RSI>50 · ATR filter · 2m bars",
     interval: "2m",
-    sl: 2,
-    tp: 3,
+    sl: 1.0,
+    tp: 1.5,
+    endpoint: "2min",
     toggles: {
       ema_trend: true,
-      ema_slope: true,
+      ema_slope: false,
       pullback: true,
-      breakout: true,
+      breakout: false,
+      supertrend: false,
+      macd_momentum: false,
+      rsi_momentum: true,
+      volume_spike: false,
+      atr_range: true,
+      session_ok: false,
+      adx_ok: false,
+      smc_bos: false,
+      smc_ob: false,
+      smc_fvg: false,
+      halftrend: false,
+    },
+  },
+  {
+    name: "⚡ Keep GOING",
+    desc: "Always-in-market scalp — EMA5/13 + SuperTrend + RSI, 5m",
+    interval: "2m",
+    sl: 1,
+    tp: 1,
+    toggles: {
+      ema_trend: true,
+      ema_slope: false,
+      pullback: false,
+      breakout: false,
       supertrend: true,
-      macd_momentum: true,
-      rsi_momentum: false,
+      macd_momentum: false,
+      rsi_momentum: true,
       volume_spike: false,
       atr_range: false,
       session_ok: false,
@@ -563,6 +649,7 @@ export const BUILT_IN_PRESETS: BuiltInPreset[] = [
       smc_bos: false,
       smc_ob: false,
       smc_fvg: false,
+      halftrend: false,
     },
   },
 ];
@@ -987,7 +1074,7 @@ function ExamTab({
               loading ? "bg-slate-800 text-slate-500 cursor-wait" : "bg-cyan-600 text-white hover:bg-cyan-500 active:scale-95"
             }`}
           >
-            {loading ? "Loading…" : "Run Backtest"}
+            {loading ? "Loading" : "Run Backtest"}
           </button>
         </div>
       )}
@@ -1307,8 +1394,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     // 1m data limited to 7d max — clamp period
     if (v === "1m" && parseInt(period) > 7) setPeriod("3d");
   };
-  const [slMult, setSlMult] = useState(defaultRisk.sl);
-  const [tpMult, setTpMult] = useState(defaultRisk.tp);
+  const _keepGoing = BUILT_IN_PRESETS.find((p) => p.name === "⚡ Keep GOING");
+  const [slMult, setSlMult] = useState(_keepGoing?.sl ?? defaultRisk.sl);
+  const [tpMult, setTpMult] = useState(_keepGoing?.tp ?? defaultRisk.tp);
 
   // Date range filter
   const fmtDate = (d: Date) => fmtInputDateSGT(d);
@@ -1344,7 +1432,10 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const [presets, setPresets] = useState<ConditionPreset[]>([]);
   const [presetName, setPresetName] = useState("");
   const [showPresetSave, setShowPresetSave] = useState(false);
-  const [activePreset, setActivePreset] = useState<string | null>(null);
+  const [activePreset, setActivePreset] = useState<string | null>("⚡ Keep GOING");
+  // Editable strategy label (shown in header, independent from preset names)
+  const [strategyLabel, setStrategyLabel] = useState("⚡ Keep GOING");
+  const [editingLabel, setEditingLabel] = useState(false);
 
   // ── Load persisted config on mount / symbol change ──
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -1358,6 +1449,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     ]).then(([cfg, loadedPresets, autoSettings]) => {
       if (cancelled) return;
       if (cfg.period) setPeriod(cfg.period);
+      if (cfg.interval) handleIntervalChange(cfg.interval);
       if (cfg.sl_mult != null) setSlMult(cfg.sl_mult);
       if (cfg.tp_mult != null) setTpMult(cfg.tp_mult);
       if (cfg.risk_filters) setRiskFilters(cfg.risk_filters);
@@ -1384,10 +1476,10 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   useEffect(() => {
     if (!configLoaded) return;  // Don't save during initial load
     const timer = setTimeout(() => {
-      saveStrategyConfig({ period, sl_mult: slMult, tp_mult: tpMult, risk_filters: riskFilters, active_preset: activePreset ?? undefined }, symbol).catch(() => {});
+      saveStrategyConfig({ period, interval, sl_mult: slMult, tp_mult: tpMult, risk_filters: riskFilters, active_preset: activePreset ?? undefined }, symbol).catch(() => {});
     }, 500);  // debounce 500ms
     return () => clearTimeout(timer);
-  }, [period, slMult, tpMult, riskFilters, activePreset, symbol, configLoaded]);
+  }, [period, interval, slMult, tpMult, riskFilters, activePreset, symbol, configLoaded]);
 
   // ── Persist auto-trading toggle to backend ──
   useEffect(() => {
@@ -1420,6 +1512,17 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     [symbol, period, slMult, tpMult, dateFrom, dateTo, conditionToggles, riskFilters]
   );
 
+  // ── Apply a built-in preset ────────────────────────────
+  const applyBuiltInPreset = useCallback((bp: BuiltInPreset) => {
+    setConditionToggles((prev) => ({ ...prev, ...bp.toggles }));
+    setActivePreset(bp.name);
+    setStrategyLabel(bp.name);
+    setSlMult(bp.sl);
+    setTpMult(bp.tp);
+    handleIntervalChange(bp.interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Backtest ──────────────────────────────────────────
   const [hasRunBacktest, setHasRunBacktest] = useState(false);
 
@@ -1432,6 +1535,60 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     if (dateTo !== freshTo) setDateTo(freshTo);
     if (dateFrom !== freshFrom) setDateFrom(freshFrom);
     try {
+      // Check if active preset uses a different endpoint
+      const activeBuiltIn = BUILT_IN_PRESETS.find((bp) => bp.name === activePreset);
+      if (activeBuiltIn?.endpoint === "2min") {
+        const res = await fetchMGC2MinBacktest(symbol, slMult, tpMult, period);
+        setBtData(res);
+        onTradesUpdate?.(res.trades);
+        setHasRunBacktest(true);
+        if (res.metrics && onConfigLock) {
+          onConfigLock({
+            conditionToggles: { ...conditionToggles },
+            slMult, tpMult, interval, preset: activePreset, symbol,
+            metrics: {
+              win_rate: res.metrics.win_rate ?? 0,
+              total_return_pct: res.metrics.total_return_pct ?? 0,
+              max_drawdown_pct: res.metrics.max_drawdown_pct ?? 0,
+              sharpe_ratio: res.metrics.sharpe_ratio ?? 0,
+              profit_factor: res.metrics.profit_factor ?? 0,
+              total_trades: res.metrics.total_trades ?? 0,
+              winners: res.metrics.winners ?? 0,
+              losers: res.metrics.losers ?? 0,
+              risk_reward_ratio: res.metrics.risk_reward_ratio ?? 0,
+            },
+            lockedAt: Date.now(),
+          });
+        }
+        return;
+      }
+
+      if (activeBuiltIn?.endpoint === "5min_locked") {
+        const res = await fetchMGC5MinLockedBacktest(symbol, slMult, tpMult, period);
+        setBtData(res);
+        onTradesUpdate?.(res.trades);
+        setHasRunBacktest(true);
+        if (res.metrics && onConfigLock) {
+          onConfigLock({
+            conditionToggles: { ...conditionToggles },
+            slMult, tpMult, interval, preset: activePreset, symbol,
+            metrics: {
+              win_rate: res.metrics.win_rate ?? 0,
+              total_return_pct: res.metrics.total_return_pct ?? 0,
+              max_drawdown_pct: res.metrics.max_drawdown_pct ?? 0,
+              sharpe_ratio: res.metrics.sharpe_ratio ?? 0,
+              profit_factor: res.metrics.profit_factor ?? 0,
+              total_trades: res.metrics.total_trades ?? 0,
+              winners: res.metrics.winners ?? 0,
+              losers: res.metrics.losers ?? 0,
+              risk_reward_ratio: res.metrics.risk_reward_ratio ?? 0,
+            },
+            lockedAt: Date.now(),
+          });
+        }
+        return;
+      }
+
       // Compute disabled conditions from toggles (OFF = disabled)
       const disabled = CONDITION_DEFS
         .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
@@ -1472,7 +1629,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     } finally {
       setLoading(false);
     }
-  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, riskFilters, configKey, interval]);
+  }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, riskFilters, configKey, interval, activePreset]);
 
   // ── Trigger backtest after optimizer apply (so new state is used) ──
   useEffect(() => {
@@ -1726,6 +1883,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         exitConditions.use_sma28_cut ?? false,
         skipHours.length > 0 ? skipHours : undefined,
         maxLossPerTrade,
+        interval,
       );
       setOptimizationResults(results);
       if (results.length > 0) {
@@ -1755,7 +1913,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     } finally {
       setOptimizing(false);
     }
-  }, [symbol, period, slMult, tpMult, riskFilters]);
+  }, [symbol, period, slMult, tpMult, riskFilters, interval]);
 
   const m = btData?.metrics;
 
@@ -1770,17 +1928,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="text-sm font-bold text-slate-100 tracking-tight">{symbolName}</span>
-                <select
-                  value={interval}
-                  onChange={(e) => handleIntervalChange(e.target.value)}
-                  className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700/50 text-slate-400 uppercase tracking-wider appearance-none cursor-pointer hover:border-cyan-600/50 focus:outline-none focus:border-cyan-600/50 transition-colors"
-                  style={{ colorScheme: "dark" }}
-                >
-                  <option value="1m">1min</option>
-                  <option value="2m">2min</option>
-                  <option value="5m">5min</option>
-                  <option value="15m">15min</option>
-                </select>
               </div>
               <div className="text-[9px] text-slate-500 -mt-0.5">{symbol}=F · Futures</div>
             </div>
@@ -1796,7 +1943,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   : "bg-gradient-to-r from-cyan-600 to-cyan-500 text-white hover:from-cyan-500 hover:to-cyan-400 active:scale-95 shadow-md shadow-cyan-900/30"
               }`}
             >
-              {loading ? "Running…" : "▶ Backtest"}
+              {loading ? "Loading" : "▶ Backtest"}
             </button>
             <button
               onClick={runConditionOptimization}
@@ -1815,6 +1962,129 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             >
               🧪 Exam
             </button>
+            <button
+              disabled={!btData}
+              onClick={() => {
+                if (!btData) return;
+                const compact = {
+                  ...btData,
+                  candles: btData.candles.slice(-200).map((c) => ({
+                    time: c.time,
+                    ohlc: [c.open, c.high, c.low, c.close] as [number, number, number, number],
+                    volume: c.volume,
+                    ema_fast: c.ema_fast,
+                    ema_slow: c.ema_slow,
+                    rsi: c.rsi,
+                    macd_hist: c.macd_hist,
+                    st_dir: c.st_dir,
+                    signal: c.signal,
+                    mkt_structure: c.mkt_structure,
+                    sma_28: c.sma_28,
+                    adx: c.adx,
+                    ht_dir: c.ht_dir,
+                    ht_line: c.ht_line,
+                  })),
+                };
+                const jsonStr = JSON.stringify(compact, null, 2).replace(
+                  /"ohlc": \[\n\s+([\d.]+),\n\s+([\d.]+),\n\s+([\d.]+),\n\s+([\d.]+)\n\s+\]/g,
+                  (_, o, h, l, c2) => `"ohlc": [${o},${h},${l},${c2}]`
+                );
+                const blob = new Blob([jsonStr], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${btData.symbol}_${btData.interval}_${btData.period}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all ${
+                btData
+                  ? "bg-slate-700 text-slate-200 hover:bg-slate-600 active:scale-95 shadow-md"
+                  : "bg-slate-800 text-slate-600 cursor-not-allowed"
+              }`}
+              title="Download backtest data as JSON (compact OHLC arrays)"
+            >
+              ⬇ JSON
+            </button>
+          </div>
+        </div>
+
+        {/* ── Strategy quick-config row ─────────────────────── */}
+        <div className="flex items-center gap-2 mb-2 flex-wrap">
+          {/* Quick-pick strategy buttons */}
+          {BUILT_IN_PRESETS.filter((bp) => bp.name === "🎯 Pullback Config" || bp.name === "🔒 BoS Config").map((bp) => (
+            <button
+              key={bp.name}
+              onClick={() => applyBuiltInPreset(bp)}
+              className={`px-2 py-1 text-[9px] font-bold rounded-md border transition-all ${
+                activePreset === bp.name
+                  ? "bg-cyan-900/40 border-cyan-600/60 text-cyan-300"
+                  : "bg-slate-800/60 border-slate-700/50 text-slate-400 hover:border-slate-500/60 hover:text-slate-200"
+              }`}
+              title={bp.desc}
+            >
+              {bp.name}
+            </button>
+          ))}
+
+          {/* Editable strategy label */}
+          <div className="flex items-center gap-1 ml-1">
+            {editingLabel ? (
+              <input
+                autoFocus
+                value={strategyLabel}
+                onChange={(e) => setStrategyLabel(e.target.value)}
+                onBlur={() => setEditingLabel(false)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingLabel(false); }}
+                className="bg-slate-900 border border-cyan-600/50 rounded px-2 py-0.5 text-[10px] text-slate-100 font-bold w-40 focus:outline-none"
+              />
+            ) : (
+              <button
+                onClick={() => setEditingLabel(true)}
+                className="text-[10px] font-bold text-slate-300 hover:text-cyan-300 transition-colors px-1 py-0.5 rounded hover:bg-slate-800/60"
+                title="Click to rename"
+              >
+                ✏ {strategyLabel}
+              </button>
+            )}
+          </div>
+
+          {/* SL / TP inline number inputs */}
+          <div className="ml-auto flex items-center gap-2">
+            <label className="flex items-center gap-1 text-[9px]">
+              <span className="text-rose-400 font-bold">SL</span>
+              <input
+                type="number" min="0.5" max="10" step="0.5"
+                value={slMult}
+                onChange={(e) => setSlMult(parseFloat(e.target.value) || slMult)}
+                className="w-14 bg-slate-900 border border-slate-700/60 rounded px-1.5 py-0.5 text-[10px] text-rose-300 font-bold text-right focus:outline-none focus:border-rose-500/60"
+                style={{ colorScheme: "dark" }}
+              />
+              <span className="text-slate-500">×</span>
+            </label>
+            <label className="flex items-center gap-1 text-[9px]">
+              <span className="text-emerald-400 font-bold">TP</span>
+              <input
+                type="number" min="0.5" max="10" step="0.5"
+                value={tpMult}
+                onChange={(e) => setTpMult(parseFloat(e.target.value) || tpMult)}
+                className="w-14 bg-slate-900 border border-slate-700/60 rounded px-1.5 py-0.5 text-[10px] text-emerald-300 font-bold text-right focus:outline-none focus:border-emerald-500/60"
+                style={{ colorScheme: "dark" }}
+              />
+              <span className="text-slate-500">×</span>
+            </label>
+            {/* Interval */}
+            <select
+              value={interval}
+              onChange={(e) => handleIntervalChange(e.target.value)}
+              className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700/50 text-slate-400 uppercase tracking-wider appearance-none cursor-pointer hover:border-cyan-600/50 focus:outline-none focus:border-cyan-600/50 transition-colors"
+              style={{ colorScheme: "dark" }}
+            >
+              <option value="1m">1min</option>
+              <option value="2m">2min</option>
+              <option value="5m">5min</option>
+              <option value="15m">15min</option>
+            </select>
           </div>
         </div>
       </div>
@@ -1877,14 +2147,12 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                       setSlMult(bp.sl);
                       setTpMult(bp.tp);
                       handleIntervalChange(bp.interval);
-                      setPendingOptRun(true);
                       return;
                     }
                     const p = presets.find((x) => x.name === val);
                     if (p) {
                       setConditionToggles((prev) => ({ ...prev, ...p.toggles }));
                       setActivePreset(p.name);
-                      setPendingOptRun(true);
                     }
                   }}
                   className="w-full bg-slate-900/60 ring-1 ring-slate-700/50 rounded-md pl-2 pr-6 py-1.5 text-[10px] text-slate-300 font-bold
@@ -1893,7 +2161,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 >
                   <option value="__custom__">Custom</option>
                   {BUILT_IN_PRESETS.map((bp) => (
-                    <option key={bp.name} value={bp.name}>🔒 {bp.name} ({bp.interval} · SL{bp.sl}× TP{bp.tp}×)</option>
+                    <option key={bp.name} value={bp.name}>{bp.name} ({bp.interval} · SL{bp.sl}× TP{bp.tp}×)</option>
                   ))}
                   {presets.map((p) => (
                     <option key={p.name} value={p.name}>{p.name}</option>
@@ -1903,6 +2171,21 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                 </svg>
               </div>
+              {activePreset && !BUILT_IN_PRESETS.some((bp) => bp.name === activePreset) && (
+                <button
+                  onClick={() => {
+                    if (!confirm(`Delete preset "${activePreset}"?`)) return;
+                    delete5MinConditionPreset(activePreset, symbol)
+                      .then(() => load5MinConditionPresets(symbol).then(setPresets))
+                      .catch(() => {});
+                    setActivePreset(null);
+                  }}
+                  className="px-2 py-1.5 text-[9px] font-bold rounded-md bg-slate-800/60 text-red-400 hover:text-red-300 ring-1 ring-slate-700/50 hover:ring-red-500/30 transition-all shrink-0"
+                  title={`Delete preset "${activePreset}"`}
+                >
+                  🗑
+                </button>
+              )}
               <button
                 onClick={() => setShowPresetSave(!showPresetSave)}
                 className="px-2 py-1.5 text-[9px] font-bold rounded-md bg-slate-800/60 text-blue-400 hover:text-blue-300 ring-1 ring-slate-700/50 hover:ring-blue-600/30 transition-all shrink-0"
@@ -2181,8 +2464,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             <div className="flex items-center justify-center min-h-[300px]">
               <div className="flex flex-col items-center gap-3">
                 <div className="w-7 h-7 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-                <span className="text-[11px] text-cyan-400 font-bold">Running backtest…</span>
-                <span className="text-[9px] text-slate-600">Fetching {period} data & simulating trades</span>
+                <span className="text-[9px] text-slate-600">Fetching {period} data</span>
               </div>
             </div>
           )}
@@ -2321,44 +2603,10 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 const pnlPct = unrealPnl != null && displayEntry > 0 ? ((isLong ? livePrice! - displayEntry : displayEntry - livePrice!) / displayEntry) * 100 : null;
 
                 return (
-                  <div className={`flex gap-2 ${hasOpen ? "" : ""}`}>
-                    {/* ─── Daily P&L ─── */}
-                    {hasDays && (
-                      <div className={`${hasOpen ? "w-1/2" : "w-full"} rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/80 to-slate-950/60 overflow-hidden`}>
-                        <div className="px-3 py-2 flex items-center justify-between border-b border-slate-800/30">
-                          <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">
-                            Daily P&L · {days.length} day{days.length > 1 ? "s" : ""}
-                          </span>
-                          <span className={`text-sm font-bold tabular-nums ${totalPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                            {totalPnl >= 0 ? "+" : ""}${n(totalPnl).toFixed(0)}
-                          </span>
-                        </div>
-                        <div className="px-3 py-2 space-y-1 max-h-[200px] overflow-y-auto">
-                          {[...days].reverse().map((d: { date: string; pnl: number; win_rate: number }) => (
-                            <div key={d.date} className="flex items-center gap-2">
-                              <span className="text-[9px] text-slate-500 tabular-nums w-[52px] shrink-0">{d.date.slice(5)}</span>
-                              <div className="flex-1 h-2 bg-slate-800/60 rounded-full overflow-hidden">
-                                {d.pnl >= 0 ? (
-                                  <div className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded-full transition-all" style={{ width: `${Math.min(100, (d.pnl / maxAbs) * 100)}%` }} />
-                                ) : (
-                                  <div className="h-full bg-gradient-to-l from-rose-600 to-rose-400 rounded-full ml-auto transition-all" style={{ width: `${Math.min(100, (Math.abs(d.pnl) / maxAbs) * 100)}%` }} />
-                                )}
-                              </div>
-                              <span className={`text-[10px] font-bold tabular-nums w-[50px] text-right ${d.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                                {d.pnl >= 0 ? "+" : ""}${n(d.pnl).toFixed(0)}
-                              </span>
-                              <span className={`text-[8px] font-bold tabular-nums w-[28px] text-right ${d.win_rate >= 60 ? "text-emerald-500/70" : d.win_rate >= 40 ? "text-amber-500/70" : "text-rose-500/70"}`}>
-                                {d.win_rate.toFixed(0)}%
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
+                  <div>
                     {/* ─── Currently Holding ─── */}
                     {pos ? (
-                      <div className={`${hasDays ? "w-1/2" : "w-full"} rounded-xl border ${unrealPnl != null && unrealPnl >= 0 ? "border-emerald-500/20" : "border-rose-500/20"} bg-gradient-to-b from-slate-900/90 to-slate-950/95 overflow-hidden flex flex-col`}>
+                      <div className={`w-full rounded-xl border ${unrealPnl != null && unrealPnl >= 0 ? "border-emerald-500/20" : "border-rose-500/20"} bg-gradient-to-b from-slate-900/90 to-slate-950/95 overflow-hidden flex flex-col`}>
                         {/* Header strip */}
                         <div className={`px-3 py-1.5 flex items-center justify-between ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-500/5" : "bg-rose-500/5"}`}>
                           <div className="flex items-center gap-2">
@@ -2488,13 +2736,13 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 );
               })()}
 
-              {/* Trade log — grouped by date */}
+              {/* Trade log — merged with Daily P&L bars */}
               <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 relative">
                 {loading && (
                   <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm rounded-lg">
                     <div className="flex flex-col items-center gap-2">
                       <div className="w-5 h-5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-                      <span className="text-[10px] text-cyan-400 font-bold">Loading trades…</span>
+                      <span className="text-[10px] text-cyan-400 font-bold">Loading</span>
                     </div>
                   </div>
                 )}

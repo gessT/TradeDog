@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import FuturesDashboard from "../components/futures/FuturesDashboard";
 import type { FuturesDashboardHandle, LayoutState } from "../components/futures/FuturesDashboard";
-import KLSEDashboard from "../components/klse/KLSEDashboard";
+import MYDashboard from "../components/klse/MYDashboard";
+import type { MYDashboardHandle, MYLayoutState, MYStockInfo } from "../components/klse/MYDashboard";
 import USDashboard from "../components/us/USDashboard";
 import type { USDashboardHandle, USLayoutState } from "../components/us/USDashboard";
 
@@ -22,8 +23,11 @@ export default function Page() {
   const [configOpen, setConfigOpen] = useState(false);
   const futuresRef = useRef<FuturesDashboardHandle>(null);
   const usRef = useRef<USDashboardHandle>(null);
+  const myRef = useRef<MYDashboardHandle>(null);
   const [futuresLayout, setFuturesLayout] = useState<LayoutState>({ col1: true, col2: true, col3: true, tiger: true });
   const [usLayout, setUsLayout] = useState<USLayoutState>({ watchlist: true, chart: true, rightPanel: true });
+  const [myLayout, setMyLayout] = useState<MYLayoutState>({ watchlist: true, chart: true, rightPanel: true });
+  const [myStock, setMyStock] = useState<MYStockInfo | null>(null);
 
   // Restore saved default tab after hydration
   useEffect(() => {
@@ -50,11 +54,25 @@ export default function Page() {
         // ignore malformed saved layout
       }
     }
+
+    const savedMYLayout = localStorage.getItem("tradedog_my_layout");
+    if (savedMYLayout) {
+      try {
+        const parsed = JSON.parse(savedMYLayout) as MYLayoutState;
+        setMyLayout((prev) => ({ ...prev, ...parsed }));
+      } catch {
+        // ignore malformed saved layout
+      }
+    }
   }, []);
 
   useEffect(() => {
     localStorage.setItem("tradedog_us_layout", JSON.stringify(usLayout));
   }, [usLayout]);
+
+  useEffect(() => {
+    localStorage.setItem("tradedog_my_layout", JSON.stringify(myLayout));
+  }, [myLayout]);
 
   const switchTab = useCallback((tab: Tab) => {
     setMode(tab);
@@ -85,6 +103,7 @@ export default function Page() {
       {/* ── Top navigation bar ─────────── */}
       <div className="flex items-center border-b border-slate-800/60 bg-slate-900/60">
         {/* Dashboard tabs */}
+        <div className="flex items-center shrink-0">
         {TABS.map((tab) => (
           <button
             key={tab.key}
@@ -102,9 +121,25 @@ export default function Page() {
             )}
           </button>
         ))}
+        </div>
 
-        {/* Spacer */}
-        <div className="flex-1" />
+        {/* Center — Active stock info (MY tab) */}
+        <div className="flex-1 flex justify-center">
+          {mode === "MY" && myStock && (
+            <div className="flex items-center gap-2.5">
+              <span className="text-[15px] font-black text-white tracking-tight">{myStock.name}</span>
+              <span className="text-[11px] font-semibold text-slate-500 tabular-nums">{myStock.symbol.replace(".KL", "")}</span>
+              {myStock.price > 0 && (
+                <>
+                  <span className="text-[12px] font-bold text-white tabular-nums">RM{myStock.price.toFixed(2)}</span>
+                  <span className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded ${myStock.change >= 0 ? "text-emerald-400 bg-emerald-500/10" : "text-rose-400 bg-rose-500/10"}`}>
+                    {myStock.change >= 0 ? "+" : ""}{myStock.changePct.toFixed(2)}%
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Config button */}
         <div className="relative shrink-0 mr-2">
@@ -157,15 +192,14 @@ export default function Page() {
                 })}
               </div>
 
-              {/* Layout toggles (Futures / US) */}
-              {(mode === "FUTURES" || mode === "US") && (
+              {/* Layout toggles (Futures / US / MY) */}
+              {(mode === "FUTURES" || mode === "US" || mode === "MY") && (
                 <div className="px-3 py-2 border-t border-slate-800/60">
                   <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1.5">Layout Panels</div>
                   {mode === "FUTURES" && ([
                     { key: "col1" as const, label: "Chart", icon: "📊" },
                     { key: "col2" as const, label: "Strategy", icon: "🧪" },
                     { key: "col3" as const, label: "Trader", icon: "🤖" },
-                    { key: "tiger" as const, label: "Tiger Account", icon: "🐯" },
                   ]).map((item) => (
                     <button
                       key={item.key}
@@ -204,6 +238,27 @@ export default function Page() {
                       </span>
                     </button>
                   ))}
+                  {mode === "MY" && ([
+                    { key: "watchlist" as const, label: "Watchlist", icon: "📋" },
+                    { key: "chart" as const, label: "Chart & Backtest", icon: "📊" },
+                    { key: "rightPanel" as const, label: "Orders & Strategy", icon: "💹" },
+                  ]).map((item) => (
+                    <button
+                      key={item.key}
+                      onClick={() => {
+                        const next = !myLayout[item.key];
+                        setMyLayout((prev) => ({ ...prev, [item.key]: next }));
+                        myRef.current?.setLayout(item.key, next);
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition mb-0.5 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200"
+                    >
+                      <span className="text-sm">{item.icon}</span>
+                      <span className="text-[11px] font-semibold flex-1">{item.label}</span>
+                      <span className={`w-7 h-4 rounded-full relative transition-colors ${myLayout[item.key] ? "bg-emerald-500/40" : "bg-slate-700"}`}>
+                        <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${myLayout[item.key] ? "left-3.5 bg-emerald-400" : "left-0.5 bg-slate-500"}`} />
+                      </span>
+                    </button>
+                  ))}
                 </div>
               )}
 
@@ -220,7 +275,7 @@ export default function Page() {
         {visited.has("FUTURES") && <FuturesDashboard ref={futuresRef} onLayoutChange={setFuturesLayout} />}
       </div>
       <div className={`flex-1 overflow-hidden ${mode === "MY" ? "flex" : "hidden"}`}>
-        {visited.has("MY") && <KLSEDashboard />}
+        {visited.has("MY") && <MYDashboard ref={myRef} onLayoutChange={setMyLayout} layout={myLayout} onStockChange={setMyStock} />}
       </div>
       <div className={`flex-1 overflow-hidden ${mode === "US" ? "flex" : "hidden"}`}>
         {visited.has("US") && <USDashboard ref={usRef} onLayoutChange={setUsLayout} layout={usLayout} />}

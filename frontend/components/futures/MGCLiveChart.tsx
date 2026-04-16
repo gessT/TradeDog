@@ -18,10 +18,9 @@ import { useLivePrice } from "../../hooks/useLivePrice";
 // ═══════════════════════════════════════════════════════════════════════
 
 /** Offset (seconds) to shift UTC epoch → SGT for lightweight-charts */
-import { SGT_OFFSET_SEC, toSGT } from "../../utils/time";
+import { getTimezone, toLocal as toLocalTz } from "../../utils/time";
 
-const TZ_OFFSET_SEC = SGT_OFFSET_SEC;
-const toLocal = (utcSec: number) => toSGT(utcSec) as UTCTimestamp;
+const toLocal = (utcSec: number) => toLocalTz(utcSec) as UTCTimestamp;
 
 type TradeMarker = {
   entry_time: string;
@@ -132,7 +131,7 @@ export default function MGCLiveChart({ symbol = "MGC", symbolName = "Micro Gold"
         if (prev) setPrevPrice(prev.current_price);
         return res;
       });
-      setLastUpdate(new Date().toLocaleTimeString());
+      setLastUpdate(new Date().toLocaleTimeString([], { timeZone: getTimezone() }));
       setError(null);
       onPriceUpdate?.(res.current_price);
     } catch (e) {

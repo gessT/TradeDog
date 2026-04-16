@@ -8,10 +8,10 @@ import {
   type IChartApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { toSGT } from "../../utils/time";
+import { toLocal as toLocalTz } from "../../utils/time";
 import { fetchMGCLive, type MGCLiveCandle } from "../../services/api";
 
-const toLocal = (utcSec: number) => toSGT(utcSec) as UTCTimestamp;
+const toLocal = (utcSec: number) => toLocalTz(utcSec) as UTCTimestamp;
 
 interface HoldingMiniChartProps {
   symbol: string;

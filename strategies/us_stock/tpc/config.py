@@ -26,7 +26,7 @@ DEFAULT_TPC_PARAMS: dict = {
 
     # ── 1H indicators (for ATR / chart display) ──────
     "h_ema_fast":        20,
-    "h_ema_slow":        50,
+    "h_ema_slow":        28,
     "h_rsi_period":      14,
     "h_atr_period":      14,
 

@@ -30,6 +30,26 @@ def macd(
     return macd_line, signal_line, histogram
 
 
+def macd_crossover_bull(macd_line: pd.Series, signal_line: pd.Series) -> pd.Series:
+    """True on the bar where MACD line crosses ABOVE signal line (bullish crossover).
+
+    Equivalent to Pine Script: ta.crossover(macd, signal)
+    """
+    prev_macd = macd_line.shift(1)
+    prev_sig = signal_line.shift(1)
+    return ((macd_line > signal_line) & (prev_macd <= prev_sig)).astype(int)
+
+
+def macd_crossover_bear(macd_line: pd.Series, signal_line: pd.Series) -> pd.Series:
+    """True on the bar where MACD line crosses BELOW signal line (bearish crossover).
+
+    Equivalent to Pine Script: ta.crossunder(macd, signal)
+    """
+    prev_macd = macd_line.shift(1)
+    prev_sig = signal_line.shift(1)
+    return ((macd_line < signal_line) & (prev_macd >= prev_sig)).astype(int)
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Breakout / Pullback detection
 # ═══════════════════════════════════════════════════════════════════════

@@ -12,7 +12,6 @@ import {
 } from "../../services/api";
 import CommodityCards from "./CommodityCards";
 import MGCLiveChart from "./MGCLiveChart";
-import ScanTradePanel from "./ScanTradePanel";
 import Strategy5MinPanel, { type LockedTradingConfig } from "./Strategy5MinPanel";
 import AutoTraderPanel from "./AutoTraderPanel";
 import { LivePriceProvider } from "../../hooks/useLivePrice";
@@ -23,8 +22,12 @@ const CONDITION_KEYS: (keyof Scan5MinConditions)[] = [
   "halftrend",
 ];
 const DEFAULT_TOGGLES: Record<string, boolean> = Object.fromEntries(
-  CONDITION_KEYS.map((k) => [k, true])
+  CONDITION_KEYS.map((k) => [k, false])
 );
+// Keep Going defaults: EMA trend + SuperTrend + RSI
+DEFAULT_TOGGLES["ema_trend"] = true;
+DEFAULT_TOGGLES["supertrend"] = true;
+DEFAULT_TOGGLES["rsi_momentum"] = true;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Futures Dashboard — multi-commodity trading workspace
@@ -122,7 +125,7 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
   }, []);
 
   // ── Shared interval (used by both backtest & auto-trader) ──
-  const [interval, setInterval_] = useState("5m");
+  const [interval, setInterval_] = useState("2m");
 
   // ── Shared SL/TP multipliers (synced from backtest → auto-trader) ──
   const [slMult, setSlMult] = useState(4.0);
@@ -250,17 +253,8 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
           Trader
         </button>
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <AutoTraderPanel symbol={selectedSymbol} lockedConfig={lockedConfig} />
+          <AutoTraderPanel symbol={selectedSymbol} lockedConfig={lockedConfig} tradeExecutedTick={tradeExecutedTick} onTradeExecuted={() => setTradeExecutedTick((n) => n + 1)} />
         </div>
-        <button onClick={() => setTigerOpen((v) => !v)} className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-slate-600 hover:text-slate-300 uppercase tracking-widest font-bold bg-slate-950/60 hover:bg-slate-900/80 border-y border-slate-800/40 transition-colors shrink-0 w-full">
-          <svg className={`w-3 h-3 transition-transform ${tigerOpen ? "" : "rotate-180"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M19 9l-7 7-7-7"/></svg>
-          Tiger Account
-        </button>
-        {tigerOpen && (
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <ScanTradePanel tradeExecutedTick={tradeExecutedTick} />
-          </div>
-        )}
       </section>
       )}
 

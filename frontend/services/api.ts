@@ -271,6 +271,93 @@ export async function fetchNearATH(top: number = 10, market: string = "MY"): Pro
 }
 
 
+// ── Volume Breakout Scanner ─────────────────────────────────────────
+
+export type VolBreakoutStock = {
+  symbol: string;
+  name: string;
+  current_price: number;
+  range_high: number;
+  range_low: number;
+  status: "breakout" | "range" | "breakdown";
+  pct_from_high: number;
+  pct_from_low: number;
+  big_vol_days: number;
+  max_vol_ratio: number;
+  last_big_vol_days_ago: number;
+};
+
+export type VolBreakoutResponse = {
+  count: number;
+  scanned: number;
+  lookback: number;
+  vol_mult: number;
+  stocks: VolBreakoutStock[];
+};
+
+export async function fetchVolBreakout(
+  top: number = 30,
+  market: string = "MY",
+  lookback: number = 10,
+  volMult: number = 2.0,
+): Promise<VolBreakoutResponse> {
+  const params = new URLSearchParams({
+    top: String(top),
+    market,
+    lookback: String(lookback),
+    vol_mult: String(volMult),
+  });
+  const response = await fetch(`${API_BASE}/stock/vol-breakout?${params}`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as VolBreakoutResponse;
+}
+
+
+// ── Strategy Opportunity Scanner ────────────────────────────────────
+
+export type OpportunityStock = {
+  symbol: string;
+  name: string;
+  price: number;
+  entry_price: number;
+  sl_price: number;
+  tp_price: number;
+  entry_date: string;
+  dist_pct: number;
+  risk_pct: number;
+  reward_pct: number;
+  status: "OPEN" | "SIGNAL";
+  win_rate: number;
+  total_return: number;
+  total_trades: number;
+};
+
+export type OpportunityScanResponse = {
+  strategy: string;
+  period: string;
+  total_scanned: number;
+  hits: number;
+  results: OpportunityStock[];
+};
+
+export async function fetchOpportunities(
+  strategy: string = "smp",
+  period: string = "6mo",
+  capital: number = 5000,
+): Promise<OpportunityScanResponse> {
+  const params = new URLSearchParams({ strategy, period, capital: String(capital) });
+  const response = await fetch(`${API_BASE}/stock/scan_opportunities?${params}`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as OpportunityScanResponse;
+}
+
+
 // ── Top Volume Scanner ──────────────────────────────────────────────
 
 export type TopVolumeStock = {
@@ -1064,6 +1151,7 @@ export async function save5MinConditionToggles(toggles: Record<string, boolean>,
 
 export type StrategyConfig = {
   period?: string;
+  interval?: string;
   sl_mult?: number;
   tp_mult?: number;
   risk_filters?: Record<string, boolean>;
@@ -1233,6 +1321,47 @@ export async function fetchMGC5MinBacktest(
   return (await response.json()) as MGC5MinBacktestResponse;
 }
 
+export async function fetchMGC2MinBacktest(
+  symbol: string = "MGC",
+  sl_mult: number = 1.0,
+  tp_mult: number = 1.5,
+  period: string = "60d",
+  rsi_min: number = 50,
+  ema_fast: number = 20,
+  ema_slow: number = 50,
+  capital: number = 10000,
+  direction: string = "SHORT",
+): Promise<MGC5MinBacktestResponse> {
+  const url = `${API_BASE}/mgc/backtest_2min?symbol=${encodeURIComponent(toYF(symbol))}&sl_mult=${sl_mult}&tp_mult=${tp_mult}&period=${encodeURIComponent(period)}&rsi_min=${rsi_min}&ema_fast=${ema_fast}&ema_slow=${ema_slow}&capital=${capital}&direction=${encodeURIComponent(direction)}`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as MGC5MinBacktestResponse;
+}
+
+export async function fetchMGC5MinLockedBacktest(
+  symbol: string = "MGC",
+  sl_atr_mult: number = 1.0,
+  tp_atr_mult: number = 2.0,
+  period: string = "60d",
+  bos_lookback: number = 10,
+  st_period: number = 10,
+  st_mult: number = 2.0,
+  rsi_min: number = 50,
+  use_htf: boolean = true,
+  capital: number = 10000,
+): Promise<MGC5MinBacktestResponse> {
+  const url = `${API_BASE}/mgc/backtest_5min_locked?symbol=${encodeURIComponent(toYF(symbol))}&sl_atr_mult=${sl_atr_mult}&tp_atr_mult=${tp_atr_mult}&period=${encodeURIComponent(period)}&bos_lookback=${bos_lookback}&st_period=${st_period}&st_mult=${st_mult}&rsi_min=${rsi_min}&use_htf=${use_htf}&capital=${capital}`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as MGC5MinBacktestResponse;
+}
+
 
 // ── 5min Condition Optimization ──────────────────────────────────────
 
@@ -1265,8 +1394,9 @@ export async function optimize5MinConditions(
   useSma28Cut: boolean = false,
   skipHours?: number[],
   maxLossPerTrade: number = 0,
+  interval: string = "5m",
 ): Promise<ConditionOptimizationResult[]> {
-  let url = `${API_BASE}/mgc/optimize_conditions_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&top_n=${top_n}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}`;
+  let url = `${API_BASE}/mgc/optimize_conditions_5min?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&top_n=${top_n}&atr_sl_mult=${atr_sl_mult}&atr_tp_mult=${atr_tp_mult}&interval=${encodeURIComponent(interval)}`;
   if (skipFlat) url += `&skip_flat=true`;
   url += `&skip_counter_trend=${skipCounterTrend}`;
   if (useEmaExit) url += `&use_ema_exit=true`;
@@ -1332,6 +1462,7 @@ export type Scan5MinConditions = {
   smc_ob: boolean;
   smc_fvg: boolean;
   smc_bos: boolean;
+  cm_macd: boolean;
   mkt_structure: number;  // 1=BULL, -1=BEAR, 0=SIDEWAYS
 };
 
@@ -1547,9 +1678,10 @@ export async function getBacktestPosition(
   slMult: number = 3.0,
   tpMult: number = 2.5,
   disabledConditions?: string[],
+  interval: string = "5m",
 ): Promise<BacktestPositionResponse> {
   const yf = toYF(symbol);
-  let url = `${API_BASE}/mgc/backtest_position?symbol=${encodeURIComponent(yf)}&atr_sl_mult=${slMult}&atr_tp_mult=${tpMult}`;
+  let url = `${API_BASE}/mgc/backtest_position?symbol=${encodeURIComponent(yf)}&atr_sl_mult=${slMult}&atr_tp_mult=${tpMult}&interval=${encodeURIComponent(interval)}`;
   if (disabledConditions && disabledConditions.length > 0) {
     url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
   }
@@ -1571,8 +1703,9 @@ export type TradeLog5MinResponse = {
 
 export async function fetchTradeLog5Min(
   limit: number = 50,
+  interval: string = "5m",
 ): Promise<TradeLog5MinResponse> {
-  const url = `${API_BASE}/mgc/trade_log_5min?limit=${limit}`;
+  const url = `${API_BASE}/mgc/trade_log_5min?limit=${limit}&interval=${encodeURIComponent(interval)}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
@@ -1657,6 +1790,7 @@ export type US1HTrade = {
   direction: string;
   mae: number;
   mkt_structure: number;
+  sl_price: number;
 };
 
 export type US1HMetrics = {
@@ -1806,6 +1940,196 @@ export async function fetchTPCBacktest(
   return (await response.json()) as US1HBacktestResponse;
 }
 
+// ── HPB (HeatPulse Breakout) backtest ──────────────────────────────
+
+export async function fetchHPBBacktest(
+  symbol: string = "0208.KL",
+  period: string = "2y",
+  disabledConditions?: string[],
+  params?: Record<string, unknown>,
+  capital: number = 10000,
+): Promise<US1HBacktestResponse> {
+  let url = `${API_BASE}/stock/backtest_hpb?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&capital=${capital}`;
+  if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) url += `&${k}=${v}`;
+    }
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as US1HBacktestResponse;
+}
+
+// ── KLSE VPB v3 (量价分析) Backtest ────────────────────────────────
+
+export async function fetchVPB3Backtest(
+  symbol: string = "0208.KL",
+  period: string = "2y",
+  disabledConditions?: string[],
+  params?: Record<string, unknown>,
+  capital: number = 5000,
+): Promise<US1HBacktestResponse> {
+  let url = `${API_BASE}/stock/backtest_vpb3?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&capital=${capital}`;
+  if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) url += `&${k}=${v}`;
+    }
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as US1HBacktestResponse;
+}
+
+// ── SMP (Smart Money Pivot) backtest ─────────────────────────────────
+
+export async function fetchSMPBacktest(
+  symbol: string = "0233.KL",
+  period: string = "2y",
+  disabledConditions?: string[],
+  params?: Record<string, unknown>,
+  capital: number = 5000,
+): Promise<US1HBacktestResponse> {
+  let url = `${API_BASE}/stock/backtest_smp?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&capital=${capital}`;
+  if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) url += `&${k}=${v}`;
+    }
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as US1HBacktestResponse;
+}
+
+export async function fetchPSniperBacktest(
+  symbol: string = "0208.KL",
+  period: string = "2y",
+  disabledConditions?: string[],
+  params?: Record<string, unknown>,
+  capital: number = 5000,
+): Promise<US1HBacktestResponse> {
+  let url = `${API_BASE}/stock/backtest_psniper?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&capital=${capital}`;
+  if (disabledConditions && disabledConditions.length > 0) url += `&disabled_conditions=${encodeURIComponent(disabledConditions.join(","))}`;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) url += `&${k}=${v}`;
+    }
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as US1HBacktestResponse;
+}
+
+// ── CM MACD Crossover Backtest (KLSE Daily) ────────────────────────
+export async function fetchCMMACDBacktest(
+  symbol: string = "0208.KL",
+  period: string = "2y",
+  _disabledConditions?: string[],
+  params?: Record<string, unknown>,
+  capital: number = 5000,
+): Promise<US1HBacktestResponse> {
+  let url = `${API_BASE}/stock/backtest_cm_macd?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&capital=${capital}`;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) url += `&${k}=${v}`;
+    }
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as US1HBacktestResponse;
+}
+
+// ── KLSE Strategy Config (per-symbol + per-strategy persistence) ────
+
+export type KLSEStrategyConfig = {
+  disabled_conditions?: string[];
+  atr_sl_mult?: number;
+  tp1_r_mult?: number;
+  tp2_r_mult?: number;
+  capital?: number;
+  period?: string;
+};
+
+export async function loadKLSEStrategyConfig(strategy: string = "tpc"): Promise<KLSEStrategyConfig> {
+  const res = await fetch(`${API_BASE}/stock/klse_strategy_config?strategy=${encodeURIComponent(strategy)}`, { cache: "no-store" });
+  if (!res.ok) return {};
+  return (await res.json()) as KLSEStrategyConfig;
+}
+
+export async function saveKLSEStrategyConfig(config: KLSEStrategyConfig, strategy: string = "tpc"): Promise<void> {
+  await fetch(`${API_BASE}/stock/klse_strategy_config?strategy=${encodeURIComponent(strategy)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+}
+
+
+// ── Scan Best Strategy ──────────────────────────────────────────────
+
+export type StrategyGradeMetrics = {
+  total_return_pct: number;
+  win_rate: number;
+  profit_factor: number;
+  sharpe_ratio: number;
+  max_drawdown_pct: number;
+  total_trades: number;
+  winners: number;
+  losers: number;
+};
+
+export type StrategyGradeResult = {
+  strategy: string;
+  label: string;
+  grade: string;
+  score: number;
+  metrics: StrategyGradeMetrics | null;
+  error?: string;
+};
+
+export type ScanBestStrategyResponse = {
+  symbol: string;
+  period: string;
+  best: string | null;
+  best_grade: string;
+  strategies: StrategyGradeResult[];
+};
+
+export async function fetchBestStrategy(
+  symbol: string,
+  period: string = "2y",
+  capital: number = 5000,
+): Promise<ScanBestStrategyResponse> {
+  const params = new URLSearchParams({
+    symbol,
+    period,
+    capital: String(capital),
+  });
+  const response = await fetch(`${API_BASE}/stock/scan_best_strategy?${params}`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return (await response.json()) as ScanBestStrategyResponse;
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // Auto-Trader v2 — 4-Layer Production Trading System
@@ -1850,6 +2174,7 @@ export type AutoTraderSnapshot = {
     daily_limit: number;
     daily_loss_limit: number;
   };
+  scan_count: number;
 };
 
 export type AutoTraderTickResult = {

@@ -10,14 +10,14 @@ import {
   type IChartApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { SGT_OFFSET_SEC, toSGT } from "../../utils/time";
+import { toLocal as toLocalTz } from "../../utils/time";
 import type { US1HCandle, US1HTrade } from "../../services/api";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Main Chart Area — Professional candlestick chart with overlays
 // ═══════════════════════════════════════════════════════════════════════
 
-const toLocal = (utcSec: number) => toSGT(utcSec) as UTCTimestamp;
+const toLocal = (utcSec: number) => toLocalTz(utcSec) as UTCTimestamp;
 const parseTS = (s: string): number => {
   let ms = new Date(s).getTime();
   if (isNaN(ms)) ms = new Date(s.replace(" ", "T")).getTime();
@@ -276,6 +276,28 @@ export default function USMainChart({
         });
         bgSeries.setData(bgData);
       }
+
+      // SuperTrend line with direction color
+      const stLineData: { time: UTCTimestamp; value: number; color: string }[] = [];
+      for (let i = 0; i < visibleCandles.length; i++) {
+        const c = visibleCandles[i];
+        if (c.st_line == null || c.st_dir == null) continue;
+        stLineData.push({
+          time: cData[i].time,
+          value: c.st_line,
+          color: c.st_dir === 1 ? "#10b981" : "#ef4444",
+        });
+      }
+      if (stLineData.length > 0) {
+        const stSeries = chart.addSeries(LineSeries, {
+          lineWidth: 2,
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+          pointMarkersVisible: false,
+        });
+        stSeries.setData(stLineData);
+      }
     }
 
     // ── Volume ──
@@ -426,8 +448,8 @@ export default function USMainChart({
           {markersOn ? "⚑ Trades" : "⚐ Trades"}
         </button>
 
-        {/* Weekly SuperTrend toggle — only show if strategy has weekly ST data */}
-        {candles.some((c) => c.st_line != null) && (
+        {/* Weekly SuperTrend toggle — only show if strategy has ST data */}
+        {candles.some((c) => c.st_dir != null) && (
         <button
           onClick={() => setWSuperTrendOn((v) => !v)}
           className={`text-[10px] px-2 py-0.5 rounded border transition font-medium ${

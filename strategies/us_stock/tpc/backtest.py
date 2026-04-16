@@ -129,8 +129,13 @@ class TPCBacktester:
         # ── Generate signals ──
         signals = strategy.generate_signals(df_1h, disabled=disabled_conditions)
 
+        # Split disabled into entry vs exit sets
+        _exit_keys = {"sl_exit", "tp1_exit", "tp2_exit", "trail_exit",
+                      "wst_flip_exit", "ema28_break_exit", "ht_flip_exit"}
+        disabled_exits = (disabled_conditions & _exit_keys) if disabled_conditions else set()
+
         # ── Simulate ──
-        trades, curve, _ = self._simulate(df_1h, signals, full_params)
+        trades, curve, _ = self._simulate(df_1h, signals, full_params, disabled_exits)
         return self._compute_metrics(trades, curve, self.initial_capital, full_params)
 
     def _simulate(
@@ -138,7 +143,9 @@ class TPCBacktester:
         df: pd.DataFrame,
         signals: pd.Series,
         params: dict,
+        disabled_exits: set[str] | None = None,
     ) -> tuple[list[TPCTrade], list[float], float]:
+        _dis_exit = disabled_exits or set()
         equity = self.initial_capital
         peak_equity = equity
         max_dd = 0.0
@@ -174,7 +181,7 @@ class TPCBacktester:
                 reason = ""
 
                 # ── ATR Trailing stop ──
-                if params.get("use_trailing") and position.get("tp1_hit"):
+                if "trail_exit" not in _dis_exit and params.get("use_trailing") and position.get("tp1_hit"):
                     if high_price > extreme_since_entry:
                         extreme_since_entry = high_price
                         trail_atr = float(prev["h_atr"]) if "h_atr" in prev.index and not np.isnan(float(prev["h_atr"])) else position["entry_atr"]
@@ -184,12 +191,12 @@ class TPCBacktester:
                             position["sl"] = sl
 
                 # ── Check SL ──
-                if low_price <= sl:
+                if "sl_exit" not in _dis_exit and low_price <= sl:
                     exit_price = sl
                     reason = "TRAIL" if sl != position["orig_sl"] else "SL"
 
                 # ── Check TP1 (partial close) ──
-                if exit_price is None and not position.get("tp1_hit") and high_price >= tp1:
+                if exit_price is None and "tp1_exit" not in _dis_exit and not position.get("tp1_hit") and high_price >= tp1:
                     tp1_qty = max(1, int(position["qty_total"] * params["tp1_exit_pct"]))
                     tp1_pnl = (tp1 - position["entry_price"]) * tp1_qty
                     equity += tp1_pnl
@@ -224,17 +231,31 @@ class TPCBacktester:
                         continue
 
                 # ── Check TP2 (full exit) ──
-                if exit_price is None and position.get("tp1_hit") and high_price >= tp2:
+                if exit_price is None and "tp2_exit" not in _dis_exit and position.get("tp1_hit") and high_price >= tp2:
                     exit_price = tp2
                     reason = "TP2"
 
                 # ── Check daily/weekly exit signals ──
-                if exit_price is None:
+                if exit_price is None and "wst_flip_exit" not in _dis_exit:
                     # Weekly SuperTrend flip to bearish → hard exit
                     w_st = bar.get("w_st_dir") if "w_st_dir" in bar.index else np.nan
                     if not np.isnan(w_st) and int(w_st) == -1:
                         exit_price = close_price
                         reason = "W_ST_FLIP"
+
+                # ── EMA28 breakdown exit: close < EMA28 * 0.97 (3% below) ──
+                if exit_price is None and "ema28_break_exit" not in _dis_exit:
+                    ema_slow = float(bar["h_ema_slow"]) if "h_ema_slow" in bar.index and not np.isnan(float(bar.get("h_ema_slow", np.nan))) else np.nan
+                    if not np.isnan(ema_slow) and close_price < ema_slow * 0.97:
+                        exit_price = close_price
+                        reason = "EMA28_BREAK"
+
+                # ── Daily HalfTrend flips bearish (red) ──
+                if exit_price is None and "ht_flip_exit" not in _dis_exit:
+                    ht_d = bar.get("ht_dir") if "ht_dir" in bar.index else np.nan
+                    if not np.isnan(ht_d) and int(ht_d) == 1:
+                        exit_price = close_price
+                        reason = "HT_FLIP"
 
                 # ── Max hold period ──
                 if exit_price is None and bars_held >= params.get("max_hold_bars", 999):
