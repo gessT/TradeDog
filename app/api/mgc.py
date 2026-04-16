@@ -264,7 +264,7 @@ def _tiger_bars(symbol: str, interval: str, limit: int = 500):
         if df_raw is not None and not df_raw.empty:
             times = df_raw["time"].tolist()
             df = df_raw[["open", "high", "low", "close", "volume"]].copy()
-            df.index = pd.to_datetime(df_raw["time"], unit="ms")
+            df.index = pd.to_datetime(df_raw["time"], unit="ms", utc=True)
             df["_time_ms"] = times
             df = df.sort_index()
             return identifier, df
@@ -272,6 +272,41 @@ def _tiger_bars(symbol: str, interval: str, limit: int = 500):
     except Exception:
         logger.warning("Tiger bars failed for %s/%s", symbol, interval)
         return symbol, None
+
+
+
+def _load_tiger_or_yf(symbol: str, interval: str, period: str) -> "pd.DataFrame":
+    """
+    Load OHLCV bars: Tiger API first, fallback to yfinance.
+    `symbol` is the commodity key (e.g. "MGC"), not the yfinance ticker.
+    `period` is a yfinance-style string like "5d", "60d", "7d".
+    Returns a DataFrame with columns [open, high, low, close, volume].
+    """
+    import pandas as pd
+
+    # Convert period string → bar limit estimate
+    # yfinance periods: Nd = N days × ~78 bars/day for 5m
+    _bars_per_day = {"1m": 390, "2m": 195, "5m": 78, "15m": 26, "30m": 13, "1h": 7}
+    try:
+        days = int(period.replace("d", "").replace("m", "0").split("y")[0])
+        bars_pd = _bars_per_day.get(interval, 78)
+        limit = min(days * bars_pd + 50, 1750)
+    except Exception:
+        limit = 800
+
+    _, df_tiger = _tiger_bars(symbol, interval, limit)
+    if df_tiger is not None and not df_tiger.empty:
+        logger.debug("Tiger data used for %s/%s (%d bars)", symbol, interval, len(df_tiger))
+        return df_tiger
+
+    # Fallback: yfinance
+    commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": f"{symbol}=F"})
+    yf_symbol = commodity.get("yf", f"{symbol}=F")
+    logger.debug("Tiger unavailable — falling back to yfinance for %s/%s", symbol, interval)
+    df_yf = load_yfinance(symbol=yf_symbol, interval=interval, period=period)
+    if df_yf is None or df_yf.empty:
+        raise ValueError(f"No data available for {symbol} ({interval}, {period})")
+    return df_yf
 
 
 @router.get("/price/{symbol}")
@@ -2043,9 +2078,10 @@ async def mgc_backtest_2min(
         from strategies.futures.strategy_2min import GMCPullbackStrategy, DEFAULT_PARAMS
         from strategies.futures.backtest_2min import Backtester2Min
 
-        df = load_yfinance(symbol=symbol, interval="2m", period=period)
+        _sym_key = symbol.replace("=F", "").replace("=f", "")
+        df = _load_tiger_or_yf(_sym_key, "2m", period)
         if df.empty or len(df) < 100:
-            raise ValueError("Not enough 2m data from yfinance.")
+            raise ValueError("Not enough 2m data.")
 
         params = {
             **DEFAULT_PARAMS,
@@ -2138,6 +2174,42 @@ async def mgc_backtest_2min(
     )
 
 
+def _relabel_eod_as_open(
+    trades: list,
+    direction: str,
+) -> tuple[list, dict | None]:
+    """
+    If the last trade has reason="EOD" it means the position is still open.
+    Relabel it as reason="OPEN" and return an open_position dict.
+    The exit_price on the trade stays as-is (last bar close = latest price).
+    """
+    if not trades or trades[-1].reason != "EOD":
+        return trades, None
+
+    t = trades[-1]
+    open_pos = {
+        "direction":   direction,
+        "entry_price": t.entry_price,
+        "sl":          t.sl,
+        "tp":          t.tp,
+        "entry_time":  t.entry_time,
+        "signal_type": direction,
+        "bar_time":    t.entry_time,
+    }
+    # Rebuild the last trade with reason="OPEN"
+    relabeled = t.model_copy(update={"reason": "OPEN"}) if hasattr(t, "model_copy") else MGC5MinTrade(
+        entry_time=t.entry_time, exit_time=t.exit_time,
+        entry_price=t.entry_price, exit_price=t.exit_price,
+        qty=t.qty, pnl=t.pnl, pnl_pct=t.pnl_pct,
+        reason="OPEN",
+        signal_type=t.signal_type, direction=t.direction,
+        mae=t.mae, mkt_structure=getattr(t, "mkt_structure", 0),
+        sl=t.sl, tp=t.tp,
+    )
+    trades = trades[:-1] + [relabeled]
+    return trades, open_pos
+
+
 # ── 5min Locked Strategy Backtest endpoint ───────────────────────────
 
 @router.get("/backtest_5min_locked")
@@ -2161,14 +2233,15 @@ async def mgc_backtest_5min_locked(
         from strategies.futures.strategy_5min_locked import LockedStrategy5Min, DEFAULT_LOCKED_PARAMS
         from strategies.futures.backtest_5min_locked import BacktesterLocked5Min
 
-        df_5m = load_yfinance(symbol=symbol, interval="5m", period=period)
+        _sym_key = symbol.replace("=F", "").replace("=f", "")
+        df_5m = _load_tiger_or_yf(_sym_key, "5m", period)
         if df_5m.empty or len(df_5m) < 100:
-            raise ValueError("Not enough 5m data from yfinance.")
+            raise ValueError("Not enough 5m data.")
 
         df_1h = None
         if use_htf:
             try:
-                df_1h = load_yfinance(symbol=symbol, interval="1h", period="90d")
+                df_1h = _load_tiger_or_yf(_sym_key, "1h", "90d")
             except Exception:
                 df_1h = None
 
@@ -2254,6 +2327,8 @@ async def mgc_backtest_5min_locked(
         logger.exception("5min_locked backtest failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    trades, open_pos = _relabel_eod_as_open(trades, "CALL")
+
     return MGC5MinBacktestResponse(
         symbol=symbol,
         interval="5m",
@@ -2264,7 +2339,7 @@ async def mgc_backtest_5min_locked(
         metrics=metrics,
         daily_pnl=[],
         params=params,
-        open_position=None,
+        open_position=open_pos,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
 
@@ -2292,14 +2367,15 @@ async def mgc_backtest_5min_locked_short(
         from strategies.futures.strategy_5min_locked_short import LockedStrategy5MinShort, DEFAULT_LOCKED_SHORT_PARAMS
         from strategies.futures.backtest_5min_locked_short import BacktesterLockedShort5Min
 
-        df_5m = load_yfinance(symbol=symbol, interval="5m", period=period)
+        _sym_key = symbol.replace("=F", "").replace("=f", "")
+        df_5m = _load_tiger_or_yf(_sym_key, "5m", period)
         if df_5m.empty or len(df_5m) < 100:
-            raise ValueError("Not enough 5m data from yfinance.")
+            raise ValueError("Not enough 5m data.")
 
         df_1h = None
         if use_htf:
             try:
-                df_1h = load_yfinance(symbol=symbol, interval="1h", period="90d")
+                df_1h = _load_tiger_or_yf(_sym_key, "1h", "90d")
             except Exception:
                 df_1h = None
 
@@ -2380,6 +2456,119 @@ async def mgc_backtest_5min_locked_short(
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as exc:
         logger.exception("5min_locked_short backtest failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    trades, open_pos = _relabel_eod_as_open(trades, "PUT")
+
+    return MGC5MinBacktestResponse(
+        symbol=symbol,
+        interval="5m",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        daily_pnl=[],
+        params=params,
+        open_position=open_pos,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
+# ── Sync Test Strategy Backtest endpoint ─────────────────────────────
+
+@router.get("/backtest_sync_test")
+async def mgc_backtest_sync_test(
+    symbol: Annotated[str, Query()] = "MGC=F",
+    period: Annotated[str, Query()] = "5d",
+    capital: Annotated[float, Query()] = INITIAL_CAPITAL,
+    hold_bars: Annotated[int, Query(ge=1, le=100)] = 2,
+    direction: Annotated[str, Query()] = "long",
+) -> MGC5MinBacktestResponse:
+    """
+    SYNC TEST backtest — NOT for profit.
+    Enters every 5-min candle, exits after hold_bars (default 2 = 10 min).
+    Used to validate paper/live execution synchronisation.
+    """
+
+    def _run():
+        from strategies.futures.strategy_sync_test import SyncTestStrategy, DEFAULT_SYNC_PARAMS
+        from strategies.futures.backtest_sync_test import BacktesterSyncTest
+
+        _sym_key = symbol.replace("=F", "").replace("=f", "")
+        df_5m = _load_tiger_or_yf(_sym_key, "5m", period)
+        if df_5m.empty or len(df_5m) < 10:
+            raise ValueError("Not enough 5m data.")
+
+        params = {
+            **DEFAULT_SYNC_PARAMS,
+            "hold_bars": hold_bars,
+            "direction": direction,
+        }
+
+        bt     = BacktesterSyncTest(capital=capital, contracts=1)
+        result = bt.run(df_5m, params=params)
+
+        # Candles — plain OHLCV, no indicators
+        candles = []
+        for ts, row in df_5m.iterrows():
+            candles.append(MGC5MinCandle(
+                time=str(ts),
+                open=round(float(row["open"]), 2),
+                high=round(float(row["high"]), 2),
+                low=round(float(row["low"]), 2),
+                close=round(float(row["close"]), 2),
+                volume=int(row.get("volume", 0) or 0),
+                ema_fast=0.0,
+                ema_slow=0.0,
+                rsi=50.0,
+                st_dir=0,
+                macd_hist=0.0,
+            ))
+
+        trades = []
+        for t in result.trades:
+            trades.append(MGC5MinTrade(
+                entry_time=str(t.entry_time),
+                exit_time=str(t.exit_time),
+                entry_price=round(t.entry_price, 2),
+                exit_price=round(t.exit_price, 2),
+                qty=t.qty,
+                pnl=round(t.pnl, 2),
+                pnl_pct=round(t.pnl / capital * 100, 4),
+                reason=t.reason,
+                signal_type="SYNC",
+                direction="CALL" if t.direction == "LONG" else "PUT",
+                mae=0.0,
+                sl=0.0,
+                tp=0.0,
+            ))
+
+        m = result
+        metrics = MGC5MinMetrics(
+            total_trades=m.total_trades,
+            winners=m.winners,
+            losers=m.losers,
+            win_rate=round(m.win_rate, 2),
+            total_return_pct=round(m.total_return_pct, 2),
+            profit_factor=round(m.profit_factor, 2),
+            max_drawdown_pct=round(m.max_drawdown_pct, 2),
+            sharpe_ratio=round(m.sharpe_ratio, 2),
+            risk_reward_ratio=round(m.risk_reward, 2),
+            avg_win=round(m.avg_win_usd, 2),
+            avg_loss=round(m.avg_loss_usd, 2),
+            initial_capital=capital,
+            final_equity=round(m.final_equity, 2),
+        )
+
+        return candles, trades, result.equity_curve, metrics, params
+
+    try:
+        candles, trades, eq_curve, metrics, params = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("sync_test backtest failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
     return MGC5MinBacktestResponse(

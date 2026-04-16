@@ -20,6 +20,7 @@ import {
   fetchMGC2MinBacktest,
   fetchMGC5MinLockedBacktest,
   fetchMGC5MinLockedShortBacktest,
+  fetchMGCSyncTestBacktest,
   execute5Min,
   getMgcPosition,
   optimize5MinConditions,
@@ -575,7 +576,7 @@ export type BuiltInPreset = {
   sl: number;
   tp: number;
   desc: string;
-  endpoint?: "5min" | "2min" | "5min_locked" | "5min_locked_short" | "5min_mix";  // which backend endpoint to use (default: 5min)
+  endpoint?: "5min" | "2min" | "5min_locked" | "5min_locked_short" | "5min_mix" | "sync_test";  // which backend endpoint to use (default: 5min)
 };
 
 export const BUILT_IN_PRESETS: BuiltInPreset[] = [
@@ -647,6 +648,31 @@ export const BUILT_IN_PRESETS: BuiltInPreset[] = [
       volume_spike: false,
       atr_range: true,
       session_ok: true,
+      adx_ok: false,
+      smc_bos: false,
+      smc_ob: false,
+      smc_fvg: false,
+      halftrend: false,
+    },
+  },
+  {
+    name: "🔬 Sync Test",
+    desc: "VALIDATION ONLY · Entry every 5m · Exit after 10m · No SL/TP",
+    interval: "5m",
+    sl: 0,
+    tp: 0,
+    endpoint: "sync_test",
+    toggles: {
+      ema_trend: false,
+      ema_slope: false,
+      pullback: false,
+      breakout: false,
+      supertrend: false,
+      macd_momentum: false,
+      rsi_momentum: false,
+      volume_spike: false,
+      atr_range: false,
+      session_ok: false,
       adx_ok: false,
       smc_bos: false,
       smc_ob: false,
@@ -1688,6 +1714,14 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         return;
       }
 
+      if (activeBuiltIn?.endpoint === "sync_test") {
+        const res = await fetchMGCSyncTestBacktest(symbol, period, 2, "long");
+        setBtData(res);
+        onTradesUpdate?.(res.trades);
+        setHasRunBacktest(true);
+        return;
+      }
+
       // Compute disabled conditions from toggles (OFF = disabled)
       const disabled = CONDITION_DEFS
         .filter((d) => (d.group === "5m" || d.group === "smc") && !conditionToggles[d.key])
@@ -2111,7 +2145,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         {/* ── Strategy quick-config row ─────────────────────── */}
         <div className="flex items-center gap-2 mb-2 flex-wrap">
           {/* Quick-pick strategy buttons */}
-          {BUILT_IN_PRESETS.filter((bp) => bp.name === "⬆ BoS Long" || bp.name === "⬇ BoS Short" || bp.name === "⇅ BoS Mix").map((bp) => (
+          {BUILT_IN_PRESETS.filter((bp) => bp.name === "⬆ BoS Long" || bp.name === "⬇ BoS Short" || bp.name === "⇅ BoS Mix" || bp.name === "🔬 Sync Test").map((bp) => (
             <button
               key={bp.name}
               onClick={() => applyBuiltInPreset(bp)}
