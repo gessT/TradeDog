@@ -1393,6 +1393,7 @@ function ExamTab({
 
 export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles, interval: intervalProp = "5m", onIntervalChange, onSlTpChange, onConfigLock }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>>; interval?: string; onIntervalChange?: (v: string) => void; onSlTpChange?: (sl: number, tp: number) => void; onConfigLock?: (config: LockedTradingConfig) => void }>) {
   const [showExam, setShowExam] = useState(false);
+  const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -2053,24 +2054,46 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   return (
     <div className="flex flex-col h-full">
       {/* ── Header ───────────────────────────────────────── */}
-      <div className="px-3 pt-3 pb-0">
-        <div className="flex items-center gap-3 mb-3">
+      <div className="px-2 pt-1.5 pb-0">
+        <div className="flex items-center gap-1.5 mb-1.5">
           {/* Symbol identity */}
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500/20 to-yellow-600/10 border border-amber-500/30 flex items-center justify-center text-base">🥇</div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-amber-500/20 to-yellow-600/10 border border-amber-500/30 flex items-center justify-center text-sm">🥇</div>
             <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm font-bold text-slate-100 tracking-tight">{symbolName}</span>
+              <div className="flex items-center gap-1">
+                <span className="text-xs font-bold text-slate-100 tracking-tight">{symbolName}</span>
               </div>
               <div className="text-[9px] text-slate-500 -mt-0.5">{symbol}=F · Futures</div>
             </div>
           </div>
-          {/* Action buttons */}
-          <div className="ml-auto flex items-center gap-1.5">
+          {/* Period + date + backtest + tools */}
+          <div className="ml-auto flex items-center gap-1 flex-wrap justify-end">
+            {(interval === "1m" ? ["1d", "2d", "3d", "5d", "7d"] : ["1d", "3d", "7d", "30d", "60d"]).map((p) => (
+              <button
+                key={p}
+                onClick={() => setPeriod(p)}
+                className={`px-1.5 py-0.5 text-[9px] font-bold rounded transition-all ${
+                  period === p ? "bg-cyan-700 text-white" : "bg-slate-800 text-slate-500 hover:text-slate-200"
+                }`}
+              >{p}</button>
+            ))}
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="bg-slate-900 border border-slate-700 text-slate-300 text-[9px] rounded px-1 py-0.5 w-[90px]"
+            />
+            <span className="text-[9px] text-slate-600">→</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="bg-slate-900 border border-slate-700 text-slate-300 text-[9px] rounded px-1 py-0.5 w-[90px]"
+            />
             <button
               onClick={runBacktest}
               disabled={loading}
-              className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all ${
+              className={`px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all ${
                 loading
                   ? "bg-slate-800 text-slate-500 cursor-wait"
                   : "bg-gradient-to-r from-cyan-600 to-cyan-500 text-white hover:from-cyan-500 hover:to-cyan-400 active:scale-95 shadow-md shadow-cyan-900/30"
@@ -2078,73 +2101,85 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             >
               {loading ? "Loading" : "▶ Backtest"}
             </button>
-            <button
-              onClick={runConditionOptimization}
-              disabled={optimizing || loading}
-              className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all ${
-                optimizing || loading
-                  ? "bg-slate-800 text-slate-500 cursor-wait"
-                  : "bg-gradient-to-r from-purple-600 to-violet-500 text-white hover:from-purple-500 hover:to-violet-400 active:scale-95 shadow-md shadow-purple-900/30"
-              }`}
-            >
-              {optimizing ? "Optimizing…" : "⚡ Best 3"}
-            </button>
-            <button
-              onClick={() => setShowExam(true)}
-              className="px-3 py-1.5 text-[10px] font-bold rounded-lg bg-gradient-to-r from-violet-600 to-fuchsia-500 text-white hover:from-violet-500 hover:to-fuchsia-400 active:scale-95 shadow-md shadow-violet-900/30 transition-all"
-            >
-              🧪 Exam
-            </button>
-            <button
-              disabled={!btData}
-              onClick={() => {
-                if (!btData) return;
-                const compact = {
-                  ...btData,
-                  candles: btData.candles.slice(-200).map((c) => ({
-                    time: c.time,
-                    ohlc: [c.open, c.high, c.low, c.close] as [number, number, number, number],
-                    volume: c.volume,
-                    ema_fast: c.ema_fast,
-                    ema_slow: c.ema_slow,
-                    rsi: c.rsi,
-                    macd_hist: c.macd_hist,
-                    st_dir: c.st_dir,
-                    signal: c.signal,
-                    mkt_structure: c.mkt_structure,
-                    sma_28: c.sma_28,
-                    adx: c.adx,
-                    ht_dir: c.ht_dir,
-                    ht_line: c.ht_line,
-                  })),
-                };
-                const jsonStr = JSON.stringify(compact, null, 2).replace(
-                  /"ohlc": \[\n\s+([\d.]+),\n\s+([\d.]+),\n\s+([\d.]+),\n\s+([\d.]+)\n\s+\]/g,
-                  (_, o, h, l, c2) => `"ohlc": [${o},${h},${l},${c2}]`
-                );
-                const blob = new Blob([jsonStr], { type: "application/json" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `${btData.symbol}_${btData.interval}_${btData.period}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-              }}
-              className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all ${
-                btData
-                  ? "bg-slate-700 text-slate-200 hover:bg-slate-600 active:scale-95 shadow-md"
-                  : "bg-slate-800 text-slate-600 cursor-not-allowed"
-              }`}
-              title="Download backtest data as JSON (compact OHLC arrays)"
-            >
-              ⬇ JSON
-            </button>
+            {/* Tools dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowToolsMenu((v) => !v)}
+                className="px-1.5 py-1 text-[10px] font-bold rounded-lg bg-slate-800 border border-slate-700/60 text-slate-400 hover:text-slate-200 hover:border-slate-500/60 transition-all"
+                title="More tools"
+              >
+                ∨
+              </button>
+              {showToolsMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowToolsMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50 min-w-[120px] rounded-lg border border-slate-700/60 bg-slate-900 shadow-xl overflow-hidden">
+                    <button
+                      onClick={() => { setShowToolsMenu(false); runConditionOptimization(); }}
+                      disabled={optimizing || loading}
+                      className="w-full px-3 py-1.5 text-[10px] font-bold text-left text-purple-300 hover:bg-slate-800 transition-colors disabled:opacity-40"
+                    >
+                      ⚡ Best 3
+                    </button>
+                    <button
+                      onClick={() => { setShowToolsMenu(false); setShowExam(true); }}
+                      className="w-full px-3 py-1.5 text-[10px] font-bold text-left text-violet-300 hover:bg-slate-800 transition-colors"
+                    >
+                      🧪 Exam
+                    </button>
+                    <button
+                      disabled={!btData}
+                      onClick={() => {
+                        if (!btData) return;
+                        setShowToolsMenu(false);
+                        const compact = {
+                          ...btData,
+                          candles: btData.candles.slice(-200).map((c) => ({
+                            time: c.time,
+                            ohlc: [c.open, c.high, c.low, c.close] as [number, number, number, number],
+                            volume: c.volume,
+                            ema_fast: c.ema_fast,
+                            ema_slow: c.ema_slow,
+                            rsi: c.rsi,
+                            macd_hist: c.macd_hist,
+                            st_dir: c.st_dir,
+                            signal: c.signal,
+                            mkt_structure: c.mkt_structure,
+                            sma_28: c.sma_28,
+                            adx: c.adx,
+                            ht_dir: c.ht_dir,
+                            ht_line: c.ht_line,
+                          })),
+                        };
+                        const jsonStr = JSON.stringify(compact, null, 2).replace(
+                          /"ohlc": \[\n\s+([\d.]+),\n\s+([\d.]+),\n\s+([\d.]+),\n\s+([\d.]+)\n\s+\]/g,
+                          (_, o, h, l, c2) => `"ohlc": [${o},${h},${l},${c2}]`
+                        );
+                        const blob = new Blob([jsonStr], { type: "application/json" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `${btData.symbol}_${btData.interval}_${btData.period}.json`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className={`w-full px-3 py-1.5 text-[10px] font-bold text-left transition-colors ${
+                        btData ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 cursor-not-allowed"
+                      }`}
+                      title="Download backtest data as JSON"
+                    >
+                      ⬇ Export JSON
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* ── Strategy quick-config row ─────────────────────── */}
-        <div className="flex items-center gap-2 mb-2 flex-wrap">
-          {/* Quick-pick strategy buttons */}
+        {/* ── Strategy quick-config strip ─────────────────────── */}
+        <div className="rounded-lg border border-slate-600/50 bg-slate-800/70 px-2 py-1.5 flex items-center gap-1.5 mb-1.5 flex-wrap">
+          {/* Quick-pick preset buttons */}
           {BUILT_IN_PRESETS.filter((bp) => bp.name === "⬆ BoS Long" || bp.name === "⬇ BoS Short" || bp.name === "⇅ BoS Mix" || bp.name === "🔬 Sync Test").map((bp) => (
             <button
               key={bp.name}
@@ -2160,15 +2195,53 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             </button>
           ))}
 
-          {/* SL / TP inline number inputs */}
-          <div className="ml-auto flex items-center gap-2">
+          {/* Strategy dropdown */}
+          <div className="relative">
+            <select
+              value={activePreset ?? "__custom__"}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === "__custom__") { setActivePreset(null); return; }
+                const bp = BUILT_IN_PRESETS.find((x) => x.name === val);
+                if (bp) {
+                  setConditionToggles((prev) => ({ ...prev, ...bp.toggles }));
+                  setActivePreset(bp.name);
+                  setSlMult(bp.sl);
+                  setTpMult(bp.tp);
+                  handleIntervalChange(bp.interval);
+                  return;
+                }
+                const p = presets.find((x) => x.name === val);
+                if (p) {
+                  setConditionToggles((prev) => ({ ...prev, ...p.toggles }));
+                  setActivePreset(p.name);
+                }
+              }}
+              className="rounded pl-1.5 pr-5 py-1 text-[9px] bg-slate-900/60 border border-slate-700/50 text-slate-300 font-bold appearance-none cursor-pointer hover:border-slate-600/60 focus:outline-none transition-colors"
+              style={{ colorScheme: "dark" }}
+            >
+              {BUILT_IN_PRESETS.map((bp) => (
+                <option key={bp.name} value={bp.name}>{bp.name}</option>
+              ))}
+              {presets.map((p) => (
+                <option key={p.name} value={p.name}>{p.name}</option>
+              ))}
+              <option value="__custom__">Custom</option>
+            </select>
+            <svg className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+
+          {/* SL / TP + Interval + Conditions icon */}
+          <div className="ml-auto flex items-center gap-1.5">
             <label className="flex items-center gap-1 text-[9px]">
               <span className="text-rose-400 font-bold">SL</span>
               <input
                 type="number" min="0.5" max="10" step="0.5"
                 value={slMult}
                 onChange={(e) => setSlMult(parseFloat(e.target.value) || slMult)}
-                className="w-14 bg-slate-900 border border-slate-700/60 rounded px-1.5 py-0.5 text-[10px] text-rose-300 font-bold text-right focus:outline-none focus:border-rose-500/60"
+                className="w-10 bg-slate-900 border border-slate-700/60 rounded px-1 py-0.5 text-[9px] text-rose-300 font-bold text-right focus:outline-none focus:border-rose-500/60"
                 style={{ colorScheme: "dark" }}
               />
               <span className="text-slate-500">×</span>
@@ -2179,12 +2252,11 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 type="number" min="0.5" max="10" step="0.5"
                 value={tpMult}
                 onChange={(e) => setTpMult(parseFloat(e.target.value) || tpMult)}
-                className="w-14 bg-slate-900 border border-slate-700/60 rounded px-1.5 py-0.5 text-[10px] text-emerald-300 font-bold text-right focus:outline-none focus:border-emerald-500/60"
+                className="w-10 bg-slate-900 border border-slate-700/60 rounded px-1 py-0.5 text-[9px] text-emerald-300 font-bold text-right focus:outline-none focus:border-emerald-500/60"
                 style={{ colorScheme: "dark" }}
               />
               <span className="text-slate-500">×</span>
             </label>
-            {/* Interval */}
             <select
               value={interval}
               onChange={(e) => handleIntervalChange(e.target.value)}
@@ -2196,6 +2268,26 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               <option value="5m">5min</option>
               <option value="15m">15min</option>
             </select>
+            {/* Conditions icon button with count badge */}
+            <button
+              onClick={() => setConditionsOpen((v) => !v)}
+              title={`${Object.values(conditionToggles).filter(Boolean).length}/${CONDITION_DEFS.length} conditions enabled`}
+              className={`relative w-6 h-6 rounded border flex items-center justify-center transition-all ${
+                conditionsOpen
+                  ? "bg-cyan-900/40 border-cyan-600/60 text-cyan-400"
+                  : "bg-slate-800/60 border-slate-700/50 text-slate-400 hover:border-slate-500/60 hover:text-slate-200"
+              }`}
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+              </svg>
+              {(() => {
+                const cnt = Object.values(conditionToggles).filter(Boolean).length;
+                return cnt > 0 ? (
+                  <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-cyan-600 text-[7px] text-white font-bold flex items-center justify-center leading-none">{cnt}</span>
+                ) : null;
+              })()}
+            </button>
           </div>
         </div>
       </div>
@@ -2207,81 +2299,14 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         </div>
       )}
 
-      {/* ═════════════════════════════════════════════════════ */}
-      {/* Backtest Conditions                                   */}
-      {/* ═════════════════════════════════════════════════════ */}
-      {(() => {
-        const enabledCount = Object.values(conditionToggles).filter(Boolean).length;
-        return (
-          <div className="mx-3 mt-2">
-            {/* Collapsed header bar — always visible */}
-            <button
-              onClick={() => setConditionsOpen((v) => !v)}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-800/60 bg-slate-900/40 hover:bg-slate-900/70 transition-all"
-            >
-              <span className="text-[10px]">⚙️</span>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Conditions</span>
-
-              {/* Compact inline pills when collapsed */}
-              {!conditionsOpen && (
-                <span className="flex items-center gap-1 ml-1">
-                  {CONDITION_DEFS.map((def) => {
-                    const on = conditionToggles[def.key];
-                    return (
-                      <span
-                        key={def.key}
-                        title={`${def.label}: ${on ? "ON" : "OFF"}`}
-                        className={`w-1.5 h-1.5 rounded-full ${on ? "bg-cyan-600" : "bg-slate-700"}`}
-                      />
-                    );
-                  })}
-                </span>
-              )}
-
-              <span className="ml-auto flex items-center gap-2">
-                <span className="text-[9px] text-slate-500">{enabledCount}/{CONDITION_DEFS.length} on</span>
-                <svg className={`w-3 h-3 text-slate-500 transition-transform ${conditionsOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path d="M19 9l-7 7-7-7"/></svg>
-              </span>
-            </button>
-            {/* Preset dropdown — beside conditions header */}
-            <div className="flex items-center gap-1.5 mt-1">
-              <div className="relative flex-1">
-                <select
-                  value={activePreset ?? "__custom__"}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (val === "__custom__") { setActivePreset(null); return; }
-                    const bp = BUILT_IN_PRESETS.find((x) => x.name === val);
-                    if (bp) {
-                      setConditionToggles((prev) => ({ ...prev, ...bp.toggles }));
-                      setActivePreset(bp.name);
-                      setSlMult(bp.sl);
-                      setTpMult(bp.tp);
-                      handleIntervalChange(bp.interval);
-                      return;
-                    }
-                    const p = presets.find((x) => x.name === val);
-                    if (p) {
-                      setConditionToggles((prev) => ({ ...prev, ...p.toggles }));
-                      setActivePreset(p.name);
-                    }
-                  }}
-                  className="w-full bg-slate-900/60 ring-1 ring-slate-700/50 rounded-md pl-2 pr-6 py-1.5 text-[10px] text-slate-300 font-bold
-                    hover:ring-slate-600/60 focus:ring-cyan-500/40 focus:outline-none transition-all appearance-none cursor-pointer"
-                  style={{ colorScheme: "dark" }}
-                >
-                  {BUILT_IN_PRESETS.map((bp) => (
-                    <option key={bp.name} value={bp.name}>{bp.name}</option>
-                  ))}
-                  {presets.map((p) => (
-                    <option key={p.name} value={p.name}>{p.name}</option>
-                  ))}
-                  <option value="__custom__">Custom</option>
-                </select>
-                <svg className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
+      {/* ─ Conditions Panel ─ */}
+      {conditionsOpen && (
+        <div className="mx-2 mb-1.5 rounded-lg border border-slate-700/60 bg-slate-900/60">
+          {/* Panel header with save/delete/close */}
+          <div className="flex items-center gap-1.5 px-2 py-1 border-b border-slate-800/60">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Conditions</span>
+            <span className="text-[9px] text-slate-600">{Object.values(conditionToggles).filter(Boolean).length}/{CONDITION_DEFS.length} on</span>
+            <div className="ml-auto flex items-center gap-1">
               {activePreset && !BUILT_IN_PRESETS.some((bp) => bp.name === activePreset) && (
                 <button
                   onClick={() => {
@@ -2291,59 +2316,56 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                       .catch(() => {});
                     setActivePreset(null);
                   }}
-                  className="px-2 py-1.5 text-[9px] font-bold rounded-md bg-slate-800/60 text-red-400 hover:text-red-300 ring-1 ring-slate-700/50 hover:ring-red-500/30 transition-all shrink-0"
+                  className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-slate-800/60 text-red-400 hover:text-red-300 ring-1 ring-slate-700/50 hover:ring-red-500/30 transition-all"
                   title={`Delete preset "${activePreset}"`}
-                >
-                  🗑
-                </button>
+                >🗑</button>
               )}
               <button
                 onClick={() => setShowPresetSave(!showPresetSave)}
-                className="px-2 py-1.5 text-[9px] font-bold rounded-md bg-slate-800/60 text-blue-400 hover:text-blue-300 ring-1 ring-slate-700/50 hover:ring-blue-600/30 transition-all shrink-0"
+                className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-slate-800/60 text-blue-400 hover:text-blue-300 ring-1 ring-slate-700/50 hover:ring-blue-600/30 transition-all"
                 title="Save current conditions as preset"
-              >
-                {showPresetSave ? "✕" : "💾"}
-              </button>
+              >{showPresetSave ? "✕" : "💾"}</button>
+              <button
+                onClick={() => setConditionsOpen(false)}
+                className="w-5 h-5 rounded bg-slate-800/60 border border-slate-700/50 text-slate-400 hover:text-slate-200 flex items-center justify-center text-[10px] transition-all"
+              >✕</button>
             </div>
-            {showPresetSave && (
-              <div className="flex gap-1 mt-1">
-                <input
-                  type="text"
-                  value={presetName}
-                  onChange={(e) => setPresetName(e.target.value)}
-                  placeholder="Preset name…"
-                  className="flex-1 px-2 py-1 text-[9px] rounded-md bg-slate-900 border border-slate-700 text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-blue-600"
-                  maxLength={50}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && presetName.trim()) {
-                      save5MinConditionPreset(presetName.trim(), conditionToggles, symbol)
-                        .then(() => load5MinConditionPresets(symbol).then(setPresets))
-                        .catch(() => {});
-                      setPresetName("");
-                      setShowPresetSave(false);
-                    }
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    if (!presetName.trim()) return;
+          </div>
+          {showPresetSave && (
+            <div className="flex gap-1 px-2 py-1.5 border-b border-slate-800/60">
+              <input
+                type="text"
+                value={presetName}
+                onChange={(e) => setPresetName(e.target.value)}
+                placeholder="Preset name…"
+                className="flex-1 px-2 py-1 text-[9px] rounded-md bg-slate-900 border border-slate-700 text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-blue-600"
+                maxLength={50}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && presetName.trim()) {
                     save5MinConditionPreset(presetName.trim(), conditionToggles, symbol)
                       .then(() => load5MinConditionPresets(symbol).then(setPresets))
                       .catch(() => {});
                     setPresetName("");
                     setShowPresetSave(false);
-                  }}
-                  disabled={!presetName.trim()}
-                  className="px-2 py-1 text-[9px] font-bold rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 transition"
-                >
-                  Save
-                </button>
-              </div>
-            )}
-
-            {/* Expanded condition toggles */}
-            {conditionsOpen && (
-              <div className="mt-1 rounded-lg border border-slate-800/60 bg-slate-900/30 p-3 space-y-2">
+                  }
+                }}
+              />
+              <button
+                onClick={() => {
+                  if (!presetName.trim()) return;
+                  save5MinConditionPreset(presetName.trim(), conditionToggles, symbol)
+                    .then(() => load5MinConditionPresets(symbol).then(setPresets))
+                    .catch(() => {});
+                  setPresetName("");
+                  setShowPresetSave(false);
+                }}
+                disabled={!presetName.trim()}
+                className="px-2 py-1 text-[9px] font-bold rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 transition"
+              >Save</button>
+            </div>
+          )}
+          {/* Condition toggles */}
+          <div className="p-2 space-y-2">
                 {(["5m", "smc"] as const).map((group) => {
                   const groupLabel = group === "5m" ? "5-Minute (Execution)" : "Smart Money (SMC)";
                   const groupColor = group === "5m" ? "slate" : "purple";
@@ -2488,71 +2510,14 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   </div>
                 </div>
 
-              </div>
-            )}
           </div>
-        );
-      })()}
+        </div>
+      )}
 
       {/* ═════════════════════════════════════════════════════ */}
       {/* TAB: Backtest                                        */}
       {/* ═════════════════════════════════════════════════════ */}
         <div className="flex-1 overflow-y-auto">
-          {/* Controls */}
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-800/40">
-            <div className="flex gap-0.5">
-              {(interval === "1m" ? ["1d", "2d", "3d", "5d", "7d"] : ["1d", "3d", "7d", "30d", "60d"]).map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setPeriod(p)}
-                  className={`px-2 py-0.5 text-[10px] font-bold rounded transition ${
-                    period === p ? "bg-cyan-700 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"
-                  }`}
-                >{p}</button>
-              ))}
-            </div>
-
-            {/* Date range */}
-            <div className="flex items-center gap-1 ml-1">
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-                className="bg-slate-900 border border-slate-700 text-slate-300 text-[9px] rounded px-1 py-0.5 w-[100px]"
-              />
-              <span className="text-[9px] text-slate-600">→</span>
-              <input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                className="bg-slate-900 border border-slate-700 text-slate-300 text-[9px] rounded px-1 py-0.5 w-[100px]"
-              />
-            </div>
-
-            {/* SL / TP sliders */}
-            <div className="flex items-center gap-3 ml-2">
-              <label className="flex items-center gap-1 text-[10px]">
-                <span className="text-rose-400 font-bold">SL</span>
-                <input
-                  type="range" min="1" max="6" step="1" value={slMult}
-                  onChange={(e) => setSlMult(parseInt(e.target.value))}
-                  disabled={false}
-                  className={`w-14 h-1 accent-rose-500 cursor-pointer`}
-                />
-                <span className="text-slate-400 tabular-nums w-8">{slMult}×</span>
-              </label>
-              <label className="flex items-center gap-1 text-[10px]">
-                <span className="text-emerald-400 font-bold">TP</span>
-                <input
-                  type="range" min="1" max="6" step="1" value={tpMult}
-                  onChange={(e) => setTpMult(parseInt(e.target.value))}
-                  disabled={false}
-                  className={`w-14 h-1 accent-emerald-500 cursor-pointer`}
-                />
-                <span className="text-slate-400 tabular-nums w-8">{tpMult}×</span>
-              </label>
-            </div>
-          </div>
 
           {/* Idle state */}
           {!btData && !loading && (
@@ -2582,119 +2547,11 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
 
           {/* Results */}
           {btData && m && (
-            <div className="p-3 space-y-3">
-              {/* Metrics — single compact row */}
-              <div className="flex gap-1 items-stretch">
-                {/* Highlighted key metrics */}
-                <div className="flex-1 rounded-md border border-cyan-700/40 bg-cyan-950/15 px-2 py-1 text-center relative group/wr">
-                  <div className="text-[7px] text-cyan-500/70 uppercase cursor-help">WR</div>
-                  <div className={`text-xs font-bold tabular-nums ${winRateColor(m.win_rate)}`}>{n(m.win_rate).toFixed(1)}%</div>
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/wr:block w-44 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
-                    <b className="text-cyan-400">Win Rate</b> — Percentage of trades that were profitable. Above 55% is good, 60%+ is strong.
-                  </div>
-                </div>
-                <div className="flex-1 rounded-md border border-cyan-700/40 bg-cyan-950/15 px-2 py-1 text-center relative group/ret">
-                  <div className="text-[7px] text-cyan-500/70 uppercase cursor-help">Return</div>
-                  <div className={`text-xs font-bold tabular-nums ${m.total_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{m.total_return_pct >= 0 ? "+" : ""}{n(m.total_return_pct).toFixed(2)}%</div>
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/ret:block w-44 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
-                    <b className="text-emerald-400">Total Return</b> — Net profit as % of initial capital ($50K). Higher is better.
-                  </div>
-                </div>
-                <div className="flex-1 rounded-md border border-rose-700/40 bg-rose-950/15 px-2 py-1 text-center relative group/dd">
-                  <div className="text-[7px] text-rose-500/70 uppercase cursor-help">Max DD</div>
-                  <div className="text-xs font-bold tabular-nums text-rose-400">{n(m.max_drawdown_pct).toFixed(2)}%</div>
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/dd:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
-                    <b className="text-rose-400">Max Drawdown</b> — Largest peak-to-trough equity drop. Your worst losing streak. Below 10% is safe, above 20% is risky.
-                  </div>
-                </div>
-                {/* Secondary metrics */}
-                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center relative group/sh">
-                  <div className="text-[7px] text-slate-600 uppercase cursor-help">Sharpe</div>
-                  <div className={`text-xs font-bold tabular-nums ${m.sharpe_ratio >= 1 ? "text-emerald-400" : "text-slate-300"}`}>{n(m.sharpe_ratio).toFixed(2)}</div>
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/sh:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
-                    <b className="text-cyan-400">Sharpe Ratio</b> — Return per unit of risk. &lt;0.5 poor, 0.5–1.0 okay, 1.0–2.0 good, &gt;2.0 excellent.
-                  </div>
-                </div>
-                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center relative group/tr">
-                  <div className="text-[7px] text-slate-600 uppercase cursor-help">Trades</div>
-                  <div className="text-xs font-bold tabular-nums text-slate-200">{m.total_trades}</div>
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/tr:block w-40 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
-                    <b className="text-slate-200">Total Trades</b> — Number of completed trades in the backtest period.
-                  </div>
-                </div>
-                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center relative group/wl">
-                  <div className="text-[7px] text-slate-600 uppercase cursor-help">W/L</div>
-                  <div className="text-xs font-bold tabular-nums text-slate-200">{m.winners}/{m.losers}</div>
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/wl:block w-40 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
-                    <b className="text-slate-200">Winners / Losers</b> — Count of winning trades vs losing trades.
-                  </div>
-                </div>
-                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center relative group/pf">
-                  <div className="text-[7px] text-slate-600 uppercase cursor-help">PF</div>
-                  <div className={`text-xs font-bold tabular-nums ${m.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400"}`}>{n(m.profit_factor).toFixed(2)}</div>
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/pf:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
-                    <b className="text-amber-400">Profit Factor</b> — Gross profit ÷ gross loss. Above 1.0 = profitable. 1.5+ is good, 2.0+ is excellent.
-                  </div>
-                </div>
-                <div className="flex-1 rounded-md bg-slate-900/60 px-2 py-1 text-center relative group/rr">
-                  <div className="text-[7px] text-slate-600 uppercase cursor-help">R:R</div>
-                  <div className="text-xs font-bold tabular-nums text-cyan-400">1:{n(m.risk_reward_ratio).toFixed(2)}</div>
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/rr:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none">
-                    <b className="text-cyan-400">Risk:Reward</b> — How much you risk per $1 of potential reward. 1:1.5+ means your winners are larger than losers.
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Daily P&L (1/2) + Currently Holding (1/2) ── */}
+            <div className="p-2 space-y-2">
+              {/* Metrics (left) + Holding (right) */}
               {(() => {
                 const openTrade = btData.trades.find((t) => t.reason === "OPEN");
                 const hasOpen = hasRunBacktest && !!openTrade;
-
-                // Compute daily P&L directly from trade log so they always match
-                // Uses same grouping logic as TradeLogByDate: entry_time, futures session shift
-                const periodDays: Record<string, number> = { "1d": 1, "3d": 3, "7d": 7, "30d": 30, "60d": 60 };
-                const daysBack = periodDays[period] ?? 60;
-                const closedTrades = btData.trades.filter((t) => t.reason !== "OPEN");
-
-                // Helper: map a trade to its trading-session date (same as TradeLogByDate)
-                const tradingDay = (t: MGC5MinTrade) => {
-                  const datePart = t.entry_time.slice(0, 10);
-                  const hour = parseInt(t.entry_time.slice(11, 13), 10);
-                  if (hour >= 18) {
-                    const d = new Date(datePart + "T12:00:00Z");
-                    d.setUTCDate(d.getUTCDate() + 1);
-                    return d.toISOString().slice(0, 10);
-                  }
-                  return datePart;
-                };
-
-                // Find cutoff from the last trading date
-                const allTradingDates = closedTrades.map(tradingDay).sort();
-                const lastDate = allTradingDates.length > 0 ? allTradingDates[allTradingDates.length - 1] : "";
-                const cutoff = lastDate
-                  ? (() => { const d = new Date(lastDate); d.setDate(d.getDate() - daysBack); return d.toISOString().slice(0, 10); })()
-                  : "";
-
-                // Group filtered trades by trading-session date
-                const dayMap: Record<string, { date: string; pnl: number; trades: number; wins: number; losses: number; win_rate: number }> = {};
-                for (const t of closedTrades) {
-                  const day = tradingDay(t);
-                  if (day < cutoff) continue;
-                  if (!dayMap[day]) dayMap[day] = { date: day, pnl: 0, trades: 0, wins: 0, losses: 0, win_rate: 0 };
-                  dayMap[day].pnl += t.pnl;
-                  dayMap[day].trades += 1;
-                  if (t.pnl > 0) dayMap[day].wins += 1;
-                  else dayMap[day].losses += 1;
-                }
-                const days = Object.values(dayMap)
-                  .map(d => ({ ...d, pnl: Math.round(d.pnl * 100) / 100, win_rate: d.trades > 0 ? Math.round(d.wins / d.trades * 1000) / 10 : 0 }))
-                  .sort((a, b) => a.date.localeCompare(b.date));
-
-                const hasDays = days.length > 0;
-
-                const totalPnl = days.reduce((s, d) => s + d.pnl, 0);
-                const maxAbs = Math.max(...days.map(d => Math.abs(d.pnl)), 1);
-
                 const pos = hasOpen ? (btData.open_position ?? {
                   direction: openTrade!.direction || "CALL",
                   entry_price: openTrade!.entry_price,
@@ -2703,146 +2560,144 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   entry_time: openTrade!.entry_time,
                   signal_type: openTrade!.signal_type,
                 }) : null;
-                // Use Tiger's actual fill price when holding, backtest as fallback
                 const tigerHolding = tigerPos && Math.abs(tigerPos.current_qty) > 0;
                 const displayEntry = tigerHolding && tigerPos!.average_cost > 0 ? tigerPos!.average_cost : pos?.entry_price ?? 0;
                 const isLong = pos ? pos.direction !== "PUT" : false;
                 const qty = tigerHolding ? Math.abs(tigerPos!.current_qty) : 1;
-                const contractSize = 10; // MGC = $10/point
-                // P&L in dollars — same formula as trade log: (price diff) × qty × contract_size
+                const contractSize = 10;
                 const unrealPnl = pos && livePrice != null ? (isLong ? livePrice - displayEntry : displayEntry - livePrice) * qty * contractSize : null;
                 const pnlPct = unrealPnl != null && displayEntry > 0 ? ((isLong ? livePrice! - displayEntry : displayEntry - livePrice!) / displayEntry) * 100 : null;
 
                 return (
-                  <div>
-                    {/* ─── Currently Holding ─── */}
-                    {pos ? (
-                      <div className={`w-full rounded-xl border ${unrealPnl != null && unrealPnl >= 0 ? "border-emerald-500/20" : "border-rose-500/20"} bg-gradient-to-b from-slate-900/90 to-slate-950/95 overflow-hidden flex flex-col`}>
-                        {/* Header strip */}
-                        <div className={`px-3 py-1.5 flex items-center justify-between ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-500/5" : "bg-rose-500/5"}`}>
-                          <div className="flex items-center gap-2">
-                            <div className="relative">
-                              <span className={`block w-2 h-2 rounded-full ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-400" : "bg-rose-400"}`} />
-                              <span className={`absolute inset-0 w-2 h-2 rounded-full animate-ping ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-400/40" : "bg-rose-400/40"}`} />
-                            </div>
-                            <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Holding</span>
-                            <span className={`text-[10px] font-extrabold tracking-wide ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
-                              {isLong ? "▲ LONG" : "▼ SHORT"}
-                            </span>
-                          </div>
-                          {unrealPnl != null && (
-                            <div className="flex items-baseline gap-1">
-                              <span className={`text-base font-black tabular-nums tracking-tight ${unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                                {unrealPnl >= 0 ? "+" : ""}${unrealPnl.toFixed(0)}
-                              </span>
-                              <span className={`text-[9px] font-bold tabular-nums ${unrealPnl >= 0 ? "text-emerald-500/60" : "text-rose-500/60"}`}>
-                                {pnlPct != null && pnlPct >= 0 ? "+" : ""}{pnlPct?.toFixed(2)}%
-                              </span>
-                            </div>
-                          )}
+                  <div className="flex gap-2 items-start">
+                    {/* Left: metrics card */}
+                    <div className="flex-1 rounded-lg border border-slate-800/60 bg-slate-900/50 p-1.5">
+                      {/* 2×2 primary grid */}
+                      <div className="grid grid-cols-2 gap-1 mb-1">
+                        <div className="rounded-md bg-slate-800/60 px-2 py-1 relative group/wr">
+                          <div className="text-[8px] text-slate-500 uppercase font-semibold tracking-wide">Win Rate</div>
+                          <div className={`text-sm font-black tabular-nums ${winRateColor(m.win_rate)}`}>{n(m.win_rate).toFixed(1)}%</div>
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/wr:block w-44 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none"><b className="text-cyan-400">Win Rate</b> — Percentage of trades that were profitable. Above 55% is good, 60%+ is strong.</div>
                         </div>
-
-                        {/* Mini chart */}
-                        <div className="px-1.5 pt-1.5">
-                          <HoldingMiniChart
-                            symbol={symbol}
-                            entryTime={pos.entry_time}
-                            entryPrice={pos.entry_price}
-                            sl={pos.sl}
-                            tp={pos.tp}
-                            isLong={isLong}
-                            livePrice={livePrice}
-                          />
+                        <div className="rounded-md bg-slate-800/60 px-2 py-1 relative group/ret">
+                          <div className="text-[8px] text-slate-500 uppercase font-semibold tracking-wide">Return</div>
+                          <div className={`text-sm font-black tabular-nums ${m.total_return_pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{m.total_return_pct >= 0 ? "+" : ""}{n(m.total_return_pct).toFixed(2)}%</div>
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/ret:block w-44 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none"><b className="text-emerald-400">Total Return</b> — Net profit as % of initial capital ($50K).</div>
                         </div>
-
-                        {/* Price row — Entry / Now / SL / TP */}
-                        <div className="px-3 pt-2 pb-1">
-                          <div className="grid grid-cols-4 gap-1">
-                            <div className="rounded-md bg-blue-950/40 px-1.5 py-1 text-center">
-                              <div className="text-[7px] text-blue-400/50 font-bold uppercase">Entry</div>
-                              <div className="text-[10px] font-bold text-blue-300 tabular-nums">{displayEntry}</div>
-                            </div>
-                            <div className="rounded-md bg-yellow-950/30 px-1.5 py-1 text-center">
-                              <div className="text-[7px] text-yellow-400/50 font-bold uppercase">Now</div>
-                              <div className="text-[10px] font-bold text-yellow-300 tabular-nums">{livePrice != null ? livePrice.toFixed(2) : "—"}</div>
-                            </div>
-                            <div className="rounded-md bg-rose-950/30 px-1.5 py-1 text-center">
-                              <div className="text-[7px] text-rose-400/50 font-bold uppercase">SL</div>
-                              <div className="text-[10px] font-bold text-rose-400 tabular-nums">{pos.sl}</div>
-                            </div>
-                            <div className="rounded-md bg-emerald-950/30 px-1.5 py-1 text-center">
-                              <div className="text-[7px] text-emerald-400/50 font-bold uppercase">TP</div>
-                              <div className="text-[10px] font-bold text-emerald-400 tabular-nums">{pos.tp}</div>
-                            </div>
-                          </div>
+                        <div className="rounded-md bg-slate-800/60 px-2 py-1 relative group/dd">
+                          <div className="text-[8px] text-slate-500 uppercase font-semibold tracking-wide">Max DD</div>
+                          <div className="text-sm font-black tabular-nums text-rose-400">{n(m.max_drawdown_pct).toFixed(2)}%</div>
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/dd:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none"><b className="text-rose-400">Max Drawdown</b> — Largest peak-to-trough equity drop. Below 10% safe, above 20% risky.</div>
                         </div>
-
-                        {/* SL/TP progress bar */}
-                        {livePrice != null && pos.sl > 0 && pos.tp > 0 && (() => {
-                          const range = Math.abs(pos.tp - pos.sl);
-                          const progress = isLong
-                            ? (livePrice - pos.sl) / range
-                            : (pos.sl - livePrice) / range;
-                          const pct = Math.max(0, Math.min(100, progress * 100));
-                          return (
-                            <div className="px-3 pb-1.5">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[7px] text-rose-400/60 font-bold">SL</span>
-                                <div className="flex-1 h-1.5 rounded-full bg-slate-800/80 overflow-hidden">
-                                  <div
-                                    className={`h-full rounded-full transition-all duration-500 ${
-                                      pct > 70 ? "bg-gradient-to-r from-amber-500 to-emerald-400" :
-                                      pct > 40 ? "bg-gradient-to-r from-amber-600 to-amber-400" :
-                                      "bg-gradient-to-r from-rose-600 to-rose-400"
-                                    }`}
-                                    style={{ width: `${pct}%` }}
-                                  />
-                                </div>
-                                <span className="text-[7px] text-emerald-400/60 font-bold">TP</span>
-                              </div>
-                            </div>
-                          );
-                        })()}
-
-                        {/* Footer: signal + buttons */}
-                        <div className="px-3 pb-2 mt-auto space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[8px] text-slate-500 truncate">{pos.signal_type}</span>
-                            <span className="text-[8px] text-slate-600">{fmtDateTime(pos.entry_time)}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            {/* Sync & Auto buttons hidden — use Auto-Trader panel instead
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleSync(); }}
-                              disabled={syncing || autoTrading}
-                              className={`flex-1 py-1 text-[9px] font-bold rounded-md transition-all ${
-                                syncing
-                                  ? "bg-slate-700 text-slate-500 cursor-wait"
-                                  : autoTrading
-                                    ? "bg-slate-800 text-slate-600 cursor-not-allowed"
-                                    : "bg-orange-600 text-white hover:bg-orange-500 active:scale-95 shadow-sm shadow-orange-900/30"
-                              }`}
-                            >
-                              {syncing ? "⏳" : "🔄 Sync"}
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); setAutoTrading((v) => !v); }}
-                              className={`flex-1 py-1 text-[9px] font-bold rounded-md transition-all ${
-                                autoTrading
-                                  ? "bg-gradient-to-r from-emerald-500 to-cyan-500 text-white shadow-md shadow-emerald-900/40 ring-1 ring-emerald-400/30 animate-pulse"
-                                  : "bg-slate-800 border border-slate-700/50 text-slate-400 hover:text-emerald-400 hover:border-emerald-700/50 active:scale-95"
-                              }`}
-                            >
-                              {autoTrading ? "● Auto ON" : "⚡ Auto"}
-                            </button>
-                            */}
-                          </div>
-                          {syncStatus && (
-                            <div className="text-[8px] font-bold text-orange-400 animate-pulse truncate">{syncStatus}</div>
-                          )}
+                        <div className="rounded-md bg-slate-800/60 px-2 py-1 relative group/sh">
+                          <div className="text-[8px] text-slate-500 uppercase font-semibold tracking-wide">Sharpe</div>
+                          <div className={`text-sm font-black tabular-nums ${m.sharpe_ratio >= 1 ? "text-emerald-400" : "text-slate-300"}`}>{n(m.sharpe_ratio).toFixed(2)}</div>
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/sh:block w-48 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none"><b className="text-cyan-400">Sharpe Ratio</b> — Return per unit of risk. 1.0–2.0 good, 2.0+ excellent.</div>
                         </div>
                       </div>
-                    ) : null}
+                      {/* Secondary row */}
+                      <div className="flex gap-1">
+                        {[
+                          { key: "tr", label: "Trades", value: m.total_trades, color: "text-slate-200", tip: "Total completed trades." },
+                          { key: "wl", label: "W:L", value: `${m.winners}/${m.losers}`, color: "text-slate-200", tip: "Winners vs losers." },
+                          { key: "pf", label: "PF", value: n(m.profit_factor).toFixed(2), color: m.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400", tip: "Profit Factor — gross profit ÷ gross loss. 1.5+ good." },
+                          { key: "rr", label: "R:R", value: `1:${n(m.risk_reward_ratio).toFixed(2)}`, color: "text-cyan-400", tip: "Risk:Reward ratio." },
+                        ].map(({ key, label, value, color, tip }) => (
+                          <div key={key} className={`flex-1 rounded bg-slate-900/60 px-1.5 py-0.5 text-center relative group/s${key}`}>
+                            <div className="text-[7px] text-slate-600 uppercase">{label}</div>
+                            <div className={`text-[10px] font-bold tabular-nums ${color}`}>{value}</div>
+                            <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/s${key}:block w-40 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none`}>{tip}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Right: holding card */}
+                    <div className="w-[160px] shrink-0">
+                      {pos ? (
+                        <div className={`rounded-xl border ${unrealPnl != null && unrealPnl >= 0 ? "border-emerald-500/20" : "border-rose-500/20"} bg-gradient-to-b from-slate-900/90 to-slate-950/95 overflow-hidden`}>
+                          {/* Header strip */}
+                          <div className={`px-2 py-1 flex items-center justify-between ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-500/5" : "bg-rose-500/5"}`}>
+                            <div className="flex items-center gap-1.5">
+                              <div className="relative">
+                                <span className={`block w-1.5 h-1.5 rounded-full ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-400" : "bg-rose-400"}`} />
+                                <span className={`absolute inset-0 w-1.5 h-1.5 rounded-full animate-ping ${unrealPnl != null && unrealPnl >= 0 ? "bg-emerald-400/40" : "bg-rose-400/40"}`} />
+                              </div>
+                              <span className={`text-[9px] font-extrabold ${isLong ? "text-emerald-400" : "text-rose-400"}`}>{isLong ? "▲ LONG" : "▼ SHORT"}</span>
+                            </div>
+                            {unrealPnl != null && (
+                              <div className="flex items-baseline gap-0.5">
+                                <span className={`text-xs font-black tabular-nums ${unrealPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{unrealPnl >= 0 ? "+" : ""}${unrealPnl.toFixed(0)}</span>
+                              </div>
+                            )}
+                          </div>
+                          {/* Mini chart */}
+                          <div className="px-1 pt-1">
+                            <HoldingMiniChart
+                              symbol={symbol}
+                              entryTime={pos.entry_time}
+                              entryPrice={pos.entry_price}
+                              sl={pos.sl}
+                              tp={pos.tp}
+                              isLong={isLong}
+                              livePrice={livePrice}
+                            />
+                          </div>
+                          {/* Price grid */}
+                          <div className="px-1.5 py-1">
+                            <div className="grid grid-cols-4 gap-0.5">
+                              <div className="rounded bg-blue-950/40 px-1 py-0.5 text-center">
+                                <div className="text-[7px] text-blue-400/50 uppercase">Entry</div>
+                                <div className="text-[9px] font-bold text-blue-300 tabular-nums">{displayEntry}</div>
+                              </div>
+                              <div className="rounded bg-yellow-950/30 px-1 py-0.5 text-center">
+                                <div className="text-[7px] text-yellow-400/50 uppercase">Now</div>
+                                <div className="text-[9px] font-bold text-yellow-300 tabular-nums">{livePrice != null ? livePrice.toFixed(2) : "—"}</div>
+                              </div>
+                              <div className="rounded bg-rose-950/30 px-1 py-0.5 text-center">
+                                <div className="text-[7px] text-rose-400/50 uppercase">SL</div>
+                                <div className="text-[9px] font-bold text-rose-400 tabular-nums">{pos.sl}</div>
+                              </div>
+                              <div className="rounded bg-emerald-950/30 px-1 py-0.5 text-center">
+                                <div className="text-[7px] text-emerald-400/50 uppercase">TP</div>
+                                <div className="text-[9px] font-bold text-emerald-400 tabular-nums">{pos.tp}</div>
+                              </div>
+                            </div>
+                          </div>
+                          {/* SL→TP progress bar */}
+                          {livePrice != null && pos.sl > 0 && pos.tp > 0 && (() => {
+                            const range = Math.abs(pos.tp - pos.sl);
+                            const progress = isLong ? (livePrice - pos.sl) / range : (pos.sl - livePrice) / range;
+                            const pct = Math.max(0, Math.min(100, progress * 100));
+                            return (
+                              <div className="px-1.5 pb-1">
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[7px] text-rose-400/60 font-bold">SL</span>
+                                  <div className="flex-1 h-1 rounded-full bg-slate-800/80 overflow-hidden">
+                                    <div className={`h-full rounded-full transition-all duration-500 ${pct > 70 ? "bg-gradient-to-r from-amber-500 to-emerald-400" : pct > 40 ? "bg-gradient-to-r from-amber-600 to-amber-400" : "bg-gradient-to-r from-rose-600 to-rose-400"}`} style={{ width: `${pct}%` }} />
+                                  </div>
+                                  <span className="text-[7px] text-emerald-400/60 font-bold">TP</span>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          {/* Footer */}
+                          <div className="px-2 pb-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[8px] text-slate-500 truncate">{pos.signal_type}</span>
+                              <span className="text-[8px] text-slate-600">{fmtDateTime(pos.entry_time)}</span>
+                            </div>
+                            {syncStatus && <div className="text-[8px] font-bold text-orange-400 animate-pulse truncate">{syncStatus}</div>}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-slate-800/40 bg-slate-900/40 flex flex-col items-center justify-center py-6 gap-2">
+                          <span className="text-2xl animate-pulse">🪬</span>
+                          <span className="text-[9px] text-slate-500 font-semibold text-center leading-tight">Waiting for<br/>signal</span>
+                          <span className="text-[8px] text-slate-700">No position open</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })()}
