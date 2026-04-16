@@ -19,6 +19,7 @@ import {
   fetchMGC5MinBacktest,
   fetchMGC2MinBacktest,
   fetchMGC5MinLockedBacktest,
+  fetchMGC5MinLockedShortBacktest,
   execute5Min,
   getMgcPosition,
   optimize5MinConditions,
@@ -574,16 +575,16 @@ export type BuiltInPreset = {
   sl: number;
   tp: number;
   desc: string;
-  endpoint?: "5min" | "2min" | "5min_locked";  // which backend endpoint to use (default: 5min)
+  endpoint?: "5min" | "2min" | "5min_locked" | "5min_locked_short" | "5min_mix";  // which backend endpoint to use (default: 5min)
 };
 
 export const BUILT_IN_PRESETS: BuiltInPreset[] = [
   {
-    name: "🔒 BoS Config",
-    desc: "1H HTF bias · BoS breakout · EMA50 · Supertrend · SL1.2×TP1.5×",
+    name: "⬆ BoS Long",
+    desc: "BoS breakout · EMA50 · Supertrend · LONG-only · SL2×TP2×",
     interval: "5m",
-    sl: 1.2,
-    tp: 1.5,
+    sl: 2.0,
+    tp: 2.0,
     endpoint: "5min_locked",
     toggles: {
       ema_trend: true,
@@ -604,23 +605,23 @@ export const BUILT_IN_PRESETS: BuiltInPreset[] = [
     },
   },
   {
-    name: "🎯 Pullback Config",
-    desc: "EMA20/50 pullback · RSI>50 · ATR filter · 2m bars",
-    interval: "2m",
-    sl: 1.0,
-    tp: 1.5,
-    endpoint: "2min",
+    name: "⬇ BoS Short",
+    desc: "BoS breakdown · EMA50 · Supertrend bearish · SHORT-only · SL2×TP2×",
+    interval: "5m",
+    sl: 2.0,
+    tp: 2.0,
+    endpoint: "5min_locked_short",
     toggles: {
       ema_trend: true,
       ema_slope: false,
-      pullback: true,
-      breakout: false,
-      supertrend: false,
+      pullback: false,
+      breakout: true,
+      supertrend: true,
       macd_momentum: false,
       rsi_momentum: true,
       volume_spike: false,
       atr_range: true,
-      session_ok: false,
+      session_ok: true,
       adx_ok: false,
       smc_bos: false,
       smc_ob: false,
@@ -629,22 +630,23 @@ export const BUILT_IN_PRESETS: BuiltInPreset[] = [
     },
   },
   {
-    name: "⚡ Keep GOING",
-    desc: "Always-in-market scalp — EMA5/13 + SuperTrend + RSI, 5m",
-    interval: "2m",
-    sl: 1,
-    tp: 1,
+    name: "\u21c5 BoS Mix",
+    desc: "BoS Long + BoS Short combined — trades both directions · SL2\u00d7TP2\u00d7",
+    interval: "5m",
+    sl: 2.0,
+    tp: 2.0,
+    endpoint: "5min_mix",
     toggles: {
       ema_trend: true,
       ema_slope: false,
       pullback: false,
-      breakout: false,
+      breakout: true,
       supertrend: true,
       macd_momentum: false,
       rsi_momentum: true,
       volume_spike: false,
-      atr_range: false,
-      session_ok: false,
+      atr_range: true,
+      session_ok: true,
       adx_ok: false,
       smc_bos: false,
       smc_ob: false,
@@ -1394,9 +1396,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     // 1m data limited to 7d max — clamp period
     if (v === "1m" && parseInt(period) > 7) setPeriod("3d");
   };
-  const _keepGoing = BUILT_IN_PRESETS.find((p) => p.name === "⚡ Keep GOING");
-  const [slMult, setSlMult] = useState(_keepGoing?.sl ?? defaultRisk.sl);
-  const [tpMult, setTpMult] = useState(_keepGoing?.tp ?? defaultRisk.tp);
+  const _bosl = BUILT_IN_PRESETS.find((p) => p.name === "⬆ BoS Long");
+  const [slMult, setSlMult] = useState(_bosl?.sl ?? defaultRisk.sl);
+  const [tpMult, setTpMult] = useState(_bosl?.tp ?? defaultRisk.tp);
 
   // Date range filter
   const fmtDate = (d: Date) => fmtInputDateSGT(d);
@@ -1432,9 +1434,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const [presets, setPresets] = useState<ConditionPreset[]>([]);
   const [presetName, setPresetName] = useState("");
   const [showPresetSave, setShowPresetSave] = useState(false);
-  const [activePreset, setActivePreset] = useState<string | null>("⚡ Keep GOING");
+  const [activePreset, setActivePreset] = useState<string | null>("⬆ BoS Long");
   // Editable strategy label (shown in header, independent from preset names)
-  const [strategyLabel, setStrategyLabel] = useState("⚡ Keep GOING");
+  const [strategyLabel, setStrategyLabel] = useState("⬆ BoS Long");
   const [editingLabel, setEditingLabel] = useState(false);
 
   // ── Load persisted config on mount / symbol change ──
@@ -1582,6 +1584,103 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               winners: res.metrics.winners ?? 0,
               losers: res.metrics.losers ?? 0,
               risk_reward_ratio: res.metrics.risk_reward_ratio ?? 0,
+            },
+            lockedAt: Date.now(),
+          });
+        }
+        return;
+      }
+
+      if (activeBuiltIn?.endpoint === "5min_locked_short") {
+        const res = await fetchMGC5MinLockedShortBacktest(symbol, slMult, tpMult, period, 10, 10, 2.0, 50, false);
+        setBtData(res);
+        onTradesUpdate?.(res.trades);
+        setHasRunBacktest(true);
+        if (res.metrics && onConfigLock) {
+          onConfigLock({
+            conditionToggles: { ...conditionToggles },
+            slMult, tpMult, interval, preset: activePreset, symbol,
+            metrics: {
+              win_rate: res.metrics.win_rate ?? 0,
+              total_return_pct: res.metrics.total_return_pct ?? 0,
+              max_drawdown_pct: res.metrics.max_drawdown_pct ?? 0,
+              sharpe_ratio: res.metrics.sharpe_ratio ?? 0,
+              profit_factor: res.metrics.profit_factor ?? 0,
+              total_trades: res.metrics.total_trades ?? 0,
+              winners: res.metrics.winners ?? 0,
+              losers: res.metrics.losers ?? 0,
+              risk_reward_ratio: res.metrics.risk_reward_ratio ?? 0,
+            },
+            lockedAt: Date.now(),
+          });
+        }
+        return;
+      }
+
+      if (activeBuiltIn?.endpoint === "5min_mix") {
+        // Run both long and short in parallel, merge results
+        const [resL, resS] = await Promise.all([
+          fetchMGC5MinLockedBacktest(symbol, slMult, tpMult, period, 10, 10, 2.0, 50, false),
+          fetchMGC5MinLockedShortBacktest(symbol, slMult, tpMult, period, 10, 10, 2.0, 50, false),
+        ]);
+        // Merge trades sorted by entry_time
+        const allTrades = [...resL.trades, ...resS.trades].sort(
+          (a, b) => new Date(a.entry_time).getTime() - new Date(b.entry_time).getTime()
+        );
+        // Rebuild equity curve from merged trades
+        const cap = resL.metrics.initial_capital;
+        let eq = cap;
+        const eqCurve: number[] = [eq];
+        for (const t of allTrades) { eq += t.pnl; eqCurve.push(eq); }
+        // Combined metrics
+        const wins = allTrades.filter((t) => t.pnl > 0);
+        const losses = allTrades.filter((t) => t.pnl <= 0);
+        const grossProfit = wins.reduce((s, t) => s + t.pnl, 0);
+        const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+        const peakArr = eqCurve.reduce<number[]>((acc, v) => { acc.push(Math.max(acc[acc.length - 1] ?? v, v)); return acc; }, []);
+        const maxDD = Math.max(...eqCurve.map((v, i) => (peakArr[i] - v) / peakArr[i] * 100));
+        const pnls = allTrades.map((t) => t.pnl);
+        const mean = pnls.reduce((s, v) => s + v, 0) / (pnls.length || 1);
+        const std = Math.sqrt(pnls.reduce((s, v) => s + (v - mean) ** 2, 0) / (pnls.length || 1));
+        const combinedMetrics = {
+          ...resL.metrics,
+          total_trades: allTrades.length,
+          winners: wins.length,
+          losers: losses.length,
+          win_rate: allTrades.length > 0 ? wins.length / allTrades.length * 100 : 0,
+          total_return_pct: (eq - cap) / cap * 100,
+          final_equity: eq,
+          profit_factor: grossLoss > 0 ? grossProfit / grossLoss : 0,
+          max_drawdown_pct: isFinite(maxDD) ? maxDD : 0,
+          sharpe_ratio: std > 0 ? mean / std * Math.sqrt(allTrades.length) : 0,
+          avg_win: wins.length > 0 ? grossProfit / wins.length : 0,
+          avg_loss: losses.length > 0 ? -grossLoss / losses.length : 0,
+          risk_reward_ratio: grossLoss > 0 && wins.length > 0 && losses.length > 0
+            ? (grossProfit / wins.length) / (grossLoss / losses.length) : 0,
+        };
+        const combined: typeof resL = {
+          ...resL,
+          trades: allTrades,
+          equity_curve: eqCurve,
+          metrics: combinedMetrics,
+        };
+        setBtData(combined);
+        onTradesUpdate?.(allTrades);
+        setHasRunBacktest(true);
+        if (onConfigLock) {
+          onConfigLock({
+            conditionToggles: { ...conditionToggles },
+            slMult, tpMult, interval, preset: activePreset, symbol,
+            metrics: {
+              win_rate: combinedMetrics.win_rate,
+              total_return_pct: combinedMetrics.total_return_pct,
+              max_drawdown_pct: combinedMetrics.max_drawdown_pct,
+              sharpe_ratio: combinedMetrics.sharpe_ratio,
+              profit_factor: combinedMetrics.profit_factor,
+              total_trades: combinedMetrics.total_trades,
+              winners: combinedMetrics.winners,
+              losers: combinedMetrics.losers,
+              risk_reward_ratio: combinedMetrics.risk_reward_ratio,
             },
             lockedAt: Date.now(),
           });
@@ -2012,7 +2111,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         {/* ── Strategy quick-config row ─────────────────────── */}
         <div className="flex items-center gap-2 mb-2 flex-wrap">
           {/* Quick-pick strategy buttons */}
-          {BUILT_IN_PRESETS.filter((bp) => bp.name === "🎯 Pullback Config" || bp.name === "🔒 BoS Config").map((bp) => (
+          {BUILT_IN_PRESETS.filter((bp) => bp.name === "⬆ BoS Long" || bp.name === "⬇ BoS Short" || bp.name === "⇅ BoS Mix").map((bp) => (
             <button
               key={bp.name}
               onClick={() => applyBuiltInPreset(bp)}
@@ -2137,13 +2236,13 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                     hover:ring-slate-600/60 focus:ring-cyan-500/40 focus:outline-none transition-all appearance-none cursor-pointer"
                   style={{ colorScheme: "dark" }}
                 >
-                  <option value="__custom__">Custom</option>
                   {BUILT_IN_PRESETS.map((bp) => (
                     <option key={bp.name} value={bp.name}>{bp.name}</option>
                   ))}
                   {presets.map((p) => (
                     <option key={p.name} value={p.name}>{p.name}</option>
                   ))}
+                  <option value="__custom__">Custom</option>
                 </select>
                 <svg className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
