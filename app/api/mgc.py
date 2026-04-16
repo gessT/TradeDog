@@ -2483,11 +2483,12 @@ async def mgc_backtest_sync_test(
     period: Annotated[str, Query()] = "5d",
     capital: Annotated[float, Query()] = INITIAL_CAPITAL,
     hold_bars: Annotated[int, Query(ge=1, le=100)] = 2,
-    direction: Annotated[str, Query()] = "long",
+    direction: Annotated[str, Query()] = "both",
+    pip_target: Annotated[float, Query(ge=0.1)] = 2.0,
 ) -> MGC5MinBacktestResponse:
     """
     SYNC TEST backtest — NOT for profit.
-    Enters every 5-min candle, exits after hold_bars (default 2 = 10 min).
+    Uses real strategy signals; exits when price moves ±pip_target from entry.
     Used to validate paper/live execution synchronisation.
     """
 
@@ -2503,6 +2504,7 @@ async def mgc_backtest_sync_test(
         params = {
             **DEFAULT_SYNC_PARAMS,
             "hold_bars": hold_bars,
+            "pip_target": pip_target,
             "direction": direction,
         }
 
