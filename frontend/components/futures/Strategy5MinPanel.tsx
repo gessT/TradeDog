@@ -1564,7 +1564,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       }
 
       if (activeBuiltIn?.endpoint === "5min_locked") {
-        const res = await fetchMGC5MinLockedBacktest(symbol, slMult, tpMult, period);
+        const res = await fetchMGC5MinLockedBacktest(symbol, slMult, tpMult, period, 10, 10, 2.0, 50, false);
         setBtData(res);
         onTradesUpdate?.(res.trades);
         setHasRunBacktest(true);
@@ -2027,28 +2027,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
             </button>
           ))}
 
-          {/* Editable strategy label */}
-          <div className="flex items-center gap-1 ml-1">
-            {editingLabel ? (
-              <input
-                autoFocus
-                value={strategyLabel}
-                onChange={(e) => setStrategyLabel(e.target.value)}
-                onBlur={() => setEditingLabel(false)}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingLabel(false); }}
-                className="bg-slate-900 border border-cyan-600/50 rounded px-2 py-0.5 text-[10px] text-slate-100 font-bold w-40 focus:outline-none"
-              />
-            ) : (
-              <button
-                onClick={() => setEditingLabel(true)}
-                className="text-[10px] font-bold text-slate-300 hover:text-cyan-300 transition-colors px-1 py-0.5 rounded hover:bg-slate-800/60"
-                title="Click to rename"
-              >
-                ✏ {strategyLabel}
-              </button>
-            )}
-          </div>
-
           {/* SL / TP inline number inputs */}
           <div className="ml-auto flex items-center gap-2">
             <label className="flex items-center gap-1 text-[9px]">
@@ -2161,7 +2139,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 >
                   <option value="__custom__">Custom</option>
                   {BUILT_IN_PRESETS.map((bp) => (
-                    <option key={bp.name} value={bp.name}>{bp.name} ({bp.interval} · SL{bp.sl}× TP{bp.tp}×)</option>
+                    <option key={bp.name} value={bp.name}>{bp.name}</option>
                   ))}
                   {presets.map((p) => (
                     <option key={p.name} value={p.name}>{p.name}</option>

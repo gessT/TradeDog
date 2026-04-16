@@ -54,8 +54,8 @@ DEFAULT_LOCKED_PARAMS: dict = {
     "trail_atr_mult": 1.0,
     # Flat-market filter
     "atr_min_pct": 0.02,   # ATR must be > 0.02% of close
-    # Session filter — UTC hours (NY+London overlap: 13-20 UTC)
-    "active_hours": {13, 14, 15, 16, 17, 18, 19, 20},
+    # Session filter — all active hours (24/7 gold futures)
+    "active_hours": set(range(24)),
     # Cooldown: minimum bars between entries
     "cooldown_bars": 2,
     # RSI confirmation (optional, set rsi_min=0 to disable)
