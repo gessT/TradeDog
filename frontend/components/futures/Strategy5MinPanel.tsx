@@ -1529,7 +1529,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       getAutoTradeSettings(symbol),
     ]).then(([cfg, loadedPresets, autoSettings]) => {
       if (cancelled) return;
-      if (cfg.period) setPeriod(cfg.period);
+      if (cfg.period) { prevPeriodRef.current = cfg.period; setPeriod(cfg.period); }
       if (cfg.interval) handleIntervalChange(cfg.interval);
       if (cfg.sl_mult != null) setSlMult(Math.max(0.3, cfg.sl_mult));
       if (cfg.tp_mult != null) setTpMult(Math.max(0.3, cfg.tp_mult));
@@ -1606,6 +1606,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
 
   // ── Backtest ──────────────────────────────────────────
   const [hasRunBacktest, setHasRunBacktest] = useState(false);
+  const hasRunBacktestRef = useRef(false);
+  hasRunBacktestRef.current = hasRunBacktest;
 
   const runBacktest = useCallback(async () => {
     setLoading(true);
@@ -1980,7 +1982,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         try { sessionStorage.setItem("bt5min_cache", JSON.stringify({ configKey, data: res })); } catch { /* */ }
       } catch { /* network error — retry next cycle */ }
     };
-    doRun(); // immediate run on activation
+    if (!hasRunBacktestRef.current) doRun(); // immediate only if user hasn't manually run yet
     // Align to next 5-min candle close, then repeat every 5 min
     const fiveMin = 5 * 60 * 1000;
     const msToNext = fiveMin - (Date.now() % fiveMin) + 3000;
