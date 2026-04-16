@@ -17,7 +17,8 @@ import {
   type AutoTraderSnapshot,
   type AutoTraderTrade,
 } from "../../services/api";
-import type { LockedTradingConfig } from "./Strategy5MinPanel";
+import type { LockedTradingConfig, BuiltInPreset } from "./Strategy5MinPanel";
+import { BUILT_IN_PRESETS } from "./Strategy5MinPanel";
 import TigerAccountTab from "./TigerAccountTab";
 
 type Mode = "off" | "paper" | "live";
@@ -104,9 +105,24 @@ type Props = {
   lockedConfig?: LockedTradingConfig | null;
   tradeExecutedTick?: number;
   onTradeExecuted?: () => void;
+  onStartedChange?: (started: boolean) => void;
 };
 
-export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExecutedTick = 0, onTradeExecuted }: Props) {
+/** Build a LockedTradingConfig from a BuiltInPreset (used when user picks manually without running backtest). */
+function configFromPreset(preset: BuiltInPreset, sym: string): LockedTradingConfig {
+  return {
+    preset: preset.name,
+    symbol: sym,
+    interval: preset.interval,
+    slMult: preset.sl,
+    tpMult: preset.tp,
+    conditionToggles: { ...preset.toggles },
+    metrics: { win_rate: 0, total_return_pct: 0, max_drawdown_pct: 0, sharpe_ratio: 0, profit_factor: 0, total_trades: 0, winners: 0, losers: 0, risk_reward_ratio: 0 },
+    lockedAt: Date.now(),
+  };
+}
+
+export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExecutedTick = 0, onTradeExecuted, onStartedChange }: Props) {
   const { price: livePrice } = useLivePrice();
   const [snap, setSnap] = useState<AutoTraderSnapshot | null>(null);
   const [trades, setTrades] = useState<AutoTraderTrade[]>([]);
@@ -116,12 +132,18 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
   const [starting, setStarting] = useState(false);
   const [launchFlash, setLaunchFlash] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  // Manual preset override (null = follow backtest lockedConfig)
+  const [manualConfig, setManualConfig] = useState<LockedTradingConfig | null>(null);
+  // Strategy dropdown open/closed
+  const [showStrategyDrop, setShowStrategyDrop] = useState(false);
   // Snapshot the locked config when trading actually starts — so subsequent backtests don't affect it
   const [runningConfig, setRunningConfig] = useState<LockedTradingConfig | null>(null);
-  // Use runningConfig while trading, lockedConfig otherwise
-  const activeConfig = runningConfig ?? lockedConfig ?? null;
+  // Effective config: manual override > locked from backtest
+  const pendingConfig = manualConfig ?? lockedConfig ?? null;
+  // Use runningConfig while trading, pendingConfig otherwise
+  const activeConfig = runningConfig ?? pendingConfig;
   // Interval always follows the latest strategy setting (not frozen at start)
-  const currentInterval = lockedConfig?.interval ?? activeConfig?.interval ?? "1m";
+  const currentInterval = pendingConfig?.interval ?? activeConfig?.interval ?? "1m";
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastBarRef = useRef("");
   const livePriceRef = useRef(livePrice);
@@ -137,8 +159,9 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
       const s = await autoTraderGetState(symbol);
       setSnap(s);
       setMode(s.mode);
+      onStartedChange?.(s.started);
     } catch {}
-  }, [symbol]);
+  }, [symbol, onStartedChange]);
 
   useEffect(() => { refreshState(); }, [refreshState]);
 
@@ -146,6 +169,18 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
   useEffect(() => {
     autoTraderGetDbTrades(symbol).then(setTrades).catch(() => {});
   }, [symbol]);
+
+  // ── React to external trade events (scanner paper entries, etc.) ──
+  const extTickRef = useRef(tradeExecutedTick);
+  useEffect(() => {
+    if (tradeExecutedTick > 0 && tradeExecutedTick !== extTickRef.current) {
+      extTickRef.current = tradeExecutedTick;
+      // Refresh auto-trader state so panel shows new position
+      refreshState();
+      autoTraderGetDbTrades(symbol).then(setTrades).catch(() => {});
+      pushLog("Scanner: paper entry synced", "entry");
+    }
+  }, [tradeExecutedTick, refreshState, symbol, pushLog]);
 
 
 
@@ -203,19 +238,21 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
 
   // ── Controls ────────────────────────────────────────────────
   const handleStart = async (m: "paper" | "live") => {
-    if (!lockedConfig) return;
+    const cfg = pendingConfig;
+    if (!cfg) return;
     setStarting(true);
     // Snapshot the config at start time — subsequent backtests won't affect it
-    setRunningConfig({ ...lockedConfig });
+    setRunningConfig({ ...cfg });
     // Compute disabled conditions from locked config toggles
-    const disabled = Object.entries(lockedConfig.conditionToggles).filter(([, v]) => !v).map(([k]) => k);
-    const label = lockedConfig.preset ?? "Custom";
-    await autoTraderUpdateConfig({ disabled_conditions: disabled, sl_mult: lockedConfig.slMult, tp_mult: lockedConfig.tpMult, strategy_preset: label }, symbol).catch(() => {});
-    const s = await autoTraderStart(m, symbol, lockedConfig.interval).catch(() => null);
+    const disabled = Object.entries(cfg.conditionToggles).filter(([, v]) => !v).map(([k]) => k);
+    const label = cfg.preset ?? "Custom";
+    await autoTraderUpdateConfig({ disabled_conditions: disabled, sl_mult: cfg.slMult, tp_mult: cfg.tpMult, strategy_preset: label }, symbol).catch(() => {});
+    const s = await autoTraderStart(m, symbol, cfg.interval).catch(() => null);
     setStarting(false);
     if (s) {
       setSnap(s); setMode(m);
-      pushLog(`Started ${m.toUpperCase()} | ${label} | SL=${lockedConfig.slMult}x TP=${lockedConfig.tpMult}x`, "info");
+      onStartedChange?.(s.started);
+      pushLog(`Started ${m.toUpperCase()} | ${label} | SL=${cfg.slMult}x TP=${cfg.tpMult}x`, "info");
       setLaunchFlash(m);
       setTimeout(() => setLaunchFlash(null), 3000);
       // Auto-switch to Tiger Account tab when starting Live Trade
@@ -224,11 +261,11 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
   };
   const handleStop = async () => {
     const s = await autoTraderStop(symbol).catch(() => null);
-    if (s) { setSnap(s); setMode("off"); setRunningConfig(null); pushLog("Stopped", "warn"); }
+    if (s) { setSnap(s); setMode("off"); setRunningConfig(null); onStartedChange?.(false); pushLog("Stopped", "warn"); }
   };
   const handleReset = async () => {
     const s = await autoTraderReset(symbol).catch(() => null);
-    if (s) { setSnap(s); setMode("off"); setRunningConfig(null); setLogs([]); pushLog("Full reset", "warn"); }
+    if (s) { setSnap(s); setMode("off"); setRunningConfig(null); setManualConfig(null); setLogs([]); onStartedChange?.(false); pushLog("Full reset", "warn"); }
   };
   const handleEmergency = async () => {
     await autoTraderEmergencyStop(livePrice || 0, symbol).catch(() => null);
@@ -278,11 +315,78 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
           <button onClick={() => setShowGuide(v => !v)} className="shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white/30 hover:text-white/70 hover:bg-white/10 transition-colors" title="How it works">
             ?
           </button>
-          {started && (
-            <span className="text-[9px] text-violet-300 truncate" title={activeConfig?.preset ?? "Custom"}>
-              · {activeConfig?.preset ?? "Custom"}
-            </span>
-          )}
+
+          {/* ── Strategy dropdown ── */}
+          <div className="relative shrink-0">
+            <button
+              onClick={() => !started && setShowStrategyDrop(v => !v)}
+              disabled={started}
+              className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[8px] font-bold transition-all ${
+                started
+                  ? "text-violet-300/70 bg-violet-500/[0.07] cursor-default"
+                  : "text-violet-300 bg-violet-500/10 hover:bg-violet-500/20 ring-1 ring-violet-500/20 hover:ring-violet-500/35 cursor-pointer"
+              }`}
+              title={started ? "Strategy locked while running" : "Select strategy"}
+            >
+              <span className="max-w-[80px] truncate">{pendingConfig?.preset ?? "Pick strategy"}</span>
+              {!started && <span className="text-[7px] text-white/30">{showStrategyDrop ? "▲" : "▼"}</span>}
+            </button>
+
+            {/* Dropdown panel */}
+            {showStrategyDrop && !started && (
+              <div className="absolute left-0 top-full mt-1 z-50 w-52 rounded-lg ring-1 ring-white/10 bg-slate-900/95 backdrop-blur-sm shadow-2xl overflow-hidden">
+                <div className="px-2 py-1.5 border-b border-white/[0.06] flex items-center justify-between">
+                  <span className="text-[7px] uppercase tracking-widest text-white/35 font-bold">Select Strategy</span>
+                  {manualConfig && (
+                    <button
+                      onClick={() => { setManualConfig(null); setShowStrategyDrop(false); }}
+                      className="text-[7px] text-violet-400/70 hover:text-violet-300 transition-colors">
+                      ← Backtest
+                    </button>
+                  )}
+                </div>
+                <div className="py-0.5">
+                  {BUILT_IN_PRESETS.map((p) => {
+                    const isActive = pendingConfig?.preset === p.name;
+                    return (
+                      <button
+                        key={p.name}
+                        onClick={() => { setManualConfig(configFromPreset(p, symbol)); setShowStrategyDrop(false); }}
+                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left transition-colors ${
+                          isActive ? "bg-violet-500/15 text-white/90" : "hover:bg-white/[0.05] text-white/60 hover:text-white/85"
+                        }`}
+                      >
+                        <span className={`flex-1 text-[9px] font-semibold truncate ${isActive ? "text-violet-200" : ""}`}>{p.name}</span>
+                        <div className="shrink-0 flex items-center gap-0.5">
+                          <span className="text-[7px] text-slate-500 font-mono">{p.interval}</span>
+                          {p.sl > 0 && <span className="text-[7px] px-1 py-px rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15">SL{p.sl}×</span>}
+                          {p.tp > 0 && <span className="text-[7px] px-1 py-px rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15">TP{p.tp}×</span>}
+                        </div>
+                        {isActive && <span className="shrink-0 text-violet-400 text-[8px]">✓</span>}
+                      </button>
+                    );
+                  })}
+                  {/* Custom backtest option */}
+                  {lockedConfig && !BUILT_IN_PRESETS.find(p => p.name === lockedConfig.preset) && (() => {
+                    const isActive = !manualConfig;
+                    return (
+                      <button
+                        onClick={() => { setManualConfig(null); setShowStrategyDrop(false); }}
+                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left transition-colors ${
+                          isActive ? "bg-violet-500/15 text-white/90" : "hover:bg-white/[0.05] text-white/60 hover:text-white/85"
+                        }`}
+                      >
+                        <span className={`flex-1 text-[9px] font-semibold truncate ${isActive ? "text-violet-200" : ""}`}>{lockedConfig.preset ?? "Custom Backtest"}</span>
+                        <span className="text-[7px] text-slate-500 font-mono">{lockedConfig.interval}</span>
+                        {isActive && <span className="shrink-0 text-violet-400 text-[8px]">✓</span>}
+                      </button>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+          </div>
+
           <span className="text-[8px] font-medium text-white/60 uppercase tracking-widest shrink-0">
             {STATE_LABEL[state] ?? state}
             {state === "COOLDOWN" && snap?.cooldown_remaining ? ` ${Math.ceil(snap.cooldown_remaining)}s` : ""}
@@ -367,15 +471,18 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
           <div className="rounded-lg ring-1 ring-slate-700/40 bg-slate-800/20 p-3 text-center space-y-1">
             <div className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">Not Running</div>
             <div className="text-[9px] text-slate-400 leading-relaxed">
-              Start paper or live trading below.<br />
-              Strategy follows backtest conditions &amp; same SL/TP.
+              Select a strategy above ▲, then start paper or live trading.
             </div>
-            {activeConfig && (
+            {pendingConfig ? (
               <div className="flex items-center justify-center gap-1.5 mt-1.5">
-                <span className="text-[7px] px-1.5 py-px rounded bg-slate-800 text-slate-400 ring-1 ring-slate-700/50 font-bold">{activeConfig.interval}</span>
-                <span className="text-[7px] px-1.5 py-px rounded bg-violet-500/10 text-violet-300 ring-1 ring-violet-500/20 font-bold">{activeConfig.preset ?? "Custom"}</span>
-                <span className="text-[7px] px-1.5 py-px rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15 font-bold">SL {activeConfig.slMult}×</span>
-                <span className="text-[7px] px-1.5 py-px rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15 font-bold">TP {activeConfig.tpMult}×</span>
+                <span className="text-[7px] px-1.5 py-px rounded bg-slate-800 text-slate-400 ring-1 ring-slate-700/50 font-bold">{pendingConfig.interval}</span>
+                <span className="text-[7px] px-1.5 py-px rounded bg-violet-500/10 text-violet-300 ring-1 ring-violet-500/20 font-bold">{pendingConfig.preset ?? "Custom"}</span>
+                <span className="text-[7px] px-1.5 py-px rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15 font-bold">SL {pendingConfig.slMult}×</span>
+                <span className="text-[7px] px-1.5 py-px rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15 font-bold">TP {pendingConfig.tpMult}×</span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center gap-1 mt-1.5 text-[8px] text-amber-400/60">
+                <span>▲</span><span>Pick a strategy from the dropdown in the header</span>
               </div>
             )}
           </div>
@@ -543,9 +650,9 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
         {!started ? (
           <div className="flex gap-1.5">
             <button onClick={() => handleStart("paper")}
-              disabled={starting || !lockedConfig}
+              disabled={starting || !pendingConfig}
               className={`flex-1 py-1.5 rounded-lg text-[9px] font-bold tracking-wide transition-all ${
-                starting || !lockedConfig
+                starting || !pendingConfig
                   ? "bg-emerald-600/10 text-emerald-400/50 ring-1 ring-emerald-500/10 cursor-wait"
                   : "bg-gradient-to-r from-emerald-600/20 to-emerald-500/10 hover:from-emerald-600/30 hover:to-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/20 hover:ring-emerald-500/40 active:scale-95"
               }`}>
@@ -557,9 +664,9 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
               ) : "Paper Trade"}
             </button>
             <button onClick={() => handleStart("live")}
-              disabled={starting || !lockedConfig}
+              disabled={starting || !pendingConfig}
               className={`flex-1 py-2 rounded-lg text-[9px] font-extrabold tracking-wider transition-all ${
-                starting || !lockedConfig
+                starting || !pendingConfig
                   ? "bg-red-600/10 text-red-300/50 ring-1 ring-red-500/10 cursor-wait"
                   : "bg-gradient-to-r from-red-600/30 to-red-500/20 hover:from-red-600/50 hover:to-red-500/30 text-red-300 ring-2 ring-red-500/30 hover:ring-red-500/50 active:scale-95"
               }`}>
@@ -574,7 +681,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                 if (!confirm("Clear all paper trades & reset paper account?")) return;
                 await autoTraderClearDbTrades(symbol).catch(() => {});
                 const s = await autoTraderReset(symbol).catch(() => null);
-                if (s) { setSnap(s); setMode("off"); setRunningConfig(null); }
+                if (s) { setSnap(s); setMode("off"); setRunningConfig(null); setManualConfig(null); }
                 setTrades([]);
                 setLogs([]);
                 pushLog("Paper account reset", "warn");

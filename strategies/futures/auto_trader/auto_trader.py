@@ -438,8 +438,15 @@ class FuturesAutoTrader:
 
     def on_live_entry_filled(self, entry_price: float, sl: float, tp: float,
                              qty: int, direction: str) -> None:
-        """Called after Tiger bracket order fills."""
-        self._machine.on_entry_filled(entry_price, sl, tp, qty, direction)
+        """Called when a Tiger live order fills (live mode).
+
+        For live mode: advances the state machine to IN_TRADE.
+        For paper/off mode: no-op — paper mode is handled internally
+        by the tick loop via _execute_paper(). Scanner entries should
+        not interfere with a running paper auto-trader.
+        """
+        if self._machine.mode == "live":
+            self._machine.on_entry_filled(entry_price, sl, tp, qty, direction)
 
     def on_live_exit(self, exit_price: float, reason: str = "TP") -> Optional[TradeRecord]:
         """Called when live position exits."""

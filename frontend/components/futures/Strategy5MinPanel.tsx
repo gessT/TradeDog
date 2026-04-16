@@ -1380,14 +1380,14 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles, interval: intervalProp = "5m", onIntervalChange, onSlTpChange, onConfigLock }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>>; interval?: string; onIntervalChange?: (v: string) => void; onSlTpChange?: (sl: number, tp: number) => void; onConfigLock?: (config: LockedTradingConfig) => void }>) {
+export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, autoTraderRunning = false, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles, interval: intervalProp = "5m", onIntervalChange, onSlTpChange, onConfigLock }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; autoTraderRunning?: boolean; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>>; interval?: string; onIntervalChange?: (v: string) => void; onSlTpChange?: (sl: number, tp: number) => void; onConfigLock?: (config: LockedTradingConfig) => void }>) {
   const [showExam, setShowExam] = useState(false);
   const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // ── Auto-Trading state (persisted in backend) ─────────────────────
-  const [autoTrading, setAutoTrading] = useState(true);
+  const [autoTrading, setAutoTrading] = useState(false);
   const autoTradingRef = useRef(false);
   autoTradingRef.current = autoTrading;
   const lastAutoEntryRef = useRef<string>(""); // prevent double-exec on same entry_time
@@ -1421,6 +1421,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   useEffect(() => { if (logOpen) setLogUnread(0); }, [logOpen]);
   // Force-open log panel when scanner turns ON; keep open while ON
   useEffect(() => { if (autoTrading) setLogOpen(true); }, [autoTrading]);
+  // Also open on mount if scanner is already ON
+  useEffect(() => { if (autoTrading) setLogOpen(true); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Per-symbol SL/TP defaults (backtest-optimized) ─────────────────
   const SYMBOL_RISK: Record<string, { sl: number; tp: number }> = {
@@ -1737,7 +1739,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       }
 
       if (activeBuiltIn?.endpoint === "sync_test") {
-        const res = await fetchMGCSyncTestBacktest(symbol, period, 2, "long");
+        const res = await fetchMGCSyncTestBacktest(symbol, period, 2, "both", 10000, 2.0);
         setBtData(res);
         onTradesUpdate?.(res.trades);
         setHasRunBacktest(true);
@@ -1933,6 +1935,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   // ── Auto-Trading: auto-sync when new open position appears ──
   useEffect(() => {
     if (!autoTrading) return;
+    // Skip if Auto-Trader is running — it handles its own entries (paper or live)
+    if (autoTraderRunning) return;
     const openTrade = btData?.trades.find((t) => t.reason === "OPEN");
     const pos = btData?.open_position ?? (openTrade ? {
       direction: openTrade.direction || "CALL",
@@ -1961,11 +1965,13 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         pushNotif("paper", `📄 Paper: ${side} entered @ $${Number(pos.entry_price).toFixed(2)} | SL $${Number(pos.sl).toFixed(2)} TP $${Number(pos.tp).toFixed(2)}`);
         setExitStatus(`📄 Paper: ${side} @ $${Number(pos.entry_price).toFixed(2)}`);
         setTimeout(() => setExitStatus(null), 5000);
+        // Notify AutoTraderPanel to refresh state + log
+        onDirectExecute?.();
       } catch (e) {
         pushNotif("error", `❌ Paper failed: ${e instanceof Error ? e.message : "Unknown"}`);
       }
     })();
-  }, [autoTrading, btData?.open_position?.entry_time, btData?.trades, symbol, activePreset, onDirectExecute, pushNotif]);
+  }, [autoTrading, autoTraderRunning, btData?.open_position?.entry_time, btData?.trades, symbol, activePreset, onDirectExecute, pushNotif]);
 
   // Reset SL/TP hit flag when open position changes
   useEffect(() => { slTpHitRef.current = false; setExitStatus(null); }, [btData?.open_position?.entry_time]);
@@ -2223,44 +2229,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               {bp.name}
             </button>
           ))}
-
-          {/* Strategy dropdown */}
-          <div className="relative">
-            <select
-              value={activePreset ?? "__custom__"}
-              onChange={(e) => {
-                const val = e.target.value;
-                if (val === "__custom__") { setActivePreset(null); return; }
-                const bp = BUILT_IN_PRESETS.find((x) => x.name === val);
-                if (bp) {
-                  setConditionToggles((prev) => ({ ...prev, ...bp.toggles }));
-                  setActivePreset(bp.name);
-                  setSlMult(bp.sl);
-                  setTpMult(bp.tp);
-                  handleIntervalChange(bp.interval);
-                  return;
-                }
-                const p = presets.find((x) => x.name === val);
-                if (p) {
-                  setConditionToggles((prev) => ({ ...prev, ...p.toggles }));
-                  setActivePreset(p.name);
-                }
-              }}
-              className="rounded pl-1.5 pr-5 py-1 text-[9px] bg-slate-900/60 border border-slate-700/50 text-slate-300 font-bold appearance-none cursor-pointer hover:border-slate-600/60 focus:outline-none focus:border-cyan-600/50 transition-colors"
-              style={{ colorScheme: "dark" }}
-            >
-              {BUILT_IN_PRESETS.map((bp) => (
-                <option key={bp.name} value={bp.name}>{bp.name}</option>
-              ))}
-              {presets.map((p) => (
-                <option key={p.name} value={p.name}>{p.name}</option>
-              ))}
-              <option value="__custom__">Custom</option>
-            </select>
-            <svg className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-            </svg>
-          </div>
 
           {/* SL / TP + Interval + Conditions icon */}
           <div className="ml-auto flex items-center gap-1.5">
@@ -2723,19 +2691,13 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                         <div className="rounded-xl border border-slate-800/40 bg-slate-900/40 flex flex-col items-center justify-center py-6 gap-2">
                           <span className={`text-2xl ${autoTrading ? "animate-pulse" : "opacity-30"}`}>🪬</span>
                           <span className="text-[9px] text-slate-500 font-semibold text-center leading-tight">Waiting for<br/>signal</span>
-                          {/* Auto-scanner toggle */}
-                          <button
-                            onClick={() => setAutoTrading(v => !v)}
-                            className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-[9px] font-bold transition-all duration-200 ${
-                              autoTrading
-                                ? "bg-emerald-900/50 border-emerald-500/60 text-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.25)]"
-                                : "bg-slate-800/60 border-slate-700/60 text-slate-500"
-                            }`}
-                          >
+                          {/* Scanner status indicator */}
+                          <div className="flex items-center gap-1.5">
                             <span className={`w-1.5 h-1.5 rounded-full ${autoTrading ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`} />
-                            {autoTrading ? "Scanner ON" : "Scanner OFF"}
-                          </button>
-                          <span className="text-[8px] text-slate-700">No position open</span>
+                            <span className={`text-[8px] font-semibold ${autoTrading ? "text-emerald-400" : "text-slate-600"}`}>
+                              {autoTrading ? "Scanner ON" : "Scanner OFF"}
+                            </span>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -2847,66 +2809,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         </div>
       )}
 
-      {/* ══ Mini Activity Log Window — top-right, always collapsible ══ */}
-      <div className="fixed top-4 right-4 z-[9999] flex flex-col items-end" style={{ width: logOpen ? 300 : "auto" }}>
-        {/* Toggle button — always on top */}
-        <button
-          onClick={() => setLogOpen(v => !v)}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-[9px] font-bold shadow-lg transition-all mb-1 ${
-            autoTrading
-              ? "bg-slate-900/95 border-emerald-500/50 text-emerald-300 hover:border-emerald-400"
-              : "bg-slate-900/80 border-slate-700/50 text-slate-500 hover:border-slate-600/70"
-          }`}
-        >
-          {autoTrading
-            ? <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-            : <span className="w-1.5 h-1.5 rounded-full bg-slate-600 shrink-0" />
-          }
-          <span>📲 Log</span>
-          {logUnread > 0 && !logOpen && (
-            <span className="bg-amber-500 text-black text-[7px] font-black rounded-full px-1 py-px leading-none min-w-[14px] text-center">{logUnread}</span>
-          )}
-          <svg className={`w-2.5 h-2.5 transition-transform ${logOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" /></svg>
-        </button>
-        {/* Log panel body — below the toggle */}
-        {logOpen && (
-          <div className="w-full rounded-xl border border-slate-700/60 bg-slate-950/95 shadow-2xl shadow-black/50 backdrop-blur-md flex flex-col" style={{ maxHeight: 380 }}>
-            {/* Panel header */}
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-800/60">
-              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest flex-1">Activity Log</span>
-              <span className="text-[8px] text-slate-600 tabular-nums">{logEntries.length} events</span>
-              <button
-                onClick={() => setLogEntries([])}
-                className="text-[8px] text-slate-600 hover:text-rose-400 transition px-1"
-              >Clear</button>
-            </div>
-            {/* Log entries */}
-            <div className="flex-1 overflow-y-auto px-1 py-1 space-y-0.5 min-h-0">
-              {logEntries.length === 0 ? (
-                <div className="text-[9px] text-slate-700 text-center py-4">No events yet</div>
-              ) : (
-                logEntries.map((e) => (
-                  <div key={e.id} className={`flex items-start gap-1.5 px-2 py-1 rounded-lg ${
-                    e.type === "signal" ? "bg-amber-950/40"
-                    : e.type === "paper" ? "bg-blue-950/40"
-                    : e.type === "live" ? "bg-emerald-950/40"
-                    : "bg-rose-950/40"
-                  }`}>
-                    <span className="text-[10px] shrink-0 mt-px">{e.type === "signal" ? "📡" : e.type === "paper" ? "📄" : e.type === "live" ? "✅" : "❌"}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[9px] leading-snug text-slate-300">{e.msg}</div>
-                      <div className="text-[7px] text-slate-700 tabular-nums mt-0.5">
-                        {new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-              <div ref={logEndRef} />
-            </div>
-          </div>
-        )}
-      </div>
+
     </div>
   );
 }

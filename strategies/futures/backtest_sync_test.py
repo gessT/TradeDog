@@ -101,81 +101,109 @@ class BacktesterSyncTest:
         params: dict,
     ) -> tuple[list[SyncTestTrade], list[float]]:
         opens   = df["open"].to_numpy(dtype=np.float64)
+        highs   = df["high"].to_numpy(dtype=np.float64)
+        lows    = df["low"].to_numpy(dtype=np.float64)
         closes  = df["close"].to_numpy(dtype=np.float64)
         sig_arr = signals.to_numpy(dtype=np.int8)
         times   = df.index.tolist()
-        hold    = int(params["hold_bars"])
+        pip_tgt = float(params.get("pip_target", 2.0))
 
         equity: float = self.initial_capital
         equity_curve: list[float] = [equity]
         trades: list[SyncTestTrade] = []
 
-        # pending: {entry_bar, entry_price, direction, qty}
         pending: dict | None = None
 
         for i in range(1, len(df)):
-            # ── Check if pending position should close ─────────────────
+            # -- Check TP / SL hit on this bar for pending position -----
             if pending is not None:
+                ep        = pending["entry_price"]
+                tp        = pending["tp"]
+                sl        = pending["sl"]
+                qty       = pending["qty"]
+                hi        = highs[i]
+                lo        = lows[i]
                 bars_held = i - pending["entry_bar"]
-                if bars_held >= hold:
-                    exit_price = float(closes[i])
-                    qty        = pending["qty"]
+
+                exit_price = None
+                reason     = "EOD"
+
+                if pending["direction"] == "LONG":
+                    if hi >= tp:
+                        exit_price, reason = tp, "TP"
+                    elif lo <= sl:
+                        exit_price, reason = sl, "SL"
+                else:
+                    if lo <= tp:
+                        exit_price, reason = tp, "TP"
+                    elif hi >= sl:
+                        exit_price, reason = sl, "SL"
+
+                if exit_price is not None:
                     if pending["direction"] == "LONG":
-                        raw_pnl = (exit_price - pending["entry_price"]) * qty * CONTRACT_SIZE
+                        raw_pnl = (exit_price - ep) * qty * CONTRACT_SIZE
                     else:
-                        raw_pnl = (pending["entry_price"] - exit_price) * qty * CONTRACT_SIZE
+                        raw_pnl = (ep - exit_price) * qty * CONTRACT_SIZE
                     net_pnl = raw_pnl - COMMISSION_USD * qty
                     equity += net_pnl
                     trades.append(SyncTestTrade(
                         entry_time  = pending["entry_time"],
                         exit_time   = times[i],
-                        entry_price = pending["entry_price"],
+                        entry_price = ep,
                         exit_price  = exit_price,
                         qty         = qty,
                         pnl         = round(net_pnl, 2),
                         pnl_pct     = round(net_pnl / self.initial_capital * 100, 4),
                         direction   = pending["direction"],
                         held_bars   = bars_held,
-                        reason      = "HOLD_EXIT",
+                        reason      = reason,
                     ))
-                    logger.debug(
-                        "SYNC EXIT %s @ %.2f  held=%d bars  pnl=%.2f",
-                        times[i], exit_price, bars_held, net_pnl,
-                    )
+                    logger.debug("SYNC %s exit @ %.2f  held=%d  pnl=%.2f",
+                                 reason, exit_price, bars_held, net_pnl)
                     pending = None
 
-            # ── Check entry signal (only if flat) ──────────────────────
+            # -- Check entry signal (only if flat) ----------------------
             if pending is None and sig_arr[i] != 0:
                 direction   = "LONG" if sig_arr[i] == 1 else "SHORT"
                 entry_price = float(opens[i])
                 qty         = self.contracts
                 equity     -= COMMISSION_USD * qty
+                if direction == "LONG":
+                    tp_price = entry_price + pip_tgt
+                    sl_price = entry_price - pip_tgt
+                else:
+                    tp_price = entry_price - pip_tgt
+                    sl_price = entry_price + pip_tgt
                 pending = {
                     "entry_bar":   i,
                     "entry_time":  times[i],
                     "entry_price": entry_price,
                     "direction":   direction,
                     "qty":         qty,
+                    "tp":          tp_price,
+                    "sl":          sl_price,
                 }
-                logger.debug("SYNC ENTRY %s %s @ %.2f", times[i], direction, entry_price)
+                logger.debug("SYNC ENTRY %s @ %.2f  TP %.2f  SL %.2f",
+                             direction, entry_price, tp_price, sl_price)
 
             equity_curve.append(equity)
 
         # Force-close any open position at last bar
         if pending is not None:
-            exit_price = float(closes[-1])
-            qty        = pending["qty"]
+            exit_price_eod = float(closes[-1])
+            qty            = pending["qty"]
+            ep             = pending["entry_price"]
             if pending["direction"] == "LONG":
-                raw_pnl = (exit_price - pending["entry_price"]) * qty * CONTRACT_SIZE
+                raw_pnl = (exit_price_eod - ep) * qty * CONTRACT_SIZE
             else:
-                raw_pnl = (pending["entry_price"] - exit_price) * qty * CONTRACT_SIZE
+                raw_pnl = (ep - exit_price_eod) * qty * CONTRACT_SIZE
             net_pnl = raw_pnl
             equity += net_pnl
             trades.append(SyncTestTrade(
                 entry_time  = pending["entry_time"],
                 exit_time   = times[-1],
-                entry_price = pending["entry_price"],
-                exit_price  = exit_price,
+                entry_price = ep,
+                exit_price  = exit_price_eod,
                 qty         = qty,
                 pnl         = round(net_pnl, 2),
                 pnl_pct     = round(net_pnl / self.initial_capital * 100, 4),
