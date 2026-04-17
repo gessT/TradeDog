@@ -357,8 +357,13 @@ function TradeLogByDate({ trades, onTradeClick, livePrice, dateFrom, dateTo, aut
         (map[datePart] ??= []).push(t);
       }
     }
-    // Reverse trades within each day so latest order is on top
-    for (const arr of Object.values(map)) arr.reverse();
+    // Within each day: OPEN (LIVE) trades first sorted by entry_time desc,
+    // then CLOSED trades sorted by exit_time desc
+    for (const arr of Object.values(map)) {
+      const open   = arr.filter(t => t.reason === "OPEN").sort((a, b) => b.entry_time.localeCompare(a.entry_time));
+      const closed = arr.filter(t => t.reason !== "OPEN").sort((a, b) => (b.exit_time ?? "").localeCompare(a.exit_time ?? ""));
+      arr.splice(0, arr.length, ...open, ...closed);
+    }
     return Object.entries(map).sort((a, b) => b[0].localeCompare(a[0]));
   })();
 

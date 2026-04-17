@@ -818,8 +818,13 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
 
         {/* ── Paper Trade tab ── */}
         {tab === "paper" && (() => {
-          const openDbTrades = trades.filter((t) => t.exit_reason === "OPEN");
-          const closedTrades = trades.filter((t) => t.exit_reason !== "OPEN");
+          const openDbTrades = trades
+            .filter((t) => t.exit_reason === "OPEN")
+            .sort((a, b) => b.entry_time.localeCompare(a.entry_time));
+          const closedTrades = trades
+            .filter((t) => t.exit_reason !== "OPEN")
+            .sort((a, b) => (b.exit_time ?? "").localeCompare(a.exit_time ?? ""));
+          const allDisplayTrades = [...openDbTrades, ...closedTrades];
           const totalPnl = closedTrades.reduce((s, t) => s + t.pnl, 0);
           const wins = closedTrades.filter((t) => t.pnl > 0).length;
           const losses = closedTrades.filter((t) => t.pnl < 0).length;
@@ -881,101 +886,55 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                 )}
               </div>
 
-              {/* ── Performance + Log ── */}
-              <div className="px-3 mb-3 flex gap-2">
-                {/* Performance */}
-                <div className="flex-1 min-w-0">
-                  <div className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-2">Performance</div>
-                  <div className="grid grid-cols-2 gap-px rounded-xl overflow-hidden ring-1 ring-white/[0.08] h-[calc(100%-22px)]">
-                    {[
-                      { label: "Total P&L", value: `${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(2)}`, color: totalPnl >= 0 ? "text-emerald-400" : "text-red-400" },
-                      { label: "Today", value: `${(snap?.daily_pnl ?? 0) >= 0 ? "+" : ""}$${(snap?.daily_pnl ?? 0).toFixed(2)}`, color: (snap?.daily_pnl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400" },
-                      { label: "Win Rate", value: `${wr}%`, color: wr >= 50 ? "text-emerald-400" : "text-red-400" },
-                      { label: "Trades", value: String(closedTrades.length), color: "text-white/60" },
-                    ].map((s, i) => (
-                      <div key={i} className="bg-white/[0.025] py-2.5 px-1 text-center">
-                        <div className="text-[8px] uppercase tracking-widest text-white/25 font-bold mb-1">{s.label}</div>
-                        <div className={`text-[13px] font-black tabular-nums ${s.color}`}>{s.value}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              {/* ── Position · Log · Performance (1/5 · 2/5 · 2/5) ── */}
+              <div className="px-3 mb-3 grid grid-cols-[1fr_2fr_2fr] gap-2 items-stretch">
 
-                {/* Log */}
-                <div className="flex-1 min-w-0">
-                  <div className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-2">Log</div>
-                  <div className="rounded-xl ring-1 ring-white/[0.08] bg-slate-900/50 overflow-hidden h-[calc(100%-22px)] flex flex-col">
-                    {logs.length === 0 ? (
-                      <div className="flex-1 flex items-center justify-center">
-                        <span className="text-[8px] text-white/15 font-mono">No activity yet</span>
+                {/* ── Position (1/5) ── */}
+                <div className="rounded-xl ring-1 ring-white/[0.08] bg-slate-900/40 flex flex-col overflow-hidden min-h-[110px]">
+                  {!pos ? (
+                    <div className="flex-1 flex flex-col items-center justify-center gap-1.5 px-2 py-4">
+                      <div className="w-6 h-6 rounded-full bg-slate-800/60 flex items-center justify-center">
+                        <span className="text-[10px] text-white/15">—</span>
                       </div>
-                    ) : (
-                      <div className="flex-1 overflow-y-auto p-1.5 space-y-px font-mono text-[8px]">
-                        {logs.slice(0, 20).map((entry, i) => {
-                          const col = entry.type === "entry" ? "text-emerald-400" : entry.type === "exit" ? "text-sky-400" : entry.type === "signal" ? "text-violet-400" : entry.type === "warn" ? "text-amber-400" : entry.type === "error" ? "text-red-400" : "text-white/40";
-                          return (
-                            <div key={i} className="flex gap-1 px-1.5 py-0.5 rounded hover:bg-white/[0.03]">
-                              <span className="text-white/20 shrink-0">{new Date(entry.ts).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
-                              <span className={`truncate ${col}`}>{entry.msg}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Positions ── */}
-              <div className="px-3 mb-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Positions</span>
-                  {pos && (
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
-                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
-                    </span>
-                  )}
-                </div>
-                {!pos ? (
-                  <div className="rounded-xl ring-1 ring-slate-700/25 bg-slate-800/10 px-3 py-5 text-center">
-                    <span className="text-[9px] text-white/15">No open positions</span>
-                  </div>
-                ) : (() => {
-                  const isLong = pos.direction === "CALL";
-                  const sl = pos.stop_loss;
-                  const tp = pos.take_profit;
-                  const range = Math.abs(tp - sl);
-                  const progress = (livePrice && range > 0)
-                    ? Math.max(0, Math.min(100, ((isLong ? (livePrice - sl) : (sl - livePrice)) / range) * 100))
-                    : null;
-                  return (
-                    <div className="rounded-xl ring-1 ring-slate-700/40 bg-slate-900/40 overflow-hidden">
-                      <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1.5fr] px-3 py-2 border-b border-slate-700/40">
-                        {["Symbol", "Dir", "Entry", "Live", "P&L"].map((h, i) => (
-                          <span key={i} className={`text-[8px] uppercase tracking-widest text-white/25 font-bold ${i >= 2 ? "text-right" : ""}`}>{h}</span>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1.5fr] items-center px-3 py-3.5">
-                        <div>
-                          <span className="text-[12px] font-bold text-white/90">{symbol}</span>
-                          <div className="text-[8px] text-white/30 font-mono mt-0.5">{fmtTZ(pos.entry_time).split(",")[0]}</div>
-                        </div>
-                        <div>
-                          <span className={`text-[12px] font-black ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
-                            {isLong ? "\u25b2" : "\u25bc"}<span className="text-white/30 text-[9px] font-normal ml-0.5">{"\u00d7"}{pos.qty}</span>
+                      <span className="text-[7.5px] text-white/15 text-center leading-tight">No<br/>Position</span>
+                    </div>
+                  ) : (() => {
+                    const isLong = pos.direction === "CALL";
+                    const sl = pos.stop_loss;
+                    const tp = pos.take_profit;
+                    const range = Math.abs(tp - sl);
+                    const progress = livePrice && range > 0
+                      ? Math.max(0, Math.min(100, ((isLong ? livePrice - sl : sl - livePrice) / range) * 100))
+                      : null;
+                    return (
+                      <div className="flex-1 flex flex-col px-2 py-2 gap-1.5">
+                        {/* Dir badge */}
+                        <div className="flex items-center gap-1">
+                          <span className="relative flex h-1.5 w-1.5 shrink-0">
+                            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 ${isLong ? "bg-emerald-400" : "bg-rose-400"}`} />
+                            <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${isLong ? "bg-emerald-400" : "bg-rose-400"}`} />
                           </span>
+                          <span className={`text-[11px] font-black ${isLong ? "text-emerald-400" : "text-rose-400"}`}>{isLong ? "▲" : "▼"}</span>
+                          <span className="text-[7.5px] text-white/25 font-mono">×{pos.qty}</span>
                         </div>
-                        <div className="text-right font-mono text-[11px] text-white/65">${pos.entry_price.toFixed(2)}</div>
-                        <div className="text-right font-mono text-[11px] text-yellow-300">{livePrice ? `$${livePrice.toFixed(2)}` : "\u2014"}</div>
-                        <div className={`text-right font-mono text-[12px] font-black tabular-nums ${uPnl == null ? "text-white/25" : uPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                          {uPnl == null ? "\u2014" : `${uPnl >= 0 ? "+" : ""}$${uPnl.toFixed(2)}`}
+                        {/* uPnL */}
+                        <div className={`text-[14px] font-black tabular-nums font-mono leading-none ${uPnl == null ? "text-white/20" : uPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                          {uPnl == null ? "—" : `${uPnl >= 0 ? "+" : ""}$${uPnl.toFixed(1)}`}
                         </div>
-                      </div>
-                      <div className="px-3 pb-3">
-                        <div className="flex items-center gap-2 text-[8px] font-mono">
-                          <span className="text-red-400/60 shrink-0">SL {sl.toFixed(2)}</span>
-                          <div className="flex-1 h-1.5 bg-slate-800/60 rounded-full overflow-hidden">
+                        {/* Entry / live */}
+                        <div className="space-y-0.5">
+                          <div className="flex justify-between text-[7.5px] font-mono">
+                            <span className="text-white/25">In</span>
+                            <span className="text-white/55 tabular-nums">{pos.entry_price.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between text-[7.5px] font-mono">
+                            <span className="text-white/25">Now</span>
+                            <span className="text-yellow-300 tabular-nums">{livePrice ? livePrice.toFixed(2) : "—"}</span>
+                          </div>
+                        </div>
+                        {/* SL/TP bar */}
+                        <div className="mt-auto">
+                          <div className="h-1 bg-slate-800/60 rounded-full overflow-hidden">
                             {progress !== null && (
                               <div
                                 className={`h-full rounded-full transition-all duration-500 ${progress > 70 ? "bg-gradient-to-r from-amber-500 to-emerald-400" : progress > 40 ? "bg-gradient-to-r from-amber-600 to-amber-400" : "bg-gradient-to-r from-red-600 to-red-400"}`}
@@ -983,12 +942,62 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                               />
                             )}
                           </div>
-                          <span className="text-emerald-400/60 shrink-0">TP {tp.toFixed(2)}</span>
+                          <div className="flex justify-between text-[6.5px] font-mono mt-0.5">
+                            <span className="text-rose-400/50">{sl.toFixed(1)}</span>
+                            <span className="text-emerald-400/50">{tp.toFixed(1)}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })()}
+                    );
+                  })()}
+                  <div className="px-2 py-1 border-t border-white/[0.05] text-center">
+                    <span className="text-[7px] uppercase tracking-widest text-white/20 font-bold">Position</span>
+                  </div>
+                </div>
+
+                {/* ── Log (2/5) ── */}
+                <div className="rounded-xl ring-1 ring-white/[0.08] bg-slate-900/40 flex flex-col overflow-hidden">
+                  <div className="px-2.5 py-1.5 border-b border-white/[0.05] flex items-center gap-1.5">
+                    <span className="text-[7px] uppercase tracking-widest text-white/20 font-bold">Log</span>
+                    {logs.length > 0 && <span className="ml-auto text-[7.5px] text-white/20 font-mono tabular-nums">{logs.length}</span>}
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-1.5 space-y-px font-mono text-[7.5px] min-h-0">
+                    {logs.length === 0 ? (
+                      <div className="h-full flex items-center justify-center">
+                        <span className="text-white/12">No activity</span>
+                      </div>
+                    ) : logs.slice(0, 30).map((entry, i) => {
+                      const col = entry.type === "entry" ? "text-emerald-400" : entry.type === "exit" ? "text-sky-400" : entry.type === "signal" ? "text-violet-400" : entry.type === "warn" ? "text-amber-400" : entry.type === "error" ? "text-red-400" : "text-white/35";
+                      return (
+                        <div key={i} className={`flex gap-1 px-1.5 py-0.5 rounded ${i === 0 ? "bg-white/[0.03]" : "hover:bg-white/[0.02]"}`}>
+                          <span className="text-white/15 shrink-0 tabular-nums">{new Date(entry.ts).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                          <span className={`truncate min-w-0 ${col}`}>{entry.msg}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* ── Performance (2/5) ── */}
+                <div className="rounded-xl ring-1 ring-white/[0.08] bg-slate-900/40 flex flex-col overflow-hidden">
+                  <div className="px-2.5 py-1.5 border-b border-white/[0.05]">
+                    <span className="text-[7px] uppercase tracking-widest text-white/20 font-bold">Performance</span>
+                  </div>
+                  <div className="flex-1 grid grid-cols-2 gap-px bg-white/[0.04]">
+                    {[
+                      { label: "Total P&L", value: `${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(2)}`, color: totalPnl >= 0 ? "text-emerald-400" : "text-red-400" },
+                      { label: "Today", value: `${(snap?.daily_pnl ?? 0) >= 0 ? "+" : ""}$${(snap?.daily_pnl ?? 0).toFixed(2)}`, color: (snap?.daily_pnl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400" },
+                      { label: "Win Rate", value: `${wr}%`, color: wr >= 50 ? "text-emerald-400" : "text-amber-400" },
+                      { label: "Trades", value: String(closedTrades.length), color: "text-white/50" },
+                    ].map((s, i) => (
+                      <div key={i} className="bg-slate-900/40 flex flex-col items-center justify-center py-3 px-1 text-center">
+                        <div className="text-[7px] uppercase tracking-widest text-white/20 font-bold mb-1">{s.label}</div>
+                        <div className={`text-[12px] font-black tabular-nums leading-none ${s.color}`}>{s.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
               </div>
 
               {/* ── Trade History ── */}
@@ -1023,7 +1032,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                     title="Close open position, reset trader, and delete all DB records"
                   >Clear DB</button>
                 </div>
-                {closedTrades.length === 0 ? (
+                {closedTrades.length === 0 && openDbTrades.length === 0 ? (
                   <div className="rounded-xl ring-1 ring-slate-700/25 bg-slate-800/10 px-3 py-5 text-center">
                     <span className="text-[9px] text-white/15">No closed trades yet</span>
                   </div>
@@ -1042,7 +1051,8 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                         </tr>
                       </thead>
                       <tbody>
-                        {closedTrades.map((t, i) => {
+                        {allDisplayTrades.map((t, i) => {
+                          const isLive = t.exit_reason === "OPEN";
                           const isLong = t.direction === "CALL";
                           const isWin = t.pnl >= 0;
                           const [entryDate, entryTime] = fmtTZ(t.entry_time).split(", ");
@@ -1051,7 +1061,9 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                             <tr
                               key={i}
                               className={`border-b border-slate-800/40 last:border-0 transition-colors hover:bg-white/[0.025] ${
-                                isWin ? "bg-emerald-950/10" : "bg-rose-950/10"
+                                isLive
+                                  ? "bg-violet-950/30 ring-inset ring-1 ring-violet-500/15"
+                                  : isWin ? "bg-emerald-950/10" : "bg-rose-950/10"
                               }`}
                             >
                               {/* Dir */}
@@ -1068,8 +1080,20 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                               </td>
                               {/* Out */}
                               <td className="px-2 py-2.5">
-                                <div className="text-[9px] font-mono text-white/55 tabular-nums">{exitDate ?? "—"}</div>
-                                <div className="text-[8px] font-mono text-white/35 tabular-nums mt-0.5">{exitTime ?? ""}</div>
+                                {isLive ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <span className="relative flex h-1.5 w-1.5">
+                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-60" />
+                                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-400" />
+                                    </span>
+                                    <span className="text-[8px] font-bold text-violet-400">LIVE</span>
+                                  </span>
+                                ) : (
+                                  <>
+                                    <div className="text-[9px] font-mono text-white/55 tabular-nums">{exitDate ?? "—"}</div>
+                                    <div className="text-[8px] font-mono text-white/35 tabular-nums mt-0.5">{exitTime ?? ""}</div>
+                                  </>
+                                )}
                               </td>
                               {/* Entry price */}
                               <td className="px-2 py-2.5 text-right">
@@ -1077,21 +1101,35 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                               </td>
                               {/* Exit price */}
                               <td className="px-2 py-2.5 text-right">
-                                <div className="text-[9px] font-mono text-white/50 tabular-nums">${t.exit_price.toFixed(2)}</div>
+                                {isLive ? (
+                                  <div className="text-[9px] font-mono text-yellow-300 tabular-nums">{livePrice ? `$${livePrice.toFixed(2)}` : "—"}</div>
+                                ) : (
+                                  <div className="text-[9px] font-mono text-white/50 tabular-nums">${t.exit_price.toFixed(2)}</div>
+                                )}
                               </td>
                               {/* Result */}
                               <td className="px-2 py-2.5 text-center">
-                                <span className={`inline-block text-[8px] font-bold px-1.5 py-0.5 rounded-md leading-tight ${
-                                  t.exit_reason === "TP"  ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/25"
-                                  : t.exit_reason === "SL" ? "bg-red-500/20 text-red-300 ring-1 ring-red-500/25"
-                                  : "bg-slate-700/40 text-slate-400 ring-1 ring-slate-600/30"
-                                }`}>{t.exit_reason ?? "—"}</span>
+                                {isLive ? (
+                                  <span className="inline-block text-[8px] font-bold px-1.5 py-0.5 rounded-md leading-tight bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/25">Open</span>
+                                ) : (
+                                  <span className={`inline-block text-[8px] font-bold px-1.5 py-0.5 rounded-md leading-tight ${
+                                    t.exit_reason === "TP"  ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/25"
+                                    : t.exit_reason === "SL" ? "bg-red-500/20 text-red-300 ring-1 ring-red-500/25"
+                                    : "bg-slate-700/40 text-slate-400 ring-1 ring-slate-600/30"
+                                  }`}>{t.exit_reason ?? "—"}</span>
+                                )}
                               </td>
                               {/* P&L */}
                               <td className="px-2 py-2.5 text-right">
-                                <div className={`text-[12px] font-black tabular-nums font-mono ${isWin ? "text-emerald-400" : "text-red-400"}`}>
-                                  {isWin ? "+" : ""}${t.pnl.toFixed(2)}
-                                </div>
+                                {isLive ? (
+                                  <div className={`text-[12px] font-black tabular-nums font-mono ${uPnl == null ? "text-white/25" : uPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                    {uPnl == null ? "—" : `${uPnl >= 0 ? "+" : ""}$${uPnl.toFixed(2)}`}
+                                  </div>
+                                ) : (
+                                  <div className={`text-[12px] font-black tabular-nums font-mono ${isWin ? "text-emerald-400" : "text-red-400"}`}>
+                                    {isWin ? "+" : ""}${t.pnl.toFixed(2)}
+                                  </div>
+                                )}
                               </td>
                             </tr>
                           );
