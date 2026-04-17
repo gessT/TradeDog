@@ -357,13 +357,8 @@ function TradeLogByDate({ trades, onTradeClick, livePrice, dateFrom, dateTo, aut
         (map[datePart] ??= []).push(t);
       }
     }
-    // Within each day: OPEN (LIVE) trades first sorted by entry_time desc,
-    // then CLOSED trades sorted by exit_time desc
-    for (const arr of Object.values(map)) {
-      const open   = arr.filter(t => t.reason === "OPEN").sort((a, b) => b.entry_time.localeCompare(a.entry_time));
-      const closed = arr.filter(t => t.reason !== "OPEN").sort((a, b) => (b.exit_time ?? "").localeCompare(a.exit_time ?? ""));
-      arr.splice(0, arr.length, ...open, ...closed);
-    }
+    // Reverse trades within each day so latest order is on top
+    for (const arr of Object.values(map)) arr.reverse();
     return Object.entries(map).sort((a, b) => b[0].localeCompare(a[0]));
   })();
 
@@ -1611,19 +1606,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     setSlMult(bp.sl);
     setTpMult(bp.tp);
     handleIntervalChange(bp.interval);
-    // Immediately sync the trader panel to this strategy (no backtest needed)
-    onConfigLock?.({
-      preset: bp.name,
-      symbol,
-      interval: bp.interval,
-      slMult: bp.sl,
-      tpMult: bp.tp,
-      conditionToggles: { ...bp.toggles },
-      metrics: { win_rate: 0, total_return_pct: 0, max_drawdown_pct: 0, sharpe_ratio: 0, profit_factor: 0, total_trades: 0, winners: 0, losers: 0, risk_reward_ratio: 0 },
-      lockedAt: Date.now(),
-    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, onConfigLock]);
+  }, []);
 
   // ── Backtest ──────────────────────────────────────────
   const [hasRunBacktest, setHasRunBacktest] = useState(false);
@@ -1631,8 +1615,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   hasRunBacktestRef.current = hasRunBacktest;
 
   const runBacktest = useCallback(async () => {
-    // Scanner must be OFF during backtest — force it off
-    setAutoTrading(false);
     setLoading(true);
     setError(null);
     // Clamp SL/TP to backend minimum
@@ -2713,7 +2695,16 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                         {/* 2×2 primary grid — grows to fill available height */}
                         <div className="grid grid-cols-2 gap-1 flex-1 auto-rows-fr mb-1">
                           <div className="rounded-md bg-slate-800/60 px-2 py-1.5 relative group/wr flex flex-col justify-center">
-                            <div className="text-[7px] text-slate-500 uppercase font-semibold tracking-wide">Win Rate</div>
+                            <div className="flex items-center gap-1">
+                              <div className="text-[7px] text-slate-500 uppercase font-semibold tracking-wide">Win Rate</div>
+                              {btData.data_source && (
+                                <span className={`ml-auto px-1 py-px rounded text-[6.5px] font-bold ${
+                                  btData.data_source === "Tiger"
+                                    ? "bg-emerald-900/50 text-emerald-400 border border-emerald-700/40"
+                                    : "bg-amber-900/50 text-amber-400 border border-amber-700/40"
+                                }`}>{btData.data_source === "Tiger" ? "⚡" : "⏱"}</span>
+                              )}
+                            </div>
                             <div className={`text-sm font-black tabular-nums ${winRateColor(m.win_rate)}`}>{n(m.win_rate).toFixed(1)}%</div>
                             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/wr:block w-44 px-2 py-1.5 rounded bg-slate-950 border border-slate-700 text-[8px] text-slate-300 leading-tight shadow-lg z-50 pointer-events-none"><b className="text-cyan-400">Win Rate</b> — Percentage of trades that were profitable. Above 55% is good, 60%+ is strong.</div>
                           </div>
@@ -2874,21 +2865,15 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
 
               {/* Trade log — merged with Daily P&L bars */}
               <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 relative">
-                <div className="px-3 pt-2 pb-0.5 flex items-center gap-2 border-b border-slate-800/30">
+                <div className="px-2 pt-1.5 pb-1 flex items-center gap-1.5 border-b border-slate-800/30">
                   <span className="text-[8px] uppercase tracking-widest text-slate-500 font-bold">Trade Log</span>
-                  <span className="text-[8px] text-slate-600">·</span>
-                  <span className="text-[8px] text-slate-600">MGC=F · {btData.interval ?? "5m"} · {btData.period}</span>
-                  <span className="text-[8px] text-slate-600">${n(m.initial_capital).toLocaleString()} → ${n(m.final_equity).toLocaleString()}</span>
                   {btData.data_source && (
-                    <span className={`px-1.5 py-0.5 rounded text-[8px] font-medium ${
+                    <span className={`px-1.5 py-px rounded text-[7.5px] font-bold ${
                       btData.data_source === "Tiger"
-                        ? "bg-emerald-900/40 text-emerald-400 border border-emerald-700/40"
-                        : "bg-amber-900/40 text-amber-400 border border-amber-700/40"
-                    }`}>
-                      {btData.data_source === "Tiger" ? "⚡ Tiger" : "⏱ yfinance"}
-                    </span>
+                        ? "bg-emerald-900/50 text-emerald-400 border border-emerald-700/40"
+                        : "bg-amber-900/50 text-amber-400 border border-amber-700/40"
+                    }`}>{btData.data_source === "Tiger" ? "⚡ Tiger" : "⏱ yfinance"}</span>
                   )}
-                  <span className="ml-auto text-[8px] text-slate-600">{btData.timestamp}</span>
                 </div>
                 {loading && (
                   <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm rounded-lg">
