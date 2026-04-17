@@ -389,9 +389,16 @@ function TradeLogByDate({ trades, onTradeClick, livePrice, dateFrom, dateTo, aut
     }, 0);
   }
   const maxDayPnl = Math.max(...Object.values(dayPnlMap).map(Math.abs), 1);
-  const totalPnl = Object.values(dayPnlMap).reduce((s, v) => s + v, 0);
-  const totalWins = trades.filter(t => t.reason !== "OPEN" && t.pnl > 0).length;
-  const closedCount = trades.filter(t => t.reason !== "OPEN").length;
+  // Totals computed from filtered trades only (respects dateFrom/dateTo)
+  const totalPnl = filtered.reduce((s, t) => {
+    if (t.reason === "OPEN" && livePrice != null) {
+      const isLong = t.direction !== "PUT";
+      return s + (isLong ? livePrice - n(t.entry_price) : n(t.entry_price) - livePrice) * n(t.qty) * 10;
+    }
+    return s + n(t.pnl);
+  }, 0);
+  const totalWins = filtered.filter(t => t.reason !== "OPEN" && t.pnl > 0).length;
+  const closedCount = filtered.filter(t => t.reason !== "OPEN").length;
 
   const toggle = (d: string) => setExpanded((p) => ({ ...p, [d]: !p[d] }));
 
@@ -404,7 +411,7 @@ function TradeLogByDate({ trades, onTradeClick, livePrice, dateFrom, dateTo, aut
             Trade Log
           </span>
           <span className="text-slate-700">·</span>
-          <span className="text-[9px] text-slate-400">{trades.length} trades · {grouped.length} day{grouped.length !== 1 ? "s" : ""}</span>
+          <span className="text-[9px] text-slate-400">{filtered.length} trades · {grouped.length} day{grouped.length !== 1 ? "s" : ""}</span>
           {closedCount > 0 && (
             <span className="text-[9px] text-slate-400">WR {Math.round(totalWins / closedCount * 100)}%</span>
           )}
