@@ -116,8 +116,15 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
   const [tradeExecutedTick, setTradeExecutedTick] = useState(0);
   // ── Whether auto-trader is actively running (paper or live) ──
   const [autoTraderStarted, setAutoTraderStarted] = useState(false);
-  // ── Scanner auto-run toggle (Strategy panel drives this; gates AutoTrader tick loop) ──
-  const [scannerAutoRun, setScannerAutoRun] = useState(false);
+  // ── Scanner auto-run toggle — persisted across page refreshes ──
+  const [scannerAutoRun, setScannerAutoRun_] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("futures_scanner_on") === "true";
+  });
+  const setScannerAutoRun = useCallback((v: boolean) => {
+    setScannerAutoRun_(v);
+    if (typeof window !== "undefined") localStorage.setItem("futures_scanner_on", String(v));
+  }, []);
   // ── Trade click → scroll chart to candle ─────────────────────
   const handleTradeClick5Min = useCallback((t: MGC5MinTrade) => {
     const ts = Math.floor(new Date(t.entry_time).getTime() / 1000);

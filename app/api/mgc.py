@@ -211,6 +211,7 @@ import time as _time
 
 _price_cache: dict[str, tuple[float, float]] = {}  # symbol → (price, timestamp)
 _PRICE_CACHE_TTL = 2.0  # seconds
+_last_tiger_price: dict[str, float] = {}  # symbol → last successful Tiger price (no expiry)
 
 
 def _get_cached_price(symbol: str) -> float | None:
@@ -238,9 +239,13 @@ def _tiger_live_price(symbol: str) -> float:
         if period_1m:
             df = quote_client.get_future_bars(identifier, period=period_1m, limit=1)
             if df is not None and not df.empty:
-                return round(float(df["close"].iloc[-1]), 2)
+                price = round(float(df["close"].iloc[-1]), 2)
+                _last_tiger_price[symbol] = price
+                return price
     except Exception:
-        logger.warning("Tiger live price failed for %s", symbol)
+        logger.warning("Tiger live price failed for %s — clearing client cache to force reconnect", symbol)
+        if hasattr(_get_tiger_clients, "_cache"):
+            del _get_tiger_clients._cache
     return 0.0
 
 
@@ -270,7 +275,9 @@ def _tiger_bars(symbol: str, interval: str, limit: int = 500):
             return identifier, df
         return identifier, None
     except Exception:
-        logger.warning("Tiger bars failed for %s/%s", symbol, interval)
+        logger.warning("Tiger bars failed for %s/%s — clearing client cache to force reconnect", symbol, interval)
+        if hasattr(_get_tiger_clients, "_cache"):
+            del _get_tiger_clients._cache
         return symbol, None
 
 
@@ -341,7 +348,12 @@ async def live_price(symbol: str):
         price = _tiger_live_price(symbol)
         if price > 0:
             return price
-        # Last-resort fallback: yfinance
+        # Return last known Tiger price to avoid yfinance blip (Tiger blip, not a real switch)
+        last = _last_tiger_price.get(symbol)
+        if last:
+            logger.debug("Tiger price blip for %s — returning last known Tiger price %.2f", symbol, last)
+            return last
+        # Last-resort fallback: yfinance (only when no Tiger price ever obtained)
         try:
             import yfinance as yf
             commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": f"{symbol}=F"})
@@ -5143,19 +5155,30 @@ def _compute_latest_atr(symbol: str, interval: str = "5m", period: int = 14) -> 
 
 
 def _load_5min_data_for_tick(symbol: str, period: str, interval: str = "5m") -> "pd.DataFrame | None":
-    """Load data for signal scanning during tick."""
+    """Load data for signal scanning during tick — Tiger first, yfinance fallback."""
     import pandas as pd
+
+    # Tiger first — real-time, most accurate
+    if _tiger_quote_ok:
+        try:
+            _, df = _tiger_bars(symbol, interval, 500)
+            if df is not None and len(df) > 50:
+                logger.debug("Tick data %s/%s: Tiger (%d bars)", symbol, interval, len(df))
+                return df
+        except Exception as e:
+            logger.warning("Tiger tick data failed for %s/%s: %s — falling back to yfinance", symbol, interval, e)
+
+    # yfinance fallback
+    _period_map = {"1d": "5d", "3d": "5d", "7d": "14d", "14d": "30d", "30d": "60d"}
+    _max_period = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d"}
+    fetch_period = _period_map.get(period, "14d")
+    max_allowed = _max_period.get(interval, "60d")
+    if int(fetch_period.replace("d", "")) > int(max_allowed.replace("d", "")):
+        fetch_period = max_allowed
     try:
-        _period_map = {"1d": "5d", "3d": "5d", "7d": "14d", "14d": "30d", "30d": "60d"}
-        # yfinance limits: 1m max 7d
-        _max_period = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d"}
-        fetch_period = _period_map.get(period, "14d")
-        max_allowed = _max_period.get(interval, "60d")
-        # Clamp to yfinance limit
-        if int(fetch_period.replace("d", "")) > int(max_allowed.replace("d", "")):
-            fetch_period = max_allowed
         df = load_yfinance(symbol=f"{symbol}=F", interval=interval, period=fetch_period)
         if df is not None and len(df) > 50:
+            logger.debug("Tick data %s/%s: yfinance fallback (%d bars)", symbol, interval, len(df))
             return df
     except Exception as e:
         logger.error("Failed to load %s data for tick: %s", interval, e)

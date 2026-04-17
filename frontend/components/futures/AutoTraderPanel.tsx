@@ -813,75 +813,6 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
 
       </div>
 
-      {/* ═══ Mini Log row (live mode only) ═══ */}
-      {started && mode === "live" && (
-        <div className="mx-2 mt-1 mb-0.5 flex gap-1.5">
-          {/* ── Mini Log bar ── */}
-          <div className="w-full rounded-lg overflow-hidden ring-1 ring-white/[0.08] bg-slate-900/60 backdrop-blur-sm">
-            {/* Header row — always visible */}
-            <button
-              onClick={() => setLogExpanded(v => !v)}
-              className="w-full flex items-center gap-1.5 px-2 py-1 hover:bg-white/[0.03] transition-colors"
-            >
-              <span className="relative flex h-1.5 w-1.5 shrink-0">
-                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 ${
-                  state === "IN_TRADE" ? "bg-violet-400" : state === "COOLDOWN" ? "bg-amber-400" : "bg-emerald-400"
-                }`} />
-                <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${
-                  state === "IN_TRADE" ? "bg-violet-400" : state === "COOLDOWN" ? "bg-amber-400" : "bg-emerald-400"
-                }`} />
-              </span>
-              <span className="flex-1 text-left font-mono text-[8px] text-white/60 truncate">
-                {logs.length > 0 ? logs[0].msg : "No activity yet"}
-              </span>
-              <span className="shrink-0 text-[8px] text-white/30 font-mono">{logs.length > 0 ? `${logs.length}` : ""}</span>
-              <span className="shrink-0 text-[7px] text-white/25 ml-0.5">{logExpanded ? "▲" : "▼"}</span>
-            </button>
-            {/* Expanded log entries */}
-            {logExpanded && snap && (
-              <div className="border-t border-white/[0.06] max-h-48 overflow-y-auto p-1.5 space-y-px font-mono text-[8px]">
-                {snap.state === "IDLE" && (
-                  <div className="relative mb-1 px-2 py-1 rounded-md bg-emerald-500/[0.04] ring-1 ring-emerald-500/10 overflow-hidden">
-                    <div className="at-scan-sweep" />
-                    <div className="flex items-center gap-1.5">
-                      <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" /><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" /></span>
-                      <span className="text-emerald-400/70 tracking-wide">Scanning for signals</span>
-                      <span className="at-scan-dots text-emerald-400/40" />
-                    </div>
-                  </div>
-                )}
-                {snap.state === "IN_TRADE" && (
-                  <div className="relative mb-1 px-2 py-1 rounded-md bg-violet-500/[0.04] ring-1 ring-violet-500/10 overflow-hidden">
-                    <div className="at-scan-sweep-violet" />
-                    <div className="flex items-center gap-1.5">
-                      <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-60" /><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-400" /></span>
-                      <span className="text-violet-400/70 tracking-wide">Monitoring position</span>
-                    </div>
-                  </div>
-                )}
-                {snap.state === "COOLDOWN" && (
-                  <div className="mb-1 px-2 py-1 rounded-md bg-amber-500/[0.04] ring-1 ring-amber-500/10">
-                    <div className="flex items-center gap-1.5">
-                      <span className="relative flex h-1.5 w-1.5"><span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-60" /><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-400" /></span>
-                      <span className="text-amber-400/70 tracking-wide">Cooling down</span>
-                    </div>
-                  </div>
-                )}
-                {logs.length === 0 && (
-                  <div className="text-white/40 text-center py-2 text-[9px]">No activity yet</div>
-                )}
-                {logs.map((l, i) => (
-                  <div key={l.ts + i} className={`flex gap-1.5 px-1.5 py-0.5 rounded hover:bg-white/[0.02] ${i === 0 ? "at-log-entry" : ""}`}>
-                    <span className="text-white/40 shrink-0">{new Date(l.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: getTimezone() })}</span>
-                    <span className={l.type === "entry" ? "text-violet-400" : l.type === "exit" ? "text-amber-300" : l.type === "signal" ? "text-cyan-400" : l.type === "error" ? "text-red-400" : l.type === "warn" ? "text-amber-400" : "text-white/40"}>{LOG_PREFIX[l.type]}</span>
-                    <span className="text-white/80 break-all">{l.msg}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
       {/* ═══ Tab content ═══ */}
       <div className="flex-1 min-h-0 overflow-y-auto">
 
@@ -1098,41 +1029,69 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                   </div>
                 ) : (
                   <div className="rounded-xl ring-1 ring-slate-700/40 bg-slate-900/40 overflow-hidden">
-                    <table className="w-full">
+                    <table className="w-full border-collapse">
                       <thead>
-                        <tr className="border-b border-slate-700/40 bg-slate-900/60">
-                          <th className="px-3 py-2 text-left text-[8px] uppercase tracking-widest text-white/25 font-bold">Symbol</th>
-                          <th className="px-3 py-2 text-center text-[8px] uppercase tracking-widest text-white/25 font-bold">Dir</th>
-                          <th className="px-3 py-2 text-right text-[8px] uppercase tracking-widest text-white/25 font-bold">Entry</th>
-                          <th className="px-3 py-2 text-right text-[8px] uppercase tracking-widest text-white/25 font-bold">Exit</th>
-                          <th className="px-3 py-2 text-center text-[8px] uppercase tracking-widest text-white/25 font-bold">Result</th>
-                          <th className="px-3 py-2 text-right text-[8px] uppercase tracking-widest text-white/25 font-bold">P&amp;L</th>
+                        <tr className="bg-slate-900/80 border-b border-slate-700/50">
+                          <th className="px-2 py-2 text-left   text-[7.5px] uppercase tracking-widest text-white/30 font-bold w-[28px]">Dir</th>
+                          <th className="px-2 py-2 text-left   text-[7.5px] uppercase tracking-widest text-white/30 font-bold">In</th>
+                          <th className="px-2 py-2 text-left   text-[7.5px] uppercase tracking-widest text-white/30 font-bold">Out</th>
+                          <th className="px-2 py-2 text-right  text-[7.5px] uppercase tracking-widest text-white/30 font-bold">Entry</th>
+                          <th className="px-2 py-2 text-right  text-[7.5px] uppercase tracking-widest text-white/30 font-bold">Exit</th>
+                          <th className="px-2 py-2 text-center text-[7.5px] uppercase tracking-widest text-white/30 font-bold">Result</th>
+                          <th className="px-2 py-2 text-right  text-[7.5px] uppercase tracking-widest text-white/30 font-bold">P&amp;L</th>
                         </tr>
                       </thead>
                       <tbody>
                         {closedTrades.map((t, i) => {
                           const isLong = t.direction === "CALL";
+                          const isWin = t.pnl >= 0;
+                          const [entryDate, entryTime] = fmtTZ(t.entry_time).split(", ");
+                          const [exitDate, exitTime]   = fmtTZ(t.exit_time ?? null).split(", ");
                           return (
-                            <tr key={i} className="border-b border-slate-800/40 hover:bg-slate-800/25 transition-colors last:border-0">
-                              <td className="px-3 py-3">
-                                <div className="text-[11px] font-bold text-white/85">{symbol}</div>
-                                <div className="text-[8px] text-slate-500 tabular-nums font-mono mt-0.5">{fmtTZ(t.entry_time).split(",")[0]}</div>
+                            <tr
+                              key={i}
+                              className={`border-b border-slate-800/40 last:border-0 transition-colors hover:bg-white/[0.025] ${
+                                isWin ? "bg-emerald-950/10" : "bg-rose-950/10"
+                              }`}
+                            >
+                              {/* Dir */}
+                              <td className="px-2 py-2.5 text-center">
+                                <div className={`text-[13px] font-black leading-none ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
+                                  {isLong ? "▲" : "▼"}
+                                </div>
+                                <div className="text-[7.5px] text-white/20 font-mono mt-0.5">×{t.qty ?? 1}</div>
                               </td>
-                              <td className="px-3 py-3 text-center">
-                                <span className={`text-[12px] font-black ${isLong ? "text-emerald-400" : "text-rose-400"}`}>{isLong ? "\u25b2" : "\u25bc"}</span>
-                                <div className="text-[8px] text-white/25 font-mono">{"\u00d7"}{t.qty ?? 1}</div>
+                              {/* In */}
+                              <td className="px-2 py-2.5">
+                                <div className="text-[9px] font-mono text-white/55 tabular-nums">{entryDate ?? "—"}</div>
+                                <div className="text-[8px] font-mono text-white/35 tabular-nums mt-0.5">{entryTime ?? ""}</div>
                               </td>
-                              <td className="px-3 py-3 text-right font-mono text-[11px] text-white/60">${t.entry_price.toFixed(2)}</td>
-                              <td className="px-3 py-3 text-right font-mono text-[11px] text-white/60">${t.exit_price.toFixed(2)}</td>
-                              <td className="px-3 py-3 text-center">
-                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md ${
-                                  t.exit_reason === "TP" ? "bg-emerald-500/15 text-emerald-300"
-                                  : t.exit_reason === "SL" ? "bg-red-500/15 text-red-300"
-                                  : "bg-slate-700/40 text-slate-400"
-                                }`}>{t.exit_reason}</span>
+                              {/* Out */}
+                              <td className="px-2 py-2.5">
+                                <div className="text-[9px] font-mono text-white/55 tabular-nums">{exitDate ?? "—"}</div>
+                                <div className="text-[8px] font-mono text-white/35 tabular-nums mt-0.5">{exitTime ?? ""}</div>
                               </td>
-                              <td className={`px-3 py-3 text-right font-mono text-[13px] font-black tabular-nums ${t.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                                {t.pnl >= 0 ? "+" : ""}${t.pnl.toFixed(2)}
+                              {/* Entry price */}
+                              <td className="px-2 py-2.5 text-right">
+                                <div className="text-[9px] font-mono text-white/50 tabular-nums">${t.entry_price.toFixed(2)}</div>
+                              </td>
+                              {/* Exit price */}
+                              <td className="px-2 py-2.5 text-right">
+                                <div className="text-[9px] font-mono text-white/50 tabular-nums">${t.exit_price.toFixed(2)}</div>
+                              </td>
+                              {/* Result */}
+                              <td className="px-2 py-2.5 text-center">
+                                <span className={`inline-block text-[8px] font-bold px-1.5 py-0.5 rounded-md leading-tight ${
+                                  t.exit_reason === "TP"  ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/25"
+                                  : t.exit_reason === "SL" ? "bg-red-500/20 text-red-300 ring-1 ring-red-500/25"
+                                  : "bg-slate-700/40 text-slate-400 ring-1 ring-slate-600/30"
+                                }`}>{t.exit_reason ?? "—"}</span>
+                              </td>
+                              {/* P&L */}
+                              <td className="px-2 py-2.5 text-right">
+                                <div className={`text-[12px] font-black tabular-nums font-mono ${isWin ? "text-emerald-400" : "text-red-400"}`}>
+                                  {isWin ? "+" : ""}${t.pnl.toFixed(2)}
+                                </div>
                               </td>
                             </tr>
                           );
@@ -1221,6 +1180,47 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                     <div className={`text-[11px] font-bold mt-px ${s.color}`}>{s.value}</div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* ── Activity Log (live mode) ── */}
+            {started && mode === "live" && (
+              <div className="mx-3 mb-2 rounded-lg overflow-hidden ring-1 ring-white/[0.08] bg-slate-900/60">
+                {/* Collapsed header */}
+                <button
+                  onClick={() => setLogExpanded(v => !v)}
+                  className="w-full flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-white/[0.03] transition-colors"
+                >
+                  <span className="relative flex h-1.5 w-1.5 shrink-0">
+                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 ${
+                      state === "IN_TRADE" ? "bg-violet-400" : state === "COOLDOWN" ? "bg-amber-400" : "bg-emerald-400"
+                    }`} />
+                    <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${
+                      state === "IN_TRADE" ? "bg-violet-400" : state === "COOLDOWN" ? "bg-amber-400" : "bg-emerald-400"
+                    }`} />
+                  </span>
+                  <span className="text-[8px] font-bold uppercase tracking-widest text-white/30 shrink-0">Log</span>
+                  <span className="flex-1 text-left font-mono text-[8px] text-white/55 truncate min-w-0 ml-1">
+                    {logs.length > 0 ? logs[0].msg : "No activity yet"}
+                  </span>
+                  <span className="shrink-0 text-[8px] text-white/25 font-mono tabular-nums">{logs.length > 0 ? logs.length : ""}</span>
+                  <span className="shrink-0 text-[7px] text-white/20 ml-1">{logExpanded ? "▲" : "▼"}</span>
+                </button>
+                {/* Expanded entries */}
+                {logExpanded && (
+                  <div className="border-t border-white/[0.06] max-h-40 overflow-y-auto p-1.5 space-y-px font-mono text-[8px]">
+                    {logs.length === 0 && (
+                      <div className="text-white/25 text-center py-3">No activity yet</div>
+                    )}
+                    {logs.map((l, i) => (
+                      <div key={l.ts + i} className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-white/[0.02] ${i === 0 ? "at-log-entry" : ""}`}>
+                        <span className="text-white/25 shrink-0 tabular-nums">{new Date(l.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: getTimezone() })}</span>
+                        <span className={`shrink-0 ${ l.type === "entry" ? "text-violet-400" : l.type === "exit" ? "text-amber-300" : l.type === "signal" ? "text-cyan-400" : l.type === "error" ? "text-red-400" : l.type === "warn" ? "text-amber-400" : "text-white/30"}`}>{LOG_PREFIX[l.type]}</span>
+                        <span className="truncate min-w-0 text-white/70">{l.msg}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
