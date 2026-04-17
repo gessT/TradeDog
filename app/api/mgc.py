@@ -275,12 +275,12 @@ def _tiger_bars(symbol: str, interval: str, limit: int = 500):
 
 
 
-def _load_tiger_or_yf(symbol: str, interval: str, period: str) -> "pd.DataFrame":
+def _load_tiger_or_yf(symbol: str, interval: str, period: str) -> "tuple[pd.DataFrame, str]":
     """
     Load OHLCV bars: Tiger API first, fallback to yfinance.
     `symbol` is the commodity key (e.g. "MGC"), not the yfinance ticker.
     `period` is a yfinance-style string like "5d", "60d", "7d".
-    Returns a DataFrame with columns [open, high, low, close, volume].
+    Returns (DataFrame, source) where source is "Tiger" or "yfinance".
     """
     import pandas as pd
 
@@ -299,14 +299,14 @@ def _load_tiger_or_yf(symbol: str, interval: str, period: str) -> "pd.DataFrame"
     if df_tiger is not None and not df_tiger.empty:
         # Validate Tiger data covers the requested period.
         # Tiger intraday history is typically limited to ~15 days.
-        # If the earliest bar is less than 80% of the requested window, fall through to yfinance.
+        # If the earliest bar is less than 70% of the requested window, fall through to yfinance.
         try:
             earliest = df_tiger.index[0]
             latest   = df_tiger.index[-1]
             tiger_span_days = (latest - earliest).total_seconds() / 86400
             if tiger_span_days >= days * 0.7:
                 logger.debug("Tiger data used for %s/%s (%d bars, %.0fd span)", symbol, interval, len(df_tiger), tiger_span_days)
-                return df_tiger
+                return df_tiger, "Tiger"
             else:
                 logger.debug("Tiger only has %.0fd of %sd requested — falling back to yfinance", tiger_span_days, days)
         except Exception:
@@ -322,7 +322,7 @@ def _load_tiger_or_yf(symbol: str, interval: str, period: str) -> "pd.DataFrame"
     df_yf = load_yfinance(symbol=yf_symbol, interval=interval, period=yf_period)
     if df_yf is None or df_yf.empty:
         raise ValueError(f"No data available for {symbol} ({interval}, {period})")
-    return df_yf
+    return df_yf, "yfinance"
 
 
 @router.get("/price/{symbol}")
@@ -2097,7 +2097,7 @@ async def mgc_backtest_2min(
         from strategies.futures.backtest_2min import Backtester2Min
 
         _sym_key = symbol.replace("=F", "").replace("=f", "")
-        df = _load_tiger_or_yf(_sym_key, "2m", period)
+        df, _data_source = _load_tiger_or_yf(_sym_key, "2m", period)
         if df.empty or len(df) < 100:
             raise ValueError("Not enough 2m data.")
 
@@ -2252,14 +2252,14 @@ async def mgc_backtest_5min_locked(
         from strategies.futures.backtest_5min_locked import BacktesterLocked5Min
 
         _sym_key = symbol.replace("=F", "").replace("=f", "")
-        df_5m = _load_tiger_or_yf(_sym_key, "5m", period)
+        df_5m, _data_source = _load_tiger_or_yf(_sym_key, "5m", period)
         if df_5m.empty or len(df_5m) < 100:
             raise ValueError("Not enough 5m data.")
 
         df_1h = None
         if use_htf:
             try:
-                df_1h = _load_tiger_or_yf(_sym_key, "1h", "90d")
+                df_1h, _ = _load_tiger_or_yf(_sym_key, "1h", "90d")
             except Exception:
                 df_1h = None
 
@@ -2387,14 +2387,14 @@ async def mgc_backtest_5min_locked_short(
         from strategies.futures.backtest_5min_locked_short import BacktesterLockedShort5Min
 
         _sym_key = symbol.replace("=F", "").replace("=f", "")
-        df_5m = _load_tiger_or_yf(_sym_key, "5m", period)
+        df_5m, _data_source = _load_tiger_or_yf(_sym_key, "5m", period)
         if df_5m.empty or len(df_5m) < 100:
             raise ValueError("Not enough 5m data.")
 
         df_1h = None
         if use_htf:
             try:
-                df_1h = _load_tiger_or_yf(_sym_key, "1h", "90d")
+                df_1h, _ = _load_tiger_or_yf(_sym_key, "1h", "90d")
             except Exception:
                 df_1h = None
 
@@ -2517,7 +2517,7 @@ async def mgc_backtest_sync_test(
         from strategies.futures.backtest_sync_test import BacktesterSyncTest
 
         _sym_key = symbol.replace("=F", "").replace("=f", "")
-        df_5m = _load_tiger_or_yf(_sym_key, "5m", period)
+        df_5m, _data_source = _load_tiger_or_yf(_sym_key, "5m", period)
         if df_5m.empty or len(df_5m) < 10:
             raise ValueError("Not enough 5m data.")
 
@@ -2627,7 +2627,7 @@ async def mgc_backtest_always_open(
 
     def _run():
         _sym_key = symbol.replace("=F", "").replace("=f", "")
-        df = _load_tiger_or_yf(_sym_key, "5m", period)
+        df, _data_source = _load_tiger_or_yf(_sym_key, "5m", period)
         if df.empty or len(df) < 3:
             raise ValueError("Not enough 5m data for Always Open strategy.")
 
@@ -4731,7 +4731,7 @@ def _get_backtest_open_position(symbol: str, period: str, trader, interval: str 
 
     # ── Always Open: position is always the last completed bar ──
     if "always open" in preset.lower() or preset.lower() == "always_open":
-        df = _load_tiger_or_yf(symbol, interval, "1d")
+        df, _ = _load_tiger_or_yf(symbol, interval, "1d")
         if df is None or len(df) < 3:
             return None
         entry_bar = df.iloc[-2]
