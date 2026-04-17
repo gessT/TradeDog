@@ -1384,23 +1384,6 @@ export async function fetchMGC5MinLockedShortBacktest(
   return (await response.json()) as MGC5MinBacktestResponse;
 }
 
-export async function fetchMGCSyncTestBacktest(
-  symbol: string = "MGC",
-  period: string = "5d",
-  hold_bars: number = 2,
-  direction: "long" | "short" | "both" = "both",
-  capital: number = 10000,
-  pip_target: number = 2.0,
-): Promise<MGC5MinBacktestResponse> {
-  const url = `${API_BASE}/mgc/backtest_sync_test?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&hold_bars=${hold_bars}&direction=${direction}&capital=${capital}&pip_target=${pip_target}`;
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Request failed with ${response.status}`);
-  }
-  return (await response.json()) as MGC5MinBacktestResponse;
-}
-
 export async function fetchMGCAlwaysOpenBacktest(
   symbol: string = "MGC",
   period: string = "1d",

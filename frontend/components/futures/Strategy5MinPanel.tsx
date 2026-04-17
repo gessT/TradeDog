@@ -20,7 +20,6 @@ import {
   fetchMGC2MinBacktest,
   fetchMGC5MinLockedBacktest,
   fetchMGC5MinLockedShortBacktest,
-  fetchMGCSyncTestBacktest,
   fetchMGCAlwaysOpenBacktest,
   execute5Min,
   getMgcPosition,
@@ -567,7 +566,7 @@ export type BuiltInPreset = {
   sl: number;
   tp: number;
   desc: string;
-  endpoint?: "5min" | "2min" | "5min_locked" | "5min_locked_short" | "5min_mix" | "sync_test" | "always_open";  // which backend endpoint to use (default: 5min)
+  endpoint?: "5min" | "2min" | "5min_locked" | "5min_locked_short" | "5min_mix" | "always_open";  // which backend endpoint to use (default: 5min)
 };
 
 export const BUILT_IN_PRESETS: BuiltInPreset[] = [
@@ -647,32 +646,7 @@ export const BUILT_IN_PRESETS: BuiltInPreset[] = [
     },
   },
   {
-    name: "🔬 Sync Test",
-    desc: "VALIDATION ONLY · Entry every 5m · Exit after 10m · No SL/TP",
-    interval: "5m",
-    sl: 0,
-    tp: 0,
-    endpoint: "sync_test",
-    toggles: {
-      ema_trend: false,
-      ema_slope: false,
-      pullback: false,
-      breakout: false,
-      supertrend: false,
-      macd_momentum: false,
-      rsi_momentum: false,
-      volume_spike: false,
-      atr_range: false,
-      session_ok: false,
-      adx_ok: false,
-      smc_bos: false,
-      smc_ob: false,
-      smc_fvg: false,
-      halftrend: false,
-    },
-  },
-  {
-    name: "🟢 Always Open",
+    name: " Always Open",
     desc: "TEST ONLY · Always LONG · SL/TP = 3 pips · 2-min cooldown then re-enter",
     interval: "5m",
     sl: 3,
@@ -1780,14 +1754,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         return;
       }
 
-      if (activeBuiltIn?.endpoint === "sync_test") {
-        const res = await fetchMGCSyncTestBacktest(symbol, period, 2, "both", 10000, 2.0);
-        setBtData(res);
-        onTradesUpdate?.(res.trades);
-        setHasRunBacktest(true);
-        return;
-      }
-
       if (activeBuiltIn?.endpoint === "always_open") {
         const res = await fetchMGCAlwaysOpenBacktest(symbol, "1d", 10000, 3, 3);
         setBtData(res);
@@ -1973,9 +1939,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         // Route to the correct backtest endpoint based on the currently-active preset.
         const currentBuiltIn = BUILT_IN_PRESETS.find((bp) => bp.name === activePresetRef.current);
         let res: MGC5MinBacktestResponse;
-        if (currentBuiltIn?.endpoint === "sync_test") {
-          res = await fetchMGCSyncTestBacktest(symbol, curPeriod, 2, "both", 10000, 2.0);
-        } else if (currentBuiltIn?.endpoint === "always_open") {
+        if (currentBuiltIn?.endpoint === "always_open") {
           res = await fetchMGCAlwaysOpenBacktest(symbol, "1d", 10000, 3, 3);
         } else if (currentBuiltIn?.endpoint === "5min_locked") {
           res = await fetchMGC5MinLockedBacktest(symbol, Math.max(0.3, slMult), Math.max(0.3, tpMult), curPeriod, 10, 10, 2.0, 50, false);
