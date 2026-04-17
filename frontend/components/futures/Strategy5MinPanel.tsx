@@ -1626,6 +1626,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   hasRunBacktestRef.current = hasRunBacktest;
 
   const runBacktest = useCallback(async () => {
+    // Scanner must be OFF during backtest — force it off
+    setAutoTrading(false);
     setLoading(true);
     setError(null);
     // Clamp SL/TP to backend minimum

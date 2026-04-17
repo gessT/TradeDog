@@ -3431,7 +3431,10 @@ async def mgc_trade_log_5min(
         if int(effective_period.replace("d", "")) > int(max_allowed.replace("d", "")):
             effective_period = max_allowed
 
-        df = load_yfinance(symbol=symbol, interval=interval, period=effective_period)
+        # Always use Tiger API first, yfinance as fallback
+        _tiger_sym = symbol.replace("=F", "")  # "MGC=F" → "MGC"
+        df, _src = _load_tiger_or_yf(_tiger_sym, interval, effective_period)
+        logger.info("trade_log_5min: source=%s bars=%s", _src, len(df) if df is not None else 0)
         bt = Backtester5Min()
         result = bt.run(df)
 

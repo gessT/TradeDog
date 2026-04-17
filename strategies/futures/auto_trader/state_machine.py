@@ -124,9 +124,9 @@ class TradingStateMachine:
         self._position_entry_time: str = ""
         self._entry_fill_ts: float = 0.0  # time.time() when entry filled
 
-        # Cooldown
+        # Cooldown (0 = disabled — re-enter immediately after exit)
         self._cooldown_end: float = 0.0
-        self._cooldown_secs: float = 60.0
+        self._cooldown_secs: float = 0.0
         self._cooldown_user_set: bool = False
 
         # Trade history
