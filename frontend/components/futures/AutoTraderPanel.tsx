@@ -849,11 +849,19 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                       <span className="text-[13px] font-black text-white/20 tracking-tight">Auto Paper</span>
                       <span className="text-[10px] font-semibold text-white/15">&middot; Inactive</span>
                       <button
-                        onClick={() => onExternalEnabledChange?.(true)}
-                        className="ml-auto text-[8px] px-2.5 py-1 rounded-lg font-bold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400/60 hover:text-emerald-300 ring-1 ring-emerald-500/20 hover:ring-emerald-500/35 transition-all"
-                      >Scanner ON</button>
+                        onClick={() => !pos && onExternalEnabledChange?.(true)}
+                        disabled={!!pos}
+                        title={pos ? "Close the open position before turning scanner ON" : "Start auto paper trading"}
+                        className={`ml-auto text-[8px] px-2.5 py-1 rounded-lg font-bold ring-1 transition-all ${
+                          pos
+                            ? "bg-white/[0.03] text-white/15 ring-white/5 cursor-not-allowed"
+                            : "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400/60 hover:text-emerald-300 ring-emerald-500/20 hover:ring-emerald-500/35"
+                        }`}
+                      >{pos ? "Position Open" : "Scanner ON"}</button>
                     </div>
-                    <div className="text-[9px] text-white/20">Scanner is OFF &mdash; enable to start auto paper trading</div>
+                    <div className="text-[9px] text-white/20">
+                      {pos ? "⚠ Close the open position before enabling scanner" : "Scanner is OFF — enable to start auto paper trading"}
+                    </div>
                   </div>
                 ) : (
                   <div className="rounded-xl ring-1 ring-emerald-500/20 bg-emerald-500/[0.04] px-4 py-3">
@@ -951,7 +959,18 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                     );
                   })()}
                   <div className="px-2 py-1 border-t border-white/[0.05] text-center">
-                    <span className="text-[7px] uppercase tracking-widest text-white/20 font-bold">Position</span>
+                    {pos ? (
+                      <button
+                        onClick={async () => {
+                          if (!confirm("Close position at market price?")) return;
+                          await handleEmergency();
+                        }}
+                        className="w-full text-[7.5px] font-bold text-rose-400/70 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg py-0.5 transition-all"
+                        title="Close position at market price"
+                      >Close Position</button>
+                    ) : (
+                      <span className="text-[7px] uppercase tracking-widest text-white/20 font-bold">Position</span>
+                    )}
                   </div>
                 </div>
 
