@@ -1827,6 +1827,7 @@ class MGC5MinBacktestResponse(BaseModel):
     params: dict
     open_position: Optional[dict] = None  # current open position from backtest (not yet TP/SL)
     timestamp: str
+    data_source: str = "yfinance"  # "Tiger" or "yfinance"
 
 
 @router.get("/backtest_5min")
@@ -2068,6 +2069,7 @@ async def mgc_backtest_5min(
         params=params,
         open_position=open_pos,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+        data_source="yfinance",
     )
 
 
@@ -2357,6 +2359,7 @@ async def mgc_backtest_5min_locked(
         params=params,
         open_position=open_pos,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+        data_source="Tiger" if _tiger_quote_ok else "yfinance",
     )
 
 
@@ -2488,6 +2491,7 @@ async def mgc_backtest_5min_locked_short(
         params=params,
         open_position=open_pos,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+        data_source="Tiger" if _tiger_quote_ok else "yfinance",
     )
 
 
@@ -2601,6 +2605,7 @@ async def mgc_backtest_sync_test(
         params=params,
         open_position=None,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+        data_source="Tiger" if _tiger_quote_ok else "yfinance",
     )
 
 
@@ -2611,12 +2616,13 @@ async def mgc_backtest_always_open(
     symbol: Annotated[str, Query()] = "MGC=F",
     period: Annotated[str, Query()] = "1d",
     capital: Annotated[float, Query()] = 10_000.0,
+    sl_pips: Annotated[float, Query()] = 3.0,
+    tp_pips: Annotated[float, Query()] = 3.0,
+    cooldown_mins: Annotated[int, Query()] = 2,
 ) -> MGC5MinBacktestResponse:
     """
-    ALWAYS OPEN — Test strategy that immediately opens ONE position.
-
-    Entry price = close of the 5-min bar from 5 minutes ago (1 completed bar back).
-    No SL / TP. Useful for validating execution pipeline connectivity.
+    ALWAYS OPEN — Opens LONG every bar. Exits on SL/TP, then re-enters after cooldown_mins cooldown.
+    Useful for validating full execution pipeline with real P&L tracking.
     """
 
     def _run():
@@ -2625,13 +2631,8 @@ async def mgc_backtest_always_open(
         if df.empty or len(df) < 3:
             raise ValueError("Not enough 5m data for Always Open strategy.")
 
-        # Entry bar: the last COMPLETED bar (index -2; index -1 may be forming)
-        entry_bar = df.iloc[-2]
-        entry_ts  = df.index[-2]
-        entry_price = round(float(entry_bar["close"]), 2)
-
-        # Build a single candle list (last 60 bars for chart context)
-        tail = df.tail(60)
+        # Build candle list (last 120 bars for chart context)
+        tail = df.tail(120)
         candles = []
         for ts, row in tail.iterrows():
             candles.append(MGC5MinCandle(
@@ -2641,57 +2642,122 @@ async def mgc_backtest_always_open(
                 low=round(float(row["low"]), 2),
                 close=round(float(row["close"]), 2),
                 volume=int(row.get("volume", 0) or 0),
-                ema_fast=None,
-                ema_slow=None,
-                rsi=None,
-                st_dir=None,
-                macd_hist=None,
+                ema_fast=None, ema_slow=None, rsi=None, st_dir=None, macd_hist=None,
             ))
 
-        # Single open trade
-        trade = MGC5MinTrade(
-            entry_time=str(entry_ts),
-            exit_time=str(entry_ts),   # still open — same timestamp
-            entry_price=entry_price,
-            exit_price=entry_price,
-            qty=1,
-            pnl=0.0,
-            pnl_pct=0.0,
-            reason="OPEN",
-            signal_type="ALWAYS_OPEN",
-            direction="CALL",
-            mae=0.0,
-            sl=0.0,
-            tp=0.0,
-        )
+        bars = list(df.iterrows())
+        trades: list[MGC5MinTrade] = []
+        eq = capital
+        eq_curve = [capital]
+        cooldown_until = None
+        open_pos = None
+        i = 0
 
-        open_pos = {
-            "direction": "CALL",
-            "entry_price": entry_price,
-            "sl": 0.0,
-            "tp": 0.0,
-            "entry_time": str(entry_ts),
-            "signal_type": "ALWAYS_OPEN",
-            "bar_time": str(entry_ts),
-        }
+        while i < len(bars) - 1:
+            ts_entry, bar_entry = bars[i]
+
+            # Skip bars within cooldown window
+            if cooldown_until is not None and ts_entry <= cooldown_until:
+                i += 1
+                continue
+            cooldown_until = None
+
+            entry_price = round(float(bar_entry["close"]), 2)
+            sl_price = round(entry_price - sl_pips, 2)
+            tp_price = round(entry_price + tp_pips, 2)
+
+            # Scan forward bars for SL/TP hit
+            exit_ts = None
+            exit_price = entry_price
+            reason = "OPEN"
+
+            for j in range(i + 1, len(bars)):
+                ts_bar, bar = bars[j]
+                lo = float(bar["low"])
+                hi = float(bar["high"])
+                # SL checked first (worst-case conservative)
+                if lo <= sl_price:
+                    exit_ts = ts_bar
+                    exit_price = sl_price
+                    reason = "SL"
+                    break
+                elif hi >= tp_price:
+                    exit_ts = ts_bar
+                    exit_price = tp_price
+                    reason = "TP"
+                    break
+
+            if reason == "OPEN":
+                # Position still open at end of data
+                last_ts, last_bar = bars[-1]
+                open_pos = {
+                    "direction": "CALL",
+                    "entry_price": entry_price,
+                    "sl": sl_price,
+                    "tp": tp_price,
+                    "entry_time": str(ts_entry),
+                    "signal_type": "ALWAYS_OPEN",
+                    "bar_time": str(last_ts),
+                }
+                trades.append(MGC5MinTrade(
+                    entry_time=str(ts_entry),
+                    exit_time=str(last_ts),
+                    entry_price=entry_price,
+                    exit_price=round(float(last_bar["close"]), 2),
+                    qty=1, pnl=0.0, pnl_pct=0.0,
+                    reason="OPEN", signal_type="ALWAYS_OPEN", direction="CALL",
+                    mae=0.0, sl=sl_price, tp=tp_price,
+                ))
+                break
+            else:
+                pnl = round((exit_price - entry_price) * 10, 2)  # MGC multiplier = 10
+                eq = round(eq + pnl, 2)
+                trades.append(MGC5MinTrade(
+                    entry_time=str(ts_entry),
+                    exit_time=str(exit_ts),
+                    entry_price=entry_price,
+                    exit_price=exit_price,
+                    qty=1,
+                    pnl=pnl,
+                    pnl_pct=round(pnl / capital * 100, 4),
+                    reason=reason, signal_type="ALWAYS_OPEN", direction="CALL",
+                    mae=0.0, sl=sl_price, tp=tp_price,
+                ))
+                eq_curve.append(eq)
+                # Start cooldown after exit
+                cooldown_until = exit_ts + timedelta(minutes=cooldown_mins)
+                i = j + 1
+                continue
+
+            i += 1
+
+        # Compute metrics
+        closed = [t for t in trades if t.reason != "OPEN"]
+        wins   = [t for t in closed if t.pnl > 0]
+        losses = [t for t in closed if t.pnl <= 0]
+        gross_profit = sum(t.pnl for t in wins)
+        gross_loss   = abs(sum(t.pnl for t in losses))
+        pf = round(gross_profit / gross_loss, 2) if gross_loss > 0 else 0.0
+        avg_win  = round(gross_profit / len(wins), 2)  if wins   else 0.0
+        avg_loss = round(gross_loss   / len(losses), 2) if losses else 0.0
 
         metrics = MGC5MinMetrics(
             initial_capital=capital,
-            final_equity=capital,
-            total_return_pct=0.0,
+            final_equity=eq,
+            total_return_pct=round((eq - capital) / capital * 100, 2),
             max_drawdown_pct=0.0,
             sharpe_ratio=0.0,
-            total_trades=1,
-            winners=0,
-            losers=0,
-            win_rate=0.0,
-            avg_win=0.0,
-            avg_loss=0.0,
-            profit_factor=0.0,
-            risk_reward_ratio=0.0,
+            total_trades=len(closed),
+            winners=len(wins),
+            losers=len(losses),
+            win_rate=round(len(wins) / len(closed) * 100, 1) if closed else 0.0,
+            avg_win=avg_win,
+            avg_loss=avg_loss,
+            profit_factor=pf,
+            risk_reward_ratio=round(avg_win / avg_loss, 2) if avg_loss > 0 else 0.0,
         )
 
-        return candles, [trade], [capital], metrics, open_pos
+        return candles, trades, eq_curve, metrics, open_pos
 
     try:
         candles, trades, eq_curve, metrics, open_pos = await run_in_threadpool(_run)
@@ -2713,6 +2779,7 @@ async def mgc_backtest_always_open(
         params={"strategy": "always_open"},
         open_position=open_pos,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+        data_source="Tiger" if _tiger_quote_ok else "yfinance",
     )
 
 
@@ -4646,7 +4713,10 @@ async def auto_trader_start(
 
 
 def _get_backtest_open_position(symbol: str, period: str, trader, interval: str = "5m") -> dict | None:
-    """Run a quick backtest to detect any open position."""
+    """Run a quick backtest to detect any open position.
+
+    Routes to the correct backtest logic based on the trader's active strategy preset.
+    """
     from strategies.futures.backtest_5min import Backtester5Min
 
     yf_symbol = f"{symbol}=F"
@@ -4656,6 +4726,30 @@ def _get_backtest_open_position(symbol: str, period: str, trader, interval: str 
     max_allowed = _max_period.get(interval, "60d")
     if int(fetch_period.replace("d", "")) > int(max_allowed.replace("d", "")):
         fetch_period = max_allowed
+
+    preset = getattr(trader, "_strategy_preset", "") or ""
+
+    # ── Always Open: position is always the last completed bar ──
+    if "always open" in preset.lower() or preset.lower() == "always_open":
+        df = _load_tiger_or_yf(symbol, interval, "1d")
+        if df is None or len(df) < 3:
+            return None
+        entry_bar = df.iloc[-2]
+        entry_price = round(float(entry_bar["close"]), 2)
+        sl_pips = trader._sl_mult if trader._sl_mult > 0 else 3.0
+        tp_pips = trader._tp_mult if trader._tp_mult > 0 else 3.0
+        return {
+            "direction": "CALL",
+            "entry_price": entry_price,
+            "sl": round(entry_price - sl_pips, 2),
+            "tp": round(entry_price + tp_pips, 2),
+            "qty": 1,
+            "entry_time": str(df.index[-2]),
+            "signal_type": "ALWAYS_OPEN",
+            "bar_time": str(df.index[-1]),
+        }
+
+    # ── Standard / custom strategy ──
     df = load_yfinance(symbol=yf_symbol, interval=interval, period=fetch_period)
     if df is None or len(df) < 50:
         return None
@@ -4706,11 +4800,13 @@ async def auto_trader_sync_market(
     symbol: str = Query("MGC"),
     interval: str = Query("5m"),
     period: str = Query("7d"),
+    live_price: float = Query(0.0),
 ):
-    """Check if backtest currently shows an open position and sync it into the paper trader.
+    """Sync backtest open position into paper trader at market price.
 
-    If the trader is IDLE and backtest has a holding position, injects it
-    so the trader immediately starts monitoring with the correct SL/TP.
+    Fetches the current open position from the backtest (direction, pip offsets).
+    If live_price > 0, re-anchors entry to live_price and recalculates SL/TP
+    preserving the same pip distances from the backtest position.
     Returns { synced: bool, position: dict | None, snapshot: dict }.
     """
     from strategies.futures.auto_trader import get_auto_trader
@@ -4728,11 +4824,76 @@ async def auto_trader_sync_market(
     if not open_pos:
         return {"synced": False, "reason": "no_open_position", "position": None, "snapshot": trader._snap()}
 
+    # Re-anchor to live market price if provided
+    if live_price > 0 and open_pos.get("entry_price", 0) > 0:
+        bt_entry = float(open_pos["entry_price"])
+        bt_sl    = float(open_pos.get("sl", 0) or 0)
+        bt_tp    = float(open_pos.get("tp", 0) or 0)
+        direction = open_pos.get("direction", "CALL")
+        if bt_sl > 0 and bt_tp > 0:
+            sl_offset = abs(bt_entry - bt_sl)
+            tp_offset = abs(bt_tp - bt_entry)
+        else:
+            sl_offset = trader._sl_mult
+            tp_offset = trader._tp_mult
+        if direction == "CALL":
+            open_pos = dict(open_pos, entry_price=live_price,
+                            sl=round(live_price - sl_offset, 2),
+                            tp=round(live_price + tp_offset, 2))
+        else:
+            open_pos = dict(open_pos, entry_price=live_price,
+                            sl=round(live_price + sl_offset, 2),
+                            tp=round(live_price - tp_offset, 2))
+
     synced = trader.sync_backtest_position(open_pos)
     return {
         "synced": synced,
         "reason": "already_in_trade" if not synced else "ok",
         "position": open_pos if synced else None,
+        "snapshot": trader._snap(),
+    }
+
+
+class ForceEntryPayload(BaseModel):
+    direction: str = "CALL"       # "CALL" or "PUT"
+    entry_price: float            # market price to enter at
+    sl: float                     # absolute SL price
+    tp: float                     # absolute TP price
+    qty: int = 1
+
+
+@router.post("/auto-trader/force-entry")
+async def auto_trader_force_entry(
+    payload: ForceEntryPayload,
+    symbol: str = Query("MGC"),
+):
+    """Immediately inject a position into the paper trader at the given price/SL/TP.
+
+    Useful for manually seeding a trade at the current live price without
+    waiting for a backtest signal.  Requires the trader to be started and IDLE.
+    """
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+
+    if not trader._snap().get("started"):
+        return {"synced": False, "reason": "not_started", "snapshot": trader._snap()}
+
+    pos = {
+        "direction": payload.direction,
+        "entry_price": payload.entry_price,
+        "sl": payload.sl,
+        "tp": payload.tp,
+        "qty": payload.qty,
+        "entry_time": datetime.now(SGT).strftime("%Y-%m-%d %H:%M:%S"),
+        "bar_time":   datetime.now(SGT).strftime("%Y-%m-%d %H:%M:%S"),
+        "signal_type": "FORCE_ENTRY",
+    }
+
+    synced = trader.sync_backtest_position(pos)
+    return {
+        "synced": synced,
+        "reason": "ok" if synced else "already_in_trade",
+        "position": pos if synced else None,
         "snapshot": trader._snap(),
     }
 

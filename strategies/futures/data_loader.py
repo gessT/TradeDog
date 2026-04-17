@@ -63,10 +63,25 @@ def load_yfinance(
     days_back = min(days_back, max_days)
 
     end_dt = datetime.now(timezone.utc)
-    start_dt = end_dt - timedelta(days=days_back)
 
-    ticker = yf.Ticker(symbol)
-    df = ticker.history(start=start_dt, end=end_dt, interval=interval, auto_adjust=False)
+    # Try progressively shorter windows if the full range returns no data
+    # (some futures contracts like MCL=F have limited intraday history on yfinance)
+    fallback_days = [days_back, 30, 14, 7, 3]
+    df = None
+    for attempt_days in fallback_days:
+        if attempt_days > days_back:
+            continue
+        start_dt = end_dt - timedelta(days=attempt_days)
+        ticker = yf.Ticker(symbol)
+        try:
+            df = ticker.history(start=start_dt, end=end_dt, interval=interval, auto_adjust=False)
+        except Exception:
+            df = None
+        if df is not None and not df.empty:
+            if attempt_days < days_back:
+                logger.warning("Fell back to %dd window for %s (%s) — full %dd unavailable", attempt_days, symbol, interval, days_back)
+            break
+        df = None
 
     if df is None or df.empty:
         raise ValueError(f"No data returned for {symbol} ({interval}, {period})")

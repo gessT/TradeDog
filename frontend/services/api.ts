@@ -1118,6 +1118,7 @@ export type MGC5MinBacktestResponse = {
   params: Record<string, unknown>;
   open_position: BacktestPosition | null;
   timestamp: string;
+  data_source?: string;  // "Tiger" or "yfinance"
 };
 
 /** Map short commodity key → yfinance ticker */
@@ -1404,8 +1405,10 @@ export async function fetchMGCAlwaysOpenBacktest(
   symbol: string = "MGC",
   period: string = "1d",
   capital: number = 10000,
+  slPips: number = 3,
+  tpPips: number = 3,
 ): Promise<MGC5MinBacktestResponse> {
-  const url = `${API_BASE}/mgc/backtest_always_open?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&capital=${capital}`;
+  const url = `${API_BASE}/mgc/backtest_always_open?symbol=${encodeURIComponent(toYF(symbol))}&period=${encodeURIComponent(period)}&capital=${capital}&sl_pips=${slPips}&tp_pips=${tpPips}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();
@@ -2291,12 +2294,28 @@ export async function autoTraderUnblock(symbol = "MGC"): Promise<AutoTraderSnaps
 }
 
 export async function autoTraderSyncMarket(
-  symbol = "MGC", interval = "5m", period = "7d",
+  symbol = "MGC", interval = "5m", period = "7d", livePrice = 0,
 ): Promise<{ synced: boolean; reason: string; position: Record<string, unknown> | null; snapshot: AutoTraderSnapshot }> {
   const res = await fetch(
-    `${_at("sync-market", symbol)}&interval=${interval}&period=${period}`,
+    `${_at("sync-market", symbol)}&interval=${interval}&period=${period}&live_price=${livePrice}`,
     { method: "POST" },
   );
+  return res.json();
+}
+
+export async function autoTraderForceEntry(
+  symbol = "MGC",
+  direction: "CALL" | "PUT" = "CALL",
+  entryPrice: number = 0,
+  sl: number = 0,
+  tp: number = 0,
+  qty = 1,
+): Promise<{ synced: boolean; reason: string; position: Record<string, unknown> | null; snapshot: AutoTraderSnapshot }> {
+  const res = await fetch(`${_at("force-entry", symbol)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ direction, entry_price: entryPrice, sl, tp, qty }),
+  });
   return res.json();
 }
 

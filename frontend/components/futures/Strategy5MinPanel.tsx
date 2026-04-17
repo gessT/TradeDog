@@ -673,10 +673,10 @@ export const BUILT_IN_PRESETS: BuiltInPreset[] = [
   },
   {
     name: "🟢 Always Open",
-    desc: "TEST ONLY · Always opens 1 LONG position · Entry = price 5 min ago · No SL/TP",
+    desc: "TEST ONLY · Always LONG · SL/TP = 3 pips · 2-min cooldown then re-enter",
     interval: "5m",
-    sl: 0,
-    tp: 0,
+    sl: 3,
+    tp: 3,
     endpoint: "always_open",
     toggles: {
       ema_trend: false,
@@ -1789,7 +1789,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       }
 
       if (activeBuiltIn?.endpoint === "always_open") {
-        const res = await fetchMGCAlwaysOpenBacktest(symbol, "1d", 10000);
+        const res = await fetchMGCAlwaysOpenBacktest(symbol, "1d", 10000, 3, 3);
         setBtData(res);
         onTradesUpdate?.(res.trades);
         setHasRunBacktest(true);
@@ -1976,7 +1976,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         if (currentBuiltIn?.endpoint === "sync_test") {
           res = await fetchMGCSyncTestBacktest(symbol, curPeriod, 2, "both", 10000, 2.0);
         } else if (currentBuiltIn?.endpoint === "always_open") {
-          res = await fetchMGCAlwaysOpenBacktest(symbol, "1d", 10000);
+          res = await fetchMGCAlwaysOpenBacktest(symbol, "1d", 10000, 3, 3);
         } else if (currentBuiltIn?.endpoint === "5min_locked") {
           res = await fetchMGC5MinLockedBacktest(symbol, Math.max(0.3, slMult), Math.max(0.3, tpMult), curPeriod, 10, 10, 2.0, 50, false);
         } else if (currentBuiltIn?.endpoint === "5min_locked_short") {
@@ -2842,6 +2842,15 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               <div className="flex items-center gap-3 text-[9px] text-slate-600">
                 <span>MGC=F · 5m · {btData.period}</span>
                 <span>${n(m.initial_capital).toLocaleString()} → ${n(m.final_equity).toLocaleString()}</span>
+                {btData.data_source && (
+                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-medium ${
+                    btData.data_source === "Tiger"
+                      ? "bg-emerald-900/40 text-emerald-400 border border-emerald-700/40"
+                      : "bg-amber-900/40 text-amber-400 border border-amber-700/40"
+                  }`}>
+                    {btData.data_source === "Tiger" ? "⚡ Tiger" : "⏱ yfinance"}
+                  </span>
+                )}
                 <span className="ml-auto">{btData.timestamp}</span>
               </div>
             </div>

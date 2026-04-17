@@ -285,10 +285,15 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
     setSyncingMarket(true);
     setSyncResult(null);
     try {
-      const r = await autoTraderSyncMarket(symbol, activeConfig.interval ?? "5m");
+      const px = livePriceRef.current || 0;
+      const r = await autoTraderSyncMarket(symbol, activeConfig.interval ?? "5m", "7d", px);
       if (r.synced) {
         setSnap(r.snapshot);
-        pushLog(`Sync Market: position injected (${r.position?.direction ?? "?"} @ ${Number(r.position?.entry_price ?? 0).toFixed(2)})`, "entry");
+        const dir = r.position?.direction ?? "?";
+        const ep  = Number(r.position?.entry_price ?? 0).toFixed(2);
+        const sl  = Number(r.position?.sl ?? 0).toFixed(2);
+        const tp  = Number(r.position?.tp ?? 0).toFixed(2);
+        pushLog(`Sync Market: ${dir} @ $${ep}  SL ${sl}  TP ${tp}`, "entry");
         setSyncResult("ok");
         setTimeout(() => setSyncResult(null), 4000);
       } else if (r.reason === "no_open_position") {
@@ -914,6 +919,40 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                       <div className="text-[8px] text-white/35 mb-0.5">W / L</div>
                       <div className="text-[13px] font-bold text-white/80 tabular-nums">{snap.daily_wins}<span className="text-white/30 text-[10px]">/</span>{snap.daily_losses}</div>
                     </div>
+                  </div>
+
+                  {/* ── Sync Market (instant entry at live price) ── */}
+                  <div className="px-3 py-2.5 border-t border-white/[0.05] space-y-1.5">
+                    <div className="flex items-center justify-between text-[8px]">
+                      <span className="text-white/30 uppercase tracking-wider font-bold">Sync Market</span>
+                      {livePrice && livePrice > 0 ? (
+                        <span className="tabular-nums font-mono text-white/40">
+                          <span className="text-yellow-400/80">${livePrice.toFixed(2)}</span>
+                          <span className="mx-1 text-white/15">·</span>
+                          <span className="text-white/25">SL/TP from backtest</span>
+                        </span>
+                      ) : (
+                        <span className="text-white/20">No live price</span>
+                      )}
+                    </div>
+                    <button
+                      onClick={handleSyncMarket}
+                      disabled={syncingMarket || !livePrice || !!snap?.position}
+                      className={`w-full py-1.5 rounded-lg text-[9px] font-bold transition-all ${
+                        syncingMarket || !livePrice || snap?.position
+                          ? "bg-slate-800/40 text-white/20 cursor-not-allowed"
+                          : syncResult === "ok"
+                            ? "bg-emerald-600/25 text-emerald-300 ring-1 ring-emerald-500/30"
+                            : syncResult === "error" || syncResult === "none"
+                              ? "bg-amber-600/20 text-amber-400/70 ring-1 ring-amber-500/20"
+                              : "bg-cyan-600/15 hover:bg-cyan-600/25 text-cyan-300 ring-1 ring-cyan-500/25 active:scale-95"
+                      }`}
+                    >
+                      {syncingMarket ? "Syncing…" : syncResult === "ok" ? "✓ Entered at market!" : syncResult === "none" ? "No backtest position" : syncResult === "error" ? "✕ Failed" : "⟳ Sync & Enter at Market"}
+                    </button>
+                    {snap?.position && (
+                      <p className="text-[7.5px] text-white/20 text-center">Close current position first</p>
+                    )}
                   </div>
                 </div>
               );
