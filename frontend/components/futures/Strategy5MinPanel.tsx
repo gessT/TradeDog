@@ -1478,7 +1478,21 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     // 1m data limited to 7d max — clamp period
     if (v === "1m" && parseInt(period) > 7) setPeriod("3d");
   };
-  const _bosl = BUILT_IN_PRESETS.find((p) => p.name === "⇕ BoS Mix");
+  // Countdown to next bar close
+  const [nextBarSecs, setNextBarSecs] = useState<number | null>(null);
+  useEffect(() => {
+    const intervalMins = interval === "1m" ? 1 : interval === "2m" ? 2 : interval === "15m" ? 15 : 5;
+    const tick = () => {
+      const now = new Date();
+      const totalSecs = now.getMinutes() * 60 + now.getSeconds();
+      const barSecs = intervalMins * 60;
+      setNextBarSecs(barSecs - (totalSecs % barSecs));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [interval]);
+  const _bosl = BUILT_IN_PRESETS.find((p) => p.name === " Always Open");
   const [slMult, setSlMult] = useState(_bosl?.sl ?? defaultRisk.sl);
   const [tpMult, setTpMult] = useState(_bosl?.tp ?? defaultRisk.tp);
 
@@ -1523,12 +1537,12 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const [presets, setPresets] = useState<ConditionPreset[]>([]);
   const [presetName, setPresetName] = useState("");
   const [showPresetSave, setShowPresetSave] = useState(false);
-  const [activePreset, setActivePreset] = useState<string | null>("⇕ BoS Mix");
+  const [activePreset, setActivePreset] = useState<string | null>(" Always Open");
   // Always-current ref so scanner closures can read the active preset without stale values
-  const activePresetRef = useRef<string | null>("⇕ BoS Mix");
+  const activePresetRef = useRef<string | null>(" Always Open");
   activePresetRef.current = activePreset;
   // Editable strategy label (shown in header, independent from preset names)
-  const [strategyLabel, setStrategyLabel] = useState("⇕ BoS Mix");
+  const [strategyLabel, setStrategyLabel] = useState(" Always Open");
   const [editingLabel, setEditingLabel] = useState(false);
 
   // ── Load persisted config on mount / symbol change ──
@@ -2859,6 +2873,11 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                             <span className={`text-[8px] font-semibold text-center leading-snug px-1 ${autoTrading ? "text-emerald-400" : "text-slate-600"}`}>
                               {autoTrading ? (autoTraderRunning ? "Auto-Trader\nRunning" : "Waiting for\nSignal") : "No Position"}
                             </span>
+                            {autoTrading && !autoTraderRunning && nextBarSecs !== null && (
+                              <span className="text-[7px] font-mono text-white/30 tabular-nums">
+                                Next scan <span className="text-emerald-400/70 font-bold">{Math.floor(nextBarSecs / 60).toString().padStart(2, "0")}:{(nextBarSecs % 60).toString().padStart(2, "0")}</span>
+                              </span>
+                            )}
                             {livePrice != null && (
                               <span className="text-[9px] font-mono text-slate-500 tabular-nums">${livePrice.toFixed(2)}</span>
                             )}

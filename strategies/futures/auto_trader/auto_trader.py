@@ -518,6 +518,34 @@ class FuturesAutoTrader:
             self._persist_trade(trade)
         return trade
 
+    def close_position_keep_running(self, live_price: float = 0.0) -> dict:
+        """Close paper position + stale OPEN db records, but keep auto-trader running.
+
+        State machine transitions IN_TRADE → COOLDOWN → IDLE (stays started).
+        Use this for the manual 'Close Position' button in the UI.
+        """
+        with self._lock:
+            result = {"paper_closed": False, "kept_running": True}
+            if self._paper.has_position:
+                trade = self._paper.close_position(live_price)
+                if trade:
+                    rec = self._machine.on_exit(trade.exit_price, "MANUAL_CLOSE", CONTRACT_SIZE, is_paper=True)
+                    if rec:
+                        self._persist_trade(rec)
+                    result["paper_closed"] = True
+                    result["paper_pnl"] = trade.pnl
+            elif self._machine.state == "IN_TRADE":
+                # State says IN_TRADE but paper has no position — just reset state
+                rec = self._machine.on_exit(live_price or self._machine._position_entry, "MANUAL_CLOSE", CONTRACT_SIZE, is_paper=True)
+                if rec:
+                    self._persist_trade(rec)
+            # Close any stale OPEN db records
+            db_closed = self._close_open_db_records(live_price)
+            if db_closed:
+                result["db_records_closed"] = db_closed
+            result["snapshot"] = self._snap()
+            return result
+
     def emergency_stop(self, live_price: float = 0.0) -> dict:
         """Emergency: close paper position + stop machine + close any stale OPEN db records."""
         with self._lock:

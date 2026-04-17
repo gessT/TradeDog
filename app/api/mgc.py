@@ -284,57 +284,29 @@ def _tiger_bars(symbol: str, interval: str, limit: int = 500):
 
 def _load_tiger_or_yf(symbol: str, interval: str, period: str) -> "tuple[pd.DataFrame, str]":
     """
-    Load OHLCV bars: Tiger API first, fallback to yfinance.
+    Load OHLCV bars from Tiger API only.
     `symbol` is the commodity key (e.g. "MGC"), not the yfinance ticker.
     `period` is a yfinance-style string like "5d", "60d", "7d".
-    Returns (DataFrame, source) where source is "Tiger" or "yfinance".
+    Returns (DataFrame, source) where source is "Tiger".
 
-    Tiger intraday history is limited to ~15 days, so periods ≥ 30d go
-    straight to yfinance without wasting a Tiger API call.
+    Always requests the maximum available bars from Tiger (~1750) to ensure
+    indicators are fully warmed up regardless of the display period.
+    Raises ValueError if Tiger returns no data.
     """
-    import pandas as pd
+    import pandas as pd  # noqa: F811
 
-    # Tiger hard limit: intraday history only covers ~15 days.
-    # For any period > 15d skip Tiger entirely — it can never satisfy the span check.
-    _TIGER_MAX_DAYS = 15
-    _bars_per_day = {"1m": 390, "2m": 195, "5m": 78, "15m": 26, "30m": 13, "1h": 7}
-    try:
-        days = int(period.replace("d", "").replace("m", "0").split("y")[0])
-        bars_pd = _bars_per_day.get(interval, 78)
-        limit = min(days * bars_pd + 50, 1750)
-    except Exception:
-        days = 60
-        limit = 800
+    # Always request max bars for indicator warmup
+    limit = 1750
 
-    if days <= _TIGER_MAX_DAYS:
-        _, df_tiger = _tiger_bars(symbol, interval, limit)
-        if df_tiger is not None and not df_tiger.empty:
-            # Validate Tiger data covers the requested period.
-            # If the earliest bar is less than 70% of the requested window, fall through to yfinance.
-            try:
-                earliest = df_tiger.index[0]
-                latest   = df_tiger.index[-1]
-                tiger_span_days = (latest - earliest).total_seconds() / 86400
-                if tiger_span_days >= days * 0.7:
-                    logger.debug("Tiger data used for %s/%s (%d bars, %.0fd span)", symbol, interval, len(df_tiger), tiger_span_days)
-                    return df_tiger, "Tiger"
-                else:
-                    logger.debug("Tiger only has %.0fd of %sd requested — falling back to yfinance", tiger_span_days, days)
-            except Exception:
-                pass  # index comparison failed — fall through to yfinance
-    else:
-        logger.debug("Period %s > %dd Tiger limit — using yfinance directly for %s/%s", period, _TIGER_MAX_DAYS, symbol, interval)
+    _, df_tiger = _tiger_bars(symbol, interval, limit)
+    if df_tiger is not None and not df_tiger.empty:
+        logger.debug("Tiger data used for %s/%s (%d bars)", symbol, interval, len(df_tiger))
+        return df_tiger, "Tiger"
 
-    # Fallback: yfinance
-    commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": f"{symbol}=F"})
-    yf_symbol = commodity.get("yf", f"{symbol}=F")
-    # Map non-standard periods to valid yfinance ones
-    _valid_yf_5m = {"1d", "2d", "5d", "7d", "14d", "30d", "60d"}
-    yf_period = period if period in _valid_yf_5m else "60d"
-    df_yf = load_yfinance(symbol=yf_symbol, interval=interval, period=yf_period)
-    if df_yf is None or df_yf.empty:
-        raise ValueError(f"No data available for {symbol} ({interval}, {period})")
-    return df_yf, "yfinance"
+    raise ValueError(
+        f"Tiger returned no data for {symbol}/{interval}. "
+        "Check your Tiger API connection or try a different symbol."
+    )
 
 
 @router.get("/price/{symbol}")
@@ -1891,22 +1863,20 @@ async def mgc_backtest_5min(
         from strategies.futures.backtest_5min import Backtester5Min
         from strategies.futures.strategy_5min import MGCStrategy5Min, DEFAULT_5MIN_PARAMS
 
-        # Always load max history so indicators are fully warmed up
+        # Load max available history from Tiger so indicators are fully warmed up
         # (EMA, RSI, MACD, Supertrend need history to stabilize)
-        # yfinance limits: 1m=7d, 2m=60d, 5m=60d, 15m=60d
-        _max_period = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d"}
-        fetch_period = _max_period.get(interval, "60d")
-        df = load_yfinance(symbol=symbol, interval=interval, period=fetch_period)
+        _sym_key = symbol.replace("=F", "").replace("=f", "")
+        df, _data_source = _load_tiger_or_yf(_sym_key, interval, period)
 
         if df.empty or len(df) < 20:
-            raise ValueError("Not enough 5m data from yfinance.")
+            raise ValueError("Not enough data from Tiger.")
 
         # Also apply date_to filter on the raw data
         if date_to:
             trade_end = _pd.Timestamp(date_to, tz=df.index.tz) + _pd.Timedelta(days=1)
             df = df[df.index < trade_end]
 
-        # ── Run full 60d simulation for consistent results ──────
+        # ── Run full simulation for consistent results ──────
         custom_params = {"atr_sl_mult": atr_sl_mult, "atr_tp_mult": atr_tp_mult, "use_ema_exit": use_ema_exit, "use_struct_fade": use_struct_fade, "use_sma28_cut": use_sma28_cut}
         bt = Backtester5Min(capital=capital)
         result = bt.run(df, params=custom_params, oos_split=oos_split, disabled_conditions=_disabled or None, skip_flat=skip_flat, skip_counter_trend=skip_counter_trend, daily_loss_limit=daily_loss_limit, skip_hours=_skip_hours, max_loss_per_trade=max_loss_per_trade)
@@ -2020,10 +1990,10 @@ async def mgc_backtest_5min(
             for t in filtered_trades
         ]
 
-        return candles, trades, result.equity_curve, metrics, result.params, filtered_daily, df, custom_params
+        return candles, trades, result.equity_curve, metrics, result.params, filtered_daily, df, custom_params, _data_source
 
     try:
-        candles, trades, eq_curve, metrics, params, daily_pnl, raw_df, bt_params = await run_in_threadpool(_run)
+        candles, trades, eq_curve, metrics, params, daily_pnl, raw_df, bt_params, _bt_data_source = await run_in_threadpool(_run)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as exc:
@@ -2086,7 +2056,7 @@ async def mgc_backtest_5min(
         params=params,
         open_position=open_pos,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
-        data_source="yfinance",
+        data_source=_bt_data_source,
     )
 
 
@@ -2184,10 +2154,10 @@ async def mgc_backtest_2min(
             final_equity=round(m.final_equity, 2),
         )
 
-        return candles, trades, result.equity_curve, metrics, params
+        return candles, trades, result.equity_curve, metrics, params, _data_source
 
     try:
-        candles, trades, eq_curve, metrics, params = await run_in_threadpool(_run)
+        candles, trades, eq_curve, metrics, params, _bt_data_source = await run_in_threadpool(_run)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as exc:
@@ -2206,6 +2176,7 @@ async def mgc_backtest_2min(
         params=params,
         open_position=None,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+        data_source=_bt_data_source,
     )
 
 
@@ -2352,10 +2323,10 @@ async def mgc_backtest_5min_locked(
             final_equity=round(m.final_equity, 2),
         )
 
-        return candles, trades, result.equity_curve, metrics, params
+        return candles, trades, result.equity_curve, metrics, params, _data_source
 
     try:
-        candles, trades, eq_curve, metrics, params = await run_in_threadpool(_run)
+        candles, trades, eq_curve, metrics, params, _bt_data_source = await run_in_threadpool(_run)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as exc:
@@ -2376,7 +2347,7 @@ async def mgc_backtest_5min_locked(
         params=params,
         open_position=open_pos,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
-        data_source="Tiger" if _tiger_quote_ok else "yfinance",
+        data_source=_bt_data_source,
     )
 
 
@@ -2484,10 +2455,10 @@ async def mgc_backtest_5min_locked_short(
             final_equity=round(m.final_equity, 2),
         )
 
-        return candles, trades, result.equity_curve, metrics, params
+        return candles, trades, result.equity_curve, metrics, params, _data_source
 
     try:
-        candles, trades, eq_curve, metrics, params = await run_in_threadpool(_run)
+        candles, trades, eq_curve, metrics, params, _bt_data_source = await run_in_threadpool(_run)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as exc:
@@ -2508,7 +2479,7 @@ async def mgc_backtest_5min_locked_short(
         params=params,
         open_position=open_pos,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
-        data_source="Tiger" if _tiger_quote_ok else "yfinance",
+        data_source=_bt_data_source,
     )
 
 
@@ -4818,6 +4789,17 @@ async def auto_trader_emergency_stop(
     from strategies.futures.auto_trader import get_auto_trader
     trader = get_auto_trader(symbol)
     return trader.emergency_stop(live_price)
+
+
+@router.post("/auto-trader/close-position")
+async def auto_trader_close_position(
+    symbol: str = Query("MGC"),
+    live_price: float = Query(0.0),
+):
+    """Close paper position and keep auto-trader running (returns to scanning)."""
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+    return trader.close_position_keep_running(live_price)
 
 
 @router.post("/auto-trader/unblock")

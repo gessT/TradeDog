@@ -8,6 +8,7 @@ import {
   autoTraderStop,
   autoTraderReset,
   autoTraderEmergencyStop,
+  autoTraderClosePosition,
   autoTraderUnblock,
   autoTraderSyncMarket,
   autoTraderSyncTrade,
@@ -91,9 +92,11 @@ function playTone(freq: number, duration: number, type: OscillatorType = "sine",
 }
 
 function notifySignal() {
-  // Two ascending tones — "ding ding"
-  playTone(880, 0.15, "sine", 0.25);
-  setTimeout(() => playTone(1100, 0.2, "sine", 0.3), 160);
+  // Notification bell chime — three-note rising arpeggio
+  playTone(523, 0.08, "sine", 0.15);  // C5
+  setTimeout(() => playTone(659, 0.08, "sine", 0.18), 100); // E5
+  setTimeout(() => playTone(784, 0.12, "sine", 0.22), 200); // G5
+  setTimeout(() => playTone(1047, 0.35, "sine", 0.28), 320); // C6 — sustain
 }
 function notifyEntry() {
   // Three quick ascending tones — "confirmed"
@@ -142,6 +145,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [starting, setStarting] = useState(false);
   const [launchFlash, setLaunchFlash] = useState<string | null>(null);
+  const [entryToast, setEntryToast] = useState<{ dir: string; price: string } | null>(null);
   const [showGuide, setShowGuide] = useState(false);
   const [closingPosition, setClosingPosition] = useState(false);
   const [logExpanded, setLogExpanded] = useState(true);
@@ -155,8 +159,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
   const [previewExpanded, setPreviewExpanded] = useState(false);
   // Manual preset override (null = follow backtest lockedConfig)
   const [manualConfig, setManualConfig] = useState<LockedTradingConfig | null>(null);
-  // Strategy dropdown open/closed
-  const [showStrategyDrop, setShowStrategyDrop] = useState(false);
+  // Strategy dropdown open/closed — removed (now read-only display)
   // Snapshot the locked config when trading actually starts — so subsequent backtests don't affect it
   const [runningConfig, setRunningConfig] = useState<LockedTradingConfig | null>(null);
   // Effective config: manual override > locked from backtest
@@ -170,6 +173,21 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
   const livePriceRef = useRef(livePrice);
   livePriceRef.current = livePrice;
   const prevExternalEnabledRef = useRef(externalEnabled);
+  // Countdown to next bar close (seconds)
+  const [nextBarSecs, setNextBarSecs] = useState<number | null>(null);
+  useEffect(() => {
+    const intervalMins = currentInterval === "1m" ? 1 : currentInterval === "2m" ? 2 : currentInterval === "15m" ? 15 : 5;
+    const tick = () => {
+      const now = new Date();
+      const totalSecs = now.getMinutes() * 60 + now.getSeconds();
+      const barSecs = intervalMins * 60;
+      const secsLeft = barSecs - (totalSecs % barSecs);
+      setNextBarSecs(secsLeft);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [currentInterval]);
 
   const pushLog = useCallback((msg: string, type: LogEntry["type"] = "info") => {
     setLogs((prev) => [{ ts: ts(), msg, type }, ...prev.slice(0, 80)]);
@@ -257,12 +275,16 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
         if (isBarClose && result.action === "SCAN") {
           pushLog(result.message || "Bar close — scanned, no signal");
         } else if (result.action === "SIGNAL") {
-          pushLog(`Signal: ${result.signal?.direction} @ $${result.signal?.entry_price} (qty=${result.risk?.qty})`, "signal");
           notifySignal();
         } else if (result.action === "ENTRY") {
           pushLog(result.message || "Entry filled", "entry");
           notifyEntry();
           onTradeExecuted?.();
+          // Show entry toast banner
+          const dir = result.signal?.direction ?? result.snapshot?.position?.direction ?? "";
+          const price = result.signal?.entry_price ?? result.snapshot?.position?.entry_price ?? 0;
+          setEntryToast({ dir: String(dir), price: Number(price).toFixed(2) });
+          setTimeout(() => setEntryToast(null), 4000);
           // Refresh DB trades so the OPEN record appears immediately
           autoTraderGetDbTrades(symbol).then(setTrades).catch(() => {});
         } else if (result.action === "EXIT") {
@@ -391,6 +413,18 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
       // Refresh trade history so the closed position appears in the table
       autoTraderGetDbTrades(symbol).then(setTrades).catch(() => {});
       pushLog("EMERGENCY STOP activated", "error");
+    } finally {
+      setClosingPosition(false);
+    }
+  };
+  const handleClosePosition = async () => {
+    setClosingPosition(true);
+    try {
+      const res = await autoTraderClosePosition(livePriceRef.current || 0, symbol).catch(() => null);
+      if (res?.snapshot) setSnap(res.snapshot as AutoTraderSnapshot);
+      else await refreshState();
+      autoTraderGetDbTrades(symbol).then(setTrades).catch(() => {});
+      pushLog("Position closed — scanner resuming", "warn");
     } finally {
       setClosingPosition(false);
     }
@@ -615,6 +649,11 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
             <span className="text-sm text-emerald-400 font-bold uppercase tracking-widest">Waiting for Entry</span>
           </div>
           <div className="text-[11px] text-white/60 mb-2">Scanning every bar close</div>
+          {nextBarSecs !== null && (
+            <div className="text-[10px] font-mono text-white/35 mb-2">
+              Next scan in <span className="text-emerald-400/80 font-bold tabular-nums">{Math.floor(nextBarSecs / 60).toString().padStart(2, "0")}:{(nextBarSecs % 60).toString().padStart(2, "0")}</span>
+            </div>
+          )}
           {activeConfig && (
             <div className="flex items-center justify-center gap-2 mt-2 flex-wrap">
               <span className="text-[9px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 ring-1 ring-slate-700/50 font-bold">{activeConfig.preset ?? "Custom"}</span>
@@ -624,11 +663,6 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
             </div>
           )}
         </div>
-        {state === "COOLDOWN" && snap?.cooldown_remaining && (
-          <div className="px-3 py-1.5 border-t border-amber-500/10 text-center">
-            <span className="text-[9px] text-amber-400/70 font-bold">Cooldown — {Math.ceil(snap.cooldown_remaining)}s remaining</span>
-          </div>
-        )}
       </div>
     );
   };
@@ -660,71 +694,26 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
           <span className="text-[10px] font-semibold tracking-tight text-white/90 shrink-0">Auto-Trader</span>
           <button onClick={() => setShowGuide(v => !v)} className="shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white/30 hover:text-white/70 hover:bg-white/10 transition-colors" title="How it works">?</button>
 
-          {/* ── Strategy dropdown ── */}
-          <div className="relative shrink-0">
-            <button
-              onClick={() => !started && setShowStrategyDrop(v => !v)}
-              disabled={started}
-              className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[8px] font-bold transition-all ${
-                started
-                  ? "text-violet-300/70 bg-violet-500/[0.07] cursor-default"
-                  : "text-violet-300 bg-violet-500/10 hover:bg-violet-500/20 ring-1 ring-violet-500/20 hover:ring-violet-500/35 cursor-pointer"
-              }`}
-              title={started ? "Strategy locked while running" : "Select strategy"}
+          {/* ── Strategy label (read-only, follows backtest) ── */}
+          {pendingConfig?.preset && (
+            <span
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[8px] font-bold text-violet-300/70 bg-violet-500/[0.07] cursor-default max-w-[100px] truncate"
+              title={`Strategy: ${pendingConfig.preset} (set from backtest)`}
             >
-              <span className="max-w-[80px] truncate">{pendingConfig?.preset ?? "Pick strategy"}</span>
-              {!started && <span className="text-[7px] text-white/30">{showStrategyDrop ? "▲" : "▼"}</span>}
-            </button>
-
-            {showStrategyDrop && !started && (
-              <div className="absolute left-0 top-full mt-1 z-50 w-52 rounded-lg ring-1 ring-white/10 bg-slate-900/95 backdrop-blur-sm shadow-2xl overflow-hidden">
-                <div className="px-2 py-1.5 border-b border-white/[0.06] flex items-center justify-between">
-                  <span className="text-[7px] uppercase tracking-widest text-white/35 font-bold">Select Strategy</span>
-                  {manualConfig && (
-                    <button onClick={() => { setManualConfig(null); setShowStrategyDrop(false); }} className="text-[7px] text-violet-400/70 hover:text-violet-300 transition-colors">← Backtest</button>
-                  )}
-                </div>
-                <div className="py-0.5">
-                  {BUILT_IN_PRESETS.map((p) => {
-                    const isActive = pendingConfig?.preset === p.name;
-                    return (
-                      <button
-                        key={p.name}
-                        onClick={() => { setManualConfig(configFromPreset(p, symbol)); setShowStrategyDrop(false); }}
-                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left transition-colors ${isActive ? "bg-violet-500/15 text-white/90" : "hover:bg-white/[0.05] text-white/60 hover:text-white/85"}`}
-                      >
-                        <span className={`flex-1 text-[9px] font-semibold truncate ${isActive ? "text-violet-200" : ""}`}>{p.name}</span>
-                        <div className="shrink-0 flex items-center gap-0.5">
-                          <span className="text-[7px] text-slate-500 font-mono">{p.interval}</span>
-                          {p.sl > 0 && <span className="text-[8px] px-1.5 py-px rounded bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/15">SL{p.sl}x</span>}
-                          {p.tp > 0 && <span className="text-[8px] px-1.5 py-px rounded bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/15">TP{p.tp}x</span>}
-                        </div>
-                        {isActive && <span className="shrink-0 text-violet-400 text-[8px]">✓</span>}
-                      </button>
-                    );
-                  })}
-                  {lockedConfig && !BUILT_IN_PRESETS.find(p => p.name === lockedConfig.preset) && (() => {
-                    const isActive = !manualConfig;
-                    return (
-                      <button
-                        onClick={() => { setManualConfig(null); setShowStrategyDrop(false); }}
-                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left transition-colors ${isActive ? "bg-violet-500/15 text-white/90" : "hover:bg-white/[0.05] text-white/60 hover:text-white/85"}`}
-                      >
-                        <span className={`flex-1 text-[9px] font-semibold truncate ${isActive ? "text-violet-200" : ""}`}>{lockedConfig.preset ?? "Custom Backtest"}</span>
-                        <span className="text-[7px] text-slate-500 font-mono">{lockedConfig.interval}</span>
-                        {isActive && <span className="shrink-0 text-violet-400 text-[8px]">✓</span>}
-                      </button>
-                    );
-                  })()}
-                </div>
-              </div>
-            )}
-          </div>
+              {pendingConfig.preset}
+            </span>
+          )}
 
           <span className="text-[8px] font-medium text-white/60 uppercase tracking-widest shrink-0">
             {STATE_LABEL[state] ?? state}
-            {state === "COOLDOWN" && snap?.cooldown_remaining ? ` ${Math.ceil(snap.cooldown_remaining)}s` : ""}
           </span>
+          {started && state !== "IN_TRADE" && nextBarSecs !== null && (
+            <span className="text-[8px] font-mono text-white/30 shrink-0">
+              <span className="text-emerald-400/70 font-bold tabular-nums">
+                {Math.floor(nextBarSecs / 60).toString().padStart(2, "0")}:{(nextBarSecs % 60).toString().padStart(2, "0")}
+              </span>
+            </span>
+          )}
         </div>
 
         {/* mode pill */}
@@ -846,61 +835,20 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
           return (
             <div className="flex flex-col py-2">
 
-              {/* ── Auto status ── */}
-              <div className="px-3 mb-3">
-                {!started ? (
-                  <div className="rounded-xl ring-1 ring-slate-700/25 bg-slate-800/10 px-4 py-4 flex flex-col gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-slate-600" />
-                      <span className="text-[13px] font-black text-white/20 tracking-tight">Auto Paper</span>
-                      <span className="text-[10px] font-semibold text-white/15">&middot; Inactive</span>
-                      <button
-                        onClick={() => !pos && onExternalEnabledChange?.(true)}
-                        disabled={!!pos}
-                        title={pos ? "Close the open position before turning scanner ON" : "Start auto paper trading"}
-                        className={`ml-auto text-[8px] px-2.5 py-1 rounded-lg font-bold ring-1 transition-all ${
-                          pos
-                            ? "bg-white/[0.03] text-white/15 ring-white/5 cursor-not-allowed"
-                            : "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400/60 hover:text-emerald-300 ring-emerald-500/20 hover:ring-emerald-500/35"
-                        }`}
-                      >{pos ? "Position Open" : "Scanner ON"}</button>
-                    </div>
-                    <div className="text-[9px] text-white/20">
-                      {pos ? "⚠ Close the open position before enabling scanner" : "Scanner is OFF — enable to start auto paper trading"}
-                    </div>
+              {/* ── Entry toast ── */}
+              {entryToast && (
+                <div className="mx-3 mb-2 at-launch-banner rounded-lg overflow-hidden ring-1 bg-gradient-to-r from-emerald-600/30 via-emerald-500/15 to-transparent ring-emerald-500/30">
+                  <div className="flex items-center gap-2 px-3 py-1.5">
+                    <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" /></span>
+                    <span className="text-[9px] font-bold text-emerald-300">
+                      {entryToast.dir === "CALL" ? "▲ LONG" : "▼ SHORT"} entered @ ${entryToast.price}
+                    </span>
                   </div>
-                ) : (
-                  <div className="rounded-xl ring-1 ring-emerald-500/20 bg-emerald-500/[0.04] px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="relative flex h-2.5 w-2.5">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
-                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400" />
-                      </span>
-                      <span className="text-[15px] font-black text-emerald-400 tracking-tight">Auto Paper</span>
-                      <span className="text-[9px] text-white/35 font-mono bg-slate-800/40 px-1.5 py-0.5 rounded">{STATE_LABEL[state] ?? state}</span>
-                      <button
-                        onClick={() => onExternalEnabledChange?.(false)}
-                        className="ml-auto text-[8px] px-2 py-0.5 rounded-lg font-bold bg-white/[0.05] hover:bg-amber-500/15 text-white/25 hover:text-amber-400 ring-1 ring-white/5 hover:ring-amber-500/20 transition-all"
-                      >Scanner OFF</button>
-                    </div>
-                    {activeConfig && (
-                      <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
-                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-violet-500/20 text-violet-200 font-bold tracking-tight">{activeConfig.preset ?? "Custom"}</span>
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-slate-700/50 text-slate-400 font-mono">{activeConfig.interval}</span>
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-400 font-semibold">SL {activeConfig.slMult}&times;</span>
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 font-semibold">TP {activeConfig.tpMult}&times;</span>
-                        <button
-                          onClick={handleReset}
-                          className="ml-auto text-[8px] px-2 py-0.5 rounded-md bg-white/[0.05] hover:bg-red-500/15 text-white/25 hover:text-red-400 ring-1 ring-white/5 hover:ring-red-500/20 transition-all font-semibold"
-                          title="Stop trader and reset all state"
-                        >Reset</button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                  <div className="h-0.5 at-launch-progress bg-emerald-400/60" />
+                </div>
+              )}
 
-              {/* ── Position · Log · Performance (1/5 · 2/5 · 2/5) ── */}
+              {/* ── Position · Log · Performance (1/5 · 2/5 · 2/5) ── */}}
               <div className="px-3 mb-3 grid grid-cols-[1fr_2fr_2fr] gap-2 items-stretch">
 
                 {/* ── Position (1/5) ── */}
@@ -969,11 +917,11 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                       <button
                         onClick={async () => {
                           if (!confirm("Close position at market price?")) return;
-                          await handleEmergency();
+                          await handleClosePosition();
                         }}
                         disabled={closingPosition}
                         className="w-full text-[7.5px] font-bold text-rose-400/70 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg py-0.5 transition-all disabled:opacity-50 disabled:cursor-wait"
-                        title="Close position at market price"
+                        title="Close position at market price — scanner keeps running"
                       >{closingPosition ? "Closing…" : "Close Position"}</button>
                     ) : (
                       <span className="text-[7px] uppercase tracking-widest text-white/20 font-bold">Position</span>
@@ -1072,6 +1020,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                           <th className="px-2 py-2 text-left   text-[7.5px] uppercase tracking-widest text-white/30 font-bold">Out</th>
                           <th className="px-2 py-2 text-right  text-[7.5px] uppercase tracking-widest text-white/30 font-bold">Entry</th>
                           <th className="px-2 py-2 text-right  text-[7.5px] uppercase tracking-widest text-white/30 font-bold">Exit</th>
+                          <th className="px-2 py-2 text-left   text-[7.5px] uppercase tracking-widest text-white/30 font-bold">Strategy</th>
                           <th className="px-2 py-2 text-center text-[7.5px] uppercase tracking-widest text-white/30 font-bold">Result</th>
                           <th className="px-2 py-2 text-right  text-[7.5px] uppercase tracking-widest text-white/30 font-bold">P&amp;L</th>
                         </tr>
@@ -1124,6 +1073,17 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                               {/* Entry price */}
                               <td className="px-2 py-2.5 text-right">
                                 <div className="text-[9px] font-mono text-white/50 tabular-nums">${t.entry_price.toFixed(2)}</div>
+                              </td>
+                              {/* Strategy */}
+                              <td className="px-2 py-2.5">
+                                {t.strategy_preset ? (
+                                  <span className="inline-block text-[7.5px] font-semibold px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/20 truncate max-w-[80px]" title={t.strategy_preset}>{t.strategy_preset}</span>
+                                ) : (
+                                  <span className="text-[7.5px] text-white/15">—</span>
+                                )}
+                                {t.mode === "live" && (
+                                  <span className="ml-1 inline-block text-[6.5px] font-bold px-1 py-px rounded bg-red-500/20 text-red-400 ring-1 ring-red-500/25">LIVE</span>
+                                )}
                               </td>
                               {/* Exit price */}
                               <td className="px-2 py-2.5 text-right">
@@ -1215,9 +1175,21 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
               <div className="mx-3 mb-1 at-launch-banner rounded-lg overflow-hidden ring-1 bg-gradient-to-r from-red-600/30 via-red-500/15 to-transparent ring-red-500/30">
                 <div className="flex items-center gap-2 px-3 py-1.5">
                   <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-red-400" /></span>
-                  <span className="text-[9px] font-bold text-red-300">\u26a0 LIVE Trading Started \u2014 Real money!</span>
+                  <span className="text-[9px] font-bold text-red-300">⚠ LIVE Trading Started — Real money!</span>
                 </div>
                 <div className="h-0.5 at-launch-progress bg-red-400/60" />
+              </div>
+            )}
+
+            {entryToast && (
+              <div className="mx-3 mb-1 at-launch-banner rounded-lg overflow-hidden ring-1 bg-gradient-to-r from-emerald-600/30 via-emerald-500/15 to-transparent ring-emerald-500/30">
+                <div className="flex items-center gap-2 px-3 py-1.5">
+                  <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" /></span>
+                  <span className="text-[9px] font-bold text-emerald-300">
+                    {entryToast.dir === "CALL" ? "▲ LONG" : "▼ SHORT"} entered @ ${entryToast.price}
+                  </span>
+                </div>
+                <div className="h-0.5 at-launch-progress bg-emerald-400/60" />
               </div>
             )}
 
@@ -1257,10 +1229,10 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                 >
                   <span className="relative flex h-1.5 w-1.5 shrink-0">
                     <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 ${
-                      state === "IN_TRADE" ? "bg-violet-400" : state === "COOLDOWN" ? "bg-amber-400" : "bg-emerald-400"
+                      state === "IN_TRADE" ? "bg-violet-400" : "bg-emerald-400"
                     }`} />
                     <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${
-                      state === "IN_TRADE" ? "bg-violet-400" : state === "COOLDOWN" ? "bg-amber-400" : "bg-emerald-400"
+                      state === "IN_TRADE" ? "bg-violet-400" : "bg-emerald-400"
                     }`} />
                   </span>
                   <span className="text-[8px] font-bold uppercase tracking-widest text-white/30 shrink-0">Log</span>
