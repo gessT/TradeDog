@@ -2788,6 +2788,19 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 relative">
                 <div className="px-3 pt-2 pb-0.5 flex items-center gap-2 border-b border-slate-800/30">
                   <span className="text-[8px] uppercase tracking-widest text-slate-500 font-bold">Trade Log</span>
+                  <span className="text-[8px] text-slate-600">·</span>
+                  <span className="text-[8px] text-slate-600">MGC=F · {btData.interval ?? "5m"} · {btData.period}</span>
+                  <span className="text-[8px] text-slate-600">${n(m.initial_capital).toLocaleString()} → ${n(m.final_equity).toLocaleString()}</span>
+                  {btData.data_source && (
+                    <span className={`px-1.5 py-0.5 rounded text-[8px] font-medium ${
+                      btData.data_source === "Tiger"
+                        ? "bg-emerald-900/40 text-emerald-400 border border-emerald-700/40"
+                        : "bg-amber-900/40 text-amber-400 border border-amber-700/40"
+                    }`}>
+                      {btData.data_source === "Tiger" ? "⚡ Tiger" : "⏱ yfinance"}
+                    </span>
+                  )}
+                  <span className="ml-auto text-[8px] text-slate-600">{btData.timestamp}</span>
                 </div>
                 {loading && (
                   <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm rounded-lg">
@@ -2800,22 +2813,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 <div className="max-h-[420px] overflow-y-auto">
                   <TradeLogByDate trades={btData.trades} onTradeClick={(t) => { setZoomTrade(t); onTradeClick?.(t); }} livePrice={livePrice} dateFrom={dateFrom} dateTo={dateTo} />
                 </div>
-              </div>
-
-              {/* Footer */}
-              <div className="flex items-center gap-3 text-[9px] text-slate-600">
-                <span>MGC=F · 5m · {btData.period}</span>
-                <span>${n(m.initial_capital).toLocaleString()} → ${n(m.final_equity).toLocaleString()}</span>
-                {btData.data_source && (
-                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-medium ${
-                    btData.data_source === "Tiger"
-                      ? "bg-emerald-900/40 text-emerald-400 border border-emerald-700/40"
-                      : "bg-amber-900/40 text-amber-400 border border-amber-700/40"
-                  }`}>
-                    {btData.data_source === "Tiger" ? "⚡ Tiger" : "⏱ yfinance"}
-                  </span>
-                )}
-                <span className="ml-auto">{btData.timestamp}</span>
               </div>
             </div>
           )}

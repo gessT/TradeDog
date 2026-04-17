@@ -281,11 +281,15 @@ def _load_tiger_or_yf(symbol: str, interval: str, period: str) -> "tuple[pd.Data
     `symbol` is the commodity key (e.g. "MGC"), not the yfinance ticker.
     `period` is a yfinance-style string like "5d", "60d", "7d".
     Returns (DataFrame, source) where source is "Tiger" or "yfinance".
+
+    Tiger intraday history is limited to ~15 days, so periods ≥ 30d go
+    straight to yfinance without wasting a Tiger API call.
     """
     import pandas as pd
 
-    # Convert period string → bar limit estimate
-    # yfinance periods: Nd = N days × ~78 bars/day for 5m
+    # Tiger hard limit: intraday history only covers ~15 days.
+    # For any period > 15d skip Tiger entirely — it can never satisfy the span check.
+    _TIGER_MAX_DAYS = 15
     _bars_per_day = {"1m": 390, "2m": 195, "5m": 78, "15m": 26, "30m": 13, "1h": 7}
     try:
         days = int(period.replace("d", "").replace("m", "0").split("y")[0])
@@ -295,27 +299,28 @@ def _load_tiger_or_yf(symbol: str, interval: str, period: str) -> "tuple[pd.Data
         days = 60
         limit = 800
 
-    _, df_tiger = _tiger_bars(symbol, interval, limit)
-    if df_tiger is not None and not df_tiger.empty:
-        # Validate Tiger data covers the requested period.
-        # Tiger intraday history is typically limited to ~15 days.
-        # If the earliest bar is less than 70% of the requested window, fall through to yfinance.
-        try:
-            earliest = df_tiger.index[0]
-            latest   = df_tiger.index[-1]
-            tiger_span_days = (latest - earliest).total_seconds() / 86400
-            if tiger_span_days >= days * 0.7:
-                logger.debug("Tiger data used for %s/%s (%d bars, %.0fd span)", symbol, interval, len(df_tiger), tiger_span_days)
-                return df_tiger, "Tiger"
-            else:
-                logger.debug("Tiger only has %.0fd of %sd requested — falling back to yfinance", tiger_span_days, days)
-        except Exception:
-            pass  # index comparison failed — fall through to yfinance
+    if days <= _TIGER_MAX_DAYS:
+        _, df_tiger = _tiger_bars(symbol, interval, limit)
+        if df_tiger is not None and not df_tiger.empty:
+            # Validate Tiger data covers the requested period.
+            # If the earliest bar is less than 70% of the requested window, fall through to yfinance.
+            try:
+                earliest = df_tiger.index[0]
+                latest   = df_tiger.index[-1]
+                tiger_span_days = (latest - earliest).total_seconds() / 86400
+                if tiger_span_days >= days * 0.7:
+                    logger.debug("Tiger data used for %s/%s (%d bars, %.0fd span)", symbol, interval, len(df_tiger), tiger_span_days)
+                    return df_tiger, "Tiger"
+                else:
+                    logger.debug("Tiger only has %.0fd of %sd requested — falling back to yfinance", tiger_span_days, days)
+            except Exception:
+                pass  # index comparison failed — fall through to yfinance
+    else:
+        logger.debug("Period %s > %dd Tiger limit — using yfinance directly for %s/%s", period, _TIGER_MAX_DAYS, symbol, interval)
 
     # Fallback: yfinance
     commodity = _COMMODITY_SYMBOLS.get(symbol, {"yf": f"{symbol}=F"})
     yf_symbol = commodity.get("yf", f"{symbol}=F")
-    logger.debug("Tiger unavailable — falling back to yfinance for %s/%s", symbol, interval)
     # Map non-standard periods to valid yfinance ones
     _valid_yf_5m = {"1d", "2d", "5d", "7d", "14d", "30d", "60d"}
     yf_period = period if period in _valid_yf_5m else "60d"
