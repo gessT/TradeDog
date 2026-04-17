@@ -115,6 +115,8 @@ type Props = {
   onStartedChange?: (started: boolean) => void;
   /** When false, the tick loop is paused even if the trader is started in the backend. */
   externalEnabled?: boolean;
+  /** Called when user toggles the scanner on/off from within the panel. */
+  onExternalEnabledChange?: (enabled: boolean) => void;
 };
 
 /** Build a LockedTradingConfig from a BuiltInPreset (used when user picks manually without running backtest). */
@@ -131,7 +133,7 @@ function configFromPreset(preset: BuiltInPreset, sym: string): LockedTradingConf
   };
 }
 
-export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExecutedTick = 0, onTradeExecuted, onStartedChange, externalEnabled = true }: Props) {
+export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExecutedTick = 0, onTradeExecuted, onStartedChange, externalEnabled = true, onExternalEnabledChange }: Props) {
   const { price: livePrice } = useLivePrice();
   const [snap, setSnap] = useState<AutoTraderSnapshot | null>(null);
   const [trades, setTrades] = useState<AutoTraderTrade[]>([]);
@@ -621,57 +623,6 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
             <span className="text-[9px] text-amber-400/70 font-bold">Cooldown — {Math.ceil(snap.cooldown_remaining)}s remaining</span>
           </div>
         )}
-        {/* ── Sync Trade button ── */}
-        <div className="px-3 py-2 border-t border-white/[0.05] space-y-1.5">
-          {syncDirPicker ? (
-            <div className="space-y-1">
-              <div className="text-[7.5px] text-amber-400/70 font-bold">No backtest position — pick direction:</div>
-              <div className="flex gap-1.5">
-                <button
-                  onClick={() => handleSyncTrade("CALL")}
-                  className="flex-1 py-1.5 rounded-lg text-[8px] font-bold bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30 hover:bg-emerald-500/25 transition-all"
-                >▲ Long</button>
-                <button
-                  onClick={() => handleSyncTrade("PUT")}
-                  className="flex-1 py-1.5 rounded-lg text-[8px] font-bold bg-red-500/15 text-red-300 ring-1 ring-red-500/30 hover:bg-red-500/25 transition-all"
-                >▼ Short</button>
-                <button
-                  onClick={() => setSyncDirPicker(false)}
-                  className="px-2 py-1.5 rounded-lg text-[8px] text-white/30 hover:text-white/60 bg-white/5 ring-1 ring-white/5 transition-all"
-                >✕</button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => handleSyncTrade()}
-                disabled={syncingMarket}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[8px] font-bold transition-all ring-1 ${
-                  syncResult === "ok"
-                    ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
-                    : syncResult === "none"
-                      ? "bg-amber-500/10 text-amber-400/70 ring-amber-500/20"
-                      : syncResult === "error"
-                        ? "bg-red-500/10 text-red-400/70 ring-red-500/20"
-                        : "bg-white/[0.05] text-white/50 ring-white/10 hover:bg-cyan-500/10 hover:text-cyan-300 hover:ring-cyan-500/25"
-                }`}
-                title="Open trade at market price using backtest position or ATR-based SL/TP"
-              >
-                {syncingMarket ? (
-                  <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-                ) : (
-                  <span>▶</span>
-                )}
-                <span>
-                  {syncResult === "ok" ? "Synced!" : syncResult === "none" ? "Already in trade" : syncResult === "error" ? "Failed" : "Sync Trade"}
-                </span>
-              </button>
-              <span className="text-[7.5px] text-white/25 leading-tight">
-                Enter at market price · SL/TP from backtest
-              </span>
-            </div>
-          )}
-        </div>
       </div>
     );
   };
@@ -956,13 +907,17 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
               {/* ── Auto status ── */}
               <div className="px-3 mb-3">
                 {!started ? (
-                  <div className="rounded-xl ring-1 ring-slate-700/25 bg-slate-800/10 px-4 py-4 flex flex-col items-center gap-2 text-center">
+                  <div className="rounded-xl ring-1 ring-slate-700/25 bg-slate-800/10 px-4 py-4 flex flex-col gap-2">
                     <div className="flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-slate-600" />
                       <span className="text-[13px] font-black text-white/20 tracking-tight">Auto Paper</span>
                       <span className="text-[10px] font-semibold text-white/15">&middot; Inactive</span>
+                      <button
+                        onClick={() => onExternalEnabledChange?.(true)}
+                        className="ml-auto text-[8px] px-2.5 py-1 rounded-lg font-bold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400/60 hover:text-emerald-300 ring-1 ring-emerald-500/20 hover:ring-emerald-500/35 transition-all"
+                      >Scanner ON</button>
                     </div>
-                    <div className="text-[9px] text-white/20">Turn on Scanner to start automatically</div>
+                    <div className="text-[9px] text-white/20">Scanner is OFF &mdash; enable to start auto paper trading</div>
                   </div>
                 ) : (
                   <div className="rounded-xl ring-1 ring-emerald-500/20 bg-emerald-500/[0.04] px-4 py-3">
@@ -972,7 +927,11 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                         <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400" />
                       </span>
                       <span className="text-[15px] font-black text-emerald-400 tracking-tight">Auto Paper</span>
-                      <span className="ml-auto text-[9px] text-white/35 font-mono bg-slate-800/40 px-1.5 py-0.5 rounded">{STATE_LABEL[state] ?? state}</span>
+                      <span className="text-[9px] text-white/35 font-mono bg-slate-800/40 px-1.5 py-0.5 rounded">{STATE_LABEL[state] ?? state}</span>
+                      <button
+                        onClick={() => onExternalEnabledChange?.(false)}
+                        className="ml-auto text-[8px] px-2 py-0.5 rounded-lg font-bold bg-white/[0.05] hover:bg-amber-500/15 text-white/25 hover:text-amber-400 ring-1 ring-white/5 hover:ring-amber-500/20 transition-all"
+                      >Scanner OFF</button>
                     </div>
                     {activeConfig && (
                       <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
@@ -991,21 +950,48 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                 )}
               </div>
 
-              {/* ── Performance ── */}
-              <div className="px-3 mb-3">
-                <div className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-2">Performance</div>
-                <div className="grid grid-cols-4 gap-px rounded-xl overflow-hidden ring-1 ring-white/[0.08]">
-                  {[
-                    { label: "Total P&L", value: `${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(2)}`, color: totalPnl >= 0 ? "text-emerald-400" : "text-red-400" },
-                    { label: "Today", value: `${(snap?.daily_pnl ?? 0) >= 0 ? "+" : ""}$${(snap?.daily_pnl ?? 0).toFixed(2)}`, color: (snap?.daily_pnl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400" },
-                    { label: "Win Rate", value: `${wr}%`, color: wr >= 50 ? "text-emerald-400" : "text-red-400" },
-                    { label: "Trades", value: String(closedTrades.length), color: "text-white/60" },
-                  ].map((s, i) => (
-                    <div key={i} className="bg-white/[0.025] py-2.5 px-1 text-center">
-                      <div className="text-[8px] uppercase tracking-widest text-white/25 font-bold mb-1">{s.label}</div>
-                      <div className={`text-[13px] font-black tabular-nums ${s.color}`}>{s.value}</div>
-                    </div>
-                  ))}
+              {/* ── Performance + Log ── */}
+              <div className="px-3 mb-3 flex gap-2">
+                {/* Performance */}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-2">Performance</div>
+                  <div className="grid grid-cols-2 gap-px rounded-xl overflow-hidden ring-1 ring-white/[0.08] h-[calc(100%-22px)]">
+                    {[
+                      { label: "Total P&L", value: `${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(2)}`, color: totalPnl >= 0 ? "text-emerald-400" : "text-red-400" },
+                      { label: "Today", value: `${(snap?.daily_pnl ?? 0) >= 0 ? "+" : ""}$${(snap?.daily_pnl ?? 0).toFixed(2)}`, color: (snap?.daily_pnl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400" },
+                      { label: "Win Rate", value: `${wr}%`, color: wr >= 50 ? "text-emerald-400" : "text-red-400" },
+                      { label: "Trades", value: String(closedTrades.length), color: "text-white/60" },
+                    ].map((s, i) => (
+                      <div key={i} className="bg-white/[0.025] py-2.5 px-1 text-center">
+                        <div className="text-[8px] uppercase tracking-widest text-white/25 font-bold mb-1">{s.label}</div>
+                        <div className={`text-[13px] font-black tabular-nums ${s.color}`}>{s.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Log */}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-2">Log</div>
+                  <div className="rounded-xl ring-1 ring-white/[0.08] bg-slate-900/50 overflow-hidden h-[calc(100%-22px)] flex flex-col">
+                    {logs.length === 0 ? (
+                      <div className="flex-1 flex items-center justify-center">
+                        <span className="text-[8px] text-white/15 font-mono">No activity yet</span>
+                      </div>
+                    ) : (
+                      <div className="flex-1 overflow-y-auto p-1.5 space-y-px font-mono text-[8px]">
+                        {logs.slice(0, 20).map((entry, i) => {
+                          const col = entry.type === "entry" ? "text-emerald-400" : entry.type === "exit" ? "text-sky-400" : entry.type === "signal" ? "text-violet-400" : entry.type === "warn" ? "text-amber-400" : entry.type === "error" ? "text-red-400" : "text-white/40";
+                          return (
+                            <div key={i} className="flex gap-1 px-1.5 py-0.5 rounded hover:bg-white/[0.03]">
+                              <span className="text-white/20 shrink-0">{new Date(entry.ts).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                              <span className={`truncate ${col}`}>{entry.msg}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
