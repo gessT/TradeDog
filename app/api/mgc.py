@@ -4606,23 +4606,19 @@ async def auto_trader_start(
 def _get_backtest_open_position(symbol: str, period: str, trader, interval: str = "5m") -> dict | None:
     """Run a quick backtest to detect any open position.
 
-    Routes to the correct backtest logic based on the trader's active strategy preset.
+    Routes to the correct backtest logic based on the trader's active strategy preset,
+    using the same backtester and data source as the Strategy5MinPanel.
     """
     from strategies.futures.backtest_5min import Backtester5Min
 
     yf_symbol = f"{symbol}=F"
-    _period_map = {"1d": "5d", "3d": "5d", "7d": "14d", "14d": "30d", "30d": "60d"}
-    _max_period = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d"}
-    fetch_period = _period_map.get(period, "14d")
-    max_allowed = _max_period.get(interval, "60d")
-    if int(fetch_period.replace("d", "")) > int(max_allowed.replace("d", "")):
-        fetch_period = max_allowed
-
     preset = getattr(trader, "_strategy_preset", "") or ""
+    preset_lower = preset.lower()
+    logger.info("sync-market _get_backtest_open_position: preset=%r symbol=%s interval=%s period=%s", preset, symbol, interval, period)
 
     # ── Always Open: position is always the last completed bar ──
-    if "always open" in preset.lower() or preset.lower() == "always_open":
-        df, _ = _load_tiger_or_yf(symbol, interval, "1d")
+    if "always open" in preset_lower or preset_lower == "always_open":
+        df, _ = _load_tiger_or_yf(symbol, interval, "5d")
         if df is None or len(df) < 3:
             return None
         entry_bar = df.iloc[-2]
@@ -4640,8 +4636,139 @@ def _get_backtest_open_position(symbol: str, period: str, trader, interval: str 
             "bar_time": str(df.index[-1]),
         }
 
-    # ── Standard / custom strategy ──
-    df = load_yfinance(symbol=yf_symbol, interval=interval, period=fetch_period)
+    # ── BoS Long (5min_locked) ──
+    if "bos long" in preset_lower or "⬆" in preset:
+        try:
+            from strategies.futures.backtest_5min_locked import BacktesterLocked5Min
+            from strategies.futures.strategy_5min_locked import DEFAULT_LOCKED_PARAMS
+            df_5m, _ = _load_tiger_or_yf(symbol, "5m", "60d")
+            if df_5m is None or len(df_5m) < 50:
+                logger.info("sync-market BoS-Long: insufficient 5m data (%s bars)", 0 if df_5m is None else len(df_5m))
+                return None
+            df_1h = None
+            try:
+                df_1h, _ = _load_tiger_or_yf(symbol, "1h", "90d")
+            except Exception:
+                pass
+            params = {**DEFAULT_LOCKED_PARAMS,
+                      "sl_atr_mult": trader._sl_mult, "tp_atr_mult": trader._tp_mult}
+            result = BacktesterLocked5Min(contracts=1).run(df_5m, df_1h, params=params)
+            if not result.trades:
+                logger.info("sync-market BoS-Long: backtest produced 0 trades")
+                return None
+            last = result.trades[-1]
+            logger.info("sync-market BoS-Long: last trade reason=%s entry=%.2f exit_time=%s", last.reason, last.entry_price, last.exit_time)
+            if last.reason not in ("EOD", "OPEN"):
+                return None
+            return {
+                "direction": "CALL",
+                "entry_price": round(last.entry_price, 2),
+                "sl": round(last.sl_price, 2),
+                "tp": round(last.tp_price, 2),
+                "qty": 1,
+                "entry_time": str(last.entry_time),
+                "signal_type": "BoS_LONG",
+                "bar_time": str(last.exit_time),
+            }
+        except Exception as e:
+            logger.warning("_get_backtest_open_position locked_long failed: %s", e)
+            return None
+
+    # ── BoS Short (5min_locked_short) ──
+    if "bos short" in preset_lower or "⬇" in preset:
+        try:
+            from strategies.futures.backtest_5min_locked_short import BacktesterLockedShort5Min
+            from strategies.futures.strategy_5min_locked_short import DEFAULT_LOCKED_SHORT_PARAMS
+            df_5m, _ = _load_tiger_or_yf(symbol, "5m", "60d")
+            if df_5m is None or len(df_5m) < 50:
+                logger.info("sync-market BoS-Short: insufficient 5m data (%s bars)", 0 if df_5m is None else len(df_5m))
+                return None
+            df_1h = None
+            try:
+                df_1h, _ = _load_tiger_or_yf(symbol, "1h", "90d")
+            except Exception:
+                pass
+            params = {**DEFAULT_LOCKED_SHORT_PARAMS,
+                      "sl_atr_mult": trader._sl_mult, "tp_atr_mult": trader._tp_mult}
+            result = BacktesterLockedShort5Min(contracts=1).run(df_5m, df_1h, params=params)
+            if not result.trades:
+                logger.info("sync-market BoS-Short: backtest produced 0 trades")
+                return None
+            last = result.trades[-1]
+            logger.info("sync-market BoS-Short: last trade reason=%s entry=%.2f exit_time=%s", last.reason, last.entry_price, last.exit_time)
+            if last.reason not in ("EOD", "OPEN"):
+                return None
+            return {
+                "direction": "PUT",
+                "entry_price": round(last.entry_price, 2),
+                "sl": round(last.sl_price, 2),
+                "tp": round(last.tp_price, 2),
+                "qty": 1,
+                "entry_time": str(last.entry_time),
+                "signal_type": "BoS_SHORT",
+                "bar_time": str(last.exit_time),
+            }
+        except Exception as e:
+            logger.warning("_get_backtest_open_position locked_short failed: %s", e)
+            return None
+
+    # ── BoS Mix (5min_mix): run both Long + Short, return whichever has the most-recent EOD trade ──
+    if "bos mix" in preset_lower or "⇕" in preset:
+        try:
+            from strategies.futures.backtest_5min_locked import BacktesterLocked5Min
+            from strategies.futures.strategy_5min_locked import DEFAULT_LOCKED_PARAMS
+            from strategies.futures.backtest_5min_locked_short import BacktesterLockedShort5Min
+            from strategies.futures.strategy_5min_locked_short import DEFAULT_LOCKED_SHORT_PARAMS
+
+            df_5m, _ = _load_tiger_or_yf(symbol, "5m", "60d")
+            if df_5m is None or len(df_5m) < 50:
+                logger.info("sync-market BoS-Mix: insufficient 5m data")
+                return None
+            df_1h = None
+            try:
+                df_1h, _ = _load_tiger_or_yf(symbol, "1h", "90d")
+            except Exception:
+                pass
+
+            params_long  = {**DEFAULT_LOCKED_PARAMS,  "sl_atr_mult": trader._sl_mult, "tp_atr_mult": trader._tp_mult}
+            params_short = {**DEFAULT_LOCKED_SHORT_PARAMS, "sl_atr_mult": trader._sl_mult, "tp_atr_mult": trader._tp_mult}
+
+            res_long  = BacktesterLocked5Min(contracts=1).run(df_5m, df_1h, params=params_long)
+            res_short = BacktesterLockedShort5Min(contracts=1).run(df_5m, df_1h, params=params_short)
+
+            candidates = []
+            if res_long.trades:
+                t = res_long.trades[-1]
+                if t.reason in ("EOD", "OPEN"):
+                    candidates.append(("CALL", t))
+            if res_short.trades:
+                t = res_short.trades[-1]
+                if t.reason in ("EOD", "OPEN"):
+                    candidates.append(("PUT", t))
+
+            if not candidates:
+                logger.info("sync-market BoS-Mix: no EOD/OPEN trade in either leg")
+                return None
+
+            # Pick the most recent entry
+            direction, last = max(candidates, key=lambda x: str(x[1].entry_time))
+            logger.info("sync-market BoS-Mix: picked %s entry=%.2f reason=%s", direction, last.entry_price, last.reason)
+            return {
+                "direction": direction,
+                "entry_price": round(last.entry_price, 2),
+                "sl": round(last.sl_price, 2),
+                "tp": round(last.tp_price, 2),
+                "qty": 1,
+                "entry_time": str(last.entry_time),
+                "signal_type": f"BoS_{'LONG' if direction == 'CALL' else 'SHORT'}",
+                "bar_time": str(last.exit_time),
+            }
+        except Exception as e:
+            logger.warning("_get_backtest_open_position bos_mix failed: %s", e)
+            return None
+
+    # ── Standard / custom strategy — always use 60d to match the panel ──
+    df = load_yfinance(symbol=yf_symbol, interval=interval, period="60d")
     if df is None or len(df) < 50:
         return None
 
@@ -4789,6 +4916,118 @@ async def auto_trader_force_entry(
     }
 
 
+class SyncTradePayload(BaseModel):
+    direction: str = "CALL"        # "CALL" or "PUT" — used when force_direction=True
+    live_price: float = 0.0
+    sl_mult: float = 0.0           # 0 = use trader's configured sl_mult
+    tp_mult: float = 0.0           # 0 = use trader's configured tp_mult
+    force_direction: bool = False  # True → skip backtest, open with provided direction + ATR
+
+
+@router.post("/auto-trader/sync-trade")
+async def auto_trader_sync_trade(
+    payload: SyncTradePayload,
+    symbol: str = Query("MGC"),
+    interval: str = Query("5m"),
+    period: str = Query("7d"),
+):
+    """Open a paper trade immediately at market price with SL/TP from backtest or ATR.
+
+    Flow:
+    1. Try the current backtest to find any open position (same as sync-market).
+       If found, re-anchor entry/SL/TP to live_price preserving the same pip distances.
+    2. If no backtest open position exists, compute ATR from recent bars and open a
+       fresh position in the requested direction using sl_mult × ATR / tp_mult × ATR.
+
+    Always injects the result into the paper trader as an OPEN position.
+    """
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+
+    if not trader._snap().get("started"):
+        return {"synced": False, "reason": "not_started", "position": None, "snapshot": trader._snap()}
+
+    live_price = payload.live_price
+    direction = payload.direction
+
+    # ── Step 1: try backtest open position (skipped when force_direction=True) ──
+    open_pos: dict | None = None
+    if not payload.force_direction:
+        try:
+            open_pos = await run_in_threadpool(_get_backtest_open_position, symbol, period, trader, interval)
+        except Exception as e:
+            logger.warning("sync-trade: backtest error: %s", e)
+
+    if open_pos:
+        # Re-anchor to live market price (same logic as sync-market)
+        if live_price > 0 and open_pos.get("entry_price", 0) > 0:
+            bt_entry = float(open_pos["entry_price"])
+            bt_sl    = float(open_pos.get("sl", 0) or 0)
+            bt_tp    = float(open_pos.get("tp", 0) or 0)
+            d = open_pos.get("direction", direction)
+            if bt_sl > 0 and bt_tp > 0:
+                sl_offset = abs(bt_entry - bt_sl)
+                tp_offset = abs(bt_tp - bt_entry)
+            else:
+                sl_offset = float(trader._sl_mult)
+                tp_offset = float(trader._tp_mult)
+            if d == "CALL":
+                open_pos = dict(open_pos, entry_price=live_price,
+                                sl=round(live_price - sl_offset, 2),
+                                tp=round(live_price + tp_offset, 2))
+            else:
+                open_pos = dict(open_pos, entry_price=live_price,
+                                sl=round(live_price + sl_offset, 2),
+                                tp=round(live_price - tp_offset, 2))
+    else:
+        # ── Step 2: no backtest position ──────────────────────────
+        # If the caller didn't explicitly force a direction, tell the frontend
+        # to ask the user which way to enter instead of silently defaulting to CALL.
+        if not payload.force_direction:
+            logger.info("sync-trade: no backtest open position found — returning no_backtest_position")
+            return {"synced": False, "reason": "no_backtest_position", "position": None, "snapshot": trader._snap()}
+
+        if live_price <= 0:
+            return {"synced": False, "reason": "no_live_price", "position": None, "snapshot": trader._snap()}
+
+        sl_m = payload.sl_mult if payload.sl_mult > 0 else (float(trader._sl_mult) if trader._sl_mult > 0 else 1.5)
+        tp_m = payload.tp_mult if payload.tp_mult > 0 else (float(trader._tp_mult) if trader._tp_mult > 0 else 3.0)
+
+        atr_val = await run_in_threadpool(_compute_latest_atr, symbol, interval)
+        if not atr_val or atr_val <= 0:
+            atr_val = 2.0  # safe fallback for MGC (≈2 ticks)
+            logger.warning("sync-trade: ATR unavailable, using fallback %.1f", atr_val)
+
+        sl_offset = round(sl_m * atr_val, 2)
+        tp_offset = round(tp_m * atr_val, 2)
+
+        if direction == "CALL":
+            sl = round(live_price - sl_offset, 2)
+            tp = round(live_price + tp_offset, 2)
+        else:
+            sl = round(live_price + sl_offset, 2)
+            tp = round(live_price - tp_offset, 2)
+
+        open_pos = {
+            "direction": direction,
+            "entry_price": live_price,
+            "sl": sl,
+            "tp": tp,
+            "qty": 1,
+            "entry_time": datetime.now(SGT).strftime("%Y-%m-%d %H:%M:%S"),
+            "bar_time":   datetime.now(SGT).strftime("%Y-%m-%d %H:%M:%S"),
+            "signal_type": "MANUAL_SYNC",
+        }
+
+    synced = trader.sync_backtest_position(open_pos)
+    return {
+        "synced": synced,
+        "reason": "ok" if synced else "already_in_trade",
+        "position": open_pos if synced else None,
+        "snapshot": trader._snap(),
+    }
+
+
 @router.get("/auto-trader/state")
 async def auto_trader_state(symbol: str = Query("MGC")):
     """Full state — machine + risk + paper summary."""
@@ -4871,6 +5110,33 @@ async def auto_trader_tick(
         "message": result.message,
         "snapshot": result.snapshot,
     }
+
+
+def _compute_latest_atr(symbol: str, interval: str = "5m", period: int = 14) -> float | None:
+    """Return the most recent ATR value for the given symbol/interval.
+
+    Uses Tiger API first (real-time, covers ~15d), falls back to yfinance.
+    """
+    import pandas as pd
+    try:
+        df, source = _load_tiger_or_yf(symbol, interval, "7d")
+        logger.debug("_compute_latest_atr: loaded %d bars via %s", len(df), source)
+    except Exception as e:
+        logger.warning("_compute_latest_atr: data load failed: %s", e)
+        return None
+    if df is None or len(df) < period + 2:
+        return None
+    high  = df["high"].astype(float)
+    low   = df["low"].astype(float)
+    close = df["close"].astype(float)
+    tr = pd.concat([
+        high - low,
+        (high - close.shift(1)).abs(),
+        (low  - close.shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    atr_series = tr.ewm(alpha=1.0 / period, adjust=False).mean()
+    val = float(atr_series.iloc[-1])
+    return val if not pd.isna(val) else None
 
 
 def _load_5min_data_for_tick(symbol: str, period: str, interval: str = "5m") -> "pd.DataFrame | None":

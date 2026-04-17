@@ -24,10 +24,13 @@ const CONDITION_KEYS: (keyof Scan5MinConditions)[] = [
 const DEFAULT_TOGGLES: Record<string, boolean> = Object.fromEntries(
   CONDITION_KEYS.map((k) => [k, false])
 );
-// Keep Going defaults: EMA trend + SuperTrend + RSI
+// BoS Mix defaults: EMA trend + breakout + SuperTrend + RSI + ATR + session
 DEFAULT_TOGGLES["ema_trend"] = true;
+DEFAULT_TOGGLES["breakout"] = true;
 DEFAULT_TOGGLES["supertrend"] = true;
 DEFAULT_TOGGLES["rsi_momentum"] = true;
+DEFAULT_TOGGLES["atr_range"] = true;
+DEFAULT_TOGGLES["session_ok"] = true;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Futures Dashboard — multi-commodity trading workspace
@@ -113,6 +116,8 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
   const [tradeExecutedTick, setTradeExecutedTick] = useState(0);
   // ── Whether auto-trader is actively running (paper or live) ──
   const [autoTraderStarted, setAutoTraderStarted] = useState(false);
+  // ── Scanner auto-run toggle (Strategy panel drives this; gates AutoTrader tick loop) ──
+  const [scannerAutoRun, setScannerAutoRun] = useState(false);
   // ── Trade click → scroll chart to candle ─────────────────────
   const handleTradeClick5Min = useCallback((t: MGC5MinTrade) => {
     const ts = Math.floor(new Date(t.entry_time).getTime() / 1000);
@@ -236,7 +241,7 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path d="M15 19l-7-7 7-7"/></svg>
           Strategy
         </button>
-        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} onTradesUpdate={setBacktestTrades} onDirectExecute={() => setTradeExecutedTick((n) => n + 1)} tradeExecutedTick={tradeExecutedTick} autoTraderRunning={autoTraderStarted} symbol={selectedSymbol} symbolName={selectedName} conditionToggles={conditionToggles} setConditionToggles={setConditionToggles} interval={interval} onIntervalChange={setInterval_} onSlTpChange={handleSlTpChange} onConfigLock={handleConfigLock} />
+        <Strategy5MinPanel onTradeClick={handleTradeClick5Min} onTradesUpdate={setBacktestTrades} onDirectExecute={() => setTradeExecutedTick((n) => n + 1)} tradeExecutedTick={tradeExecutedTick} autoTraderRunning={autoTraderStarted} symbol={selectedSymbol} symbolName={selectedName} conditionToggles={conditionToggles} setConditionToggles={setConditionToggles} interval={interval} onIntervalChange={setInterval_} onSlTpChange={handleSlTpChange} onConfigLock={handleConfigLock} onAutoTradingChange={setScannerAutoRun} />
       </section>
       )}
 
@@ -255,7 +260,7 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
           Trader
         </button>
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <AutoTraderPanel symbol={selectedSymbol} lockedConfig={lockedConfig} tradeExecutedTick={tradeExecutedTick} onTradeExecuted={() => setTradeExecutedTick((n) => n + 1)} onStartedChange={setAutoTraderStarted} />
+          <AutoTraderPanel symbol={selectedSymbol} lockedConfig={lockedConfig} tradeExecutedTick={tradeExecutedTick} onTradeExecuted={() => setTradeExecutedTick((n) => n + 1)} onStartedChange={setAutoTraderStarted} externalEnabled={scannerAutoRun} />
         </div>
       </section>
       )}

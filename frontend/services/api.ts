@@ -2286,6 +2286,27 @@ export async function autoTraderSyncMarket(
   return res.json();
 }
 
+export async function autoTraderSyncTrade(
+  symbol = "MGC",
+  direction: "CALL" | "PUT" = "CALL",
+  livePrice = 0,
+  slMult = 0,
+  tpMult = 0,
+  interval = "5m",
+  period = "7d",
+  forceDirection = false,
+): Promise<{ synced: boolean; reason: string; position: Record<string, unknown> | null; snapshot: AutoTraderSnapshot }> {
+  const res = await fetch(
+    `${_at("sync-trade", symbol)}&interval=${interval}&period=${period}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ direction, live_price: livePrice, sl_mult: slMult, tp_mult: tpMult, force_direction: forceDirection }),
+    },
+  );
+  return res.json();
+}
+
 export async function autoTraderForceEntry(
   symbol = "MGC",
   direction: "CALL" | "PUT" = "CALL",

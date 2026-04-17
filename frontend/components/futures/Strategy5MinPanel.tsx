@@ -33,6 +33,8 @@ import {
   getAutoTradeSettings,
   saveAutoTradeSettings,
   autoTraderEntryFilled,
+  autoTraderSyncMarket,
+  autoTraderGetDbTrades,
   type ConditionOptimizationResult,
   type ConditionPreset,
   type MGC5MinBacktestResponse,
@@ -242,7 +244,7 @@ function DailyPnlCard({ days, totalPnl, maxAbs, period, visibleDays, oos }: Read
   );
 }
 
-function TradeRow5Min({ t, idx, onTradeClick, livePrice }: Readonly<{ t: MGC5MinTrade; idx: number; onTradeClick?: (t: MGC5MinTrade) => void; livePrice?: number | null }>) {
+function TradeRow5Min({ t, idx, onTradeClick, livePrice, autoTraderRunning, onSyncTrader, syncTraderStatus }: Readonly<{ t: MGC5MinTrade; idx: number; onTradeClick?: (t: MGC5MinTrade) => void; livePrice?: number | null; autoTraderRunning?: boolean; onSyncTrader?: () => void; syncTraderStatus?: "idle" | "syncing" | "ok" | "none" | "error" }>) {
   const win = t.pnl >= 0;
   const isOpen = t.reason === "OPEN";
   const pipDiff = n(t.exit_price) - n(t.entry_price);
@@ -289,6 +291,28 @@ function TradeRow5Min({ t, idx, onTradeClick, livePrice }: Readonly<{ t: MGC5Min
       <td className="px-2 py-1 text-center">
         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${reasonStyle(t.reason)}`}>{t.reason}</span>
       </td>
+      {/* Sync button — shown when open position + auto trader running */}
+      {isOpen && autoTraderRunning && (
+        <td className="px-2 py-1">
+          <button
+            onClick={(e) => { e.stopPropagation(); onSyncTrader?.(); }}
+            disabled={syncTraderStatus === "syncing"}
+            className={`text-[8px] px-1.5 py-0.5 rounded-md ring-1 font-bold whitespace-nowrap transition-all cursor-pointer active:scale-95 ${
+              syncTraderStatus === "ok" ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30" :
+              syncTraderStatus === "none" ? "bg-amber-500/10 text-amber-400 ring-amber-500/20" :
+              syncTraderStatus === "error" ? "bg-red-500/10 text-red-400 ring-red-500/20" :
+              syncTraderStatus === "syncing" ? "bg-cyan-500/10 text-cyan-400/60 ring-cyan-500/15 cursor-wait" :
+              "bg-cyan-500/10 text-cyan-400 ring-cyan-500/20 hover:bg-cyan-500/20"
+            }`}
+          >
+            {syncTraderStatus === "syncing" ? "⧗ Syncing…" :
+             syncTraderStatus === "ok" ? "✓ Synced!" :
+             syncTraderStatus === "none" ? "No position" :
+             syncTraderStatus === "error" ? "✕ Failed" :
+             "⟳ Sync Trader"}
+          </button>
+        </td>
+      )}
     </tr>
   );
 }
@@ -297,7 +321,7 @@ function TradeRow5Min({ t, idx, onTradeClick, livePrice }: Readonly<{ t: MGC5Min
 // Trade Log grouped by date (expandable rows)
 // ═══════════════════════════════════════════════════════════════════════
 
-function TradeLogByDate({ trades, onTradeClick, livePrice, dateFrom, dateTo }: Readonly<{ trades: MGC5MinTrade[]; onTradeClick?: (t: MGC5MinTrade) => void; livePrice?: number | null; dateFrom?: string; dateTo?: string }>) {
+function TradeLogByDate({ trades, onTradeClick, livePrice, dateFrom, dateTo, autoTraderRunning, onSyncTrader, syncTraderStatus }: Readonly<{ trades: MGC5MinTrade[]; onTradeClick?: (t: MGC5MinTrade) => void; livePrice?: number | null; dateFrom?: string; dateTo?: string; autoTraderRunning?: boolean; onSyncTrader?: () => void; syncTraderStatus?: "idle" | "syncing" | "ok" | "none" | "error" }>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [pnlFilter, setPnlFilter] = useState<"all" | "win" | "loss">("all");
   const [dirFilter, setDirFilter] = useState<"all" | "CALL" | "PUT">("all");
@@ -497,7 +521,7 @@ function TradeLogByDate({ trades, onTradeClick, livePrice, dateFrom, dateTo }: R
                       </thead>
                       <tbody>
                         {dayTrades.map((t, i) => (
-                          <TradeRow5Min key={`${t.entry_time}-${i}`} t={t} idx={i} onTradeClick={onTradeClick} livePrice={livePrice} />
+                          <TradeRow5Min key={`${t.entry_time}-${i}`} t={t} idx={i} onTradeClick={onTradeClick} livePrice={livePrice} autoTraderRunning={autoTraderRunning} onSyncTrader={onSyncTrader} syncTraderStatus={syncTraderStatus} />
                         ))}
                       </tbody>
                     </table>
@@ -1381,7 +1405,7 @@ function ExamTab({
 // Main Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, autoTraderRunning = false, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles, interval: intervalProp = "5m", onIntervalChange, onSlTpChange, onConfigLock }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; autoTraderRunning?: boolean; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>>; interval?: string; onIntervalChange?: (v: string) => void; onSlTpChange?: (sl: number, tp: number) => void; onConfigLock?: (config: LockedTradingConfig) => void }>) {
+export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, autoTraderRunning = false, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles, interval: intervalProp = "5m", onIntervalChange, onSlTpChange, onConfigLock, onAutoTradingChange }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; autoTraderRunning?: boolean; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>>; interval?: string; onIntervalChange?: (v: string) => void; onSlTpChange?: (sl: number, tp: number) => void; onConfigLock?: (config: LockedTradingConfig) => void; onAutoTradingChange?: (enabled: boolean) => void }>) {
   const [showExam, setShowExam] = useState(false);
   const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -1447,7 +1471,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     // 1m data limited to 7d max — clamp period
     if (v === "1m" && parseInt(period) > 7) setPeriod("3d");
   };
-  const _bosl = BUILT_IN_PRESETS.find((p) => p.name === "⬆ BoS Long");
+  const _bosl = BUILT_IN_PRESETS.find((p) => p.name === "⇕ BoS Mix");
   const [slMult, setSlMult] = useState(_bosl?.sl ?? defaultRisk.sl);
   const [tpMult, setTpMult] = useState(_bosl?.tp ?? defaultRisk.tp);
 
@@ -1492,12 +1516,12 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const [presets, setPresets] = useState<ConditionPreset[]>([]);
   const [presetName, setPresetName] = useState("");
   const [showPresetSave, setShowPresetSave] = useState(false);
-  const [activePreset, setActivePreset] = useState<string | null>("⬆ BoS Long");
+  const [activePreset, setActivePreset] = useState<string | null>("⇕ BoS Mix");
   // Always-current ref so scanner closures can read the active preset without stale values
-  const activePresetRef = useRef<string | null>("⬆ BoS Long");
+  const activePresetRef = useRef<string | null>("⇕ BoS Mix");
   activePresetRef.current = activePreset;
   // Editable strategy label (shown in header, independent from preset names)
-  const [strategyLabel, setStrategyLabel] = useState("⬆ BoS Long");
+  const [strategyLabel, setStrategyLabel] = useState("⇕ BoS Mix");
   const [editingLabel, setEditingLabel] = useState(false);
 
   // ── Load persisted config on mount / symbol change ──
@@ -1525,10 +1549,8 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
         }
       }
       setPresets(loadedPresets);
-      // Restore auto-trading state from backend (default ON if backend hasn't saved a setting)
-      if (autoSettings?.enabled !== undefined) {
-        setAutoTrading(autoSettings.enabled);
-      }
+      // Always start scanner as OFF — user must manually enable each session
+      setAutoTrading(false);
       autoTradingLoaded.current = true;
       setConfigLoaded(true);
     }).catch(() => { if (!cancelled) { autoTradingLoaded.current = true; setConfigLoaded(true); } });
@@ -1544,11 +1566,12 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     return () => clearTimeout(timer);
   }, [period, interval, slMult, tpMult, riskFilters, activePreset, symbol, configLoaded]);
 
-  // ── Persist auto-trading toggle to backend ──
+  // ── Persist auto-trading toggle to backend + notify parent ──
   useEffect(() => {
     if (!autoTradingLoaded.current) return;  // Don't save during initial load
     saveAutoTradeSettings({ verify_lock: true, auto_qty: 1, enabled: autoTrading }, symbol).catch(() => {});
-  }, [autoTrading, symbol]);
+    onAutoTradingChange?.(autoTrading);
+  }, [autoTrading, symbol, onAutoTradingChange]);
 
   // ── Condition optimization ──────────────
   const [optimizationResults, setOptimizationResults] = useState<ConditionOptimizationResult[]>([]);
@@ -1583,8 +1606,19 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     setSlMult(bp.sl);
     setTpMult(bp.tp);
     handleIntervalChange(bp.interval);
+    // Immediately sync the trader panel to this strategy (no backtest needed)
+    onConfigLock?.({
+      preset: bp.name,
+      symbol,
+      interval: bp.interval,
+      slMult: bp.sl,
+      tpMult: bp.tp,
+      conditionToggles: { ...bp.toggles },
+      metrics: { win_rate: 0, total_return_pct: 0, max_drawdown_pct: 0, sharpe_ratio: 0, profit_factor: 0, total_trades: 0, winners: 0, losers: 0, risk_reward_ratio: 0 },
+      lockedAt: Date.now(),
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [symbol, onConfigLock]);
 
   // ── Backtest ──────────────────────────────────────────
   const [hasRunBacktest, setHasRunBacktest] = useState(false);
@@ -1852,6 +1886,29 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
+  // ── Sync Trader — called from trade log "⟳ Sync Trader" button ──
+  const [syncTraderStatus, setSyncTraderStatus] = useState<"idle" | "syncing" | "ok" | "none" | "error">("idle");
+  const handleSyncTrader = useCallback(async () => {
+    setSyncTraderStatus("syncing");
+    try {
+      const px = livePriceRef.current || livePrice || 0;
+      const r = await autoTraderSyncMarket(symbol, interval, "7d", px);
+      if (r.synced) {
+        setSyncTraderStatus("ok");
+        // Refresh auto trader DB trades so holding row appears in paper trader
+        autoTraderGetDbTrades(symbol).catch(() => {});
+        onDirectExecute?.();
+        setTimeout(() => setSyncTraderStatus("idle"), 3000);
+      } else {
+        setSyncTraderStatus(r.reason === "no_open_position" ? "none" : "error");
+        setTimeout(() => setSyncTraderStatus("idle"), 3000);
+      }
+    } catch {
+      setSyncTraderStatus("error");
+      setTimeout(() => setSyncTraderStatus("idle"), 3000);
+    }
+  }, [symbol, interval, livePrice, onDirectExecute]);
+
   // ── Tiger position detail (actual fill price + P&L) ──
   const [tigerPos, setTigerPos] = useState<{ current_qty: number; average_cost: number; unrealized_pnl: number; latest_price: number } | null>(null);
   useEffect(() => {
@@ -1981,8 +2038,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   // ── Auto-Trading: auto-sync when new open position appears ──
   useEffect(() => {
     if (!autoTrading) return;
-    // Skip if Auto-Trader is running — it handles its own entries (paper or live)
-    if (autoTraderRunning) return;
     const openTrade = btData?.trades.find((t) => t.reason === "OPEN");
     const pos = btData?.open_position ?? (openTrade ? {
       direction: openTrade.direction || "CALL",
@@ -1997,27 +2052,53 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     if (lastAutoEntryRef.current === pos.entry_time) return;
     lastAutoEntryRef.current = pos.entry_time;
 
-    // ── Notify: new signal detected ──
     const side = pos.direction === "PUT" ? "SHORT" : "LONG";
     pushNotif("signal", `📡 Signal: ${side} @ $${Number(pos.entry_price).toFixed(2)} | SL $${Number(pos.sl).toFixed(2)} TP $${Number(pos.tp).toFixed(2)}`);
 
     (async () => {
-      // ── Paper trade entry only (live execution disabled while scanner is ON) ──
-      try {
-        await autoTraderEntryFilled(
-          { entry_price: pos.entry_price, sl: pos.sl, tp: pos.tp, qty: 1, direction: pos.direction },
-          symbol,
-        );
-        pushNotif("paper", `📄 Paper: ${side} entered @ $${Number(pos.entry_price).toFixed(2)} | SL $${Number(pos.sl).toFixed(2)} TP $${Number(pos.tp).toFixed(2)}`);
-        setExitStatus(`📄 Paper: ${side} @ $${Number(pos.entry_price).toFixed(2)}`);
-        setTimeout(() => setExitStatus(null), 5000);
-        // Notify AutoTraderPanel to refresh state + log
-        onDirectExecute?.();
-      } catch (e) {
-        pushNotif("error", `❌ Paper failed: ${e instanceof Error ? e.message : "Unknown"}`);
+      if (autoTraderRunning) {
+        // ── Auto-Trader is running: sync position via Sync Market (re-anchors to live price + persists to DB) ──
+        try {
+          const px = livePriceRef.current || 0;
+          const r = await autoTraderSyncMarket(symbol, interval, "7d", px);
+          if (r.synced) {
+            const ep = Number(r.position?.entry_price ?? pos.entry_price).toFixed(2);
+            const sl = Number(r.position?.sl ?? pos.sl).toFixed(2);
+            const tp = Number(r.position?.tp ?? pos.tp).toFixed(2);
+            pushNotif("paper", `📄 Auto-synced: ${side} @ $${ep} | SL $${sl} TP $${tp}`);
+            setExitStatus(`📄 Auto-synced: ${side} @ $${ep}`);
+            // Refresh DB trade list so OPEN record appears
+            autoTraderGetDbTrades(symbol).catch(() => {});
+            onDirectExecute?.();
+          } else if (r.reason !== "already_in_trade") {
+            // Fallback: force-seed via entry-filled if sync-market couldn't find it (e.g. already IN_TRADE)
+            await autoTraderEntryFilled(
+              { entry_price: pos.entry_price, sl: pos.sl, tp: pos.tp, qty: 1, direction: pos.direction },
+              symbol,
+            );
+            pushNotif("paper", `📄 Paper: ${side} entered @ $${Number(pos.entry_price).toFixed(2)}`);
+            onDirectExecute?.();
+          }
+        } catch (e) {
+          pushNotif("error", `❌ Auto-sync failed: ${e instanceof Error ? e.message : "Unknown"}`);
+        }
+      } else {
+        // ── Auto-Trader not running: legacy paper entry via entry-filled ──
+        try {
+          await autoTraderEntryFilled(
+            { entry_price: pos.entry_price, sl: pos.sl, tp: pos.tp, qty: 1, direction: pos.direction },
+            symbol,
+          );
+          pushNotif("paper", `📄 Paper: ${side} entered @ $${Number(pos.entry_price).toFixed(2)} | SL $${Number(pos.sl).toFixed(2)} TP $${Number(pos.tp).toFixed(2)}`);
+          setExitStatus(`📄 Paper: ${side} @ $${Number(pos.entry_price).toFixed(2)}`);
+          setTimeout(() => setExitStatus(null), 5000);
+          onDirectExecute?.();
+        } catch (e) {
+          pushNotif("error", `❌ Paper failed: ${e instanceof Error ? e.message : "Unknown"}`);
+        }
       }
     })();
-  }, [autoTrading, autoTraderRunning, btData?.open_position?.entry_time, btData?.trades, symbol, activePreset, onDirectExecute, pushNotif]);
+  }, [autoTrading, autoTraderRunning, btData?.open_position?.entry_time, btData?.trades, symbol, interval, activePreset, onDirectExecute, pushNotif]);
 
   // Reset SL/TP hit flag when open position changes
   useEffect(() => { slTpHitRef.current = false; setExitStatus(null); }, [btData?.open_position?.entry_time]);
@@ -2811,7 +2892,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                   </div>
                 )}
                 <div className="max-h-[420px] overflow-y-auto">
-                  <TradeLogByDate trades={btData.trades} onTradeClick={(t) => { setZoomTrade(t); onTradeClick?.(t); }} livePrice={livePrice} dateFrom={dateFrom} dateTo={dateTo} />
+                  <TradeLogByDate trades={btData.trades} onTradeClick={(t) => { setZoomTrade(t); onTradeClick?.(t); }} livePrice={livePrice} dateFrom={dateFrom} dateTo={dateTo} autoTraderRunning={autoTraderRunning} onSyncTrader={handleSyncTrader} syncTraderStatus={syncTraderStatus} />
                 </div>
               </div>
             </div>

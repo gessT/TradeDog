@@ -77,6 +77,9 @@ class FuturesAutoTrader:
         self._tp_mult: float = 3.0
         self._strategy_preset: str = ""
 
+        # DB row id for the currently-open paper trade (0 = none)
+        self._open_db_id: int = 0
+
         # Load persisted config from DB
         self._load_config_from_db()
 
@@ -140,13 +143,71 @@ class FuturesAutoTrader:
         except Exception as e:
             logger.warning("[%s] Failed to save config to DB: %s", self.symbol, e)
 
-    def _persist_trade(self, trade: TradeRecord) -> None:
-        """Save a completed trade to the database."""
+    def _persist_open_trade(self, paper_trade) -> None:
+        """Insert an OPEN trade record immediately when a position is entered/seeded.
+
+        Stores the DB row id in self._open_db_id so _persist_trade can UPDATE it on close.
+        """
         try:
             from app.db.database import SessionLocal
             from app.models.paper_trade import PaperTrade as PaperTradeModel
 
             with SessionLocal() as db:
+                row = PaperTradeModel(
+                    symbol=self.symbol,
+                    direction=paper_trade.direction,
+                    entry_price=paper_trade.entry_price,
+                    exit_price=0.0,
+                    stop_loss=paper_trade.stop_loss,
+                    take_profit=paper_trade.take_profit,
+                    qty=paper_trade.qty,
+                    pnl=0.0,
+                    exit_reason="OPEN",
+                    entry_time=paper_trade.entry_time,
+                    exit_time="",
+                    bar_time=getattr(paper_trade, "bar_time", "") or "",
+                    strength=getattr(paper_trade, "strength", 0) or 0,
+                    slippage=0.0,
+                    is_paper=True,
+                    strategy_preset=self._strategy_preset,
+                    mode=self._machine.mode,
+                )
+                db.add(row)
+                db.flush()   # populate row.id before commit
+                self._open_db_id = row.id
+                db.commit()
+                logger.info("[%s] Persisted OPEN trade id=%d %s @ %.2f",
+                            self.symbol, self._open_db_id, paper_trade.direction, paper_trade.entry_price)
+        except Exception as e:
+            logger.warning("[%s] Failed to persist open trade to DB: %s", self.symbol, e)
+
+    def _persist_trade(self, trade: TradeRecord) -> None:
+        """Save a completed trade to the database.
+
+        If an open record already exists (_open_db_id > 0), UPDATE it.
+        Otherwise INSERT a new closed record.
+        """
+        try:
+            from app.db.database import SessionLocal
+            from app.models.paper_trade import PaperTrade as PaperTradeModel
+
+            with SessionLocal() as db:
+                if self._open_db_id > 0:
+                    # Update the existing open record with close details
+                    row = db.query(PaperTradeModel).filter_by(id=self._open_db_id).first()
+                    if row:
+                        row.exit_price = trade.exit_price
+                        row.exit_time = trade.exit_time
+                        row.exit_reason = trade.exit_reason
+                        row.pnl = trade.pnl
+                        row.slippage = trade.slippage
+                        db.commit()
+                        logger.info("[%s] Updated trade id=%d → %s pnl=%.2f",
+                                    self.symbol, self._open_db_id, trade.exit_reason, trade.pnl)
+                        self._open_db_id = 0
+                        return
+                    self._open_db_id = 0  # row not found, fall through to insert
+
                 row = PaperTradeModel(
                     symbol=self.symbol,
                     direction=trade.direction,
@@ -424,6 +485,7 @@ class FuturesAutoTrader:
             qty=paper_trade.qty,
             direction=paper_trade.direction,
         )
+        self._persist_open_trade(paper_trade)
 
         return TickResult(
             action="ENTRY",
@@ -519,6 +581,7 @@ class FuturesAutoTrader:
             qty=paper_trade.qty,
             direction=paper_trade.direction,
         )
+        self._persist_open_trade(paper_trade)
         logger.info("[%s] Synced backtest position: %s @ %.2f SL=%.2f TP=%.2f",
                     self.symbol, direction, entry_price, sl, tp)
         return True
@@ -533,6 +596,7 @@ class FuturesAutoTrader:
             self._machine.reset()
             self._paper.reset()
             self._risk.manual_reset()
+            self._open_db_id = 0
             return self._snap()
 
     def unblock(self) -> dict:
