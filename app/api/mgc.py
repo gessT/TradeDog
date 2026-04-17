@@ -4701,6 +4701,42 @@ async def auto_trader_unblock(symbol: str = Query("MGC")):
     return trader.unblock()
 
 
+@router.post("/auto-trader/sync-market")
+async def auto_trader_sync_market(
+    symbol: str = Query("MGC"),
+    interval: str = Query("5m"),
+    period: str = Query("7d"),
+):
+    """Check if backtest currently shows an open position and sync it into the paper trader.
+
+    If the trader is IDLE and backtest has a holding position, injects it
+    so the trader immediately starts monitoring with the correct SL/TP.
+    Returns { synced: bool, position: dict | None, snapshot: dict }.
+    """
+    from strategies.futures.auto_trader import get_auto_trader
+    trader = get_auto_trader(symbol)
+
+    if not trader._snap().get("started"):
+        return {"synced": False, "reason": "not_started", "position": None, "snapshot": trader._snap()}
+
+    try:
+        open_pos = await run_in_threadpool(_get_backtest_open_position, symbol, period, trader, interval)
+    except Exception as e:
+        logger.warning("sync-market: backtest error: %s", e)
+        return {"synced": False, "reason": "backtest_error", "position": None, "snapshot": trader._snap()}
+
+    if not open_pos:
+        return {"synced": False, "reason": "no_open_position", "position": None, "snapshot": trader._snap()}
+
+    synced = trader.sync_backtest_position(open_pos)
+    return {
+        "synced": synced,
+        "reason": "already_in_trade" if not synced else "ok",
+        "position": open_pos if synced else None,
+        "snapshot": trader._snap(),
+    }
+
+
 @router.get("/auto-trader/state")
 async def auto_trader_state(symbol: str = Query("MGC")):
     """Full state — machine + risk + paper summary."""

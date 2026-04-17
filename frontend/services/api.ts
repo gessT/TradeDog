@@ -2290,6 +2290,16 @@ export async function autoTraderUnblock(symbol = "MGC"): Promise<AutoTraderSnaps
   return res.json();
 }
 
+export async function autoTraderSyncMarket(
+  symbol = "MGC", interval = "5m", period = "7d",
+): Promise<{ synced: boolean; reason: string; position: Record<string, unknown> | null; snapshot: AutoTraderSnapshot }> {
+  const res = await fetch(
+    `${_at("sync-market", symbol)}&interval=${interval}&period=${period}`,
+    { method: "POST" },
+  );
+  return res.json();
+}
+
 export async function autoTraderGetState(symbol = "MGC"): Promise<AutoTraderFullState> {
   const res = await fetch(_at("state", symbol), { cache: "no-store" });
   return res.json();
