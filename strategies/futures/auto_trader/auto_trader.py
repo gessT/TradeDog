@@ -519,7 +519,7 @@ class FuturesAutoTrader:
         return trade
 
     def emergency_stop(self, live_price: float = 0.0) -> dict:
-        """Emergency: close paper position + stop machine."""
+        """Emergency: close paper position + stop machine + close any stale OPEN db records."""
         with self._lock:
             result = {"paper_closed": False, "machine_stopped": True}
             if self._machine.mode == "paper" and self._paper.has_position:
@@ -531,7 +531,44 @@ class FuturesAutoTrader:
                     result["paper_closed"] = True
                     result["paper_pnl"] = trade.pnl
             self._machine.emergency_stop()
+            # Also close any stale OPEN db records (covers server-restart / stopped-trader cases)
+            db_closed = self._close_open_db_records(live_price)
+            if db_closed:
+                result["db_records_closed"] = db_closed
             return result
+
+    def _close_open_db_records(self, live_price: float = 0.0) -> int:
+        """Mark any OPEN db records for this symbol as manually closed. Returns count closed."""
+        try:
+            import datetime
+            from app.db.database import SessionLocal
+            from app.models.paper_trade import PaperTrade as PaperTradeModel
+
+            with SessionLocal() as db:
+                open_rows = db.query(PaperTradeModel).filter(
+                    PaperTradeModel.symbol == self.symbol,
+                    PaperTradeModel.exit_reason == "OPEN",
+                ).all()
+                if not open_rows:
+                    return 0
+                now_str = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+                for row in open_rows:
+                    exit_px = live_price if live_price > 0 else row.entry_price
+                    qty = row.qty or 1
+                    if row.direction == "CALL":
+                        pnl = (exit_px - row.entry_price) * qty * 10
+                    else:
+                        pnl = (row.entry_price - exit_px) * qty * 10
+                    row.exit_price = exit_px
+                    row.exit_time = now_str
+                    row.exit_reason = "MANUAL_CLOSE"
+                    row.pnl = round(pnl, 2)
+                db.commit()
+                logger.info("[%s] Closed %d stale OPEN db record(s) via emergency stop", self.symbol, len(open_rows))
+                return len(open_rows)
+        except Exception as e:
+            logger.warning("[%s] Failed to close stale OPEN db records: %s", self.symbol, e)
+            return 0
 
     # ═══════════════════════════════════════════════════════════════
     # Controls

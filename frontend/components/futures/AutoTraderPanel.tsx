@@ -143,6 +143,7 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
   const [starting, setStarting] = useState(false);
   const [launchFlash, setLaunchFlash] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  const [closingPosition, setClosingPosition] = useState(false);
   const [logExpanded, setLogExpanded] = useState(true);
   const [syncingMarket, setSyncingMarket] = useState(false);
   const [syncResult, setSyncResult] = useState<"ok" | "none" | "error" | null>(null);
@@ -383,11 +384,16 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
     if (s) { setSnap(s); setMode("off"); setRunningConfig(null); setManualConfig(null); setLogs([]); onStartedChange?.(false); setPreviewTrades([]); setPreviewExpanded(false); pushLog("Full reset", "warn"); }
   };
   const handleEmergency = async () => {
-    await autoTraderEmergencyStop(livePrice || 0, symbol).catch(() => null);
-    await refreshState();
-    // Refresh trade history so the closed position appears in the table
-    autoTraderGetDbTrades(symbol).then(setTrades).catch(() => {});
-    pushLog("EMERGENCY STOP activated", "error");
+    setClosingPosition(true);
+    try {
+      await autoTraderEmergencyStop(livePrice || 0, symbol).catch(() => null);
+      await refreshState();
+      // Refresh trade history so the closed position appears in the table
+      autoTraderGetDbTrades(symbol).then(setTrades).catch(() => {});
+      pushLog("EMERGENCY STOP activated", "error");
+    } finally {
+      setClosingPosition(false);
+    }
   };
   const handleUnblock = async () => {
     const s = await autoTraderUnblock(symbol).catch(() => null);
@@ -965,9 +971,10 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                           if (!confirm("Close position at market price?")) return;
                           await handleEmergency();
                         }}
-                        className="w-full text-[7.5px] font-bold text-rose-400/70 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg py-0.5 transition-all"
+                        disabled={closingPosition}
+                        className="w-full text-[7.5px] font-bold text-rose-400/70 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg py-0.5 transition-all disabled:opacity-50 disabled:cursor-wait"
                         title="Close position at market price"
-                      >Close Position</button>
+                      >{closingPosition ? "Closing…" : "Close Position"}</button>
                     ) : (
                       <span className="text-[7px] uppercase tracking-widest text-white/20 font-bold">Position</span>
                     )}
