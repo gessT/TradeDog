@@ -11,6 +11,7 @@ import MYMetricsPanel, { MetricGrid } from "./MYMetricsPanel";
 type StockTag = { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null };
 type RunAllRow = { symbol: string; name: string; win_rate: number; total_trades: number; return_pct: number; profit_factor: number; max_dd: number; sharpe: number; status: "pending" | "running" | "done" | "error"; saved?: boolean };
 type RunAllScopeOption = { value: string; label: string; count: number };
+type RunAllSortKey = "symbol" | "win_rate" | "return_pct" | "profit_factor" | "max_dd" | "sharpe" | "total_trades" | "grade";
 export type ColorLabel = { id: number; symbol: string; color: string; market: string };
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
@@ -267,7 +268,78 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   const [runAllOpen, setRunAllOpen] = useState(false);
   const [runAllRunning, setRunAllRunning] = useState(false);
   const [runAllRows, setRunAllRows] = useState<RunAllRow[]>([]);
+  const [runAllSortKey, setRunAllSortKey] = useState<RunAllSortKey>("grade");
+  const [runAllSortDir, setRunAllSortDir] = useState<"asc" | "desc">("desc");
   const runAllAbort = useRef<AbortController | null>(null);
+
+  const getRunAllGrade = useCallback((row: RunAllRow) => {
+    if (row.status !== "done") return "—";
+    if (row.return_pct >= 40 && row.win_rate >= 55 && row.profit_factor >= 2) return "A+";
+    if (row.return_pct >= 25 && row.win_rate >= 50 && row.profit_factor >= 1.5) return "A";
+    if (row.return_pct >= 15 && row.win_rate >= 45) return "B+";
+    if (row.return_pct >= 5) return "B";
+    if (row.return_pct >= 0) return "C";
+    return "D";
+  }, []);
+
+  const getRunAllGradeScore = useCallback((row: RunAllRow) => {
+    const grade = getRunAllGrade(row);
+    const scoreMap: Record<string, number> = {
+      "A+": 6,
+      A: 5,
+      "B+": 4,
+      B: 3,
+      C: 2,
+      D: 1,
+      "—": 0,
+    };
+    return scoreMap[grade] ?? 0;
+  }, [getRunAllGrade]);
+
+  const sortedRunAllRows = useMemo(() => {
+    const rows = [...runAllRows];
+
+    rows.sort((a, b) => {
+      if (runAllSortKey !== "symbol") {
+        const aDone = a.status === "done";
+        const bDone = b.status === "done";
+        if (aDone !== bDone) return aDone ? -1 : 1;
+      }
+
+      let cmp = 0;
+      if (runAllSortKey === "symbol") {
+        cmp = a.symbol.localeCompare(b.symbol);
+      } else if (runAllSortKey === "grade") {
+        cmp = getRunAllGradeScore(a) - getRunAllGradeScore(b);
+      } else if (runAllSortKey === "win_rate") {
+        cmp = a.win_rate - b.win_rate;
+      } else if (runAllSortKey === "return_pct") {
+        cmp = a.return_pct - b.return_pct;
+      } else if (runAllSortKey === "profit_factor") {
+        cmp = a.profit_factor - b.profit_factor;
+      } else if (runAllSortKey === "max_dd") {
+        cmp = a.max_dd - b.max_dd;
+      } else if (runAllSortKey === "sharpe") {
+        cmp = a.sharpe - b.sharpe;
+      } else {
+        cmp = a.total_trades - b.total_trades;
+      }
+
+      if (cmp === 0) cmp = a.symbol.localeCompare(b.symbol);
+      return runAllSortDir === "asc" ? cmp : -cmp;
+    });
+
+    return rows;
+  }, [runAllRows, runAllSortKey, runAllSortDir, getRunAllGradeScore]);
+
+  const toggleRunAllSort = useCallback((key: RunAllSortKey) => {
+    if (runAllSortKey === key) {
+      setRunAllSortDir((prev) => prev === "asc" ? "desc" : "asc");
+      return;
+    }
+    setRunAllSortKey(key);
+    setRunAllSortDir(key === "symbol" ? "asc" : "desc");
+  }, [runAllSortKey]);
 
   const runAllScopeOptions = useMemo<RunAllScopeOption[]>(() => {
     const colorCounts = new Map<string, number>();
@@ -963,26 +1035,60 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
               <table className="w-full text-[10px]">
                 <thead className="sticky top-0 bg-slate-900">
                   <tr className="text-slate-500 border-b border-slate-800/40">
-                    <th className="text-left px-4 py-2.5 font-semibold">Stock</th>
-                    <th className="text-center px-3 py-2.5 font-semibold">WR%</th>
-                    <th className="text-center px-3 py-2.5 font-semibold">Return%</th>
-                    <th className="text-center px-3 py-2.5 font-semibold">PF</th>
-                    <th className="text-center px-3 py-2.5 font-semibold">DD%</th>
-                    <th className="text-center px-3 py-2.5 font-semibold">Sharpe</th>
-                    <th className="text-center px-3 py-2.5 font-semibold">Trades</th>
-                    <th className="text-center px-3 py-2.5 font-semibold">Grade</th>
+                    <th className="text-left px-4 py-2.5 font-semibold">
+                      <button onClick={() => toggleRunAllSort("symbol")} className="inline-flex items-center gap-1 hover:text-cyan-300 transition">
+                        Stock
+                        <span className={runAllSortKey === "symbol" ? "text-cyan-400" : "text-slate-700"}>{runAllSortKey === "symbol" ? (runAllSortDir === "asc" ? "↑" : "↓") : "↕"}</span>
+                      </button>
+                    </th>
+                    <th className="text-center px-3 py-2.5 font-semibold">
+                      <button onClick={() => toggleRunAllSort("win_rate")} className="inline-flex items-center gap-1 hover:text-cyan-300 transition">
+                        WR%
+                        <span className={runAllSortKey === "win_rate" ? "text-cyan-400" : "text-slate-700"}>{runAllSortKey === "win_rate" ? (runAllSortDir === "asc" ? "↑" : "↓") : "↕"}</span>
+                      </button>
+                    </th>
+                    <th className="text-center px-3 py-2.5 font-semibold">
+                      <button onClick={() => toggleRunAllSort("return_pct")} className="inline-flex items-center gap-1 hover:text-cyan-300 transition">
+                        Return%
+                        <span className={runAllSortKey === "return_pct" ? "text-cyan-400" : "text-slate-700"}>{runAllSortKey === "return_pct" ? (runAllSortDir === "asc" ? "↑" : "↓") : "↕"}</span>
+                      </button>
+                    </th>
+                    <th className="text-center px-3 py-2.5 font-semibold">
+                      <button onClick={() => toggleRunAllSort("profit_factor")} className="inline-flex items-center gap-1 hover:text-cyan-300 transition">
+                        PF
+                        <span className={runAllSortKey === "profit_factor" ? "text-cyan-400" : "text-slate-700"}>{runAllSortKey === "profit_factor" ? (runAllSortDir === "asc" ? "↑" : "↓") : "↕"}</span>
+                      </button>
+                    </th>
+                    <th className="text-center px-3 py-2.5 font-semibold">
+                      <button onClick={() => toggleRunAllSort("max_dd")} className="inline-flex items-center gap-1 hover:text-cyan-300 transition">
+                        DD%
+                        <span className={runAllSortKey === "max_dd" ? "text-cyan-400" : "text-slate-700"}>{runAllSortKey === "max_dd" ? (runAllSortDir === "asc" ? "↑" : "↓") : "↕"}</span>
+                      </button>
+                    </th>
+                    <th className="text-center px-3 py-2.5 font-semibold">
+                      <button onClick={() => toggleRunAllSort("sharpe")} className="inline-flex items-center gap-1 hover:text-cyan-300 transition">
+                        Sharpe
+                        <span className={runAllSortKey === "sharpe" ? "text-cyan-400" : "text-slate-700"}>{runAllSortKey === "sharpe" ? (runAllSortDir === "asc" ? "↑" : "↓") : "↕"}</span>
+                      </button>
+                    </th>
+                    <th className="text-center px-3 py-2.5 font-semibold">
+                      <button onClick={() => toggleRunAllSort("total_trades")} className="inline-flex items-center gap-1 hover:text-cyan-300 transition">
+                        Trades
+                        <span className={runAllSortKey === "total_trades" ? "text-cyan-400" : "text-slate-700"}>{runAllSortKey === "total_trades" ? (runAllSortDir === "asc" ? "↑" : "↓") : "↕"}</span>
+                      </button>
+                    </th>
+                    <th className="text-center px-3 py-2.5 font-semibold">
+                      <button onClick={() => toggleRunAllSort("grade")} className="inline-flex items-center gap-1 hover:text-cyan-300 transition">
+                        Grade
+                        <span className={runAllSortKey === "grade" ? "text-cyan-400" : "text-slate-700"}>{runAllSortKey === "grade" ? (runAllSortDir === "asc" ? "↑" : "↓") : "↕"}</span>
+                      </button>
+                    </th>
                     <th className="text-center px-3 py-2.5 font-semibold">Tag</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {runAllRows.map((row) => {
-                    const grade = row.status !== "done" ? "—"
-                      : row.return_pct >= 40 && row.win_rate >= 55 && row.profit_factor >= 2 ? "A+"
-                      : row.return_pct >= 25 && row.win_rate >= 50 && row.profit_factor >= 1.5 ? "A"
-                      : row.return_pct >= 15 && row.win_rate >= 45 ? "B+"
-                      : row.return_pct >= 5 ? "B"
-                      : row.return_pct >= 0 ? "C"
-                      : "D";
+                  {sortedRunAllRows.map((row) => {
+                    const grade = getRunAllGrade(row);
                     const gradeColor = grade.startsWith("A") ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
                       : grade.startsWith("B") ? "text-blue-400 border-blue-500/30 bg-blue-500/10"
                       : grade === "C" ? "text-amber-400 border-amber-500/30 bg-amber-500/10"

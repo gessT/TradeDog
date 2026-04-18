@@ -586,7 +586,7 @@ export default function MYStrategySection({
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto">
         {/* ── Entry Conditions (collapsible) ── */}
-        <CollapsibleSection title="Entry Conditions" defaultOpen={true} count={strat.conditions.length} enabledCount={strat.conditions.filter(c => !disabledConditions.has(c.key)).length}>
+        <CollapsibleSection title="Entry Conditions" defaultOpen={false} count={strat.conditions.length} enabledCount={strat.conditions.filter(c => !disabledConditions.has(c.key)).length}>
           <div className="space-y-1">
             {strat.conditions.map((c) => {
               const enabled = !disabledConditions.has(c.key);
@@ -615,7 +615,7 @@ export default function MYStrategySection({
         </CollapsibleSection>
 
         {/* ── Exit Rules (collapsible) ── */}
-        <CollapsibleSection title="Exit Rules" defaultOpen={true} count={strat.exitRules.length} enabledCount={strat.exitRules.filter(r => !disabledConditions.has(r.key)).length}>
+        <CollapsibleSection title="Exit Rules" defaultOpen={false} count={strat.exitRules.length} enabledCount={strat.exitRules.filter(r => !disabledConditions.has(r.key)).length}>
           <div className="space-y-1">
             {strat.exitRules.map((r) => {
               const enabled = !disabledConditions.has(r.key);
