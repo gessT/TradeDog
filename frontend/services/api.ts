@@ -2238,6 +2238,8 @@ export type AutoTraderTrade = {
   strength: number;
   slippage: number;
   is_paper: boolean;
+  strategy_preset?: string;
+  mode?: string;
 };
 
 export type AutoTraderFullState = AutoTraderSnapshot & {

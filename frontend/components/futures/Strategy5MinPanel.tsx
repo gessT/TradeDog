@@ -13,8 +13,8 @@ import {
 import { halfTrend } from "../../utils/indicators";
 import { fmtDateTimeSGT, fmtInputDateSGT, toLocal as toLocalTz } from "../../utils/time";
 import TradeDetailDialog from "./TradeDetailDialog";
-import PerformanceCard from "./PerformanceCard";
-import PositionCard from "./PositionCard";
+import PerformanceCard from "./strategy/PerformanceCard";
+import PositionCard from "./strategy/PositionCard";
 import StrategyControl from "./StrategyControl";
 import TradeLogCard from "./TradeLogCard";
 import StrategyHeader from "./StrategyHeader";

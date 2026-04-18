@@ -1,6 +1,6 @@
 "use client";
 
-import PositionStatusPanel, { type Position } from "./PositionStatusPanel";
+import PositionStatusPanel, { type Position } from "../PositionStatusPanel";
 
 export type PositionCardProps = {
   pos: Position | null;

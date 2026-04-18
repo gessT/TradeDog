@@ -1,6 +1,6 @@
 "use client";
 
-import PerformanceMetricsPanel from "./PerformanceMetricsPanel";
+import PerformanceMetricsPanel from "../PerformanceMetricsPanel";
 
 export type PerformanceCardProps = {
   metrics: {
