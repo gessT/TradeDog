@@ -139,7 +139,7 @@ const FuturesDashboard = forwardRef<FuturesDashboardHandle, FuturesDashboardProp
   }, []);
 
   // ── Shared interval (used by both backtest & auto-trader) ──
-  const [interval, setInterval_] = useState("5m");
+  const [interval, setInterval_] = useState("2m");
 
   // ── Shared SL/TP multipliers (synced from backtest → auto-trader) ──
   const [slMult, setSlMult] = useState(4.0);

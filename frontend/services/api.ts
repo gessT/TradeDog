@@ -2238,8 +2238,6 @@ export type AutoTraderTrade = {
   strength: number;
   slippage: number;
   is_paper: boolean;
-  strategy_preset?: string;
-  mode?: string;  // "paper" | "live"
 };
 
 export type AutoTraderFullState = AutoTraderSnapshot & {
@@ -2270,11 +2268,6 @@ export async function autoTraderReset(symbol = "MGC"): Promise<AutoTraderSnapsho
 
 export async function autoTraderEmergencyStop(livePrice = 0, symbol = "MGC"): Promise<Record<string, unknown>> {
   const res = await fetch(`${_at("emergency-stop", symbol)}&live_price=${livePrice}`, { method: "POST" });
-  return res.json();
-}
-
-export async function autoTraderClosePosition(livePrice = 0, symbol = "MGC"): Promise<Record<string, unknown> & { snapshot?: AutoTraderSnapshot }> {
-  const res = await fetch(`${_at("close-position", symbol)}&live_price=${livePrice}`, { method: "POST" });
   return res.json();
 }
 
