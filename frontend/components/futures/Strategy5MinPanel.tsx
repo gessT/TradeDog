@@ -16,6 +16,7 @@ import TradeDetailDialog from "./TradeDetailDialog";
 import OptimizationDialog from "./OptimizationDialog";
 import PerformanceCard from "./PerformanceCard";
 import PositionCard from "./PositionCard";
+import StrategyControl from "./StrategyControl";
 import {
   fetchMGC5MinBacktest,
   fetchMGC2MinBacktest,
@@ -2227,7 +2228,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   return (
     <div className="flex flex-col h-full">
       {/* ── Header ───────────────────────────────────────── */}
-      <div className="px-2 pt-1.5 pb-0">
+      <div className="px-2 pt-1.5 pb-0 overflow-visible">
         <div className="flex items-center gap-1.5 mb-1.5">
           {/* Symbol identity */}
           <div className="flex items-center gap-1.5">
@@ -2343,137 +2344,22 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
           </div>
         </div>
 
-        <div className="px-0.5 mb-0.5 flex items-center">
-          <span className="text-[8px] uppercase tracking-widest text-slate-500 font-bold">Strategy</span>
-        </div>
-        {/* ── Strategy quick-config strip ─────────────────────── */}
-        <div className="rounded-lg border border-slate-600/50 bg-slate-800/70 px-2 py-1.5 flex items-center gap-1.5 mb-1.5 flex-wrap">
-          {/* Quick-pick preset buttons */}
-          {BUILT_IN_PRESETS.map((bp) => (
-            <button
-              key={bp.name}
-              onClick={() => applyBuiltInPreset(bp)}
-              className={`px-2 py-1 text-[9px] font-bold rounded-md border transition-all ${
-                activePreset === bp.name
-                  ? "bg-cyan-900/40 border-cyan-600/60 text-cyan-300"
-                  : "bg-slate-800/60 border-slate-700/50 text-slate-400 hover:border-slate-500/60 hover:text-slate-200"
-              }`}
-              title={bp.desc}
-            >
-              {bp.name}
-            </button>
-          ))}
-        </div>
-
-        {/* ── Active strategy concept steps ── */}
-        {activePreset && (() => {
-          const CONCEPTS: Record<string, { icon: string; label: string }[]> = {
-            "⬆ BoS Long": [
-              { icon: "📈", label: "1H EMA 上升趋势" },
-              { icon: "〰️", label: "5m 价格在 EMA50 上方" },
-              { icon: "💥", label: "收盘突破 N棒最高点 (BoS)" },
-              { icon: "🌀", label: "Supertrend 多头" },
-              { icon: "⚡", label: "RSI 动能确认" },
-              { icon: "🕐", label: "活跃交易时段" },
-            ],
-            "⬇ BoS Short": [
-              { icon: "📉", label: "1H EMA 下降趋势" },
-              { icon: "〰️", label: "5m 价格在 EMA50 下方" },
-              { icon: "💥", label: "收盘跌破 N棒最低点 (BoS)" },
-              { icon: "🌀", label: "Supertrend 空头" },
-              { icon: "⚡", label: "RSI 动能确认" },
-              { icon: "🕐", label: "活跃交易时段" },
-            ],
-            "⇕ BoS Mix": [
-              { icon: "🔄", label: "多空双向交易" },
-              { icon: "💥", label: "价格突破结构高点→做多" },
-              { icon: "💥", label: "价格跌破结构低点→做空" },
-              { icon: "🌀", label: "Supertrend 过滤方向" },
-              { icon: "〰️", label: "EMA50 趋势确认" },
-              { icon: "🕐", label: "活跃时段 · ATR 过滤震荡" },
-            ],
-            " Always Open": [
-              { icon: "🧪", label: "TEST 模式" },
-              { icon: "🔁", label: "每次 bar close 必进场" },
-              { icon: "⬆", label: "固定做多方向" },
-              { icon: "🎯", label: "固定 SL/TP = 3 ATR" },
-            ],
-          };
-          const steps = CONCEPTS[activePreset];
-          if (!steps) return null;
-          return (
-            <div className="flex items-center gap-1.5 flex-wrap px-0.5 py-1 text-[8px]">
-              {steps.map((s, i) => (
-                <span key={i} className="flex items-center gap-0.5 text-slate-400">
-                  <span>{s.icon}</span>
-                  <span className="text-slate-500">{s.label}</span>
-                  {i < steps.length - 1 && <span className="text-slate-700 ml-0.5">→</span>}
-                </span>
-              ))}
-            </div>
-          );
-        })()}
-
-        {/* ── original controls strip ── */}
-        <div className="rounded-lg border border-slate-600/50 bg-slate-800/70 px-2 py-1.5 flex items-center gap-1.5 mb-1.5 flex-wrap">
-
-          {/* SL / TP + Interval + Conditions icon */}
-          <div className="ml-auto flex items-center gap-1.5">
-            <label className="flex items-center gap-1 text-[9px]">
-              <span className="text-rose-400 font-bold">SL</span>
-              <input
-                type="number" min="0.5" max="10" step="0.5"
-                value={slMult}
-                onChange={(e) => setSlMult(parseFloat(e.target.value) || slMult)}
-                className="w-10 bg-slate-900 border border-slate-700/60 rounded px-1 py-0.5 text-[9px] text-rose-300 font-bold text-right focus:outline-none focus:border-rose-500/60"
-                style={{ colorScheme: "dark" }}
-              />
-              <span className="text-slate-500">×</span>
-            </label>
-            <label className="flex items-center gap-1 text-[9px]">
-              <span className="text-emerald-400 font-bold">TP</span>
-              <input
-                type="number" min="0.5" max="10" step="0.5"
-                value={tpMult}
-                onChange={(e) => setTpMult(parseFloat(e.target.value) || tpMult)}
-                className="w-10 bg-slate-900 border border-slate-700/60 rounded px-1 py-0.5 text-[9px] text-emerald-300 font-bold text-right focus:outline-none focus:border-emerald-500/60"
-                style={{ colorScheme: "dark" }}
-              />
-              <span className="text-slate-500">×</span>
-            </label>
-            <select
-              value={interval}
-              onChange={(e) => handleIntervalChange(e.target.value)}
-              className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700/50 text-slate-400 uppercase tracking-wider appearance-none cursor-pointer hover:border-cyan-600/50 focus:outline-none focus:border-cyan-600/50 transition-colors"
-              style={{ colorScheme: "dark" }}
-            >
-              <option value="1m">1min</option>
-              <option value="2m">2min</option>
-              <option value="5m">5min</option>
-              <option value="15m">15min</option>
-            </select>
-            {/* Conditions icon button with count badge */}
-            <button
-              onClick={() => setConditionsOpen((v) => !v)}
-              title={`${Object.values(conditionToggles).filter(Boolean).length}/${CONDITION_DEFS.length} conditions enabled`}
-              className={`relative w-6 h-6 rounded border flex items-center justify-center transition-all ${
-                conditionsOpen
-                  ? "bg-cyan-900/40 border-cyan-600/60 text-cyan-400"
-                  : "bg-slate-800/60 border-slate-700/50 text-slate-400 hover:border-slate-500/60 hover:text-slate-200"
-              }`}
-            >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-              </svg>
-              {(() => {
-                const cnt = Object.values(conditionToggles).filter(Boolean).length;
-                return cnt > 0 ? (
-                  <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-cyan-600 text-[7px] text-white font-bold flex items-center justify-center leading-none">{cnt}</span>
-                ) : null;
-              })()}
-            </button>
-          </div>
-        </div>
+        {/* ── Strategy Control ── */}
+        <StrategyControl
+          BUILT_IN_PRESETS={BUILT_IN_PRESETS}
+          activePreset={activePreset}
+          onApplyPreset={applyBuiltInPreset}
+          slMult={slMult}
+          onSlChange={setSlMult}
+          tpMult={tpMult}
+          onTpChange={setTpMult}
+          interval={interval}
+          onIntervalChange={handleIntervalChange}
+          conditionsOpen={conditionsOpen}
+          onToggleConditions={() => setConditionsOpen((v) => !v)}
+          conditionToggles={conditionToggles}
+          CONDITION_DEFS={CONDITION_DEFS}
+        />
       </div>
 
       {/* ── Error ────────────────────────────────────────── */}
