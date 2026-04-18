@@ -17,6 +17,7 @@ import OptimizationDialog from "./OptimizationDialog";
 import PerformanceCard from "./PerformanceCard";
 import PositionCard from "./PositionCard";
 import StrategyControl from "./StrategyControl";
+import TradeLogCard from "./TradeLogCard";
 import {
   fetchMGC5MinBacktest,
   fetchMGC2MinBacktest,
@@ -2638,12 +2639,21 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 const unrealPnl = pos && livePrice != null ? (isLong ? livePrice - displayEntry : displayEntry - livePrice) * qty * contractSize : null;
                 const pnlPct = unrealPnl != null && displayEntry > 0 ? ((isLong ? livePrice! - displayEntry : displayEntry - livePrice!) / displayEntry) * 100 : null;
 
+                const totalPnl = btData.trades.reduce((s, t) => {
+                  if (t.reason === "OPEN" && livePrice != null) {
+                    const tLong = t.direction !== "PUT";
+                    return s + (tLong ? livePrice - n(t.entry_price ?? 0) : n(t.entry_price ?? 0) - livePrice) * n(t.qty ?? 1) * 10;
+                  }
+                  return s + n(t.pnl);
+                }, 0);
+
                 return (
                   <div className="grid grid-cols-[60%_40%] gap-2">
                     {/* Left: Performance Card */}
                     <PerformanceCard
                       metrics={m}
                       dataSource={btData.data_source}
+                      totalPnl={totalPnl}
                     />
 
                     {/* Right: Position Card */}
@@ -2664,30 +2674,19 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
                 );
               })()}
 
-              {/* Trade log — merged with Daily P&L bars */}
-              <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 relative">
-                <div className="px-2 pt-1.5 pb-1 flex items-center gap-1.5 border-b border-slate-800/30">
-                  <span className="text-[8px] uppercase tracking-widest text-slate-500 font-bold">Trade Log</span>
-                  {btData.data_source && (
-                    <span className={`px-1.5 py-px rounded text-[7.5px] font-bold ${
-                      btData.data_source === "Tiger"
-                        ? "bg-emerald-900/50 text-emerald-400 border border-emerald-700/40"
-                        : "bg-amber-900/50 text-amber-400 border border-amber-700/40"
-                    }`}>{btData.data_source === "Tiger" ? "⚡ Tiger" : "⏱ yfinance"}</span>
-                  )}
-                </div>
-                {loading && (
-                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm rounded-lg">
-                    <div className="flex flex-col items-center gap-2">
-                      <div className="w-5 h-5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-                      <span className="text-[10px] text-cyan-400 font-bold">Loading</span>
-                    </div>
-                  </div>
-                )}
-                <div className="max-h-[420px] overflow-y-auto">
-                  <TradeLogByDate trades={btData.trades} onTradeClick={(t) => { setZoomTrade(t); onTradeClick?.(t); }} livePrice={livePrice} dateFrom={dateFrom} dateTo={dateTo} autoTraderRunning={autoTraderRunning} onSyncTrader={handleSyncTrader} syncTraderStatus={syncTraderStatus} />
-                </div>
-              </div>
+              {/* Trade Log Card */}
+              <TradeLogCard
+                trades={btData.trades}
+                loading={loading}
+                dataSource={btData.data_source}
+                livePrice={livePrice}
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                autoTraderRunning={autoTraderRunning}
+                onTradeClick={(t) => { setZoomTrade(t); onTradeClick?.(t); }}
+                onSyncTrader={handleSyncTrader}
+                syncTraderStatus={syncTraderStatus}
+              />
             </div>
           )}
 
