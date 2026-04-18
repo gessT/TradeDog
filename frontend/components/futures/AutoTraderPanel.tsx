@@ -8,7 +8,6 @@ import {
   autoTraderStop,
   autoTraderReset,
   autoTraderEmergencyStop,
-  autoTraderClosePosition,
   autoTraderUnblock,
   autoTraderSyncMarket,
   autoTraderSyncTrade,
@@ -420,11 +419,10 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
   const handleClosePosition = async () => {
     setClosingPosition(true);
     try {
-      const res = await autoTraderClosePosition(livePriceRef.current || 0, symbol).catch(() => null);
-      if (res?.snapshot) setSnap(res.snapshot as AutoTraderSnapshot);
-      else await refreshState();
+      await autoTraderEmergencyStop(livePriceRef.current || 0, symbol).catch(() => null);
+      await refreshState();
       autoTraderGetDbTrades(symbol).then(setTrades).catch(() => {});
-      pushLog("Position closed — scanner resuming", "warn");
+      pushLog("Position closed at market", "warn");
     } finally {
       setClosingPosition(false);
     }
