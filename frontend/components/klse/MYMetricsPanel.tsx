@@ -9,7 +9,7 @@ import type {
 } from "../../services/api";
 
 // ═══════════════════════════════════════════════════════════════════════
-// Bottom Panel — Power Trader Zone (Tabbed)
+// Metrics Panel — Power Trader Zone (Tabbed)
 // ═══════════════════════════════════════════════════════════════════════
 
 const TABS = ["Backtest", "Orders", "Trade History", "Analytics", "Logs"] as const;
@@ -28,72 +28,159 @@ type Props = {
   strategyLabel?: string;
 };
 
-// ── Performance Metrics Grid ─────────────────────────────
-export function MetricsGrid({ m }: { m: US1HMetrics }) {
-  const up = m.total_return_pct >= 0;
+type MetricTone = "good" | "warn" | "bad" | "neutral";
+
+type MetricCardData = {
+  label: string;
+  value: string;
+  subValue?: string;
+  tone: MetricTone;
+};
+
+const METRIC_TONE_STYLES: Record<MetricTone, { card: string; value: string }> = {
+  good: {
+    card: "bg-emerald-500/5 border-emerald-500/20",
+    value: "text-emerald-400",
+  },
+  warn: {
+    card: "bg-amber-500/5 border-amber-500/20",
+    value: "text-amber-400",
+  },
+  bad: {
+    card: "bg-rose-500/5 border-rose-500/20",
+    value: "text-rose-400",
+  },
+  neutral: {
+    card: "bg-slate-800/35 border-slate-700/30",
+    value: "text-slate-200",
+  },
+};
+
+function MetricCard({ card }: { card: MetricCardData }) {
+  const tone = METRIC_TONE_STYLES[card.tone];
+  return (
+    <div className={`rounded-lg border px-2 py-1.5 min-w-0 h-full flex flex-col justify-between overflow-hidden ${tone.card}`}>
+      <div className="text-[8px] text-slate-500 uppercase tracking-wide leading-tight">
+        {card.label}
+      </div>
+      <div className={`text-[11px] sm:text-[12px] font-semibold tabular-nums leading-tight break-all ${tone.value}`}>
+        {card.value}
+      </div>
+      <div className="text-[8px] text-slate-500 tabular-nums leading-tight break-words">
+        {card.subValue ?? " "}
+      </div>
+    </div>
+  );
+}
+
+// ── Performance Metric Grid ──────────────────────────────
+export function MetricGrid({ m }: { m: US1HMetrics }) {
   const pnl = m.final_equity - m.initial_capital;
 
-  const wrColor = m.win_rate >= 55 ? "text-emerald-400" : m.win_rate >= 45 ? "text-amber-400" : "text-rose-400";
-  const pfColor = m.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400";
-  const srColor = m.sharpe_ratio >= 1.5 ? "text-emerald-400" : m.sharpe_ratio >= 0.5 ? "text-amber-400" : "text-rose-400";
-  const ddColor = m.max_drawdown_pct <= 10 ? "text-emerald-400" : m.max_drawdown_pct <= 20 ? "text-amber-400" : "text-rose-400";
-  const rrColor = m.risk_reward_ratio >= 1.5 ? "text-emerald-400" : "text-amber-400";
-  const oosColor = m.oos_win_rate >= 50 ? "text-emerald-400" : "text-rose-400";
+  const fmtMoney = (v: number, digits = 0) => `RM${v.toLocaleString(undefined, { maximumFractionDigits: digits })}`;
+
+  const pnlValue = `${pnl >= 0 ? "+" : "-"}${fmtMoney(Math.abs(pnl))}`;
+  const returnValue = `${m.total_return_pct >= 0 ? "+" : ""}${m.total_return_pct.toFixed(1)}%`;
+
+  let winRateTone: MetricTone = "bad";
+  if (m.win_rate >= 55) winRateTone = "good";
+  else if (m.win_rate >= 45) winRateTone = "warn";
+
+  const profitFactorTone: MetricTone = m.profit_factor >= 1.5 ? "good" : "warn";
+
+  let sharpeTone: MetricTone = "bad";
+  if (m.sharpe_ratio >= 1.5) sharpeTone = "good";
+  else if (m.sharpe_ratio >= 0.5) sharpeTone = "warn";
+
+  let drawdownTone: MetricTone = "bad";
+  if (m.max_drawdown_pct <= 10) drawdownTone = "good";
+  else if (m.max_drawdown_pct <= 20) drawdownTone = "warn";
+
+  const rrTone: MetricTone = m.risk_reward_ratio >= 1.5 ? "good" : "warn";
+  const oosTone: MetricTone = m.oos_win_rate >= 50 ? "good" : "bad";
+  const pnlTone: MetricTone = pnl >= 0 ? "good" : "bad";
+  const returnTone: MetricTone = m.total_return_pct >= 0 ? "good" : "bad";
+
+  const cards: MetricCardData[] = [
+    {
+      label: "Total P&L",
+      value: pnlValue,
+      subValue: `${fmtMoney(m.initial_capital)} to ${fmtMoney(m.final_equity)}`,
+      tone: pnlTone,
+    },
+    {
+      label: "Return",
+      value: returnValue,
+      subValue: `${m.total_trades} trades`,
+      tone: returnTone,
+    },
+    {
+      label: "Win Rate",
+      value: `${m.win_rate.toFixed(0)}%`,
+      subValue: "Hit ratio",
+      tone: winRateTone,
+    },
+    {
+      label: "Profit Factor",
+      value: m.profit_factor >= 999 ? "∞" : m.profit_factor.toFixed(2),
+      subValue: "Gross win/loss",
+      tone: profitFactorTone,
+    },
+    {
+      label: "Sharpe",
+      value: m.sharpe_ratio.toFixed(2),
+      subValue: "Risk-adjusted",
+      tone: sharpeTone,
+    },
+    {
+      label: "Max DD",
+      value: `${m.max_drawdown_pct.toFixed(1)}%`,
+      subValue: "Worst drawdown",
+      tone: drawdownTone,
+    },
+    {
+      label: "R:R",
+      value: m.risk_reward_ratio.toFixed(2),
+      subValue: "Risk reward",
+      tone: rrTone,
+    },
+    {
+      label: "Avg Win",
+      value: fmtMoney(m.avg_win),
+      subValue: "Winning trades",
+      tone: "good",
+    },
+    {
+      label: "Avg Loss",
+      value: fmtMoney(m.avg_loss),
+      subValue: "Losing trades",
+      tone: "bad",
+    },
+    {
+      label: "OOS WR",
+      value: `${m.oos_win_rate.toFixed(0)}%`,
+      subValue: "Out of sample",
+      tone: oosTone,
+    },
+    {
+      label: "OOS Trades",
+      value: String(m.oos_total_trades),
+      subValue: "Validation set",
+      tone: "neutral",
+    },
+    {
+      label: "Total Trades",
+      value: String(m.total_trades),
+      subValue: "Executed",
+      tone: "neutral",
+    },
+  ];
 
   return (
-    <div className="space-y-2">
-      {/* ── Hero Row: P&L + Return ── */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className={`rounded-lg p-3 border ${up ? "bg-emerald-500/5 border-emerald-500/20" : "bg-rose-500/5 border-rose-500/20"}`}>
-          <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-0.5">Total P&L</div>
-          <div className={`text-xl font-extrabold tabular-nums leading-tight ${up ? "text-emerald-400" : "text-rose-400"}`}>
-            {up ? "+" : ""}RM{pnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-          </div>
-          <div className="text-[10px] text-slate-600 tabular-nums mt-0.5">
-            RM{m.initial_capital.toLocaleString()} → RM{m.final_equity.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-          </div>
-        </div>
-        <div className={`rounded-lg p-3 border ${up ? "bg-emerald-500/5 border-emerald-500/20" : "bg-rose-500/5 border-rose-500/20"}`}>
-          <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mb-0.5">Return</div>
-          <div className={`text-xl font-extrabold tabular-nums leading-tight ${up ? "text-emerald-400" : "text-rose-400"}`}>
-            {up ? "+" : ""}{m.total_return_pct.toFixed(1)}%
-          </div>
-          <div className="text-[10px] text-slate-600 tabular-nums mt-0.5">
-            {m.total_trades} trades · Max DD {m.max_drawdown_pct.toFixed(1)}%
-          </div>
-        </div>
-      </div>
-
-      {/* ── Key Metrics ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-1.5">
-        {([
-          ["Win Rate", `${m.win_rate.toFixed(0)}%`, wrColor],
-          ["Profit Factor", m.profit_factor >= 999 ? "∞" : m.profit_factor.toFixed(2), pfColor],
-          ["Sharpe", m.sharpe_ratio.toFixed(2), srColor],
-          ["Max DD", `${m.max_drawdown_pct.toFixed(1)}%`, ddColor],
-          ["R:R", m.risk_reward_ratio.toFixed(2), rrColor],
-        ] as const).map(([label, value, clr]) => (
-          <div key={label} className="bg-slate-800/40 rounded-lg px-2.5 py-2 border border-slate-700/30">
-            <div className="text-[10px] text-slate-500 uppercase tracking-wide">{label}</div>
-            <div className={`text-sm font-bold tabular-nums ${clr}`}>{value}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Detail Metrics ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-        {([
-          ["Avg Win", `RM${m.avg_win.toFixed(0)}`, "text-emerald-400"],
-          ["Avg Loss", `RM${m.avg_loss.toFixed(0)}`, "text-rose-400"],
-          ["OOS WR", `${m.oos_win_rate.toFixed(0)}%`, oosColor],
-          ["OOS Trades", String(m.oos_total_trades), "text-slate-300"],
-        ] as const).map(([label, value, clr]) => (
-          <div key={label} className="bg-slate-800/20 rounded px-2.5 py-1.5 border border-slate-800/30">
-            <div className="text-[10px] text-slate-600 uppercase tracking-wide">{label}</div>
-            <div className={`text-xs font-semibold tabular-nums ${clr}`}>{value}</div>
-          </div>
-        ))}
-      </div>
+    <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(108px,1fr))] auto-rows-fr gap-1.5 overflow-hidden">
+      {cards.map((card) => (
+        <MetricCard key={card.label} card={card} />
+      ))}
     </div>
   );
 }
@@ -296,8 +383,8 @@ function AnalyticsTab({ trades, metrics }: { trades: US1HTrade[]; metrics: US1HM
   );
 }
 
-// ── Main Bottom Panel ────────────────────────────────────
-export default function MYBottomPanel({
+// ── Main Metrics Panel ───────────────────────────────────
+export default function MYMetricsPanel({
   btData,
   onTradeClick,
   selectedTrade = null,

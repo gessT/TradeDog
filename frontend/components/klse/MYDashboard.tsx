@@ -6,7 +6,7 @@ import { MY_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
 import MYStrategySection, { type StrategyType, STRATEGY_DEFAULTS } from "./MYStrategySection";
-import MYBottomPanel, { MetricsGrid } from "./MYBottomPanel";
+import MYMetricsPanel, { MetricGrid } from "./MYMetricsPanel";
 
 type StockTag = { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null };
 type RunAllRow = { symbol: string; name: string; win_rate: number; total_trades: number; return_pct: number; profit_factor: number; max_dd: number; sharpe: number; status: "pending" | "running" | "done" | "error"; saved?: boolean };
@@ -745,7 +745,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             {/* Backtest Metrics */}
             <div className="w-[35%] min-w-0 border-l border-slate-800/60 overflow-y-auto p-2 bg-slate-950/40">
               {btData ? (
-                <MetricsGrid m={btData.metrics} />
+                <MetricGrid m={btData.metrics} />
               ) : (
                 <div className="flex items-center justify-center h-full text-[10px] text-slate-600">
                   Run backtest to see results
@@ -756,7 +756,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
 
           {/* Bottom Panel */}
           <div className="flex-1 min-h-0 border-t border-slate-700/40">
-            <MYBottomPanel
+            <MYMetricsPanel
               btData={btData}
               onTradeClick={handleTradeClick}
               selectedTrade={selectedTrade}
