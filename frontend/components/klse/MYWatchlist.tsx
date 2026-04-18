@@ -38,7 +38,15 @@ type ColorLabel = { id: number; symbol: string; color: string; market: string };
 
 type ViewMode = "favs" | "all";
 
-// TradingView-style color palette
+
+// ===== Design Constants =====
+const CARD_BG = "bg-slate-900/80";
+const CARD_HOVER = "hover:bg-slate-800/80";
+const CARD_SHADOW = "shadow-md shadow-black/10";
+const CARD_RADIUS = "rounded-xl";
+const CARD_PADDING = "px-3 py-2";
+const CARD_MARGIN = "mb-2";
+const ACTIVE_CARD = "ring-2 ring-cyan-400/60";
 const COLOR_OPTIONS = [
   { key: "red", bg: "bg-red-500", ring: "ring-red-400", dot: "bg-red-500", text: "text-red-400", label: "Red" },
   { key: "orange", bg: "bg-orange-500", ring: "ring-orange-400", dot: "bg-orange-500", text: "text-orange-400", label: "Orange" },
@@ -49,8 +57,14 @@ const COLOR_OPTIONS = [
   { key: "purple", bg: "bg-purple-500", ring: "ring-purple-400", dot: "bg-purple-500", text: "text-purple-400", label: "Purple" },
   { key: "pink", bg: "bg-pink-500", ring: "ring-pink-400", dot: "bg-pink-500", text: "text-pink-400", label: "Pink" },
 ] as const;
-
 const colorDotClass = (c: string) => COLOR_OPTIONS.find((o) => o.key === c)?.dot ?? "bg-slate-500";
+
+// Sortable columns aligned with row widths
+const SORT_COLUMNS = [
+  { key: "symbol", label: "Symbol", className: "flex-1 justify-start" },
+  { key: "price", label: "Price", className: "w-16 shrink-0 justify-end" },
+  { key: "change_pct", label: "Chg%", className: "w-12 shrink-0 justify-end" },
+] as const;
 
 type Props = {
   activeSymbol: string;
@@ -94,6 +108,8 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
   const [colorFilter, setColorFilter] = useState<string | null>(null);
   const [colorPickerSymbol, setColorPickerSymbol] = useState<string | null>(null);
   const [colorPickerPos, setColorPickerPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [sortKey, setSortKey] = useState<string>("symbol");
+  const [sortAsc, setSortAsc] = useState<boolean>(true);
 
   // ── Dynamic Bursa search (Yahoo Finance fallback) ──
   const [bursaResults, setBursaResults] = useState<WatchlistItem[]>([]);
@@ -225,10 +241,9 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
 
   const displayList = (() => {
     const q = searchQuery.toLowerCase();
-
-    // Search is fully independent — ignores viewMode, sector, color, everything
+    let list: WatchlistItem[] = [];
     if (q) {
-      return MY_STOCKS.filter((s) =>
+      list = MY_STOCKS.filter((s) =>
         s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
       ).map((s) => {
         const qt = quotes[s.symbol];
@@ -242,12 +257,9 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
           signal: "—" as const,
         };
       });
-    }
-
-    // Color filter always sources from ALL stocks (independent of viewMode)
-    if (colorFilter) {
+    } else if (colorFilter) {
       const coloredSymbols = new Set(colorLabels.filter((l) => l.color === colorFilter).map((l) => l.symbol));
-      return MY_STOCKS.filter((s) => {
+      list = MY_STOCKS.filter((s) => {
         if (!coloredSymbols.has(s.symbol)) return false;
         if (sectorFilter !== "ALL" && s.sector !== sectorFilter) return false;
         return true;
@@ -263,31 +275,37 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
           signal: "—" as const,
         };
       });
-    }
-
-    // Normal view: favs or all
-    if (viewMode === "favs" && sectorFilter === "ALL") {
-      return items.map((i) => {
+    } else if (viewMode === "favs" && sectorFilter === "ALL") {
+      list = items.map((i) => {
         const qt = quotes[i.symbol];
         return qt ? { ...i, price: qt.price, change_pct: qt.change_pct } : i;
       });
+    } else {
+      list = MY_STOCKS.filter((s) => {
+        if (sectorFilter !== "ALL" && s.sector !== sectorFilter) return false;
+        return true;
+      }).map((s) => {
+        const qt = quotes[s.symbol];
+        return {
+          symbol: s.symbol,
+          name: s.name,
+          sector: s.sector,
+          cap: s.cap,
+          price: qt?.price ?? 0,
+          change_pct: qt?.change_pct ?? 0,
+          signal: "—" as const,
+        };
+      });
     }
-
-    return MY_STOCKS.filter((s) => {
-      if (sectorFilter !== "ALL" && s.sector !== sectorFilter) return false;
-      return true;
-    }).map((s) => {
-      const qt = quotes[s.symbol];
-      return {
-        symbol: s.symbol,
-        name: s.name,
-        sector: s.sector,
-        cap: s.cap,
-        price: qt?.price ?? 0,
-        change_pct: qt?.change_pct ?? 0,
-        signal: "—" as const,
-      };
+    // Sort
+    list = [...list].sort((a, b) => {
+      if (sortKey === "price" || sortKey === "change_pct") {
+        return sortAsc ? (a[sortKey] as number) - (b[sortKey] as number) : (b[sortKey] as number) - (a[sortKey] as number);
+      }
+      // symbol sort
+      return sortAsc ? a.symbol.localeCompare(b.symbol) : b.symbol.localeCompare(a.symbol);
     });
+    return list;
   })();
 
   const sectorCount = sectorFilter !== "ALL"
@@ -362,6 +380,103 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/60">
+      {/* ═══ SCANNER ═══ */}
+      <div className="border-b border-slate-800/30 shrink-0">
+        <button
+          onClick={() => setScannerOpen((p) => !p)}
+          className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-slate-800/20 transition"
+        >
+          <svg className={`w-3 h-3 text-slate-500 shrink-0 transition-transform ${scannerOpen ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+          </svg>
+          <span className="text-[8px] text-slate-500 uppercase tracking-widest font-bold flex-1">Scanner</span>
+          <svg className="w-3 h-3 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </button>
+        {scannerOpen && (
+          <div className="px-2.5 pb-2 space-y-1">
+            <button
+              onClick={handleScanATH}
+              disabled={athScanning}
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition bg-amber-500/8 border border-amber-500/20 hover:bg-amber-500/15"
+            >
+              <span className="text-sm shrink-0">🏔️</span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[9px] font-semibold text-slate-200">Near ATH</div>
+                <div className="text-[7px] text-slate-600">Stocks closest to All-Time High</div>
+              </div>
+              {athScanning ? (
+                <svg className="w-3.5 h-3.5 text-amber-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+              ) : (
+                <svg className="w-3.5 h-3.5 text-slate-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              )}
+            </button>
+
+            <button
+              onClick={handleScanVolBreakout}
+              disabled={vbScanning}
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition bg-violet-500/8 border border-violet-500/20 hover:bg-violet-500/15"
+            >
+              <span className="text-sm shrink-0">📊</span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[9px] font-semibold text-slate-200">Vol Breakout</div>
+                <div className="text-[7px] text-slate-600">Big volume &rarr; breakout / range / breakdown</div>
+              </div>
+              {vbScanning ? (
+                <svg className="w-3.5 h-3.5 text-violet-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+              ) : (
+                <svg className="w-3.5 h-3.5 text-slate-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              )}
+            </button>
+
+            <div className="flex items-center gap-1">
+              <div className="relative flex-1">
+                <button
+                  onClick={() => setOppStrategyDropdown(p => !p)}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition bg-cyan-500/8 border border-cyan-500/20 hover:bg-cyan-500/15"
+                >
+                  <span className="text-sm shrink-0">{STRATEGY_OPTIONS.find(s => s.key === oppStrategy)?.icon ?? "🎯"}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[9px] font-semibold text-slate-200">Buy Opportunity</div>
+                    <div className="text-[7px] text-slate-600">{STRATEGY_OPTIONS.find(s => s.key === oppStrategy)?.label ?? "Select"} — scan active signals</div>
+                  </div>
+                  <svg className={`w-3 h-3 text-slate-500 transition-transform ${oppStrategyDropdown ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {oppStrategyDropdown && (
+                  <div className="absolute bottom-full left-0 right-0 mb-1 z-50 bg-slate-900 border border-slate-700/60 rounded-lg shadow-xl overflow-hidden">
+                    {STRATEGY_OPTIONS.map(s => (
+                      <button
+                        key={s.key}
+                        onClick={() => { setOppStrategy(s.key); setOppStrategyDropdown(false); }}
+                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition hover:bg-slate-800/60 ${
+                          oppStrategy === s.key ? `bg-${s.color}-500/10 text-${s.color}-400` : "text-slate-300"
+                        }`}
+                      >
+                        <span className="text-xs">{s.icon}</span>
+                        <span className="text-[9px] font-semibold">{s.label}</span>
+                        {oppStrategy === s.key && <span className="ml-auto text-[9px]">✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={handleScanOpportunities}
+                disabled={oppScanning}
+                className="shrink-0 px-2.5 py-2 rounded-lg bg-cyan-500/20 border border-cyan-500/30 hover:bg-cyan-500/30 text-cyan-400 text-[9px] font-bold transition disabled:opacity-50"
+              >
+                {oppScanning ? (
+                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                ) : "RUN"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* ═══ SEARCH BAR ═══ */}
       <div className="px-2 pt-2 pb-1 shrink-0">
         <div className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition-all ${
@@ -375,7 +490,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search Bursa symbol or name…"
-            className="flex-1 bg-transparent text-[11px] text-slate-200 placeholder-slate-500 outline-none min-w-0"
+            className="flex-1 bg-transparent text-[10px] text-slate-200 placeholder-slate-500 outline-none min-w-0"
           />
           {searchQuery && (
             <button onClick={() => setSearchQuery("")} className="text-slate-500 hover:text-slate-300 shrink-0 p-0.5">
@@ -387,38 +502,41 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
         </div>
       </div>
 
-      {/* ═══ VIEW TABS + SECTOR FILTER ═══ */}
-      <div className="flex items-center gap-1 px-2 pb-1.5 shrink-0">
+      {/* ═══ FILTER ROW (WATCHLIST + SECTOR + COLOR TAGS) ═══ */}
+      <div className="relative flex items-center gap-0.5 px-2 pb-1.5 shrink-0 min-w-0">
         <div className="flex items-center rounded-md overflow-hidden border border-slate-700/50 shrink-0">
           <button
             onClick={() => { setViewMode("favs"); setSectorFilter("ALL"); }}
-            className={`px-2 py-[3px] text-[9px] font-bold tracking-wide transition-all ${
+            title="Watchlist"
+            className={`px-1.5 py-[3px] text-[8px] font-bold tracking-wide transition-all ${
               viewMode === "favs" ? "bg-cyan-500/20 text-cyan-300" : "text-slate-500 hover:text-slate-300 hover:bg-slate-800/50"
             }`}
           >
-            ★ Watchlist
+            ★
           </button>
           <button
             onClick={() => { setViewMode("all"); setSectorFilter("ALL"); }}
-            className={`px-2 py-[3px] text-[9px] font-bold tracking-wide transition-all ${
+            title="All Stocks"
+            className={`px-1.5 py-[3px] text-[8px] font-bold tracking-wide transition-all ${
               viewMode === "all" ? "bg-cyan-500/20 text-cyan-300" : "text-slate-500 hover:text-slate-300 hover:bg-slate-800/50"
             }`}
           >
-            All
+            ALL
           </button>
         </div>
 
-        <div className="relative flex-1 min-w-0">
+        <div className="relative w-[86px] shrink-0">
           <button
             onClick={(e) => { e.stopPropagation(); setSectorDropdownOpen((p) => !p); }}
-            className={`flex items-center gap-1 px-2 py-[3px] rounded-md border text-[9px] font-medium transition-all w-full ${
+            className={`flex items-center gap-1 px-2 py-[3px] rounded-md border text-[8px] font-medium transition-all w-full ${
               sectorFilter !== "ALL"
                 ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-300"
                 : "border-slate-700/50 text-slate-500 hover:text-slate-300 hover:bg-slate-800/50"
             }`}
+            title={sectorFilter === "ALL" ? "All Sectors" : sectorFilter}
           >
             <span className="truncate flex-1 text-left">
-              {sectorFilter === "ALL" ? "All Sectors" : sectorFilter}
+              {sectorFilter === "ALL" ? "Sector" : sectorFilter}
             </span>
             {sectorFilter !== "ALL" && (
               <span className="text-[8px] px-1 py-[1px] rounded bg-cyan-500/20 text-cyan-400 font-bold shrink-0">{sectorCount}</span>
@@ -429,7 +547,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
           </button>
 
           {sectorDropdownOpen && (
-            <div className="absolute top-full left-0 right-0 mt-1 bg-slate-900 border border-slate-700/80 rounded-lg shadow-2xl shadow-black/50 z-50 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="absolute top-full left-0 w-[170px] mt-1 bg-slate-900 border border-slate-700/80 rounded-lg shadow-2xl shadow-black/50 z-50 overflow-hidden" onClick={(e) => e.stopPropagation()}>
               <div className="max-h-60 overflow-y-auto">
                 <button
                   onClick={() => { setSectorFilter("ALL"); setSectorDropdownOpen(false); }}
@@ -460,56 +578,63 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
             </div>
           )}
         </div>
+
+        {activeColors.length > 0 && (
+          <div className="flex items-center gap-1 shrink-0">
+            {COLOR_OPTIONS.filter((c) => activeColors.includes(c.key)).map((c) => {
+              const count = colorLabels.filter((l) => l.color === c.key).length;
+              return (
+                <button
+                  key={c.key}
+                  onClick={() => setColorFilter(colorFilter === c.key ? null : c.key)}
+                  title={`${c.label} (${count})`}
+                  aria-label={`${c.label} (${count})`}
+                  className={`w-4 h-4 rounded-full border border-slate-700 transition-all ${c.dot} ${
+                    colorFilter === c.key ? "ring-1 ring-slate-300 scale-110" : "opacity-70 hover:opacity-100"
+                  }`}
+                >
+                  <span className="sr-only">{c.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {/* ═══ COLOR FILTER BAR ═══ */}
-      {activeColors.length > 0 && (
-        <div className="flex items-center gap-1 px-2.5 pb-1.5 shrink-0 flex-wrap">
+      {/* ═══ COLUMN HEADER (Sortable) ═══ */}
+      <div className="flex items-center gap-2 px-5 py-1.5 text-[8px] font-bold text-slate-400 uppercase tracking-widest shrink-0 border-y border-slate-800/30 bg-slate-900/80">
+        <span className="w-4 shrink-0" />
+        {SORT_COLUMNS.map((opt) => (
           <button
-            onClick={() => setColorFilter(null)}
-            className={`flex items-center gap-1 px-1.5 py-[3px] rounded text-[8px] font-bold transition-all ${
-              colorFilter === null ? "bg-slate-700/60 text-slate-200" : "text-slate-500 hover:text-slate-300 hover:bg-slate-800/40"
-            }`}
+            key={opt.key}
+            className={`${opt.className} flex items-center gap-1 group transition ${sortKey === opt.key ? "text-cyan-300" : ""}`}
+            onClick={() => {
+              if (sortKey === opt.key) setSortAsc(a => !a);
+              else { setSortKey(opt.key); setSortAsc(true); }
+            }}
+            aria-label={`Sort by ${opt.label}`}
           >
-            All
+            <span>{opt.label}</span>
+            {sortKey === opt.key && (
+              <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={sortAsc ? "M5 15l7-7 7 7" : "M19 9l-7 7-7-7"} />
+              </svg>
+            )}
           </button>
-          {COLOR_OPTIONS.filter((c) => activeColors.includes(c.key)).map((c) => {
-            const count = colorLabels.filter((l) => l.color === c.key).length;
-            return (
-              <button
-                key={c.key}
-                onClick={() => setColorFilter(colorFilter === c.key ? null : c.key)}
-                className={`flex items-center gap-1 px-1.5 py-[3px] rounded text-[8px] font-medium transition-all ${
-                  colorFilter === c.key ? "bg-slate-700/60 text-slate-200 ring-1 ring-slate-500/50" : "text-slate-500 hover:text-slate-300 hover:bg-slate-800/40"
-                }`}
-              >
-                <span className={`w-2 h-2 rounded-full ${c.dot}`} />
-                <span>{c.label}</span>
-                <span className="text-[7px] opacity-60">{count}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ═══ COLUMN HEADER ═══ */}
-      <div className="flex items-center px-2.5 py-1 text-[8px] font-bold text-slate-500 uppercase tracking-widest shrink-0 border-y border-slate-800/30">
-        <span className="w-5 shrink-0" />
-        <span className="flex-1">Symbol</span>
-        <span className="text-right w-16 shrink-0">Price</span>
-        <span className="text-right w-12 shrink-0">Chg%</span>
+        ))}
       </div>
 
-      {/* ═══ STOCK ROWS ═══ */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700/50">
+      {/* ═══ STOCK ROWS (Card Style) ═══ */}
+      <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700/50 px-2 pt-2">
         {displayList.length === 0 && bursaResults.length === 0 && !bursaSearching && (
           <div className="flex flex-col items-center justify-center py-10 gap-2">
             <span className="text-2xl opacity-30">📭</span>
-            <p className="text-[10px] text-slate-600">
+            <p className="text-[11px] text-slate-600">
               {searchQuery ? "No matches found" : viewMode === "favs" ? "Star stocks to add to your watchlist" : "No stocks in this sector"}
             </p>
           </div>
         )}
+
         {displayList.map((item) => {
           const up = item.change_pct >= 0;
           const active = item.symbol === activeSymbol;
@@ -525,50 +650,62 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                 setColorPickerSymbol(item.symbol);
                 setColorPickerPos({ x: e.clientX, y: e.clientY });
               }}
-              className={`w-full flex items-center gap-1 px-2 py-[7px] text-left transition group ${
-                active
-                  ? "bg-cyan-500/8 border-l-[2px] border-l-cyan-400"
-                  : "border-l-[2px] border-l-transparent hover:bg-slate-800/40"
-              }`}
+              className={`w-full flex items-center gap-2 ${CARD_BG} ${CARD_RADIUS} ${CARD_SHADOW} ${CARD_PADDING} ${CARD_MARGIN} transition group text-left ${CARD_HOVER} ${active ? ACTIVE_CARD : ""}`}
+              tabIndex={0}
+              aria-label={`Select ${item.name}`}
             >
-              {/* Color dot */}
-              {itemColor ? (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setColorPickerSymbol(item.symbol);
-                    const rect = (e.target as HTMLElement).getBoundingClientRect();
-                    setColorPickerPos({ x: rect.right + 4, y: rect.top });
-                  }}
-                  className={`shrink-0 w-2.5 h-2.5 rounded-full cursor-pointer hover:scale-125 transition-transform ${colorDotClass(itemColor)}`}
-                />
-              ) : (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  onClick={(e) => { e.stopPropagation(); onToggleFav(item.symbol, item.name); }}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onToggleFav(item.symbol, item.name); } }}
-                  className={`shrink-0 text-[11px] transition-all cursor-pointer ${
-                    isFav ? "opacity-100" : "opacity-0 group-hover:opacity-60"
-                  } hover:scale-125`}
-                >
-                  {isFav ? "★" : "☆"}
-                </span>
-              )}
+              <div className="w-4 shrink-0 flex items-center justify-center">
+                {itemColor ? (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Set color label"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setColorPickerSymbol(item.symbol);
+                      const rect = (e.target as HTMLElement).getBoundingClientRect();
+                      setColorPickerPos({ x: rect.right + 4, y: rect.top });
+                    }}
+                    className={`w-2.5 h-2.5 rounded-full cursor-pointer hover:scale-125 transition-transform border border-slate-800 ${colorDotClass(itemColor)}`}
+                  />
+                ) : (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label={isFav ? "Remove from favorites" : "Add to favorites"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleFav(item.symbol, item.name);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.stopPropagation();
+                        onToggleFav(item.symbol, item.name);
+                      }
+                    }}
+                    className={`text-[11px] transition-all cursor-pointer ${isFav ? "opacity-100" : "opacity-0 group-hover:opacity-60"} hover:scale-125`}
+                  >
+                    {isFav ? "★" : "☆"}
+                  </span>
+                )}
+              </div>
 
               <div className="flex flex-col min-w-0 flex-1">
                 <div className="flex items-center gap-1">
-                  <span className={`text-[11px] font-bold leading-tight truncate ${active ? "text-cyan-300" : "text-slate-200"}`}>
+                  <span className={`text-[11px] font-bold leading-tight truncate ${active ? "text-cyan-300" : "text-slate-100"}`}>
                     {item.name}
                   </span>
                   {MY_STOCK_STRATEGY[item.symbol] && (
                     <span className={`text-[6px] px-1 py-[1px] rounded font-bold uppercase tracking-wider ${
-                      MY_STOCK_STRATEGY[item.symbol] === "tpc" ? "bg-cyan-500/20 text-cyan-400" :
-                      MY_STOCK_STRATEGY[item.symbol] === "vpb3" ? "bg-emerald-500/20 text-emerald-400" :
-                      "bg-amber-500/20 text-amber-400"
-                    }`}>{MY_STOCK_STRATEGY[item.symbol]}</span>
+                      MY_STOCK_STRATEGY[item.symbol] === "tpc"
+                        ? "bg-cyan-500/20 text-cyan-400"
+                        : MY_STOCK_STRATEGY[item.symbol] === "vpb3"
+                          ? "bg-emerald-500/20 text-emerald-400"
+                          : "bg-amber-500/20 text-amber-400"
+                    }`}
+                    >
+                      {MY_STOCK_STRATEGY[item.symbol]}
+                    </span>
                   )}
                   {viewMode === "all" && sectorFilter === "ALL" && (
                     <span className="text-[7px] px-1 py-[1px] rounded bg-slate-800 text-slate-500 font-medium">{item.sector}</span>
@@ -577,47 +714,56 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                 <span className="text-[8px] text-slate-500 truncate leading-tight">{item.symbol.replace(".KL", "")}</span>
                 {stockTags.filter((t) => t.symbol === item.symbol).length > 0 && (
                   <div className="flex gap-0.5 mt-0.5 flex-wrap">
-                    {stockTags.filter((t) => t.symbol === item.symbol).map((tag) => (
-                      <span
-                        key={tag.id}
-                        className={`text-[6px] px-1 py-[1px] rounded font-bold uppercase tracking-wider ${
-                          tag.strategy_type === "mtf" ? "bg-amber-500/20 text-amber-400" :
-                          tag.strategy_type === "vpr" ? "bg-cyan-500/20 text-cyan-400" :
-                          tag.strategy_type === "vpb_v3" ? "bg-emerald-500/20 text-emerald-400" :
-                          tag.strategy_type === "vpb_v2" ? "bg-purple-500/20 text-purple-400" :
-                          tag.strategy_type === "cm_macd" ? "bg-cyan-500/20 text-cyan-300" :
-                          "bg-blue-500/20 text-blue-400"
-                        }`}
-                      >
-                        {tag.strategy_type === "vpb_v3" ? "v3" : tag.strategy_type === "cm_macd" ? "MACD" : tag.strategy_type}
-                      </span>
-                    ))}
+                    {stockTags
+                      .filter((t) => t.symbol === item.symbol)
+                      .map((tag) => (
+                        <span
+                          key={tag.id}
+                          className={`text-[6px] px-1 py-[1px] rounded font-bold uppercase tracking-wider ${
+                            tag.strategy_type === "mtf"
+                              ? "bg-amber-500/20 text-amber-400"
+                              : tag.strategy_type === "vpr"
+                                ? "bg-cyan-500/20 text-cyan-400"
+                                : tag.strategy_type === "vpb_v3"
+                                  ? "bg-emerald-500/20 text-emerald-400"
+                                  : tag.strategy_type === "vpb_v2"
+                                    ? "bg-purple-500/20 text-purple-400"
+                                    : tag.strategy_type === "cm_macd"
+                                      ? "bg-cyan-500/20 text-cyan-300"
+                                      : "bg-blue-500/20 text-blue-400"
+                          }`}
+                        >
+                          {tag.strategy_type === "vpb_v3" ? "v3" : tag.strategy_type === "cm_macd" ? "MACD" : tag.strategy_type}
+                        </span>
+                      ))}
                   </div>
                 )}
               </div>
 
               <div className="text-right w-16 shrink-0">
-                <span className={`text-[10px] font-bold tabular-nums ${item.price === 0 ? "text-slate-700" : "text-slate-200"}`}>
+                <span className={`text-[10px] font-bold tabular-nums ${item.price === 0 ? "text-slate-700" : "text-slate-100"}`}>
                   {item.price === 0 ? "—" : `RM${item.price.toFixed(2)}`}
                 </span>
               </div>
 
               <div className="text-right w-12 shrink-0">
                 {item.price > 0 ? (
-                  <span className={`inline-block text-[9px] font-bold tabular-nums px-1.5 py-[2px] rounded ${
-                    up ? "bg-emerald-500/15 text-emerald-400" : "bg-rose-500/15 text-rose-400"
-                  }`}>
-                    {up ? "+" : ""}{item.change_pct.toFixed(1)}%
+                  <span
+                    className={`inline-block text-[8px] font-bold tabular-nums px-1.5 py-[2px] rounded ${
+                      up ? "bg-emerald-500/15 text-emerald-400" : "bg-rose-500/15 text-rose-400"
+                    }`}
+                  >
+                    {up ? "+" : ""}
+                    {item.change_pct.toFixed(1)}%
                   </span>
                 ) : (
-                  <span className="text-[9px] text-slate-700">—</span>
+                  <span className="text-[8px] text-slate-700">—</span>
                 )}
               </div>
             </button>
           );
         })}
 
-        {/* ── Bursa dynamic search results ── */}
         {bursaSearching && displayList.length === 0 && (
           <div className="flex items-center justify-center py-6 gap-2">
             <svg className="w-4 h-4 text-cyan-400 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -627,9 +773,10 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
             <span className="text-[10px] text-slate-400">Searching Bursa…</span>
           </div>
         )}
+
         {bursaResults.length > 0 && (
           <>
-            <div className="px-2.5 py-1.5 text-[8px] text-cyan-400/70 uppercase tracking-widest font-bold bg-slate-800/30 border-y border-slate-800/30">
+            <div className="px-2.5 py-1.5 text-[8px] text-cyan-400/70 uppercase tracking-widest font-bold bg-slate-800/30 border-y border-slate-800/30 rounded-lg mb-2">
               Yahoo Finance Result
             </div>
             {bursaResults.map((item) => {
@@ -638,38 +785,46 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                 <button
                   key={item.symbol}
                   onClick={() => onSelectSymbol(item.symbol, item.name)}
-                  className="w-full flex items-center gap-1 px-2 py-[7px] text-left transition group border-l-[2px] border-l-cyan-500/30 hover:bg-slate-800/40 bg-cyan-500/5"
+                  className={`w-full flex items-center gap-2 ${CARD_BG} ${CARD_RADIUS} ${CARD_SHADOW} ${CARD_PADDING} ${CARD_MARGIN} transition group text-left ${CARD_HOVER} border border-cyan-500/20`}
                 >
                   <span
                     role="button"
                     tabIndex={0}
-                    onClick={(e) => { e.stopPropagation(); onToggleFav(item.symbol, item.name); }}
-                    className="shrink-0 text-[11px] opacity-0 group-hover:opacity-60 hover:scale-125 transition-all cursor-pointer"
-                  >☆</span>
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleFav(item.symbol, item.name);
+                    }}
+                    className="w-4 shrink-0 text-[11px] text-center opacity-0 group-hover:opacity-60 hover:scale-125 transition-all cursor-pointer"
+                  >
+                    ☆
+                  </span>
 
                   <div className="flex flex-col min-w-0 flex-1">
                     <div className="flex items-center gap-1">
-                      <span className="text-[11px] font-bold leading-tight truncate text-slate-200">{item.name}</span>
+                      <span className="text-[11px] font-bold leading-tight truncate text-slate-100">{item.name}</span>
                       <span className="text-[7px] px-1 py-[1px] rounded bg-cyan-500/15 text-cyan-400 font-medium">{item.sector}</span>
                     </div>
                     <span className="text-[8px] text-slate-500 truncate leading-tight">{item.symbol.replace(".KL", "")}</span>
                   </div>
 
                   <div className="text-right w-16 shrink-0">
-                    <span className={`text-[10px] font-bold tabular-nums ${item.price === 0 ? "text-slate-700" : "text-slate-200"}`}>
+                    <span className={`text-[10px] font-bold tabular-nums ${item.price === 0 ? "text-slate-700" : "text-slate-100"}`}>
                       {item.price === 0 ? "—" : `RM${item.price.toFixed(2)}`}
                     </span>
                   </div>
 
                   <div className="text-right w-12 shrink-0">
                     {item.price > 0 ? (
-                      <span className={`inline-block text-[9px] font-bold tabular-nums px-1.5 py-[2px] rounded ${
-                        up ? "bg-emerald-500/15 text-emerald-400" : "bg-rose-500/15 text-rose-400"
-                      }`}>
-                        {up ? "+" : ""}{item.change_pct.toFixed(1)}%
+                      <span
+                        className={`inline-block text-[8px] font-bold tabular-nums px-1.5 py-[2px] rounded ${
+                          up ? "bg-emerald-500/15 text-emerald-400" : "bg-rose-500/15 text-rose-400"
+                        }`}
+                      >
+                        {up ? "+" : ""}
+                        {item.change_pct.toFixed(1)}%
                       </span>
                     ) : (
-                      <span className="text-[9px] text-slate-700">—</span>
+                      <span className="text-[8px] text-slate-700">—</span>
                     )}
                   </div>
                 </button>
@@ -699,7 +854,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                   setColorPickerSymbol(null);
                 }}
                 className={`w-5 h-5 rounded-full transition-all hover:scale-125 ${c.bg} ${
-                  colorMap.get(colorPickerSymbol) === c.key ? "ring-2 ring-offset-1 ring-offset-slate-900 " + c.ring : "opacity-70 hover:opacity-100"
+                  colorMap.get(colorPickerSymbol) === c.key ? `ring-2 ring-offset-1 ring-offset-slate-900 ${c.ring}` : "opacity-70 hover:opacity-100"
                 }`}
               />
             ))}
@@ -717,118 +872,6 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
           )}
         </div>
       )}
-
-      {/* ═══ SCANNER ═══ */}
-      <div className="border-t border-slate-800/30 shrink-0">
-        <button
-          onClick={() => setScannerOpen((p) => !p)}
-          className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-slate-800/20 transition"
-        >
-          <svg className={`w-3 h-3 text-slate-500 shrink-0 transition-transform ${scannerOpen ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
-          </svg>
-          <span className="text-[8px] text-slate-500 uppercase tracking-widest font-bold flex-1">Scanner</span>
-          <svg className="w-3 h-3 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </button>
-        {scannerOpen && (
-          <div className="px-2.5 pb-2 space-y-1">
-            <button
-              onClick={handleScanATH}
-              disabled={athScanning}
-              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition bg-amber-500/8 border border-amber-500/20 hover:bg-amber-500/15"
-            >
-              <span className="text-sm shrink-0">🏔️</span>
-              <div className="min-w-0 flex-1">
-                <div className="text-[10px] font-semibold text-slate-200">Near ATH</div>
-                <div className="text-[8px] text-slate-600">Stocks closest to All-Time High</div>
-              </div>
-              {athScanning ? (
-                <svg className="w-3.5 h-3.5 text-amber-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-              ) : (
-                <svg className="w-3.5 h-3.5 text-slate-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-              )}
-            </button>
-
-            {/* Vol Breakout */}
-            <button
-              onClick={handleScanVolBreakout}
-              disabled={vbScanning}
-              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition bg-violet-500/8 border border-violet-500/20 hover:bg-violet-500/15"
-            >
-              <span className="text-sm shrink-0">📊</span>
-              <div className="min-w-0 flex-1">
-                <div className="text-[10px] font-semibold text-slate-200">Vol Breakout</div>
-                <div className="text-[8px] text-slate-600">Big volume &rarr; breakout / range / breakdown</div>
-              </div>
-              {vbScanning ? (
-                <svg className="w-3.5 h-3.5 text-violet-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-              ) : (
-                <svg className="w-3.5 h-3.5 text-slate-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-              )}
-            </button>
-
-            {/* Strategy Opportunity Scanner */}
-            <div className="flex items-center gap-1">
-              <div className="relative flex-1">
-                <button
-                  onClick={() => setOppStrategyDropdown(p => !p)}
-                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition bg-cyan-500/8 border border-cyan-500/20 hover:bg-cyan-500/15"
-                >
-                  <span className="text-sm shrink-0">{STRATEGY_OPTIONS.find(s => s.key === oppStrategy)?.icon ?? "🎯"}</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[10px] font-semibold text-slate-200">Buy Opportunity</div>
-                    <div className="text-[8px] text-slate-600">{STRATEGY_OPTIONS.find(s => s.key === oppStrategy)?.label ?? "Select"} — scan active signals</div>
-                  </div>
-                  <svg className={`w-3 h-3 text-slate-500 transition-transform ${oppStrategyDropdown ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                {oppStrategyDropdown && (
-                  <div className="absolute bottom-full left-0 right-0 mb-1 z-50 bg-slate-900 border border-slate-700/60 rounded-lg shadow-xl overflow-hidden">
-                    {STRATEGY_OPTIONS.map(s => (
-                      <button
-                        key={s.key}
-                        onClick={() => { setOppStrategy(s.key); setOppStrategyDropdown(false); }}
-                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition hover:bg-slate-800/60 ${
-                          oppStrategy === s.key ? `bg-${s.color}-500/10 text-${s.color}-400` : "text-slate-300"
-                        }`}
-                      >
-                        <span className="text-xs">{s.icon}</span>
-                        <span className="text-[10px] font-semibold">{s.label}</span>
-                        {oppStrategy === s.key && <span className="ml-auto text-[10px]">✓</span>}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <button
-                onClick={handleScanOpportunities}
-                disabled={oppScanning}
-                className="shrink-0 px-2.5 py-2 rounded-lg bg-cyan-500/20 border border-cyan-500/30 hover:bg-cyan-500/30 text-cyan-400 text-[10px] font-bold transition disabled:opacity-50"
-              >
-                {oppScanning ? (
-                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-                ) : "RUN"}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ═══ FOOTER ═══ */}
-      <div className="px-2.5 py-1.5 border-t border-slate-800/40 flex items-center justify-between shrink-0">
-        <span className="text-[9px] text-slate-600">
-          {displayList.length} {viewMode === "favs" ? "watched" : "stocks"}
-          {sectorFilter !== "ALL" && ` · ${sectorFilter}`}
-        </span>
-        <div className="flex items-center gap-2">
-          {favSymbols.length > 0 && viewMode === "favs" && (
-            <span className="text-[8px] text-cyan-400/60">★ {favSymbols.length}</span>
-          )}
-        </div>
-      </div>
 
       {/* ═══ NEAR ATH DIALOG ═══ */}
       {athDialogOpen && (
