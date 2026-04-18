@@ -834,7 +834,6 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
             : null;
           return (
             <div className="flex flex-col py-2">
-
               {/* ── Entry toast ── */}
               {entryToast && (
                 <div className="mx-3 mb-2 at-launch-banner rounded-lg overflow-hidden ring-1 bg-gradient-to-r from-emerald-600/30 via-emerald-500/15 to-transparent ring-emerald-500/30">
@@ -848,7 +847,6 @@ export default function AutoTraderPanel({ symbol = "MGC", lockedConfig, tradeExe
                 </div>
               )}
 
-              {/* ── Position · Log · Performance (1/5 · 2/5 · 2/5) ── */}}
               <div className="px-3 mb-3 grid grid-cols-[1fr_2fr_2fr] gap-2 items-stretch">
 
                 {/* ── Position (1/5) ── */}

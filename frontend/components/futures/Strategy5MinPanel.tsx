@@ -2362,6 +2362,59 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
               {bp.name}
             </button>
           ))}
+        </div>
+
+        {/* ── Active strategy concept steps ── */}
+        {activePreset && (() => {
+          const CONCEPTS: Record<string, { icon: string; label: string }[]> = {
+            "⬆ BoS Long": [
+              { icon: "📈", label: "1H EMA 上升趋势" },
+              { icon: "〰️", label: "5m 价格在 EMA50 上方" },
+              { icon: "💥", label: "收盘突破 N棒最高点 (BoS)" },
+              { icon: "🌀", label: "Supertrend 多头" },
+              { icon: "⚡", label: "RSI 动能确认" },
+              { icon: "🕐", label: "活跃交易时段" },
+            ],
+            "⬇ BoS Short": [
+              { icon: "📉", label: "1H EMA 下降趋势" },
+              { icon: "〰️", label: "5m 价格在 EMA50 下方" },
+              { icon: "💥", label: "收盘跌破 N棒最低点 (BoS)" },
+              { icon: "🌀", label: "Supertrend 空头" },
+              { icon: "⚡", label: "RSI 动能确认" },
+              { icon: "🕐", label: "活跃交易时段" },
+            ],
+            "⇕ BoS Mix": [
+              { icon: "🔄", label: "多空双向交易" },
+              { icon: "💥", label: "价格突破结构高点→做多" },
+              { icon: "💥", label: "价格跌破结构低点→做空" },
+              { icon: "🌀", label: "Supertrend 过滤方向" },
+              { icon: "〰️", label: "EMA50 趋势确认" },
+              { icon: "🕐", label: "活跃时段 · ATR 过滤震荡" },
+            ],
+            " Always Open": [
+              { icon: "🧪", label: "TEST 模式" },
+              { icon: "🔁", label: "每次 bar close 必进场" },
+              { icon: "⬆", label: "固定做多方向" },
+              { icon: "🎯", label: "固定 SL/TP = 3 ATR" },
+            ],
+          };
+          const steps = CONCEPTS[activePreset];
+          if (!steps) return null;
+          return (
+            <div className="flex items-center gap-1.5 flex-wrap px-0.5 py-1 text-[8px]">
+              {steps.map((s, i) => (
+                <span key={i} className="flex items-center gap-0.5 text-slate-400">
+                  <span>{s.icon}</span>
+                  <span className="text-slate-500">{s.label}</span>
+                  {i < steps.length - 1 && <span className="text-slate-700 ml-0.5">→</span>}
+                </span>
+              ))}
+            </div>
+          );
+        })()}
+
+        {/* ── original controls strip ── */}
+        <div className="rounded-lg border border-slate-600/50 bg-slate-800/70 px-2 py-1.5 flex items-center gap-1.5 mb-1.5 flex-wrap">
 
           {/* SL / TP + Interval + Conditions icon */}
           <div className="ml-auto flex items-center gap-1.5">
