@@ -58,14 +58,12 @@ type Props = {
   stockTags?: StockTag[];
   favSymbols: string[];
   onToggleFav: (symbol: string, name: string) => void;
-  onRunAllFavs?: () => void;
-  runAllRunning?: boolean;
   colorLabels?: ColorLabel[];
   onSetColor?: (symbol: string, color: string) => void;
   onRemoveColor?: (symbol: string) => void;
 };
 
-export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = [], favSymbols, onToggleFav, onRunAllFavs, runAllRunning, colorLabels = [], onSetColor, onRemoveColor }: Props) {
+export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = [], favSymbols, onToggleFav, colorLabels = [], onSetColor, onRemoveColor }: Props) {
   const [items, setItems] = useState<WatchlistItem[]>(INITIAL_WATCHLIST);
 
   useEffect(() => {
@@ -826,20 +824,6 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
           {sectorFilter !== "ALL" && ` · ${sectorFilter}`}
         </span>
         <div className="flex items-center gap-2">
-          {favSymbols.length > 0 && onRunAllFavs && (
-            <button
-              onClick={onRunAllFavs}
-              disabled={runAllRunning}
-              className="flex items-center gap-1 px-2 py-[3px] rounded-md text-[9px] font-bold bg-gradient-to-r from-cyan-500/80 to-blue-500/80 hover:from-cyan-400 hover:to-blue-400 text-white transition active:scale-95 disabled:opacity-40"
-            >
-              <svg className={`w-2.5 h-2.5 ${runAllRunning ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                {runAllRunning
-                  ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" />}
-              </svg>
-              {runAllRunning ? "Running…" : "Run All"}
-            </button>
-          )}
           {favSymbols.length > 0 && viewMode === "favs" && (
             <span className="text-[8px] text-cyan-400/60">★ {favSymbols.length}</span>
           )}

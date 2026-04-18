@@ -185,6 +185,12 @@ export const STRATEGY_DEFAULTS: Record<StrategyType, {
   cm_macd: { sl: 2.0,  tp1: 3.0, tp2: 3.0, capital: 5000, disabledConditions: [] },
 };
 
+type RunAllScopeOption = {
+  value: string;
+  label: string;
+  count: number;
+};
+
 type Props = {
   disabledConditions: Set<string>;
   onToggleCondition: (key: string) => void;
@@ -199,6 +205,12 @@ type Props = {
   onRunBacktest: () => void;
   onResetDefaults: () => void;
   onSaveConfig: () => Promise<void>;
+  onRunAllFavs?: () => void;
+  runAllScope?: string;
+  onRunAllScopeChange?: (scope: string) => void;
+  runAllScopeOptions?: RunAllScopeOption[];
+  runAllRunning?: boolean;
+  runAllCount?: number;
   loading: boolean;
   symbol?: string;
   symbolName?: string;
@@ -247,6 +259,12 @@ export default function MYStrategySection({
   onRunBacktest,
   onResetDefaults,
   onSaveConfig,
+  onRunAllFavs,
+  runAllScope = "watchlist",
+  onRunAllScopeChange,
+  runAllScopeOptions = [],
+  runAllRunning = false,
+  runAllCount = 0,
   loading,
   symbol,
   symbolName,
@@ -289,6 +307,8 @@ export default function MYStrategySection({
   }, []);
 
   const strat = STRATEGIES.find(s => s.key === activeStrategy) ?? STRATEGIES[0];
+  const selectedRunAllOption = runAllScopeOptions.find((o) => o.value === runAllScope) ?? null;
+  const effectiveRunAllCount = selectedRunAllOption?.count ?? runAllCount;
 
   // Build a set of tagged strategy types for the current symbol
   const taggedStrategies = new Map<string, { win_rate: number | null; return_pct: number | null }>();
@@ -658,6 +678,49 @@ export default function MYStrategySection({
               ))}
             </div>
           </div>
+
+          {/* ── Run All Scope + Action ── */}
+          {onRunAllFavs && runAllScopeOptions.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[8px] uppercase tracking-widest text-slate-500 font-bold">Run Scope</span>
+                <span className="text-[8px] text-cyan-400/70 tabular-nums">{effectiveRunAllCount}</span>
+              </div>
+
+              <div className="grid grid-cols-[1fr_auto] gap-1.5">
+                <div className="relative">
+                  <select
+                    value={runAllScope}
+                    onChange={(e) => onRunAllScopeChange?.(e.target.value)}
+                    disabled={runAllRunning}
+                    className="w-full h-7 rounded-lg border border-slate-700/60 bg-slate-900/70 text-[9px] text-slate-200 pl-2 pr-6 outline-none transition focus:border-cyan-500/40 disabled:opacity-60"
+                  >
+                    {runAllScopeOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} ({opt.count})
+                      </option>
+                    ))}
+                  </select>
+                  <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+
+                <button
+                  onClick={onRunAllFavs}
+                  disabled={runAllRunning || effectiveRunAllCount === 0}
+                  className="px-2.5 h-7 rounded-lg text-[9px] font-bold border transition flex items-center justify-center gap-1 border-cyan-500/30 bg-gradient-to-r from-cyan-500/20 to-blue-500/20 text-cyan-300 hover:from-cyan-500/30 hover:to-blue-500/30 disabled:opacity-40"
+                >
+                  <svg className={`w-3 h-3 ${runAllRunning ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    {runAllRunning
+                      ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" />}
+                  </svg>
+                  {runAllRunning ? "Running…" : "Run All"}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* ── Reset to Defaults ── */}
           {(() => {

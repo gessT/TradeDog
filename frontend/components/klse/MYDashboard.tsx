@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState, useMemo } from "react";
 import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, fetchSMPBacktest, fetchPSniperBacktest, fetchCMMACDBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, fetchBestStrategy, type US1HBacktestResponse, type US1HTrade, type StrategyGradeResult } from "../../services/api";
 import { MY_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
 import MYWatchlist from "./MYWatchlist";
@@ -10,6 +10,7 @@ import MYBottomPanel, { MetricsGrid } from "./MYBottomPanel";
 
 type StockTag = { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null };
 type RunAllRow = { symbol: string; name: string; win_rate: number; total_trades: number; return_pct: number; profit_factor: number; max_dd: number; sharpe: number; status: "pending" | "running" | "done" | "error"; saved?: boolean };
+type RunAllScopeOption = { value: string; label: string; count: number };
 export type ColorLabel = { id: number; symbol: string; color: string; market: string };
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
@@ -259,11 +260,62 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     } catch { /* offline */ }
   }, [fetchColorLabels]);
 
-  // ── Run All Favs
+  // ── Run All
+  const [runAllScope, setRunAllScope] = useState<string>("watchlist");
+  const [runAllUniverseLabel, setRunAllUniverseLabel] = useState("Watchlist");
+  const [runAllUniverseCount, setRunAllUniverseCount] = useState(0);
   const [runAllOpen, setRunAllOpen] = useState(false);
   const [runAllRunning, setRunAllRunning] = useState(false);
   const [runAllRows, setRunAllRows] = useState<RunAllRow[]>([]);
   const runAllAbort = useRef<AbortController | null>(null);
+
+  const runAllScopeOptions = useMemo<RunAllScopeOption[]>(() => {
+    const colorCounts = new Map<string, number>();
+    for (const l of colorLabels) {
+      colorCounts.set(l.color, (colorCounts.get(l.color) ?? 0) + 1);
+    }
+    const colorOptions: RunAllScopeOption[] = Array.from(colorCounts.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([color, count]) => ({
+        value: `color:${color}`,
+        label: `Color: ${color.charAt(0).toUpperCase()}${color.slice(1)}`,
+        count,
+      }));
+
+    return [
+      { value: "watchlist", label: "Watchlist", count: favSymbols.length },
+      { value: "all", label: "All Stocks", count: MY_STOCKS.length },
+      ...colorOptions,
+    ];
+  }, [favSymbols, colorLabels]);
+
+  const selectedRunAllOption = useMemo(
+    () => runAllScopeOptions.find((o) => o.value === runAllScope) ?? runAllScopeOptions[0],
+    [runAllScopeOptions, runAllScope],
+  );
+
+  const resolveRunAllUniverse = useCallback((scope: string): { label: string; symbols: string[] } => {
+    if (scope === "all") {
+      return { label: "All Stocks", symbols: MY_STOCKS.map((s) => s.symbol) };
+    }
+    if (scope.startsWith("color:")) {
+      const color = scope.slice("color:".length);
+      const coloredSymbols = new Set(colorLabels.filter((l) => l.color === color).map((l) => l.symbol));
+      const ordered = MY_STOCKS.map((s) => s.symbol).filter((sym) => coloredSymbols.has(sym));
+      const extras = Array.from(coloredSymbols).filter((sym) => !ordered.includes(sym));
+      return {
+        label: `Color: ${color.charAt(0).toUpperCase()}${color.slice(1)}`,
+        symbols: [...ordered, ...extras],
+      };
+    }
+    return { label: "Watchlist", symbols: [...favSymbols] };
+  }, [favSymbols, colorLabels]);
+
+  useEffect(() => {
+    if (!runAllScopeOptions.some((o) => o.value === runAllScope)) {
+      setRunAllScope("watchlist");
+    }
+  }, [runAllScope, runAllScopeOptions]);
 
   const cancelRunAll = useCallback(() => {
     if (runAllAbort.current) {
@@ -276,21 +328,27 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   }, []);
 
   const runAllFavs = useCallback(async () => {
-    if (favSymbols.length === 0) return;
+    const universe = resolveRunAllUniverse(runAllScope);
+    const targetSymbols = Array.from(new Set(universe.symbols));
+    if (targetSymbols.length === 0) return;
+
     // Cancel any previous run
     if (runAllAbort.current) runAllAbort.current.abort();
     const ac = new AbortController();
     runAllAbort.current = ac;
     setRunAllOpen(true);
     setRunAllRunning(true);
+    setRunAllUniverseLabel(universe.label);
+    setRunAllUniverseCount(targetSymbols.length);
+
     const strat = activeStrategyRef.current;
-    const initial: RunAllRow[] = favSymbols.map((sym) => {
+    const initial: RunAllRow[] = targetSymbols.map((sym) => {
       const stock = MY_STOCKS.find((s) => s.symbol === sym);
       return { symbol: sym, name: stock?.name ?? sym.replace(".KL", ""), win_rate: 0, total_trades: 0, return_pct: 0, profit_factor: 0, max_dd: 0, sharpe: 0, status: "pending" as const };
     });
     setRunAllRows(initial);
 
-    const promises = favSymbols.map(async (sym, idx) => {
+    const promises = targetSymbols.map(async (sym, idx) => {
       if (ac.signal.aborted) return;
       setRunAllRows((prev) => { const n = [...prev]; n[idx] = { ...n[idx], status: "running" }; return n; });
       try {
@@ -319,7 +377,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     });
     await Promise.all(promises);
     if (!ac.signal.aborted) setRunAllRunning(false);
-  }, [favSymbols, backtestPeriod, atrSlMult, tp1RMult, tp2RMult, capital]);
+  }, [resolveRunAllUniverse, runAllScope, backtestPeriod, atrSlMult, tp1RMult, tp2RMult, capital]);
 
   const saveRunAllTag = useCallback(async (row: RunAllRow) => {
     const strat = activeStrategyRef.current;
@@ -581,7 +639,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
                   : "—"}
               </span>
             </div>
-            {/* Period + Mode row */}
+            {/* Period + Mode row
             <div className="flex items-center gap-1.5 mt-1.5">
               <div className="flex items-center rounded-md border border-slate-700/60 overflow-hidden shrink-0">
                 {[{ value: "3mo", label: "3M" }, { value: "6mo", label: "6M" }, { value: "1y", label: "1Y" }, { value: "2y", label: "2Y" }, { value: "5y", label: "5Y" }].map((p) => (
@@ -610,7 +668,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
                 <span className={`w-1.5 h-1.5 rounded-full ${tradingActive ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`} />
                 {tradingActive ? "ON" : "OFF"}
               </button>
-            </div>
+            </div> */}
           </div>
 
           <MYWatchlist
@@ -622,8 +680,6 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             stockTags={stockTags}
             favSymbols={favSymbols}
             onToggleFav={toggleFav}
-            onRunAllFavs={runAllFavs}
-            runAllRunning={runAllRunning}
             colorLabels={colorLabels}
             onSetColor={setColorLabel}
             onRemoveColor={removeColorLabel}
@@ -735,6 +791,12 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             onRunBacktest={runBacktest}
             onResetDefaults={handleResetDefaults}
             onSaveConfig={handleSaveConfig}
+            onRunAllFavs={runAllFavs}
+            runAllScope={runAllScope}
+            onRunAllScopeChange={setRunAllScope}
+            runAllScopeOptions={runAllScopeOptions}
+            runAllRunning={runAllRunning}
+            runAllCount={selectedRunAllOption?.count ?? 0}
             loading={btLoading}
             activeStrategy={activeStrategy}
             onStrategyChange={handleStrategyChange}
@@ -883,7 +945,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
         </div>
       )}
 
-      {/* ═══ RUN ALL FAVS DIALOG ═══ */}
+      {/* ═══ RUN ALL DIALOG ═══ */}
       {runAllOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => { if (runAllRunning) cancelRunAll(); setRunAllOpen(false); }}>
           <div className="w-full max-w-2xl bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
@@ -891,7 +953,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-800/60">
               <div className="flex items-center gap-2">
                 <span className="text-[13px] font-black text-cyan-300">{activeStrategy.toUpperCase()}</span>
-                <span className="text-[11px] text-slate-500">— All Favorites ({favSymbols.length})</span>
+                <span className="text-[11px] text-slate-500">— {runAllUniverseLabel} ({runAllUniverseCount})</span>
                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-medium">{backtestPeriod.toUpperCase()}</span>
               </div>
               <button onClick={() => { if (runAllRunning) cancelRunAll(); setRunAllOpen(false); }} className="text-slate-500 hover:text-slate-300 text-lg leading-none">&times;</button>
