@@ -42,6 +42,7 @@ function TradeRow({ t, idx, onTradeClick, livePrice, autoTraderRunning, onSyncTr
 
   return (
     <tr
+      data-testid={`trade-row-${idx}`}
       className={`${isOpen ? "bg-blue-950/30 border-l-2 border-blue-500" : idx % 2 === 0 ? "bg-slate-900/30" : ""} ${onTradeClick ? "cursor-pointer hover:bg-cyan-900/20 transition-colors" : ""}`}
       onClick={() => onTradeClick?.(t)}
     >
