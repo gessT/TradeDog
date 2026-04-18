@@ -13,11 +13,11 @@ import {
 import { halfTrend } from "../../utils/indicators";
 import { fmtDateTimeSGT, fmtInputDateSGT, toLocal as toLocalTz } from "../../utils/time";
 import TradeDetailDialog from "./TradeDetailDialog";
-import OptimizationDialog from "./OptimizationDialog";
 import PerformanceCard from "./PerformanceCard";
 import PositionCard from "./PositionCard";
 import StrategyControl from "./StrategyControl";
 import TradeLogCard from "./TradeLogCard";
+import StrategyHeader from "./StrategyHeader";
 import {
   fetchMGC5MinBacktest,
   fetchMGC2MinBacktest,
@@ -26,7 +26,6 @@ import {
   fetchMGCAlwaysOpenBacktest,
   execute5Min,
   getMgcPosition,
-  optimize5MinConditions,
   loadStrategyConfig,
   saveStrategyConfig,
   save5MinConditionPreset,
@@ -38,7 +37,6 @@ import {
   autoTraderEntryFilled,
   autoTraderSyncMarket,
   autoTraderGetDbTrades,
-  type ConditionOptimizationResult,
   type ConditionPreset,
   type MGC5MinBacktestResponse,
   type MGC5MinCandle,
@@ -332,9 +330,17 @@ function TradeLogByDate({ trades, onTradeClick, livePrice, dateFrom, dateTo, aut
 
   // Apply date range + other filters
   const filtered = trades.filter((t) => {
-    const d = t.entry_time.slice(0, 10);
-    if (dateFrom && d < dateFrom) return false;
-    if (dateTo && d > dateTo) return false;
+    // Adjust for futures trading day: 18:00 ET → 17:59 ET next day = next date's session
+    const datePart = t.entry_time.slice(0, 10);
+    const hour = parseInt(t.entry_time.slice(11, 13), 10);
+    const tradingDay = hour >= 18 ? (() => {
+      const d = new Date(datePart + "T12:00:00Z");
+      d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString().slice(0, 10);
+    })() : datePart;
+    
+    if (dateFrom && tradingDay < dateFrom) return false;
+    if (dateTo && tradingDay > dateTo) return false;
     if (pnlFilter === "win" && t.pnl < 0) return false;
     if (pnlFilter === "loss" && t.pnl >= 0) return false;
     if (dirFilter !== "all" && (t.direction || "CALL") !== dirFilter) return false;
@@ -1417,7 +1423,6 @@ function ExamTab({
 
 export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDirectExecute, tradeExecutedTick = 0, autoTraderRunning = false, symbol = "MGC", symbolName = "Micro Gold", conditionToggles, setConditionToggles, interval: intervalProp = "5m", onIntervalChange, onSlTpChange, onConfigLock, onAutoTradingChange }: Readonly<{ onTradeClick?: (t: MGC5MinTrade) => void; onTradesUpdate?: (trades: MGC5MinTrade[]) => void; onDirectExecute?: () => void; tradeExecutedTick?: number; autoTraderRunning?: boolean; symbol?: string; symbolName?: string; conditionToggles: Record<string, boolean>; setConditionToggles: React.Dispatch<React.SetStateAction<Record<string, boolean>>>; interval?: string; onIntervalChange?: (v: string) => void; onSlTpChange?: (sl: number, tp: number) => void; onConfigLock?: (config: LockedTradingConfig) => void; onAutoTradingChange?: (enabled: boolean) => void }>) {
   const [showExam, setShowExam] = useState(false);
-  const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1503,7 +1508,9 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
   const fmtDate = (d: Date) => fmtInputDateSGT(d);
   const calcFrom = (p: string) => {
     const d = new Date();
-    d.setDate(d.getDate() - parseInt(p));
+    // Add +1 day to account for futures evening session (18:00 ET start)
+    // This ensures we fetch complete trading days
+    d.setDate(d.getDate() - parseInt(p, 10) - 1);
     return fmtDate(d);
   };
   const [dateFrom, setDateFrom] = useState(() => calcFrom("14"));
@@ -1597,12 +1604,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     onAutoTradingChange?.(autoTrading);
   }, [autoTrading, symbol, onAutoTradingChange]);
 
-  // ── Condition optimization ──────────────
-  const [optimizationResults, setOptimizationResults] = useState<ConditionOptimizationResult[]>([]);
-  const [optimizing, setOptimizing] = useState(false);
-  const [showOptDialog, setShowOptDialog] = useState(false);
-  const [pendingOptRun, setPendingOptRun] = useState(false);
-
   // ── Condition presets (state already declared above) ──
 
   // Load presets on mount / symbol change
@@ -1647,6 +1648,7 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     // Always use fresh dates so auto-reruns get latest data
     const freshTo = fmtDate(new Date());
     const freshFrom = calcFrom(period === "1d" ? "1" : period.replace("d", ""));
+    console.log("🔍 Backtest params:", { period, freshFrom, freshTo, dateFrom, dateTo });
     if (dateTo !== freshTo) setDateTo(freshTo);
     if (dateFrom !== freshFrom) setDateFrom(freshFrom);
     try {
@@ -1850,14 +1852,6 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       setLoading(false);
     }
   }, [period, slMult, tpMult, dateFrom, dateTo, symbol, conditionToggles, riskFilters, configKey, interval, activePreset]);
-
-  // ── Trigger backtest after optimizer apply (so new state is used) ──
-  useEffect(() => {
-    if (pendingOptRun) {
-      setPendingOptRun(false);
-      runBacktest();
-    }
-  }, [pendingOptRun, runBacktest]);
 
   // ── No auto-run on mount — user must click Start Backtest ──
   const initialRunDone = useRef(false);
@@ -2177,175 +2171,28 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
     })();
   }, [livePrice, btData?.open_position, symbol, period, slMult, tpMult, conditionToggles, riskFilters, configKey]);
 
-  // ── Condition optimization ───────────────────────────
-  const runConditionOptimization = useCallback(async () => {
-    setOptimizing(true);
-    setOptimizationResults([]);
-    try {
-      const results = await optimize5MinConditions(
-        symbol, period, 5,
-        slMult, tpMult,
-        riskFilters.skip_flat ?? false,
-        riskFilters.skip_counter_trend ?? true,
-        riskFilters.use_ema_exit ?? false,
-        exitConditions.use_struct_fade ?? false,
-        exitConditions.use_sma28_cut ?? false,
-        skipHours.length > 0 ? skipHours : undefined,
-        maxLossPerTrade,
-        interval,
-      );
-      setOptimizationResults(results);
-      if (results.length > 0) {
-        setShowOptDialog(true);
-        // Auto-save each result as a preset with a descriptive name
-        const catLabels: Record<string, string> = {
-          best_winrate: "Best WR",
-          best_return: "Best Return",
-          low_risk: "Low Risk",
-        };
-        for (const r of results) {
-          const cat = r.category ?? "best";
-          const label = catLabels[cat] ?? cat;
-          const toggles: Record<string, boolean> = {};
-          CONDITION_DEFS.forEach(def => {
-            if (def.group === "5m" || def.group === "smc") {
-              toggles[def.key] = r.conditions.includes(def.key);
-            }
-          });
-          save5MinConditionPreset(`⚡ ${label}`, toggles, symbol).catch(() => {});
-        }
-        // Refresh presets list
-        load5MinConditionPresets(symbol).then(setPresets).catch(() => {});
-      }
-    } catch (e: unknown) {
-      alert(`❌ Optimization failed: ${e instanceof Error ? e.message : "Unknown error"}`);
-    } finally {
-      setOptimizing(false);
-    }
-  }, [symbol, period, slMult, tpMult, riskFilters, interval]);
-
   const m = btData?.metrics;
 
   return (
     <div className="flex flex-col h-full">
-      {/* ── Header ───────────────────────────────────────── */}
-      <div className="px-2 pt-1.5 pb-0 overflow-visible">
-        <div className="flex items-center gap-1.5 mb-1.5">
-          {/* Symbol identity */}
-          <div className="flex items-center gap-1.5">
-            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-amber-500/20 to-yellow-600/10 border border-amber-500/30 flex items-center justify-center text-sm">🥇</div>
-            <div>
-              <div className="flex items-center gap-1">
-                <span className="text-xs font-bold text-slate-100 tracking-tight">{symbolName}</span>
-              </div>
-              <div className="text-[9px] text-slate-500 -mt-0.5">{symbol}=F · Futures</div>
-            </div>
-          </div>
-          {/* Period + date + backtest + tools */}
-          <div className="ml-auto flex items-center gap-1 flex-wrap justify-end">
-            {(interval === "1m" ? ["1d", "2d", "3d", "5d", "7d"] : ["1d", "3d", "7d", "30d", "60d"]).map((p) => (
-              <button
-                key={p}
-                onClick={() => setPeriod(p)}
-                className={`px-1.5 py-0.5 text-[9px] font-bold rounded transition-all ${
-                  period === p ? "bg-cyan-700 text-white" : "bg-slate-800 text-slate-500 hover:text-slate-200"
-                }`}
-              >{p}</button>
-            ))}
-            <span className="text-slate-700">|</span>
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-              className="bg-slate-900 border border-slate-700/60 text-slate-300 text-[9px] rounded px-1 py-0.5 w-[90px] focus:outline-none focus:border-violet-600" />
-            <span className="text-[9px] text-slate-600">→</span>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-              className="bg-slate-900 border border-slate-700/60 text-slate-300 text-[9px] rounded px-1 py-0.5 w-[90px] focus:outline-none focus:border-violet-600" />
-            <button
-              onClick={runBacktest}
-              disabled={loading}
-              className={`px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all ${
-                loading
-                  ? "bg-slate-800 text-slate-500 cursor-wait"
-                  : "bg-gradient-to-r from-cyan-600 to-cyan-500 text-white hover:from-cyan-500 hover:to-cyan-400 active:scale-95 shadow-md shadow-cyan-900/30"
-              }`}
-            >
-              {loading ? "Loading" : "▶ Backtest"}
-            </button>
-            {/* Tools dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setShowToolsMenu((v) => !v)}
-                className="px-1.5 py-1 text-[10px] font-bold rounded-lg bg-slate-800 border border-slate-700/60 text-slate-400 hover:text-slate-200 hover:border-slate-500/60 transition-all"
-                title="More tools"
-              >
-                ∨
-              </button>
-              {showToolsMenu && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowToolsMenu(false)} />
-                  <div className="absolute right-0 top-full mt-1 z-50 min-w-[120px] rounded-lg border border-slate-700/60 bg-slate-900 shadow-xl overflow-hidden">
-                    <button
-                      onClick={() => { setShowToolsMenu(false); runConditionOptimization(); }}
-                      disabled={optimizing || loading}
-                      className="w-full px-3 py-1.5 text-[10px] font-bold text-left text-purple-300 hover:bg-slate-800 transition-colors disabled:opacity-40"
-                    >
-                      ⚡ Best 3
-                    </button>
-                    <button
-                      onClick={() => { setShowToolsMenu(false); setShowExam(true); }}
-                      className="w-full px-3 py-1.5 text-[10px] font-bold text-left text-violet-300 hover:bg-slate-800 transition-colors"
-                    >
-                      🧪 Exam
-                    </button>
-                    <button
-                      disabled={!btData}
-                      onClick={() => {
-                        if (!btData) return;
-                        setShowToolsMenu(false);
-                        const compact = {
-                          ...btData,
-                          candles: btData.candles.slice(-200).map((c) => ({
-                            time: c.time,
-                            ohlc: [c.open, c.high, c.low, c.close] as [number, number, number, number],
-                            volume: c.volume,
-                            ema_fast: c.ema_fast,
-                            ema_slow: c.ema_slow,
-                            rsi: c.rsi,
-                            macd_hist: c.macd_hist,
-                            st_dir: c.st_dir,
-                            signal: c.signal,
-                            mkt_structure: c.mkt_structure,
-                            sma_28: c.sma_28,
-                            adx: c.adx,
-                            ht_dir: c.ht_dir,
-                            ht_line: c.ht_line,
-                          })),
-                        };
-                        const jsonStr = JSON.stringify(compact, null, 2).replace(
-                          /"ohlc": \[\n\s+([\d.]+),\n\s+([\d.]+),\n\s+([\d.]+),\n\s+([\d.]+)\n\s+\]/g,
-                          (_, o, h, l, c2) => `"ohlc": [${o},${h},${l},${c2}]`
-                        );
-                        const blob = new Blob([jsonStr], { type: "application/json" });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement("a");
-                        a.href = url;
-                        a.download = `${btData.symbol}_${btData.interval}_${btData.period}.json`;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                      }}
-                      className={`w-full px-3 py-1.5 text-[10px] font-bold text-left transition-colors ${
-                        btData ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 cursor-not-allowed"
-                      }`}
-                      title="Download backtest data as JSON"
-                    >
-                      ⬇ Export JSON
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+      {/* ── Header & Controls Section ───────────────────── */}
+      <div className="px-2 pt-1.5 pb-1.5 space-y-1.5">
+        {/* Header */}
+        <StrategyHeader
+          symbol={symbol}
+          symbolName={symbolName}
+          interval={interval}
+          period={period}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          loading={loading}
+          onPeriodChange={setPeriod}
+          onDateFromChange={setDateFrom}
+          onDateToChange={setDateTo}
+          onRunBacktest={runBacktest}
+        />
 
-        {/* ── Strategy Control ── */}
+        {/* Strategy Control */}
         <StrategyControl
           BUILT_IN_PRESETS={BUILT_IN_PRESETS}
           activePreset={activePreset}
@@ -2361,14 +2208,14 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
           conditionToggles={conditionToggles}
           CONDITION_DEFS={CONDITION_DEFS}
         />
-      </div>
 
-      {/* ── Error ────────────────────────────────────────── */}
-      {error && (
-        <div className="mx-3 mt-2 rounded-lg border border-rose-800/60 bg-rose-950/30 px-3 py-2 text-[11px] text-rose-300">
-          {error}
-        </div>
-      )}
+        {/* Error Message */}
+        {error && (
+          <div className="rounded-lg border border-rose-800/60 bg-rose-950/30 px-3 py-2 text-[11px] text-rose-300">
+            {error}
+          </div>
+        )}
+      </div>
 
       {/* ─ Conditions Panel ─ */}
       {conditionsOpen && (
@@ -2586,136 +2433,110 @@ export default function Strategy5MinPanel({ onTradeClick, onTradesUpdate, onDire
       )}
 
       {/* ═════════════════════════════════════════════════════ */}
-      {/* TAB: Backtest                                        */}
+      {/* Content Area: Backtest Results                       */}
       {/* ═════════════════════════════════════════════════════ */}
-        <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto">
 
-          {/* Idle state */}
-          {!btData && !loading && (
-            <div className="flex items-center justify-center min-h-[300px]">
-              <div className="text-center space-y-3">
-                <p className="text-4xl">🎯</p>
-                <button
-                  onClick={runBacktest}
-                  className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white font-bold text-sm shadow-lg shadow-cyan-900/40 transition-all hover:scale-105 active:scale-95"
-                >
-                  ▶ Start Backtest
-                </button>
-                <p className="text-[10px] text-slate-500">{period} · SL {slMult}× · TP {tpMult}× · EMA · MACD · RSI · Supertrend</p>
-              </div>
+        {/* ── Idle State ────────────────────────────────── */}
+        {!btData && !loading && (
+          <div className="flex items-center justify-center min-h-[300px] px-2">
+            <div className="text-center space-y-3">
+              <p className="text-4xl">🎯</p>
+              <button
+                onClick={runBacktest}
+                className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white font-bold text-sm shadow-lg shadow-cyan-900/40 transition-all hover:scale-105 active:scale-95"
+              >
+                ▶ Start Backtest
+              </button>
+              <p className="text-[10px] text-slate-500">{period} · SL {slMult}× · TP {tpMult}× · EMA · MACD · RSI · Supertrend</p>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Loading state — first run */}
-          {!btData && loading && (
-            <div className="flex items-center justify-center min-h-[300px]">
-              <div className="flex flex-col items-center gap-3">
-                <div className="w-7 h-7 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-                <span className="text-[9px] text-slate-600">Fetching {period} data</span>
-              </div>
+        {/* ── Loading State ─────────────────────────────── */}
+        {!btData && loading && (
+          <div className="flex items-center justify-center min-h-[300px] px-2">
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-7 h-7 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+              <span className="text-[9px] text-slate-600">Fetching {period} data</span>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Results */}
-          {btData && m && (
-            <div className="p-2 space-y-2">
-              {/* Performance + Position Cards */}
-              {(() => {
-                const openTrade = btData.trades.find((t) => t.reason === "OPEN");
-                const hasOpen = hasRunBacktest && !!openTrade;
-                const pos = hasOpen ? (btData.open_position ?? {
-                  direction: openTrade!.direction || "CALL",
-                  entry_price: openTrade!.entry_price,
-                  sl: openTrade!.sl ?? 0,
-                  tp: openTrade!.tp ?? 0,
-                  entry_time: openTrade!.entry_time,
-                  signal_type: openTrade!.signal_type,
-                }) : null;
-                const tigerHolding = tigerPos && Math.abs(tigerPos.current_qty) > 0;
-                const displayEntry = tigerHolding && tigerPos!.average_cost > 0 ? tigerPos!.average_cost : pos?.entry_price ?? 0;
-                const isLong = pos ? pos.direction !== "PUT" : false;
-                const qty = tigerHolding ? Math.abs(tigerPos!.current_qty) : 1;
-                const contractSize = 10;
-                const unrealPnl = pos && livePrice != null ? (isLong ? livePrice - displayEntry : displayEntry - livePrice) * qty * contractSize : null;
-                const pnlPct = unrealPnl != null && displayEntry > 0 ? ((isLong ? livePrice! - displayEntry : displayEntry - livePrice!) / displayEntry) * 100 : null;
+        {/* ── Results Section ────────────────────────────── */}
+        {btData && m && (
+          <div className="px-2 pb-2 space-y-2">
+            {/* Performance + Position Cards Row */}
+            {(() => {
+              const openTrade = btData.trades.find((t) => t.reason === "OPEN");
+              const hasOpen = hasRunBacktest && !!openTrade;
+              const pos = hasOpen ? (btData.open_position ?? {
+                direction: openTrade!.direction || "CALL",
+                entry_price: openTrade!.entry_price,
+                sl: openTrade!.sl ?? 0,
+                tp: openTrade!.tp ?? 0,
+                entry_time: openTrade!.entry_time,
+                signal_type: openTrade!.signal_type,
+              }) : null;
+              const tigerHolding = tigerPos && Math.abs(tigerPos.current_qty) > 0;
+              const displayEntry = tigerHolding && tigerPos!.average_cost > 0 ? tigerPos!.average_cost : pos?.entry_price ?? 0;
+              const isLong = pos ? pos.direction !== "PUT" : false;
+              const qty = tigerHolding ? Math.abs(tigerPos!.current_qty) : 1;
+              const contractSize = 10;
+              const unrealPnl = pos && livePrice != null ? (isLong ? livePrice - displayEntry : displayEntry - livePrice) * qty * contractSize : null;
+              const pnlPct = unrealPnl != null && displayEntry > 0 ? ((isLong ? livePrice! - displayEntry : displayEntry - livePrice!) / displayEntry) * 100 : null;
 
-                const totalPnl = btData.trades.reduce((s, t) => {
-                  if (t.reason === "OPEN" && livePrice != null) {
-                    const tLong = t.direction !== "PUT";
-                    return s + (tLong ? livePrice - n(t.entry_price ?? 0) : n(t.entry_price ?? 0) - livePrice) * n(t.qty ?? 1) * 10;
-                  }
-                  return s + n(t.pnl);
-                }, 0);
+              const totalPnl = btData.trades.reduce((s, t) => {
+                if (t.reason === "OPEN" && livePrice != null) {
+                  const tLong = t.direction !== "PUT";
+                  return s + (tLong ? livePrice - n(t.entry_price ?? 0) : n(t.entry_price ?? 0) - livePrice) * n(t.qty ?? 1) * 10;
+                }
+                return s + n(t.pnl);
+              }, 0);
 
-                return (
-                  <div className="grid grid-cols-[60%_40%] gap-2">
-                    {/* Left: Performance Card */}
-                    <PerformanceCard
-                      metrics={m}
-                      dataSource={btData.data_source}
-                      totalPnl={totalPnl}
-                    />
+              return (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                  {/* Performance Card */}
+                  <PerformanceCard
+                    metrics={m}
+                    dataSource={btData.data_source}
+                    totalPnl={totalPnl}
+                  />
 
-                    {/* Right: Position Card */}
-                    <PositionCard
-                      pos={pos}
-                      isLong={isLong}
-                      unrealPnl={unrealPnl}
-                      displayEntry={displayEntry}
-                      symbol={symbol}
-                      livePrice={livePrice}
-                      autoTrading={autoTrading}
-                      autoTraderRunning={autoTraderRunning}
-                      nextBarSecs={nextBarSecs}
-                      syncStatus={syncStatus}
-                      onToggleAutoTrading={() => setAutoTrading((v) => !v)}
-                    />
-                  </div>
-                );
-              })()}
+                  {/* Position Card */}
+                  <PositionCard
+                    pos={pos}
+                    isLong={isLong}
+                    unrealPnl={unrealPnl}
+                    displayEntry={displayEntry}
+                    symbol={symbol}
+                    livePrice={livePrice}
+                    autoTrading={autoTrading}
+                    autoTraderRunning={autoTraderRunning}
+                    nextBarSecs={nextBarSecs}
+                    syncStatus={syncStatus}
+                    onToggleAutoTrading={() => setAutoTrading((v) => !v)}
+                  />
+                </div>
+              );
+            })()}
 
-              {/* Trade Log Card */}
-              <TradeLogCard
-                trades={btData.trades}
-                loading={loading}
-                dataSource={btData.data_source}
-                livePrice={livePrice}
-                dateFrom={dateFrom}
-                dateTo={dateTo}
-                autoTraderRunning={autoTraderRunning}
-                onTradeClick={(t) => { setZoomTrade(t); onTradeClick?.(t); }}
-                onSyncTrader={handleSyncTrader}
-                syncTraderStatus={syncTraderStatus}
-              />
-            </div>
-          )}
-
-        </div>
-      {/* ═════════════════════════════════════════════════════ */}
-      {/* OPTIMIZATION DIALOG                                  */}
-      {/* ═════════════════════════════════════════════════════ */}
-      {showOptDialog && optimizationResults.length > 0 && (
-        <OptimizationDialog
-          results={optimizationResults}
-          slMult={slMult}
-          tpMult={tpMult}
-          onApply={(result) => {
-            const newToggles: Record<string, boolean> = {};
-            CONDITION_DEFS.forEach(def => {
-              if (def.group === "5m" || def.group === "smc") {
-                newToggles[def.key] = result.conditions.includes(def.key);
-              } else {
-                newToggles[def.key] = conditionToggles[def.key];
-              }
-            });
-            setConditionToggles(newToggles);
-            setShowOptDialog(false);
-            // Schedule backtest after React processes all state updates
-            setPendingOptRun(true);
-          }}
-          onClose={() => setShowOptDialog(false)}
-        />
-      )}
+            {/* Trade Log Card - Full Width */}
+            <TradeLogCard
+              trades={btData.trades}
+              loading={loading}
+              dataSource={btData.data_source}
+              livePrice={livePrice}
+              dateFrom={dateFrom}
+              dateTo={dateTo}
+              autoTraderRunning={autoTraderRunning}
+              onTradeClick={(t) => { setZoomTrade(t); onTradeClick?.(t); }}
+              onSyncTrader={handleSyncTrader}
+              syncTraderStatus={syncTraderStatus}
+            />
+          </div>
+        )}
+      </div>
 
       {/* ═════════════════════════════════════════════════════ */}
       {/* EXAM DIALOG                                          */}

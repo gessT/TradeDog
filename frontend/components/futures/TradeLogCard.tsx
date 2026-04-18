@@ -130,14 +130,30 @@ function TradeLog({ trades, onTradeClick, livePrice, dateFrom, dateTo, autoTrade
   const [reasonFilter, setReasonFilter] = useState<"all" | "TP" | "SL" | "TRAILING">("all");
 
   const filtered = trades.filter((t) => {
-    const d = t.entry_time.slice(0, 10);
-    if (dateFrom && d < dateFrom) return false;
-    if (dateTo && d > dateTo) return false;
+    // Adjust for futures trading day: 18:00 ET → 17:59 ET next day = next date's session
+    const datePart = t.entry_time.slice(0, 10);
+    const hour = Number.parseInt(t.entry_time.slice(11, 13), 10);
+    const tradingDay = hour >= 18 ? (() => {
+      const d = new Date(datePart + "T12:00:00Z");
+      d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString().slice(0, 10);
+    })() : datePart;
+    
+    if (dateFrom && tradingDay < dateFrom) return false;
+    if (dateTo && tradingDay > dateTo) return false;
     if (pnlFilter === "win" && t.pnl < 0) return false;
     if (pnlFilter === "loss" && t.pnl >= 0) return false;
     if (dirFilter !== "all" && (t.direction || "CALL") !== dirFilter) return false;
     if (reasonFilter !== "all" && t.reason !== reasonFilter) return false;
     return true;
+  });
+
+  console.log("📊 TradeLog filter:", { 
+    totalTrades: trades.length, 
+    filteredTrades: filtered.length,
+    dateFrom, 
+    dateTo,
+    sampleTrade: trades[0]?.entry_time 
   });
 
   const grouped = (() => {
