@@ -360,6 +360,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
   const STRATEGY_OPTIONS = [
     { key: "tpc", label: "TPC", icon: "📈", color: "cyan" },
     { key: "hpb", label: "HPB", icon: "🔥", color: "amber" },
+    { key: "momentum_guard", label: "Momentum Guard", icon: "🛡️", color: "cyan" },
     { key: "vpb3", label: "VPB3", icon: "📊", color: "emerald" },
     { key: "smp", label: "SMP", icon: "🧠", color: "violet" },
     { key: "psniper", label: "PrecSniper", icon: "🎯", color: "rose" },
@@ -699,6 +700,8 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                     <span className={`text-[6px] px-1 py-[1px] rounded font-bold uppercase tracking-wider ${
                       MY_STOCK_STRATEGY[item.symbol] === "tpc"
                         ? "bg-cyan-500/20 text-cyan-400"
+                        : MY_STOCK_STRATEGY[item.symbol] === "momentum_guard"
+                          ? "bg-cyan-500/20 text-cyan-300"
                         : MY_STOCK_STRATEGY[item.symbol] === "vpb3"
                           ? "bg-emerald-500/20 text-emerald-400"
                           : "bg-amber-500/20 text-amber-400"
@@ -728,12 +731,14 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                                   ? "bg-emerald-500/20 text-emerald-400"
                                   : tag.strategy_type === "vpb_v2"
                                     ? "bg-purple-500/20 text-purple-400"
+                                      : tag.strategy_type === "momentum_guard"
+                                        ? "bg-cyan-500/20 text-cyan-300"
                                     : tag.strategy_type === "cm_macd"
                                       ? "bg-cyan-500/20 text-cyan-300"
                                       : "bg-blue-500/20 text-blue-400"
                           }`}
                         >
-                          {tag.strategy_type === "vpb_v3" ? "v3" : tag.strategy_type === "cm_macd" ? "MACD" : tag.strategy_type}
+                            {tag.strategy_type === "vpb_v3" ? "v3" : tag.strategy_type === "cm_macd" ? "MACD" : tag.strategy_type === "momentum_guard" ? "MGuard" : tag.strategy_type}
                         </span>
                       ))}
                   </div>

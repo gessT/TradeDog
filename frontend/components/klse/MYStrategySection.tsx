@@ -7,7 +7,7 @@ import type { US1HBacktestResponse } from "../../services/api";
 // MY Strategy Section — multi-strategy with dropdown
 // ═══════════════════════════════════════════════════════════
 
-export type StrategyType = "tpc" | "hpb" | "vpb3" | "smp" | "psniper" | "cm_macd";
+export type StrategyType = "tpc" | "hpb" | "momentum_guard" | "vpb3" | "smp" | "psniper" | "cm_macd";
 
 type StrategyDef = {
   key: StrategyType;
@@ -71,6 +71,26 @@ const STRATEGIES: StrategyDef[] = [
     sliders: {
       sl: { label: "SL ATR \u00D7", min: 0.5, max: 5, step: 0.5 },
       tp1: { label: "TP ATR \u00D7", min: 0.5, max: 10, step: 0.5 },
+    },
+  },
+  {
+    key: "momentum_guard",
+    label: "Momentum Guard",
+    subtitle: "EMA20/EMA50 + RSI with capital defense",
+    icon: "🛡️",
+    color: "cyan",
+    conditions: [
+      { key: "ema_cross_up", label: "EMA20 Cross EMA50", icon: "📈", desc: "Entry only when EMA20 crosses above EMA50" },
+      { key: "rsi_window", label: "RSI Window", icon: "🎯", desc: "RSI(14) between 40 and 65 avoids overbought entries" },
+    ],
+    exitRules: [
+      { key: "sl_exit", icon: "🛑", label: "Stop Loss", desc: "Hard stop at fixed % below entry" },
+      { key: "tp_exit", icon: "📉", label: "Trailing Stop", desc: "Trailing stop at fixed % from peak" },
+      { key: "trend_exit", icon: "🔻", label: "Trend Exit", desc: "Exit when EMA20 crosses below EMA50" },
+    ],
+    sliders: {
+      sl: { label: "Stop Loss %", min: 1, max: 15, step: 0.5 },
+      tp1: { label: "Trail %", min: 2, max: 25, step: 0.5 },
     },
   },
   {
@@ -179,6 +199,7 @@ export const STRATEGY_DEFAULTS: Record<StrategyType, {
 }> = {
   tpc:  { sl: 2,   tp1: 1,   tp2: 2.5, capital: 5000, disabledConditions: [] },
   hpb:  { sl: 2,   tp1: 4,   tp2: 4,   capital: 5000, disabledConditions: [] },
+  momentum_guard: { sl: 5, tp1: 10, tp2: 65, capital: 5000, disabledConditions: [] },
   vpb3: { sl: 5,   tp1: 3.0, tp2: 3.0, capital: 5000, disabledConditions: [] },
   smp:  { sl: 4,   tp1: 2.0, tp2: 2.0, capital: 5000, disabledConditions: [] },
   psniper: { sl: 3.5,  tp1: 1.2, tp2: 6,   capital: 5000, disabledConditions: [] },
@@ -422,6 +443,9 @@ export default function MYStrategySection({
           slPrice = Math.min(...recentLows);
           const risk = entryPrice - slPrice;
           tp1Price = entryPrice + risk * tp1RMult;
+        } else if (activeStrategy === "momentum_guard") {
+          slPrice = entryPrice * (1 - atrSlMult / 100);
+          tp1Price = entryPrice * (1 + tp1RMult / 100);
         } else {
           slPrice = entryPrice - atr * atrSlMult;
           const risk = atr * atrSlMult;
@@ -432,7 +456,8 @@ export default function MYStrategySection({
         const stBull = last.st_dir === 1;
         const htBull = last.ht_dir === 1;
         const emaUp = last.ema_fast != null && last.ema_slow != null && last.ema_fast > last.ema_slow;
-        const rsiOk = last.rsi != null && last.rsi > 40 && last.rsi < 72;
+        const rsiUpper = activeStrategy === "momentum_guard" ? 65 : 72;
+        const rsiOk = last.rsi != null && last.rsi > 40 && last.rsi < rsiUpper;
 
         if (activeStrategy === "tpc") {
           signalBias = stBull && htBull ? "BUY" : stBull || htBull ? "WAIT" : "AVOID";

@@ -12,7 +12,7 @@ export type MYStock = {
   /** Market cap tier: L=Large, M=Mid, S=Small */
   cap: "L" | "M" | "S";
   /** Default strategy for this stock (auto-selects on stock pick) */
-  strategy?: "tpc" | "hpb" | "vpb3" | "smp" | "psniper";
+  strategy?: "tpc" | "hpb" | "vpb3" | "smp" | "psniper" | "cm_macd" | "momentum_guard";
 };
 
 export const MY_STOCKS: MYStock[] = [
@@ -50,7 +50,7 @@ export const MY_STOCKS: MYStock[] = [
 
   // ── Industrial Products ───────────────────────────────
   { symbol: "8869.KL", name: "Press Metal", sector: "Industrial", refPrice: 5.5, cap: "L" },
-  { symbol: "0208.KL", name: "Greatech", sector: "Industrial", refPrice: 3.0, cap: "M" },
+  { symbol: "0208.KL", name: "Greatech", sector: "Industrial", refPrice: 3.0, cap: "M", strategy: "momentum_guard" },
   { symbol: "5292.KL", name: "UWC", sector: "Industrial", refPrice: 3.0, cap: "M" },
   { symbol: "5168.KL", name: "Hartalega", sector: "Industrial", refPrice: 2.0, cap: "L" },
   { symbol: "7153.KL", name: "Kossan Rubber", sector: "Industrial", refPrice: 1.5, cap: "M" },
