@@ -447,7 +447,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                   </svg>
                 </button>
                 {oppStrategyDropdown && (
-                  <div className="absolute bottom-full left-0 right-0 mb-1 z-50 bg-slate-900 border border-slate-700/60 rounded-lg shadow-xl overflow-hidden">
+                  <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700/60 rounded-lg shadow-xl overflow-hidden">
                     {STRATEGY_OPTIONS.map(s => (
                       <button
                         key={s.key}
