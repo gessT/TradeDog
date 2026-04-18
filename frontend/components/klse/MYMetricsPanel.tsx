@@ -402,6 +402,35 @@ export default function MYMetricsPanel({
   const trades = btData?.trades ?? [];
   const metrics = btData?.metrics ?? null;
 
+  const handleDownloadJson = useCallback(() => {
+    if (!btData || btData.candles.length === 0) return;
+
+    const rows = btData.candles.map((c) => {
+      const parsed = new Date(c.time);
+      const dateStr = Number.isNaN(parsed.getTime())
+        ? String(c.time).slice(0, 10)
+        : parsed.toISOString().slice(0, 10);
+
+      return [dateStr, c.open, c.high, c.low, c.close, c.volume];
+    });
+
+    const json = JSON.stringify(rows, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const safeSymbol = (btData.symbol ?? symbol).replace(/[^A-Za-z0-9_-]+/g, "_");
+    const fileName = `${safeSymbol}_${btData.interval}_${btData.period}_ohlcv.json`;
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    URL.revokeObjectURL(url);
+  }, [btData, symbol]);
+
   return (
     <div className="flex flex-col h-full overflow-hidden border-t border-slate-800/60 bg-slate-950/80">
       {/* ── Tab bar ──────────────────────────────────── */}
@@ -444,6 +473,21 @@ export default function MYMetricsPanel({
             ) : (
               <span className="flex items-center gap-1">🏆 Scan Best</span>
             )}
+          </button>
+        )}
+        {tab === "Backtest" && (
+          <button
+            onClick={handleDownloadJson}
+            disabled={!btData || btData.candles.length === 0}
+            className="mr-3 text-[9px] px-2.5 py-0.5 rounded border border-cyan-500/60 bg-cyan-500/15 text-cyan-400 hover:bg-cyan-500/30 disabled:opacity-40 transition font-medium"
+            title={!btData || btData.candles.length === 0 ? "Run backtest first" : "Download OHLCV JSON"}
+          >
+            <span className="flex items-center gap-1">
+              <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v12m0 0l4-4m-4 4l-4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+              </svg>
+              JSON
+            </span>
           </button>
         )}
         {(tab === "Trade History" || tab === "Backtest") && trades.length > 0 && (
