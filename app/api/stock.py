@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import logging
+from pathlib import Path
 
 SGT = timezone(timedelta(hours=8))
 
@@ -664,6 +665,27 @@ def save_klse_strategy_config(
             {"sym": sym, "cfg": config},
         )
     return {"status": "ok"}
+
+
+@router.get("/pine_scripts")
+def list_pine_scripts() -> dict[str, list[dict[str, str]]]:
+    """List Pine Script files from ./pine_scripts.
+
+    File name stem is treated as strategy key (for example, psniper.pine -> psniper).
+    """
+    scripts_dir = Path(__file__).resolve().parents[2] / "pine_scripts"
+    if not scripts_dir.exists() or not scripts_dir.is_dir():
+        return {"scripts": []}
+
+    scripts = [
+        {
+            "file_name": f.name,
+            "strategy_key": f.stem,
+        }
+        for f in sorted(scripts_dir.glob("*.pine"))
+        if f.is_file()
+    ]
+    return {"scripts": scripts}
 
 
 def _normalize_column_name(column: object) -> str:
@@ -4039,6 +4061,126 @@ async def klse_backtest_psniper(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# SMA 5/20 Cross (Pine Script parity) Backtest
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/backtest_sma5_20_cross")
+async def klse_backtest_sma5_20_cross(
+    symbol: _Ann[str, Query()] = "0208.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 5000.0,
+    disabled_conditions: _Ann[_Opt[str], Query()] = None,
+    sma_fast: _Ann[_Opt[int], Query(ge=2, le=50)] = None,
+    sma_slow: _Ann[_Opt[int], Query(ge=5, le=200)] = None,
+) -> US1HBacktestResponse:
+    """Run simple SMA(5/20) crossover backtest on KLSE daily bars."""
+
+    from strategies.klse.sma5_20_cross import VALID_CONDITIONS
+
+    _disabled: set[str] = set()
+    if disabled_conditions:
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in VALID_CONDITIONS}
+
+    def _run():
+        from strategies.futures.data_loader import load_yfinance
+        from strategies.klse.sma5_20_cross import DEFAULT_PARAMS, build_indicators
+        from strategies.klse.sma5_20_cross import run_backtest as sma_backtest
+
+        param_overrides: dict = {}
+        if sma_fast is not None:
+            param_overrides["sma_fast"] = sma_fast
+        if sma_slow is not None:
+            param_overrides["sma_slow"] = sma_slow
+
+        full_params = {**DEFAULT_PARAMS, **param_overrides}
+
+        df = load_yfinance(symbol=symbol, interval="1d", period=period)
+        min_rows = int(full_params["sma_slow"]) + 5
+        if df.empty or len(df) < min_rows:
+            raise ValueError(f"Not enough daily data for {symbol} (need {min_rows}+ bars).")
+
+        result = sma_backtest(df, params=full_params, capital=capital, disabled_conditions=_disabled or None)
+
+        df_ind = build_indicators(df.copy(), full_params, _disabled or None)
+
+        candles: list[US1HCandle] = []
+        for ts_val, row in df_ind.iterrows():
+            candles.append(
+                US1HCandle(
+                    time=ts_val.isoformat() if hasattr(ts_val, "isoformat") else str(ts_val),
+                    open=round(float(row["open"]), 4),
+                    high=round(float(row["high"]), 4),
+                    low=round(float(row["low"]), 4),
+                    close=round(float(row["close"]), 4),
+                    volume=float(row.get("volume", 0)),
+                    ema_fast=round(float(row.get("sma_fast", 0)), 4) if not _isnan(row.get("sma_fast")) else None,
+                    ema_slow=round(float(row.get("sma_slow", 0)), 4) if not _isnan(row.get("sma_slow")) else None,
+                    signal=int(row.get("signal", 0)),
+                )
+            )
+
+        metrics = US1HMetrics(
+            initial_capital=result.initial_capital,
+            final_equity=result.final_equity,
+            total_return_pct=result.total_return_pct,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            total_trades=result.total_trades,
+            winners=result.winners,
+            losers=result.losers,
+            win_rate=result.win_rate,
+            avg_win=result.avg_win_pct,
+            avg_loss=result.avg_loss_pct,
+            profit_factor=result.profit_factor,
+            risk_reward_ratio=result.risk_reward,
+        )
+
+        trades_out = [
+            US1HTrade(
+                entry_time=t.entry_date,
+                exit_time=t.exit_date,
+                entry_price=t.entry_price,
+                exit_price=t.exit_price,
+                qty=0,
+                pnl=t.pnl,
+                pnl_pct=t.return_pct,
+                reason=t.exit_reason,
+                signal_type="SMA5_20_CROSS",
+                direction="CALL",
+                sl_price=t.sl_price,
+            )
+            for t in result.trades
+        ]
+
+        out_params = {
+            "sma_fast": full_params["sma_fast"],
+            "sma_slow": full_params["sma_slow"],
+        }
+
+        return candles, trades_out, result.equity_curve, metrics, out_params
+
+    try:
+        candles, trades, eq_curve, metrics, params_out = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("SMA5/20 Cross backtest failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return US1HBacktestResponse(
+        symbol=symbol,
+        interval="1d",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        params=params_out,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # CM MACD — MACD(12,26,9) Crossover Strategy (KLSE Daily)
 # Entry: MACD line crosses ABOVE signal → long
 # Exit:  MACD line crosses BELOW signal  OR ATR SL/TP
@@ -4989,6 +5131,18 @@ def _run_strategy_backtest(strategy: str, df: pd.DataFrame, capital: float):
         from strategies.klse.psniper.strategy import DEFAULT_PARAMS as PS_PARAMS
         from strategies.klse.psniper.backtest import run_backtest as ps_backtest
         raw = ps_backtest(df, params=PS_PARAMS, capital=capital)
+        trades = [_NormTrade(
+            entry_date=t.entry_date, exit_date=t.exit_date,
+            entry_price=t.entry_price, exit_price=t.exit_price,
+            sl_price=t.sl_price, tp_price=t.tp_price,
+            pnl=t.pnl, exit_reason=t.exit_reason, win=t.win,
+        ) for t in raw.trades]
+        return _NormResult(trades=trades, win_rate=raw.win_rate,
+                           total_return_pct=raw.total_return_pct, total_trades=raw.total_trades)
+    elif strategy == "sma5_20_cross":
+        from strategies.klse.sma5_20_cross import DEFAULT_PARAMS as SMA_PARAMS
+        from strategies.klse.sma5_20_cross import run_backtest as sma_backtest
+        raw = sma_backtest(df, params=SMA_PARAMS, capital=capital)
         trades = [_NormTrade(
             entry_date=t.entry_date, exit_date=t.exit_date,
             entry_price=t.entry_price, exit_price=t.exit_price,

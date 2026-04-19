@@ -1,0 +1,23 @@
+//@version=6
+strategy("sma5_20_cross", overlay=true, initial_capital=5000, pyramiding=0)
+
+// Simple test strategy:
+// BUY when SMA(5) crosses above SMA(20)
+// SELL when SMA(5) crosses below SMA(20)
+
+smaFast = ta.sma(close, 5)
+smaSlow = ta.sma(close, 20)
+
+buySignal = ta.crossover(smaFast, smaSlow)
+sellSignal = ta.crossunder(smaFast, smaSlow)
+
+if buySignal
+    strategy.entry("BUY", strategy.long)
+
+if sellSignal
+    strategy.close("BUY", comment="SELL")
+
+plot(smaFast, color=color.new(color.green, 0), title="SMA 5")
+plot(smaSlow, color=color.new(color.orange, 0), title="SMA 20")
+plotshape(buySignal, title="Buy", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.tiny, text="BUY")
+plotshape(sellSignal, title="Sell", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, text="SELL")

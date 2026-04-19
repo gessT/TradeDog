@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { US1HBacktestResponse } from "../../services/api";
+import { fetchPineScripts, type US1HBacktestResponse } from "../../services/api";
 
 // ═══════════════════════════════════════════════════════════
 // MY Strategy Section — multi-strategy with dropdown
 // ═══════════════════════════════════════════════════════════
 
-export type StrategyType = "tpc" | "hpb" | "momentum_guard" | "vpb3" | "smp" | "psniper" | "cm_macd";
+export type StrategyType = "tpc" | "hpb" | "momentum_guard" | "vpb3" | "smp" | "psniper" | "sma5_20_cross" | "cm_macd";
 
 type StrategyDef = {
   key: StrategyType;
@@ -172,6 +172,23 @@ const STRATEGIES: StrategyDef[] = [
     },
   },
   {
+    key: "sma5_20_cross",
+    label: "SMA 5/20 Cross",
+    subtitle: "Simple SMA crossover buy/sell test",
+    icon: "📜",
+    color: "emerald",
+    conditions: [
+      { key: "sma_cross_up", label: "SMA 5 > SMA 20 Cross", icon: "📈", desc: "Buy when SMA(5) crosses above SMA(20)" },
+    ],
+    exitRules: [
+      { key: "sma_cross_down", icon: "📉", label: "SMA 5 < SMA 20 Cross", desc: "Sell when SMA(5) crosses below SMA(20)" },
+    ],
+    sliders: {
+      sl: { label: "Unused", min: 1, max: 1, step: 1 },
+      tp1: { label: "Unused", min: 1, max: 1, step: 1 },
+    },
+  },
+  {
     key: "cm_macd",
     label: "CM MACD",
     subtitle: "MACD(12,26,9) Crossover",
@@ -192,6 +209,36 @@ const STRATEGIES: StrategyDef[] = [
   },
 ];
 
+type PineScriptOption = {
+  fileName: string;
+  strategyKey: StrategyType;
+  icon: string;
+  subtitle: string;
+};
+
+const PINE_LINKED_STRATEGIES = new Set<StrategyType>(["psniper", "sma5_20_cross"]);
+const CORE_DROPDOWN_STRATEGIES: StrategyDef[] = STRATEGIES.filter((s) => !PINE_LINKED_STRATEGIES.has(s.key));
+const STRATEGY_KEY_SET = new Set<StrategyType>(STRATEGIES.map((s) => s.key));
+
+const DEFAULT_PINE_SCRIPT_OPTIONS: PineScriptOption[] = [
+  {
+    fileName: "psniper.pine",
+    strategyKey: "psniper",
+    icon: "📜",
+    subtitle: "Precision Sniper backtest with buy/sell trades",
+  },
+  {
+    fileName: "sma5_20_cross.pine",
+    strategyKey: "sma5_20_cross",
+    icon: "📜",
+    subtitle: "Simple SMA crossover buy/sell test",
+  },
+];
+
+function toStrategyType(value: string): StrategyType | null {
+  return STRATEGY_KEY_SET.has(value as StrategyType) ? (value as StrategyType) : null;
+}
+
 // Default parameter values per strategy (the single source of truth)
 export const STRATEGY_DEFAULTS: Record<StrategyType, {
   sl: number; tp1: number; tp2: number; capital: number;
@@ -203,6 +250,7 @@ export const STRATEGY_DEFAULTS: Record<StrategyType, {
   vpb3: { sl: 5,   tp1: 3.0, tp2: 3.0, capital: 5000, disabledConditions: [] },
   smp:  { sl: 4,   tp1: 2.0, tp2: 2.0, capital: 5000, disabledConditions: [] },
   psniper: { sl: 3.5,  tp1: 1.2, tp2: 6,   capital: 5000, disabledConditions: [] },
+  sma5_20_cross: { sl: 1, tp1: 1, tp2: 1, capital: 5000, disabledConditions: [] },
   cm_macd: { sl: 2.0,  tp1: 3.0, tp2: 3.0, capital: 5000, disabledConditions: [] },
 };
 
@@ -300,6 +348,7 @@ export default function MYStrategySection({
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [pineScriptOptions, setPineScriptOptions] = useState<PineScriptOption[]>(DEFAULT_PINE_SCRIPT_OPTIONS);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const handleConfirmReset = useCallback(() => {
@@ -325,6 +374,36 @@ export default function MYStrategySection({
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    fetchPineScripts()
+      .then((scripts) => {
+        if (!alive) return;
+        const mapped = scripts
+          .map((s): PineScriptOption | null => {
+            const strategyKey = toStrategyType(s.strategy_key);
+            if (!strategyKey) return null;
+            const linked = STRATEGIES.find((st) => st.key === strategyKey);
+            return {
+              fileName: s.file_name,
+              strategyKey,
+              icon: "📜",
+              subtitle: linked ? `${linked.label} backtest with buy/sell trades` : "Pine Script strategy",
+            };
+          })
+          .filter((s): s is PineScriptOption => s !== null);
+
+        if (mapped.length > 0) setPineScriptOptions(mapped);
+      })
+      .catch(() => {
+        // Keep fallback scripts when endpoint is unavailable.
+      });
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const strat = STRATEGIES.find(s => s.key === activeStrategy) ?? STRATEGIES[0];
@@ -383,7 +462,7 @@ export default function MYStrategySection({
 
           {dropdownOpen && (
             <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700/60 rounded-lg shadow-xl shadow-black/30 overflow-hidden">
-              {STRATEGIES.map(s => (
+              {CORE_DROPDOWN_STRATEGIES.map(s => (
                 <button
                   key={s.key}
                   onClick={() => { onStrategyChange(s.key); setDropdownOpen(false); }}
@@ -408,6 +487,44 @@ export default function MYStrategySection({
                   )}
                 </button>
               ))}
+
+              <div className="mx-2 my-1 border-t border-slate-700/60" />
+              <div className="px-3 py-1 text-[8px] uppercase tracking-widest text-slate-500 font-bold">Pine Script</div>
+
+              {pineScriptOptions.map((p) => {
+                const linkedStrategy = STRATEGIES.find((s) => s.key === p.strategyKey);
+                if (!linkedStrategy) return null;
+
+                return (
+                  <button
+                    key={p.fileName}
+                    onClick={() => {
+                      onStrategyChange(p.strategyKey);
+                      setDropdownOpen(false);
+                      onRunBacktest();
+                    }}
+                    className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition hover:bg-slate-800/60 ${
+                      activeStrategy === p.strategyKey ? "bg-rose-500/10 border-l-2 border-rose-400" : "border-l-2 border-transparent"
+                    }`}
+                  >
+                    <span className="text-sm">{p.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className={`text-[10px] font-semibold ${activeStrategy === p.strategyKey ? "text-rose-400" : "text-slate-200"} flex items-center gap-1.5`}>
+                        {p.fileName}
+                        {taggedStrategies.has(p.strategyKey) && (
+                          <span className="inline-flex items-center gap-0.5 px-1 py-px rounded-full bg-amber-500/20 text-amber-400 text-[7px] font-semibold">
+                            ★ {taggedStrategies.get(p.strategyKey)!.win_rate != null ? `${taggedStrategies.get(p.strategyKey)!.win_rate!.toFixed(0)}%` : "Tagged"}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[8px] text-slate-500">{p.subtitle}</div>
+                    </div>
+                    {activeStrategy === p.strategyKey && (
+                      <svg className="w-3 h-3 text-rose-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
