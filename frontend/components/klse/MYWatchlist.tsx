@@ -36,6 +36,26 @@ const INITIAL_WATCHLIST: WatchlistItem[] = MY_DEFAULT_STOCKS.map((s) => ({
 type StockTag = { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null };
 type ColorLabel = { id: number; symbol: string; color: string; market: string };
 
+type PositionAlertStatus = "OPEN" | "SIGNAL" | "NONE";
+type PositionAlertRow = {
+  symbol: string;
+  name: string;
+  strategy_type: string;
+  tagged_strategies: string[];
+  status: PositionAlertStatus;
+  is_buy_opportunity: boolean;
+  price: number;
+  entry_price: number | null;
+  sl_price: number | null;
+  tp_price: number | null;
+  entry_date: string;
+  dist_pct: number | null;
+  risk_pct: number | null;
+  reward_pct: number | null;
+  win_rate: number | null;
+  total_trades: number | null;
+};
+
 type ViewMode = "favs" | "all";
 
 
@@ -364,6 +384,8 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
     { key: "vpb3", label: "VPB3", icon: "📊", color: "emerald" },
     { key: "smp", label: "SMP", icon: "🧠", color: "violet" },
     { key: "psniper", label: "PrecSniper", icon: "🎯", color: "rose" },
+    { key: "sma5_20_cross", label: "SMA 5/20 Cross", icon: "📜", color: "emerald" },
+    { key: "gessup", label: "GessUp", icon: "🧭", color: "cyan" },
     { key: "cm_macd", label: "CM MACD", icon: "📉", color: "cyan" },
   ] as const;
 
@@ -379,6 +401,142 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
     setOppScanning(false);
   }, [oppStrategy]);
 
+  // ── Position Alert Scanner (tagged stocks only) ──
+  const [posDialogOpen, setPosDialogOpen] = useState(false);
+  const [posResults, setPosResults] = useState<PositionAlertRow[]>([]);
+  const [posScanning, setPosScanning] = useState(false);
+  const [posScanned, setPosScanned] = useState(0);
+
+  const handleScanPositionAlert = useCallback(async () => {
+    setPosDialogOpen(true);
+    setPosScanning(true);
+    setPosResults([]);
+
+    try {
+      const tagsBySymbol = new Map<string, string[]>();
+      for (const tag of stockTags) {
+        if (!tagsBySymbol.has(tag.symbol)) tagsBySymbol.set(tag.symbol, []);
+        const strategies = tagsBySymbol.get(tag.symbol)!;
+        if (!strategies.includes(tag.strategy_type)) strategies.push(tag.strategy_type);
+      }
+
+      const taggedSymbols = Array.from(tagsBySymbol.keys());
+      setPosScanned(taggedSymbols.length);
+
+      if (taggedSymbols.length === 0) {
+        setPosResults([]);
+        return;
+      }
+
+      const supportedStrategies = new Set<string>(STRATEGY_OPTIONS.map((s) => s.key));
+      const strategyBySymbol = new Map<string, string>();
+      const strategyGroups = new Map<string, string[]>();
+
+      for (const symbol of taggedSymbols) {
+        const taggedStrategies = tagsBySymbol.get(symbol) ?? [];
+        const strategyToUse = taggedStrategies[0];
+
+        if (!strategyToUse) continue;
+        strategyBySymbol.set(symbol, strategyToUse);
+
+        if (!supportedStrategies.has(strategyToUse)) continue;
+        if (!strategyGroups.has(strategyToUse)) strategyGroups.set(strategyToUse, []);
+        strategyGroups.get(strategyToUse)!.push(symbol);
+      }
+
+      const hitBySymbol = new Map<string, { strategy: string; hit: OpportunityStock }>();
+      const scans = await Promise.allSettled(
+        Array.from(strategyGroups.entries()).map(async ([strategy, symbols]) => {
+          const res = await fetchOpportunities(strategy, "6mo", 5000, symbols);
+          return { strategy, symbols, res };
+        }),
+      );
+
+      for (const scan of scans) {
+        if (scan.status !== "fulfilled") continue;
+        const { strategy, symbols, res } = scan.value;
+        const symbolSet = new Set(symbols);
+        for (const hit of res.results) {
+          if (!symbolSet.has(hit.symbol)) continue;
+          const prev = hitBySymbol.get(hit.symbol);
+          if (!prev || (prev.hit.status !== "OPEN" && hit.status === "OPEN")) {
+            hitBySymbol.set(hit.symbol, { strategy, hit });
+          }
+        }
+      }
+
+      const statusWeight = (status: PositionAlertStatus) => {
+        if (status === "OPEN") return 0;
+        if (status === "SIGNAL") return 1;
+        return 2;
+      };
+
+      const rows: PositionAlertRow[] = taggedSymbols.map((symbol) => {
+        const taggedStrategies = tagsBySymbol.get(symbol) ?? [];
+        const usedStrategy = strategyBySymbol.get(symbol) ?? taggedStrategies[0] ?? "—";
+        const found = hitBySymbol.get(symbol);
+        const hit = found?.hit ?? null;
+        const stockMeta = MY_STOCKS.find((s) => s.symbol === symbol);
+        const marketPrice = quotes[symbol]?.price ?? 0;
+
+        if (hit) {
+          return {
+            symbol,
+            name: stockMeta?.name ?? symbol.replace(".KL", ""),
+            strategy_type: found?.strategy ?? usedStrategy,
+            tagged_strategies: taggedStrategies,
+            status: hit.status,
+            is_buy_opportunity: hit.status === "OPEN",
+            price: hit.price,
+            entry_price: hit.entry_price,
+            sl_price: hit.sl_price,
+            tp_price: hit.tp_price,
+            entry_date: hit.entry_date,
+            dist_pct: hit.dist_pct,
+            risk_pct: hit.risk_pct,
+            reward_pct: hit.reward_pct,
+            win_rate: hit.win_rate,
+            total_trades: hit.total_trades,
+          };
+        }
+
+        return {
+          symbol,
+          name: stockMeta?.name ?? symbol.replace(".KL", ""),
+          strategy_type: usedStrategy,
+          tagged_strategies: taggedStrategies,
+          status: "NONE",
+          is_buy_opportunity: false,
+          price: marketPrice,
+          entry_price: null,
+          sl_price: null,
+          tp_price: null,
+          entry_date: "",
+          dist_pct: null,
+          risk_pct: null,
+          reward_pct: null,
+          win_rate: null,
+          total_trades: null,
+        };
+      });
+
+      rows.sort((a, b) => {
+        const sw = statusWeight(a.status) - statusWeight(b.status);
+        if (sw !== 0) return sw;
+        const ad = a.dist_pct == null ? 9999 : Math.abs(a.dist_pct);
+        const bd = b.dist_pct == null ? 9999 : Math.abs(b.dist_pct);
+        if (ad !== bd) return ad - bd;
+        return a.symbol.localeCompare(b.symbol);
+      });
+
+      setPosResults(rows);
+    } catch {
+      setPosResults([]);
+    } finally {
+      setPosScanning(false);
+    }
+  }, [stockTags, quotes]);
+
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/60">
       {/* ═══ SCANNER ═══ */}
@@ -392,7 +550,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
           </span>
           <div className="min-w-0 flex-1">
             <div className="text-[10px] text-cyan-300 uppercase tracking-[0.16em] font-black leading-tight">Scanner</div>
-            <div className="text-[8px] text-slate-400 leading-tight">Near ATH • Vol Breakout • Buy Opportunity</div>
+            <div className="text-[8px] text-slate-400 leading-tight">Near ATH • Vol Breakout • Buy Opportunity • Position Alert</div>
           </div>
           <span className={`text-[7px] px-1.5 py-0.5 rounded-full border font-bold tracking-wide ${scannerOpen ? "border-cyan-500/40 bg-cyan-500/20 text-cyan-300" : "border-slate-700/60 bg-slate-800/70 text-slate-500"}`}>
             {scannerOpen ? "OPEN" : "CLOSED"}
@@ -480,6 +638,23 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                 ) : "SCAN"}
               </button>
             </div>
+
+            <button
+              onClick={handleScanPositionAlert}
+              disabled={posScanning}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition bg-gradient-to-r from-emerald-500/14 to-cyan-500/10 border border-emerald-500/35 hover:from-emerald-500/22 hover:to-cyan-500/14 disabled:opacity-50"
+            >
+              <span className="text-base shrink-0">🚨</span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-bold text-slate-100">Position Alert</div>
+                <div className="text-[8px] text-emerald-300/75">First tag per stock — tagged stocks only</div>
+              </div>
+              {posScanning ? (
+                <svg className="w-4 h-4 text-emerald-300 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+              ) : (
+                <svg className="w-4 h-4 text-emerald-200/70 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.3} d="M9 5l7 7-7 7" /></svg>
+              )}
+            </button>
           </div>
         )}
       </div>
@@ -1204,6 +1379,131 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                 <div className="flex items-center gap-3 text-[8px]">
                   <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-emerald-500/40" /> Open position</span>
                   <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-cyan-500/40" /> Signal active</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ POSITION ALERT DIALOG (TAGGED STOCKS) ═══ */}
+      {posDialogOpen && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setPosDialogOpen(false)}>
+          <div className="bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/50 w-[760px] max-w-[96vw] max-h-[82vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/60">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🚨</span>
+                <div>
+                  <h3 className="text-[13px] font-bold text-slate-100">Position Alert</h3>
+                  <p className="text-[9px] text-slate-500">
+                    {posScanning
+                      ? "Scanning tagged stocks with first tag…"
+                      : `${posResults.length} rows from ${posScanned} tagged stocks`}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setPosDialogOpen(false)} className="text-slate-500 hover:text-slate-300 p-1 rounded hover:bg-slate-800/50 transition">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto">
+              {posScanning ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3">
+                  <svg className="w-8 h-8 text-emerald-400 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                  <p className="text-[11px] text-slate-400">Scanning {posScanned || "tagged"} stocks…</p>
+                  <p className="text-[9px] text-slate-600">OPEN means buy opportunity</p>
+                </div>
+              ) : posResults.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-2">
+                  <span className="text-2xl opacity-30">📭</span>
+                  <p className="text-[11px] text-slate-600">No tagged stocks found</p>
+                </div>
+              ) : (
+                <table className="w-full text-[10px]">
+                  <thead className="sticky top-0 bg-slate-900/95 backdrop-blur">
+                    <tr className="text-[8px] text-slate-500 uppercase tracking-wider">
+                      <th className="text-left px-3 py-2 font-bold">#</th>
+                      <th className="text-left px-2 py-2 font-bold">Stock</th>
+                      <th className="text-left px-2 py-2 font-bold">Using Tag</th>
+                      <th className="text-right px-2 py-2 font-bold">Price</th>
+                      <th className="text-right px-2 py-2 font-bold">Entry</th>
+                      <th className="text-center px-2 py-2 font-bold">Status</th>
+                      <th className="text-right px-3 py-2 font-bold">WR%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {posResults.map((row, i) => {
+                      const strategyMeta = STRATEGY_OPTIONS.find((s) => s.key === row.strategy_type);
+                      const entryFmt = row.entry_price == null ? "—" : row.entry_price.toFixed(row.entry_price < 1 ? 4 : 2);
+                      const priceFmt = row.price > 0 ? row.price.toFixed(row.price < 1 ? 4 : 2) : "—";
+                      const statusChip = row.status === "OPEN"
+                        ? "bg-emerald-500/20 text-emerald-300"
+                        : row.status === "SIGNAL"
+                          ? "bg-cyan-500/20 text-cyan-300"
+                          : "bg-slate-700/50 text-slate-400";
+                      const statusLabel = row.status === "OPEN"
+                        ? "● BUY"
+                        : row.status === "SIGNAL"
+                          ? "◆ SIGNAL"
+                          : "— NONE";
+                      const dist = row.dist_pct == null ? "—" : `${row.dist_pct >= 0 ? "+" : ""}${row.dist_pct.toFixed(1)}%`;
+
+                      return (
+                        <tr
+                          key={`${row.symbol}-${row.strategy_type}`}
+                          onClick={() => {
+                            const stock = MY_STOCKS.find((st) => st.symbol === row.symbol);
+                            if (stock) onSelectSymbol(stock.symbol, stock.name);
+                            setPosDialogOpen(false);
+                          }}
+                          className={`cursor-pointer transition hover:bg-slate-800/50 border-b border-slate-800/20 ${row.status === "OPEN" ? "bg-emerald-500/5" : ""}`}
+                        >
+                          <td className="px-3 py-2 text-slate-600 tabular-nums">{i + 1}</td>
+                          <td className="px-2 py-2">
+                            <div className="text-[10px] font-semibold text-slate-200">{row.name}</div>
+                            <div className="text-[8px] text-slate-500">{row.symbol.replace(".KL", "")}</div>
+                          </td>
+                          <td className="px-2 py-2">
+                            <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 text-[8px] text-slate-300">
+                              <span>{strategyMeta?.icon ?? "🎯"}</span>
+                              <span className="font-semibold">{strategyMeta?.label ?? row.strategy_type}</span>
+                            </div>
+                          </td>
+                          <td className="px-2 py-2 text-right text-slate-300 tabular-nums font-medium">{priceFmt}</td>
+                          <td className="px-2 py-2 text-right tabular-nums">
+                            <div className={`text-[10px] font-medium ${row.status === "OPEN" ? "text-emerald-300" : row.status === "SIGNAL" ? "text-cyan-300" : "text-slate-500"}`}>
+                              {entryFmt}
+                            </div>
+                            <div className="text-[8px] text-slate-600">{dist}</div>
+                          </td>
+                          <td className="px-2 py-2 text-center">
+                            <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${statusChip}`}>{statusLabel}</span>
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            <div className={`text-[10px] font-semibold ${row.win_rate != null && row.win_rate >= 60 ? "text-emerald-400" : row.win_rate != null && row.win_rate >= 50 ? "text-amber-400" : "text-slate-400"}`}>
+                              {row.win_rate != null ? `${row.win_rate.toFixed(0)}%` : "—"}
+                            </div>
+                            <div className="text-[7px] text-slate-600">{row.total_trades != null ? `${row.total_trades}t` : ""}</div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Footer */}
+            {!posScanning && posResults.length > 0 && (
+              <div className="px-4 py-2 border-t border-slate-800/40 flex items-center justify-between">
+                <span className="text-[8px] text-slate-600">Click to select stock · OPEN means buy opportunity</span>
+                <div className="flex items-center gap-3 text-[8px]">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-emerald-500/40" /> Buy opportunity</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-cyan-500/40" /> Signal</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-slate-600/60" /> No alert</span>
                 </div>
               </div>
             )}

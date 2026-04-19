@@ -347,8 +347,12 @@ export async function fetchOpportunities(
   strategy: string = "smp",
   period: string = "6mo",
   capital: number = 5000,
+  symbols?: string[],
 ): Promise<OpportunityScanResponse> {
   const params = new URLSearchParams({ strategy, period, capital: String(capital) });
+  if (symbols && symbols.length > 0) {
+    params.set("symbols", symbols.join(","));
+  }
   const response = await fetch(`${API_BASE}/stock/scan_opportunities?${params}`, { cache: "no-store" });
   if (!response.ok) {
     const detail = await response.text();

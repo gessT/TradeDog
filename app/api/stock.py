@@ -5065,18 +5065,32 @@ async def scan_opportunities(
     strategy: _Ann[str, Query()] = "smp",
     period: _Ann[str, Query()] = "6mo",
     capital: _Ann[float, Query()] = 5000.0,
+    symbols: _Ann[_Opt[str], Query()] = None,
 ) -> dict:
     """Scan all KLSE stocks for a given strategy. Return those with an active signal
-    or currently open position (i.e. buy opportunity near entry)."""
+    or currently open position (i.e. buy opportunity near entry).
+
+    Optional `symbols` accepts a comma-separated list to scan a subset only.
+    """
+
+    if symbols:
+        target_symbols = []
+        seen = set()
+        for raw in symbols.split(","):
+            sym = (raw or "").strip().upper()
+            if not sym or sym in seen:
+                continue
+            seen.add(sym)
+            target_symbols.append(sym)
+    else:
+        target_symbols = [s.symbol for s in _get_my_stocks()]
 
     def _scan() -> list[dict]:
         from strategies.futures.data_loader import load_yfinance
 
-        all_symbols = [s.symbol for s in _get_my_stocks()]
-
         hits: list[dict] = []
 
-        for sym in all_symbols:
+        for sym in target_symbols:
             try:
                 df = load_yfinance(symbol=sym, interval="1d", period=period)
                 if df.empty or len(df) < 60:
@@ -5170,7 +5184,7 @@ async def scan_opportunities(
     return {
         "strategy": strategy,
         "period": period,
-        "total_scanned": len(_get_my_stocks()),
+        "total_scanned": len(target_symbols),
         "hits": len(results),
         "results": results,
     }
