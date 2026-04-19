@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { MY_STOCKS, MY_SECTORS, MY_DEFAULT_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
 import { US_STOCKS, US_SECTORS, US_DEFAULT_STOCKS } from "../../constants/usStocks";
+import { SGX_STOCKS, SGX_SECTORS, SGX_DEFAULT_STOCKS } from "../../constants/sgxStocks";
 import { fetchNearATH, type NearATHStock, fetchVolBreakout, type VolBreakoutStock, fetchOpportunities, type OpportunityStock } from "../../services/api";
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
@@ -48,7 +49,7 @@ type PositionAlertRow = {
 };
 
 type ViewMode = "favs" | "all";
-type RegionType = "MY" | "US";
+type RegionType = "MY" | "US" | "SG";
 
 
 // ===== Design Constants =====
@@ -91,11 +92,12 @@ type Props = {
 };
 
 export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbol, stockTags = [], favSymbols, onToggleFav, colorLabels = [], onSetColor, onRemoveColor }: Props) {
-  const marketStocks = region === "US" ? US_STOCKS : MY_STOCKS;
-  const marketSectors = region === "US" ? US_SECTORS : MY_SECTORS;
-  const marketDefaultStocks = region === "US" ? US_DEFAULT_STOCKS : MY_DEFAULT_STOCKS;
-  const marketStockStrategy: Record<string, string | undefined> = region === "US" ? {} : MY_STOCK_STRATEGY;
-  const currencyPrefix = region === "US" ? "$" : "RM";
+  const marketStocks = region === "US" ? US_STOCKS : (region === "SG" ? SGX_STOCKS : MY_STOCKS);
+  const marketSectors = region === "US" ? US_SECTORS : (region === "SG" ? SGX_SECTORS : MY_SECTORS);
+  const marketDefaultStocks = region === "US" ? US_DEFAULT_STOCKS : (region === "SG" ? SGX_DEFAULT_STOCKS : MY_DEFAULT_STOCKS);
+  const marketStockStrategy: Record<string, string | undefined> = region === "MY" ? MY_STOCK_STRATEGY : {};
+  const currencyPrefix = region === "US" ? "$" : (region === "SG" ? "S$" : "RM");
+  const displaySymbol = (sym: string) => sym.replace(".KL", "").replace(".SI", "");
 
   const [items, setItems] = useState<WatchlistItem[]>([]);
 
@@ -400,7 +402,7 @@ export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbo
     setOppScanning(true);
     setOppResults([]);
     try {
-      const symbols = region === "US" ? marketStocks.map((s) => s.symbol) : undefined;
+      const symbols = region === "MY" ? undefined : marketStocks.map((s) => s.symbol);
       const res = await fetchOpportunities(oppStrategy, "6mo", 5000, symbols);
       setOppResults(res.results);
       setOppScanned(res.total_scanned);
@@ -491,7 +493,7 @@ export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbo
         if (hit) {
           return {
             symbol,
-            name: stockMeta?.name ?? symbol.replace(".KL", ""),
+            name: stockMeta?.name ?? displaySymbol(symbol),
             strategy_type: found?.strategy ?? usedStrategy,
             tagged_strategies: taggedStrategies,
             status: hit.status,
@@ -511,7 +513,7 @@ export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbo
 
         return {
           symbol,
-          name: stockMeta?.name ?? symbol.replace(".KL", ""),
+          name: stockMeta?.name ?? displaySymbol(symbol),
           strategy_type: usedStrategy,
           tagged_strategies: taggedStrategies,
           status: "NONE",
@@ -680,7 +682,7 @@ export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbo
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={region === "MY" ? "Search Bursa symbol or name…" : "Search US symbol or name…"}
+            placeholder={region === "MY" ? "Search Bursa symbol or name…" : region === "SG" ? "Search SGX symbol or name…" : "Search US symbol or name…"}
             className="flex-1 bg-transparent text-[10px] text-slate-200 placeholder-slate-500 outline-none min-w-0"
           />
           {searchQuery && (
@@ -904,7 +906,7 @@ export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbo
                     <span className="text-[7px] px-1 py-[1px] rounded bg-slate-800 text-slate-500 font-medium">{item.sector}</span>
                   )}
                 </div>
-                <span className="text-[8px] text-slate-500 truncate leading-tight">{item.symbol.replace(".KL", "")}</span>
+                <span className="text-[8px] text-slate-500 truncate leading-tight">{displaySymbol(item.symbol)}</span>
                 {stockTags.filter((t) => t.symbol === item.symbol).length > 0 && (
                   <div className="flex gap-0.5 mt-0.5 flex-wrap">
                     {stockTags
@@ -965,7 +967,7 @@ export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbo
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
-            <span className="text-[10px] text-slate-400">Searching {region === "MY" ? "Bursa" : "symbols"}…</span>
+            <span className="text-[10px] text-slate-400">Searching {region === "MY" ? "Bursa" : region === "SG" ? "SGX" : "symbols"}…</span>
           </div>
         )}
 
@@ -999,7 +1001,7 @@ export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbo
                       <span className="text-[11px] font-bold leading-tight truncate text-slate-100">{item.name}</span>
                       <span className="text-[7px] px-1 py-[1px] rounded bg-cyan-500/15 text-cyan-400 font-medium">{item.sector}</span>
                     </div>
-                    <span className="text-[8px] text-slate-500 truncate leading-tight">{item.symbol.replace(".KL", "")}</span>
+                    <span className="text-[8px] text-slate-500 truncate leading-tight">{displaySymbol(item.symbol)}</span>
                   </div>
 
                   <div className="text-right w-16 shrink-0">
@@ -1130,7 +1132,7 @@ export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbo
                           <td className="px-3 py-2 text-slate-600 tabular-nums">{i + 1}</td>
                           <td className="px-2 py-2">
                             <div className="text-[10px] font-semibold text-slate-200">{s.name}</div>
-                            <div className="text-[8px] text-slate-500">{s.symbol.replace(".KL", "")}</div>
+                            <div className="text-[8px] text-slate-500">{displaySymbol(s.symbol)}</div>
                           </td>
                           <td className="px-2 py-2 text-right text-slate-300 tabular-nums font-medium">
                             {s.current_price.toFixed(2)}
@@ -1238,7 +1240,7 @@ export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbo
                           <td className="px-3 py-2 text-slate-600 tabular-nums">{i + 1}</td>
                           <td className="px-2 py-2">
                             <div className="text-[10px] font-semibold text-slate-200">{s.name}</div>
-                            <div className="text-[8px] text-slate-500">{s.symbol.replace(".KL", "")}</div>
+                            <div className="text-[8px] text-slate-500">{displaySymbol(s.symbol)}</div>
                           </td>
                           <td className="px-2 py-2 text-right text-slate-300 tabular-nums font-medium">
                             {s.current_price.toFixed(2)}
@@ -1341,7 +1343,7 @@ export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbo
                           <td className="px-3 py-2 text-slate-600 tabular-nums">{i + 1}</td>
                           <td className="px-2 py-2">
                             <div className="text-[10px] font-semibold text-slate-200">{s.name}</div>
-                            <div className="text-[8px] text-slate-500">{s.symbol.replace(".KL", "")} · {s.entry_date}</div>
+                            <div className="text-[8px] text-slate-500">{displaySymbol(s.symbol)} · {s.entry_date}</div>
                           </td>
                           <td className="px-2 py-2 text-right tabular-nums font-medium text-slate-300">
                             {s.price.toFixed(s.price < 1 ? 4 : 2)}
@@ -1473,7 +1475,7 @@ export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbo
                           <td className="px-3 py-2 text-slate-600 tabular-nums">{i + 1}</td>
                           <td className="px-2 py-2">
                             <div className="text-[10px] font-semibold text-slate-200">{row.name}</div>
-                            <div className="text-[8px] text-slate-500">{row.symbol.replace(".KL", "")}</div>
+                            <div className="text-[8px] text-slate-500">{displaySymbol(row.symbol)}</div>
                           </td>
                           <td className="px-2 py-2">
                             <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 text-[8px] text-slate-300">

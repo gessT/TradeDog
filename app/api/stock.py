@@ -333,10 +333,113 @@ US_SECTORS: dict[str, list[tuple[str, str]]] = {
 }
 
 
+# - Major SGX stocks (Yahoo Finance tickers with .SI) -----------------
+SGX_STOCKS: dict[str, str] = {
+    # Finance
+    "D05.SI": "DBS Group",
+    "O39.SI": "OCBC Bank",
+    "U11.SI": "UOB",
+    "S68.SI": "Singapore Exchange",
+    "Q0F.SI": "iFAST",
+    # Telecom
+    "Z74.SI": "Singtel",
+    "CC3.SI": "StarHub",
+    # Transport
+    "C6L.SI": "Singapore Airlines",
+    "S58.SI": "SATS",
+    "C52.SI": "ComfortDelGro",
+    # Property
+    "C31.SI": "CapitaLand Investment",
+    "C09.SI": "City Developments",
+    "U14.SI": "UOL Group",
+    "H78.SI": "Hongkong Land",
+    # REIT
+    "C38U.SI": "CapitaLand Integrated Commercial Trust",
+    "A17U.SI": "CapitaLand Ascendas REIT",
+    "N2IU.SI": "Mapletree Pan Asia Commercial Trust",
+    "M44U.SI": "Mapletree Logistics Trust",
+    "ME8U.SI": "Mapletree Industrial Trust",
+    "BUOU.SI": "Frasers Logistics & Commercial Trust",
+    "T39.SI": "Frasers Centrepoint Trust",
+    "HMN.SI": "CapitaLand Ascott Trust",
+    # Industrial / Utilities
+    "BN4.SI": "Keppel",
+    "S51.SI": "Seatrium",
+    "BS6.SI": "Yangzijiang Shipbuilding",
+    "U96.SI": "Sembcorp Industries",
+    # Consumer / Tech
+    "G13.SI": "Genting Singapore",
+    "Y92.SI": "Thai Beverage",
+    "F34.SI": "Wilmar International",
+    "V03.SI": "Venture Corporation",
+    # ETF
+    "ES3.SI": "Nikko AM STI ETF",
+    "A35.SI": "ABF Singapore Bond Index ETF",
+}
+
+SGX_SECTORS: dict[str, list[tuple[str, str]]] = {
+    "FINANCE": [
+        ("D05.SI", "DBS Group"),
+        ("O39.SI", "OCBC Bank"),
+        ("U11.SI", "UOB"),
+        ("S68.SI", "Singapore Exchange"),
+        ("Q0F.SI", "iFAST"),
+    ],
+    "TELECOM": [
+        ("Z74.SI", "Singtel"),
+        ("CC3.SI", "StarHub"),
+    ],
+    "TRANSPORT": [
+        ("C6L.SI", "Singapore Airlines"),
+        ("S58.SI", "SATS"),
+        ("C52.SI", "ComfortDelGro"),
+    ],
+    "PROPERTY": [
+        ("C31.SI", "CapitaLand Investment"),
+        ("C09.SI", "City Developments"),
+        ("U14.SI", "UOL Group"),
+        ("H78.SI", "Hongkong Land"),
+    ],
+    "REIT": [
+        ("C38U.SI", "CapitaLand Integrated Commercial Trust"),
+        ("A17U.SI", "CapitaLand Ascendas REIT"),
+        ("N2IU.SI", "Mapletree Pan Asia Commercial Trust"),
+        ("M44U.SI", "Mapletree Logistics Trust"),
+        ("ME8U.SI", "Mapletree Industrial Trust"),
+        ("BUOU.SI", "Frasers Logistics & Commercial Trust"),
+        ("T39.SI", "Frasers Centrepoint Trust"),
+        ("HMN.SI", "CapitaLand Ascott Trust"),
+    ],
+    "INDUSTRIAL": [
+        ("BN4.SI", "Keppel"),
+        ("S51.SI", "Seatrium"),
+        ("BS6.SI", "Yangzijiang Shipbuilding"),
+    ],
+    "UTILITIES": [
+        ("U96.SI", "Sembcorp Industries"),
+    ],
+    "CONSUMER": [
+        ("G13.SI", "Genting Singapore"),
+        ("Y92.SI", "Thai Beverage"),
+        ("F34.SI", "Wilmar International"),
+    ],
+    "TECH": [
+        ("V03.SI", "Venture Corporation"),
+    ],
+    "ETF": [
+        ("ES3.SI", "Nikko AM STI ETF"),
+        ("A35.SI", "ABF Singapore Bond Index ETF"),
+    ],
+}
+
+
 def _get_stock_universe(market: str) -> tuple[dict[str, str], dict[str, list[tuple[str, str]]]]:
     """Return (stocks_dict, sectors_dict) for the given market."""
-    if market == "US":
+    market_norm = (market or "MY").upper()
+    if market_norm == "US":
         return US_STOCKS, US_SECTORS
+    if market_norm in {"SG", "SGX", "SINGAPORE"}:
+        return SGX_STOCKS, SGX_SECTORS
     return BURSA_STOCKS, BURSA_SECTORS
 
 
@@ -1015,6 +1118,7 @@ async def top_volume(top: int = 10, market: str = Query(default="MY")) -> dict:
 
 TRADINGVIEW_SCANNER_URL_MY = "https://scanner.tradingview.com/malaysia/scan"
 TRADINGVIEW_SCANNER_URL_US = "https://scanner.tradingview.com/america/scan"
+TRADINGVIEW_SCANNER_URL_SG = "https://scanner.tradingview.com/singapore/scan"
 
 # Yahoo Finance code → TradingView ticker name
 YF_TO_TV: dict[str, str] = {
@@ -1125,9 +1229,13 @@ US_TV_EXCHANGE: dict[str, str] = {
 
 def _fetch_tv_sector_data(market: str = "MY") -> list[dict]:
     """Fetch our specific stocks from TradingView scanner API in a single request."""
-    if market == "US":
+    market_norm = (market or "MY").upper()
+    if market_norm == "US":
         tv_tickers = [f"{US_TV_EXCHANGE.get(t, 'NYSE')}:{t}" for t in US_STOCKS]
         scanner_url = TRADINGVIEW_SCANNER_URL_US
+    elif market_norm in {"SG", "SGX", "SINGAPORE"}:
+        tv_tickers = [f"SGX:{ticker.replace('.SI', '')}" for ticker in SGX_STOCKS]
+        scanner_url = TRADINGVIEW_SCANNER_URL_SG
     else:
         tv_tickers = [f"MYX:{tv}" for tv in YF_TO_TV.values()]
         scanner_url = TRADINGVIEW_SCANNER_URL_MY
@@ -1151,21 +1259,24 @@ def _fetch_tv_sector_data(market: str = "MY") -> list[dict]:
 @router.get("/sectors")
 async def sector_overview(market: str = Query(default="MY")) -> dict:
     """Return sector-level momentum overview using TradingView scanner API."""
+    market_norm = (market or "MY").upper()
     _, sectors_dict = _get_stock_universe(market)
 
     # Build lookup: TV ticker -> (sector, yf_code, name) from our mapping
     tv_lookup: dict[str, tuple[str, str, str]] = {}
     for sector, stocks_list in sectors_dict.items():
         for yf_code, name in stocks_list:
-            if market == "US":
+            if market_norm == "US":
                 tv_lookup[yf_code] = (sector, yf_code, name)
+            elif market_norm in {"SG", "SGX", "SINGAPORE"}:
+                tv_lookup[yf_code.replace(".SI", "")] = (sector, yf_code, name)
             else:
                 tv_ticker = YF_TO_TV.get(yf_code)
                 if tv_ticker:
                     tv_lookup[tv_ticker] = (sector, yf_code, name)
 
     def _scan() -> dict[str, list[dict]]:
-        tv_rows = _fetch_tv_sector_data(market)
+        tv_rows = _fetch_tv_sector_data(market_norm)
 
         sector_results: dict[str, list[dict]] = {s: [] for s in sectors_dict}
 
@@ -5276,10 +5387,13 @@ def _get_my_stocks() -> list:
 
 
 def _get_stock_name(symbol: str) -> str:
-    for s in _get_my_stocks():
-        if s.symbol == symbol:
-            return s.name
-    return symbol.replace(".KL", "")
+    if symbol in BURSA_STOCKS:
+        return BURSA_STOCKS[symbol]
+    if symbol in US_STOCKS:
+        return US_STOCKS[symbol]
+    if symbol in SGX_STOCKS:
+        return SGX_STOCKS[symbol]
+    return symbol.replace(".KL", "").replace(".SI", "")
 
 
 def _run_strategy_backtest(strategy: str, df: pd.DataFrame, capital: float):

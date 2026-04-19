@@ -4,6 +4,7 @@ import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useSta
 import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, fetchSMPBacktest, fetchBOSLongBacktest, fetchPSniperBacktest, fetchSMA520CrossBacktest, fetchGessupBacktest, fetchCMMACDBacktest, fetchMomentumGuardBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, fetchBestStrategy, type US1HBacktestResponse, type US1HTrade, type StrategyGradeResult } from "../../services/api";
 import { MY_STOCKS, MY_DEFAULT_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
 import { US_STOCKS, US_DEFAULT_STOCKS } from "../../constants/usStocks";
+import { SGX_STOCKS, SGX_DEFAULT_STOCKS } from "../../constants/sgxStocks";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
 import MYStrategySection, { type StrategyType, STRATEGY_DEFAULTS } from "./MYStrategySection";
@@ -26,7 +27,7 @@ const API_BASE = RAW_API_BASE
 
 type Mode = "Live" | "Backtest" | "Replay";
 type MobilePanel = "chart" | "watchlist" | "strategy";
-type RegionType = "MY" | "US";
+type RegionType = "MY" | "US" | "SG";
 
 export interface MYLayoutState {
   watchlist: boolean;
@@ -60,10 +61,11 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   const [mode, setMode] = useState<Mode>("Backtest");
   const [tradingActive, setTradingActive] = useState(false);
 
-  const marketStocks = region === "US" ? US_STOCKS : MY_STOCKS;
+  const marketStocks = region === "US" ? US_STOCKS : (region === "SG" ? SGX_STOCKS : MY_STOCKS);
+  const displaySymbol = useCallback((sym: string) => sym.replace(".KL", "").replace(".SI", ""), []);
 
   useEffect(() => {
-    const defaultStock = (region === "US" ? US_DEFAULT_STOCKS[0] : MY_DEFAULT_STOCKS[0]) ?? marketStocks[0];
+    const defaultStock = (region === "US" ? US_DEFAULT_STOCKS[0] : (region === "SG" ? SGX_DEFAULT_STOCKS[0] : MY_DEFAULT_STOCKS[0])) ?? marketStocks[0];
     if (!defaultStock) return;
     setSelectedSymbol(defaultStock.symbol);
     setSelectedName(defaultStock.name);
@@ -445,7 +447,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     const strat = activeStrategyRef.current;
     const initial: RunAllRow[] = targetSymbols.map((sym) => {
       const stock = marketStocks.find((s) => s.symbol === sym);
-      return { symbol: sym, name: stock?.name ?? sym.replace(".KL", ""), win_rate: 0, total_trades: 0, return_pct: 0, profit_factor: 0, max_dd: 0, sharpe: 0, status: "pending" as const };
+      return { symbol: sym, name: stock?.name ?? displaySymbol(sym), win_rate: 0, total_trades: 0, return_pct: 0, profit_factor: 0, max_dd: 0, sharpe: 0, status: "pending" as const };
     });
     setRunAllRows(initial);
 
@@ -511,7 +513,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     });
     await Promise.all(promises);
     if (!ac.signal.aborted) setRunAllRunning(false);
-  }, [backtestPeriod, atrSlMult, tp1RMult, tp2RMult, capital, disabledConditions, marketStocks]);
+  }, [backtestPeriod, atrSlMult, tp1RMult, tp2RMult, capital, disabledConditions, marketStocks, displaySymbol]);
 
   const runAllFavs = useCallback(async () => {
     const universe = resolveRunAllUniverse(runAllScope);
@@ -909,6 +911,15 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
                 >
                   美股
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setRegion("SG")}
+                  className={`px-2 py-1 text-[9px] font-bold transition ${
+                    region === "SG" ? "bg-cyan-500/20 text-cyan-300" : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  SGX
+                </button>
               </div>
             </div>
             {/* Period + Mode row
@@ -972,7 +983,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
                   <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-400 animate-spin" />
                 </div>
 
-                <div className="text-[9px] text-slate-500">{selectedName} ({selectedSymbol.replace(".KL", "")})</div>
+                <div className="text-[9px] text-slate-500">{selectedName} ({displaySymbol(selectedSymbol)})</div>
                 <div className="w-full h-1.5 rounded-full bg-slate-800/80 overflow-hidden mt-1">
                   <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-400 animate-[progress_2s_ease-in-out_infinite]" style={{ width: "100%", animation: "progress 2s ease-in-out infinite" }} />
                 </div>
@@ -1039,7 +1050,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
               loading={btLoading}
               symbol={selectedSymbol}
               symbolName={selectedName}
-              strategyLabel={`${activeStrategy.toUpperCase()} · ${selectedSymbol.replace(".KL", "")}`}
+              strategyLabel={`${activeStrategy.toUpperCase()} · ${displaySymbol(selectedSymbol)}`}
             />
           </div>
         </div>
@@ -1100,7 +1111,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
                 <div>
                   <h3 className="text-[14px] sm:text-[15px] font-bold text-slate-100">Strategy Comparison</h3>
                   <p className="text-[10px] text-slate-500">
-                    {scanLoading ? "Running all strategies…" : `${selectedName ?? selectedSymbol.replace(".KL", "")} · ${backtestPeriod} backtest`}
+                    {scanLoading ? "Running all strategies…" : `${selectedName ?? displaySymbol(selectedSymbol)} · ${backtestPeriod} backtest`}
                   </p>
                 </div>
               </div>
@@ -1427,7 +1438,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
                         <td className="px-4 py-2.5">
                           <div className="flex flex-col">
                             <span className="text-[11px] font-bold text-slate-200">{row.name}</span>
-                            <span className="text-[8px] text-slate-500">{row.symbol.replace(".KL", "")}</span>
+                            <span className="text-[8px] text-slate-500">{displaySymbol(row.symbol)}</span>
                           </div>
                         </td>
                         <td className="text-center px-3 py-2.5">
