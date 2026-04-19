@@ -283,6 +283,7 @@ type Props = {
   onRunTaggedStrategyStocks?: (symbols: string[], label?: string) => void | Promise<void>;
   onUpdateTaggedStrategyStocks?: (strategyType: string, symbols: string[]) => void | Promise<void>;
   onSelectTaggedStock?: (symbol: string, name: string) => void;
+  onTagStrategyType?: (strategyType: StrategyType) => void | Promise<void>;
   loading: boolean;
   symbol?: string;
   symbolName?: string;
@@ -291,8 +292,8 @@ type Props = {
   btData?: US1HBacktestResponse | null;
   livePrice?: number;
   stockTags?: StockTag[];
-  onTagStrategy?: () => void;
-  onUntagStrategy?: (strategyType: string) => void;
+  onTagStrategy?: () => void | Promise<void>;
+  onUntagStrategy?: (strategyType: string) => void | Promise<void>;
 };
 
 // ── Collapsible Section ──
@@ -340,6 +341,7 @@ export default function MYStrategySection({
   onRunTaggedStrategyStocks,
   onUpdateTaggedStrategyStocks,
   onSelectTaggedStock,
+  onTagStrategyType,
   loading,
   symbol,
   symbolName,
@@ -358,6 +360,8 @@ export default function MYStrategySection({
   const [checkedTaggedSymbols, setCheckedTaggedSymbols] = useState<Set<string>>(new Set());
   const [initialTaggedSymbols, setInitialTaggedSymbols] = useState<Set<string>>(new Set());
   const [tagUpdateStatus, setTagUpdateStatus] = useState<"idle" | "updating" | "updated" | "error">("idle");
+  const [optimisticTagState, setOptimisticTagState] = useState<Partial<Record<StrategyType, boolean>>>({});
+  const [tagTogglePending, setTagTogglePending] = useState<Set<StrategyType>>(new Set());
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const handleConfirmReset = useCallback(() => {
@@ -384,6 +388,11 @@ export default function MYStrategySection({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
+
+  useEffect(() => {
+    setOptimisticTagState({});
+    setTagTogglePending(new Set());
+  }, [symbol]);
 
   const strat = STRATEGIES.find(s => s.key === activeStrategy) ?? STRATEGIES[0];
   const selectedRunAllOption = runAllScopeOptions.find((o) => o.value === runAllScope) ?? null;
@@ -471,6 +480,49 @@ export default function MYStrategySection({
     }
   }
 
+  const isStrategyTagged = useCallback((strategyKey: StrategyType) => {
+    return optimisticTagState[strategyKey] ?? taggedStrategies.has(strategyKey);
+  }, [optimisticTagState, taggedStrategies]);
+
+  const isTagTogglePending = useCallback((strategyKey: StrategyType) => tagTogglePending.has(strategyKey), [tagTogglePending]);
+
+  const handleDropdownTagToggle = useCallback(async (strategyKey: StrategyType) => {
+    if (tagTogglePending.has(strategyKey)) return;
+
+    const currentlyTagged = optimisticTagState[strategyKey] ?? taggedStrategies.has(strategyKey);
+    const nextTagged = !currentlyTagged;
+    const canToggle = currentlyTagged
+      ? Boolean(onUntagStrategy)
+      : Boolean(onTagStrategyType || (strategyKey === activeStrategy && onTagStrategy));
+
+    if (!canToggle) return;
+
+    setOptimisticTagState((prev) => ({ ...prev, [strategyKey]: nextTagged }));
+    setTagTogglePending((prev) => {
+      const next = new Set(prev);
+      next.add(strategyKey);
+      return next;
+    });
+
+    try {
+      if (currentlyTagged) {
+        await Promise.resolve(onUntagStrategy?.(strategyKey));
+      } else if (onTagStrategyType) {
+        await Promise.resolve(onTagStrategyType(strategyKey));
+      } else if (strategyKey === activeStrategy) {
+        await Promise.resolve(onTagStrategy?.());
+      }
+    } catch {
+      setOptimisticTagState((prev) => ({ ...prev, [strategyKey]: currentlyTagged }));
+    } finally {
+      setTagTogglePending((prev) => {
+        const next = new Set(prev);
+        next.delete(strategyKey);
+        return next;
+      });
+    }
+  }, [tagTogglePending, optimisticTagState, taggedStrategies, onUntagStrategy, onTagStrategyType, activeStrategy, onTagStrategy]);
+
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/80">
       {/* Header with Strategy Dropdown */}
@@ -484,30 +536,41 @@ export default function MYStrategySection({
             <div className="flex-1 text-left min-w-0">
               <div className={`text-[11px] font-bold text-${strat.color}-400 uppercase tracking-wider truncate flex items-center gap-1.5`}>
                 {strat.label}
-                {taggedStrategies.has(strat.key) && (
+                {isStrategyTagged(strat.key) && (
                   <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-[8px] font-semibold normal-case tracking-normal">
-                    ★ {taggedStrategies.get(strat.key)!.win_rate != null ? `${taggedStrategies.get(strat.key)!.win_rate!.toFixed(0)}%` : "Tagged"}
+                    ★ {taggedStrategies.get(strat.key)?.win_rate != null ? `${taggedStrategies.get(strat.key)!.win_rate!.toFixed(0)}%` : "Tagged"}
                   </span>
                 )}
               </div>
               <div className="text-[9px] text-slate-500 mt-0.5">{strat.subtitle}</div>
             </div>
             {/* Tag / Untag button */}
-            {taggedStrategies.has(activeStrategy) ? (
-              <button
-                onClick={(e) => { e.stopPropagation(); onUntagStrategy?.(activeStrategy); }}
-                className="shrink-0 p-1 rounded hover:bg-amber-500/20 text-amber-400 transition" title="Remove tag"
-              >
-                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M17.707 9.293a1 1 0 010 1.414l-7 7a1 1 0 01-1.414 0l-7-7A.997.997 0 012 10V5a3 3 0 013-3h5c.256 0 .512.098.707.293l7 7zM5 6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
-              </button>
-            ) : btData && btData.metrics ? (
-              <button
-                onClick={(e) => { e.stopPropagation(); onTagStrategy?.(); }}
-                className="shrink-0 p-1 rounded hover:bg-slate-700/60 text-slate-500 hover:text-amber-400 transition" title="Tag this strategy"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5a1.99 1.99 0 011.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.99 1.99 0 013 12V7a4 4 0 014-4z" /></svg>
-              </button>
-            ) : null}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); void handleDropdownTagToggle(activeStrategy); }}
+              disabled={isTagTogglePending(activeStrategy)}
+              className={`shrink-0 p-1 rounded transition disabled:cursor-wait ${
+                isStrategyTagged(activeStrategy)
+                  ? "text-amber-300 hover:text-rose-300 hover:bg-rose-500/15"
+                  : "text-slate-500 hover:text-amber-400 hover:bg-slate-700/60"
+              }`}
+              title={isStrategyTagged(activeStrategy) ? "Untag active strategy" : "Tag active strategy"}
+            >
+              {isTagTogglePending(activeStrategy) ? (
+                <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <circle className="opacity-30" cx="12" cy="12" r="9" strokeWidth="2" />
+                  <path className="opacity-100" strokeLinecap="round" strokeWidth="2" d="M21 12a9 9 0 00-9-9" />
+                </svg>
+              ) : isStrategyTagged(activeStrategy) ? (
+                <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M17.707 9.293a1 1 0 010 1.414l-7 7a1 1 0 01-1.414 0l-7-7A.997.997 0 012 10V5a3 3 0 013-3h5c.256 0 .512.098.707.293l7 7zM5 6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                </svg>
+              ) : (
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5a1.99 1.99 0 011.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.99 1.99 0 013 12V7a4 4 0 014-4z" />
+                </svg>
+              )}
+            </button>
             <svg className={`w-3.5 h-3.5 text-slate-500 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
@@ -537,9 +600,9 @@ export default function MYStrategySection({
                       <div className="flex-1 min-w-0">
                         <div className={`text-[10px] font-semibold ${isActive ? `text-${s.color}-400` : "text-slate-200"} flex items-center gap-1.5`}>
                           {s.label}
-                          {taggedStrategies.has(s.key) && (
+                          {isStrategyTagged(s.key) && (
                             <span className="inline-flex items-center gap-0.5 px-1 py-px rounded-full bg-amber-500/20 text-amber-400 text-[7px] font-semibold">
-                              ★ {taggedStrategies.get(s.key)!.win_rate != null ? `${taggedStrategies.get(s.key)!.win_rate!.toFixed(0)}%` : "Tagged"}
+                              ★ {taggedStrategies.get(s.key)?.win_rate != null ? `${taggedStrategies.get(s.key)!.win_rate!.toFixed(0)}%` : "Tagged"}
                             </span>
                           )}
                         </div>
@@ -547,6 +610,33 @@ export default function MYStrategySection({
                       </div>
                       {isActive && (
                         <svg className={`w-3 h-3 text-${s.color}-400`} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => { void handleDropdownTagToggle(s.key); }}
+                      disabled={isTagTogglePending(s.key)}
+                      className={`shrink-0 px-2 py-1.5 rounded border transition disabled:cursor-wait ${
+                        isStrategyTagged(s.key)
+                          ? "border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-rose-500/20 hover:text-rose-300"
+                          : "border-slate-600/50 bg-slate-800/60 text-slate-300 hover:bg-slate-700/70 hover:text-amber-300"
+                      }`}
+                      title={isStrategyTagged(s.key) ? `Untag: ${s.label}` : `Tag: ${s.label}`}
+                    >
+                      {isTagTogglePending(s.key) ? (
+                        <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <circle className="opacity-30" cx="12" cy="12" r="9" strokeWidth="2" />
+                          <path className="opacity-100" strokeLinecap="round" strokeWidth="2" d="M21 12a9 9 0 00-9-9" />
+                        </svg>
+                      ) : isStrategyTagged(s.key) ? (
+                        <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M17.707 9.293a1 1 0 010 1.414l-7 7a1 1 0 01-1.414 0l-7-7A.997.997 0 012 10V5a3 3 0 013-3h5c.256 0 .512.098.707.293l7 7zM5 6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5a1.99 1.99 0 011.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.99 1.99 0 013 12V7a4 4 0 014-4z" />
+                        </svg>
                       )}
                     </button>
 

@@ -674,36 +674,63 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   const handleTagCurrentStrategy = useCallback(async () => {
     if (!btData?.metrics) return;
     const m = btData.metrics;
-    try {
-      await fetch(`${API_BASE}/stock/my-stock-tags`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          symbol: selectedSymbol,
-          strategy_type: activeStrategy,
-          strategy_name: activeStrategy.toUpperCase(),
-          period: backtestPeriod,
-          capital,
-          win_rate: m.win_rate,
-          return_pct: m.total_return_pct,
-          profit_factor: m.profit_factor,
-          max_dd_pct: m.max_drawdown_pct,
-          sharpe: m.sharpe_ratio,
-          total_trades: m.total_trades,
-        }),
-      });
-      fetchTags();
-    } catch { /* ignore */ }
+    const res = await fetch(`${API_BASE}/stock/my-stock-tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        symbol: selectedSymbol,
+        strategy_type: activeStrategy,
+        strategy_name: activeStrategy.toUpperCase(),
+        period: backtestPeriod,
+        capital,
+        win_rate: m.win_rate,
+        return_pct: m.total_return_pct,
+        profit_factor: m.profit_factor,
+        max_dd_pct: m.max_drawdown_pct,
+        sharpe: m.sharpe_ratio,
+        total_trades: m.total_trades,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to tag strategy ${activeStrategy}`);
+    }
+    await fetchTags();
+  }, [selectedSymbol, activeStrategy, backtestPeriod, capital, btData, fetchTags]);
+
+  const handleTagStrategyByType = useCallback(async (strategyType: StrategyType) => {
+    const metrics = strategyType === activeStrategy ? (btData?.metrics ?? null) : null;
+    const res = await fetch(`${API_BASE}/stock/my-stock-tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        symbol: selectedSymbol,
+        strategy_type: strategyType,
+        strategy_name: strategyType.toUpperCase(),
+        period: backtestPeriod,
+        capital,
+        win_rate: metrics?.win_rate ?? null,
+        return_pct: metrics?.total_return_pct ?? null,
+        profit_factor: metrics?.profit_factor ?? null,
+        max_dd_pct: metrics?.max_drawdown_pct ?? null,
+        sharpe: metrics?.sharpe_ratio ?? null,
+        total_trades: metrics?.total_trades ?? null,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to tag strategy ${strategyType}`);
+    }
+    await fetchTags();
   }, [selectedSymbol, activeStrategy, backtestPeriod, capital, btData, fetchTags]);
 
   // ── Untag a strategy for current stock
   const handleUntagStrategy = useCallback(async (strategyType: string) => {
     const tag = stockTags.find(t => t.symbol === selectedSymbol && t.strategy_type === strategyType);
     if (!tag) return;
-    try {
-      await fetch(`${API_BASE}/stock/my-stock-tags/${tag.id}`, { method: "DELETE" });
-      fetchTags();
-    } catch { /* ignore */ }
+    const res = await fetch(`${API_BASE}/stock/my-stock-tags/${tag.id}`, { method: "DELETE" });
+    if (!res.ok) {
+      throw new Error(`Failed to untag strategy ${strategyType}`);
+    }
+    await fetchTags();
   }, [selectedSymbol, stockTags, fetchTags]);
 
   // Auto-run when symbol changes (clicking a stock loads its chart)
@@ -965,6 +992,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             livePrice={price}
             stockTags={stockTags}
             onTagStrategy={handleTagCurrentStrategy}
+            onTagStrategyType={handleTagStrategyByType}
             onUntagStrategy={handleUntagStrategy}
           />
         </aside>
