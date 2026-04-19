@@ -98,7 +98,7 @@ export default function MYMainChart({
   const chartRef = useRef<IChartApi | null>(null);
 
   // Weekly SuperTrend overlay toggle
-  const [wSuperTrendOn, setWSuperTrendOn] = useState(false);
+  const [wSuperTrendOn, setWSuperTrendOn] = useState(overlays.has("w_supertrend"));
 
   // HalfTrend overlay toggle
   const [htOn, setHtOn] = useState(overlays.has("halftrend"));
@@ -410,8 +410,8 @@ export default function MYMainChart({
           </span>
         )}
 
-        {/* Weekly SuperTrend toggle — TPC only */}
-        {strategy === "tpc" && candles.some((c) => c.st_dir != null) && (
+        {/* Weekly SuperTrend toggle — TPC/GessUp */}
+        {(strategy === "tpc" || strategy === "gessup") && candles.some((c) => c.st_dir != null) && (
         <button
           onClick={() => setWSuperTrendOn((v) => !v)}
           className={`text-[10px] px-2 py-0.5 rounded border transition font-medium ${
@@ -424,8 +424,8 @@ export default function MYMainChart({
         </button>
         )}
 
-        {/* HalfTrend toggle — TPC only */}
-        {strategy === "tpc" && candles.some((c) => c.ht_line != null) && (
+        {/* HalfTrend toggle — TPC/GessUp */}
+        {(strategy === "tpc" || strategy === "gessup") && candles.some((c) => c.ht_line != null) && (
         <button
           onClick={() => setHtOn((v) => !v)}
           className={`text-[10px] px-2 py-0.5 rounded border transition font-medium ${

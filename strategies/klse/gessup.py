@@ -190,7 +190,8 @@ def build_indicators(
 
     # weekly_supertrend returns -1 bullish, 1 bearish; UI convention uses 1 bullish.
     st_dir = np.where(weekly_dir_raw < 0, 1, -1)
-    ht_dir = np.where(ht_trend == 0, 1, -1)
+    # Keep same convention as existing chart logic: 0 bullish, 1 bearish.
+    ht_dir = ht_trend.copy()
 
     signal_ok = np.ones(len(out), dtype=bool)
     if "weekly_supertrend" not in off:

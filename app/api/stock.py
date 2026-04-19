@@ -4712,6 +4712,30 @@ async def scan_best_strategy(
         from strategies.futures.data_loader import load_yfinance
 
         results = []
+        pine_backends: set[str] = set()
+        pine_label_map: dict[str, str] = {}
+
+        # Discover runnable Pine scripts and their mapped backend strategy keys.
+        try:
+            pine_payload = list_pine_scripts()
+            scripts = pine_payload.get("scripts", []) if isinstance(pine_payload, dict) else []
+            for item in scripts:
+                if not isinstance(item, dict):
+                    continue
+                if not bool(item.get("runnable", False)):
+                    continue
+
+                backend = str(item.get("backend_strategy") or item.get("strategy_key") or "").strip().lower()
+                if not backend:
+                    continue
+
+                pine_backends.add(backend)
+
+                file_name = str(item.get("file_name") or "").strip()
+                strategy_key = str(item.get("strategy_key") or "").strip()
+                pine_label_map.setdefault(backend, file_name or strategy_key or backend)
+        except Exception as exc:
+            logger.debug("Pine discovery failed in scan_best_strategy: %s", exc)
 
         # --- TPC ---
         try:
@@ -5019,6 +5043,82 @@ async def scan_best_strategy(
         except Exception as exc:
             logger.debug("Momentum Guard scan failed for %s: %s", symbol, exc)
             results.append({"strategy": "momentum_guard", "label": "Momentum Guard", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
+
+        # --- Additional Pine strategies not already covered above ---
+        existing_keys = {str(r.get("strategy", "")).strip().lower() for r in results}
+        extra_pine_keys = sorted(k for k in pine_backends if k and k not in existing_keys)
+
+        for backend in extra_pine_keys:
+            try:
+                df = load_yfinance(symbol=symbol, interval="1d", period=period)
+                if df.empty or len(df) < 60:
+                    raise ValueError("Not enough data")
+
+                df.attrs["symbol"] = symbol
+                raw = _run_strategy_backtest(backend, df, capital)
+                if raw is None:
+                    raise ValueError(f"Strategy '{backend}' is not supported")
+
+                wins = [t for t in raw.trades if t.win]
+                losses = [t for t in raw.trades if not t.win]
+                gross_win = sum(t.pnl for t in wins)
+                gross_loss = abs(sum(t.pnl for t in losses))
+                profit_factor = round(gross_win / gross_loss, 2) if gross_loss > 0 else 999.0
+
+                # Approximate Sharpe from trade PnL stream.
+                pnl_stream = [float(t.pnl) for t in raw.trades]
+                if len(pnl_stream) > 1:
+                    avg_r = sum(pnl_stream) / len(pnl_stream)
+                    variance = sum((r - avg_r) ** 2 for r in pnl_stream) / len(pnl_stream)
+                    std_r = variance ** 0.5
+                    sharpe_ratio = round((avg_r / std_r) * (252 ** 0.5), 2) if std_r > 0 else 0.0
+                else:
+                    sharpe_ratio = 0.0
+
+                # Approximate max drawdown from cumulative trade equity.
+                eq_curve = [float(capital)]
+                for t in raw.trades:
+                    eq_curve.append(eq_curve[-1] + float(t.pnl))
+                peak = eq_curve[0]
+                max_dd = 0.0
+                for v in eq_curve:
+                    if v > peak:
+                        peak = v
+                    dd = ((peak - v) / peak) * 100.0 if peak > 0 else 0.0
+                    if dd > max_dd:
+                        max_dd = dd
+
+                m = {
+                    "total_return_pct": raw.total_return_pct,
+                    "win_rate": raw.win_rate,
+                    "profit_factor": profit_factor,
+                    "sharpe_ratio": sharpe_ratio,
+                    "max_drawdown_pct": round(max_dd, 2),
+                    "total_trades": raw.total_trades,
+                    "winners": len(wins),
+                    "losers": len(losses),
+                }
+
+                grade, score = _grade_metrics(m)
+                pine_label = pine_label_map.get(backend, backend)
+                results.append({
+                    "strategy": backend,
+                    "label": f"Pine · {pine_label}",
+                    "grade": grade,
+                    "score": score,
+                    "metrics": m,
+                })
+            except Exception as exc:
+                pine_label = pine_label_map.get(backend, backend)
+                logger.debug("Pine strategy scan failed for %s (%s): %s", symbol, backend, exc)
+                results.append({
+                    "strategy": backend,
+                    "label": f"Pine · {pine_label}",
+                    "grade": "F",
+                    "score": 0,
+                    "metrics": None,
+                    "error": str(exc),
+                })
 
         # Sort by score descending
         results.sort(key=lambda x: -x["score"])

@@ -511,31 +511,61 @@ export default function MYStrategySection({
 
           {dropdownOpen && (
             <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700/60 rounded-lg shadow-xl shadow-black/30 overflow-hidden">
-              {CORE_DROPDOWN_STRATEGIES.map(s => (
-                <button
-                  key={s.key}
-                  onClick={() => { onStrategyChange(s.key); setDropdownOpen(false); }}
-                  className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition hover:bg-slate-800/60 ${
-                    activeStrategy === s.key ? `bg-${s.color}-500/10 border-l-2 border-${s.color}-400` : "border-l-2 border-transparent"
-                  }`}
-                >
-                  <span className="text-sm">{s.icon}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className={`text-[10px] font-semibold ${activeStrategy === s.key ? `text-${s.color}-400` : "text-slate-200"} flex items-center gap-1.5`}>
-                      {s.label}
-                      {taggedStrategies.has(s.key) && (
-                        <span className="inline-flex items-center gap-0.5 px-1 py-px rounded-full bg-amber-500/20 text-amber-400 text-[7px] font-semibold">
-                          ★ {taggedStrategies.get(s.key)!.win_rate != null ? `${taggedStrategies.get(s.key)!.win_rate!.toFixed(0)}%` : "Tagged"}
-                        </span>
+              {CORE_DROPDOWN_STRATEGIES.map((s) => {
+                const isActive = activeStrategy === s.key;
+                return (
+                  <div
+                    key={s.key}
+                    className={`w-full flex items-stretch gap-1 px-2 py-1 border-l-2 ${
+                      isActive ? `bg-${s.color}-500/10 border-${s.color}-400` : "border-transparent"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onStrategyChange(s.key);
+                        setDropdownOpen(false);
+                      }}
+                      className="flex-1 flex items-center gap-2 px-2 py-1.5 text-left rounded transition hover:bg-slate-800/60"
+                      title={`Select strategy: ${s.label}`}
+                    >
+                      <span className="text-sm">{s.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-[10px] font-semibold ${isActive ? `text-${s.color}-400` : "text-slate-200"} flex items-center gap-1.5`}>
+                          {s.label}
+                          {taggedStrategies.has(s.key) && (
+                            <span className="inline-flex items-center gap-0.5 px-1 py-px rounded-full bg-amber-500/20 text-amber-400 text-[7px] font-semibold">
+                              ★ {taggedStrategies.get(s.key)!.win_rate != null ? `${taggedStrategies.get(s.key)!.win_rate!.toFixed(0)}%` : "Tagged"}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[8px] text-slate-500">{s.subtitle}</div>
+                      </div>
+                      {isActive && (
+                        <svg className={`w-3 h-3 text-${s.color}-400`} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
                       )}
-                    </div>
-                    <div className="text-[8px] text-slate-500">{s.subtitle}</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onStrategyChange(s.key);
+                        onRunBacktest();
+                        setDropdownOpen(false);
+                      }}
+                      disabled={loading}
+                      className={`shrink-0 px-2 py-1.5 rounded text-[8px] font-bold uppercase tracking-wide border transition ${
+                        loading
+                          ? "border-slate-700/40 bg-slate-800/50 text-slate-500 cursor-not-allowed"
+                          : "border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
+                      }`}
+                      title={`Run backtest: ${s.label}`}
+                    >
+                      Run
+                    </button>
                   </div>
-                  {activeStrategy === s.key && (
-                    <svg className={`w-3 h-3 text-${s.color}-400`} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-                  )}
-                </button>
-              ))}
+                );
+              })}
 
               <div className="mx-2 my-1 border-t border-slate-700/60" />
               <div className="px-3 py-1 text-[8px] uppercase tracking-widest text-slate-500 font-bold">Pine Script</div>
@@ -651,7 +681,7 @@ export default function MYStrategySection({
         }
 
         const stBull = last.st_dir === 1;
-        const htBull = last.ht_dir === 1;
+        const htBull = last.ht_dir === 0;
         const emaUp = last.ema_fast != null && last.ema_slow != null && last.ema_fast > last.ema_slow;
         const rsiUpper = activeStrategy === "momentum_guard" ? 65 : 72;
         const rsiOk = last.rsi != null && last.rsi > 40 && last.rsi < rsiUpper;
@@ -1030,23 +1060,7 @@ export default function MYStrategySection({
         </div>
       )}
 
-      {/* ═══ Run Backtest button ═══ */}
       <div className="shrink-0 p-2 border-t border-slate-800/40">
-        <button
-          onClick={onRunBacktest}
-          disabled={loading}
-          className="group relative w-full py-2.5 rounded-xl text-[11px] font-bold text-white overflow-hidden transition-all active:scale-[0.97] disabled:opacity-40 hover:shadow-lg hover:shadow-cyan-500/20"
-        >
-          <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 to-blue-500 group-hover:from-cyan-400 group-hover:to-blue-400 transition-all" />
-          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.15),transparent_70%)]" />
-          <span className="relative flex items-center justify-center gap-1.5">
-            {loading ? (
-              <><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg> Running {symbolName ?? symbol?.replace(".KL", "") ?? ""}…</>
-            ) : (
-              <><svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.84A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.27l9.344-5.891a1.5 1.5 0 000-2.538L6.3 2.841z" /></svg> Run {symbolName ?? symbol?.replace(".KL", "") ?? "Backtest"}</>
-            )}
-          </span>
-        </button>
         <div className="text-[8px] text-slate-600 text-center mt-1">
           {disabledConditions.size > 0
             ? `${disabledConditions.size} condition${disabledConditions.size > 1 ? "s" : ""} disabled`
