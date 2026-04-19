@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { MY_STOCKS, MY_SECTORS, MY_DEFAULT_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
+import { US_STOCKS, US_SECTORS, US_DEFAULT_STOCKS } from "../../constants/usStocks";
 import { fetchNearATH, type NearATHStock, fetchVolBreakout, type VolBreakoutStock, fetchOpportunities, type OpportunityStock } from "../../services/api";
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE;
@@ -22,16 +23,6 @@ type WatchlistItem = {
   change_pct: number;
   signal: "BUY" | "SELL" | "HOLD" | "—";
 };
-
-const INITIAL_WATCHLIST: WatchlistItem[] = MY_DEFAULT_STOCKS.map((s) => ({
-  symbol: s.symbol,
-  name: s.name,
-  sector: s.sector,
-  cap: s.cap,
-  price: 0,
-  change_pct: 0,
-  signal: "—" as const,
-}));
 
 type StockTag = { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null };
 type ColorLabel = { id: number; symbol: string; color: string; market: string };
@@ -57,6 +48,7 @@ type PositionAlertRow = {
 };
 
 type ViewMode = "favs" | "all";
+type RegionType = "MY" | "US";
 
 
 // ===== Design Constants =====
@@ -87,6 +79,7 @@ const SORT_COLUMNS = [
 ] as const;
 
 type Props = {
+  region?: RegionType;
   activeSymbol: string;
   onSelectSymbol: (sym: string, name: string) => void;
   stockTags?: StockTag[];
@@ -97,16 +90,24 @@ type Props = {
   onRemoveColor?: (symbol: string) => void;
 };
 
-export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = [], favSymbols, onToggleFav, colorLabels = [], onSetColor, onRemoveColor }: Props) {
-  const [items, setItems] = useState<WatchlistItem[]>(INITIAL_WATCHLIST);
+export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbol, stockTags = [], favSymbols, onToggleFav, colorLabels = [], onSetColor, onRemoveColor }: Props) {
+  const marketStocks = region === "US" ? US_STOCKS : MY_STOCKS;
+  const marketSectors = region === "US" ? US_SECTORS : MY_SECTORS;
+  const marketDefaultStocks = region === "US" ? US_DEFAULT_STOCKS : MY_DEFAULT_STOCKS;
+  const marketStockStrategy: Record<string, string | undefined> = region === "US" ? {} : MY_STOCK_STRATEGY;
+  const currencyPrefix = region === "US" ? "$" : "RM";
+
+  const [items, setItems] = useState<WatchlistItem[]>([]);
 
   useEffect(() => {
-    const syms = favSymbols.length > 0 ? favSymbols : INITIAL_WATCHLIST.map((i) => i.symbol);
+    const marketSymbols = new Set(marketStocks.map((s) => s.symbol));
+    const preferred = favSymbols.length > 0 ? favSymbols.filter((sym) => marketSymbols.has(sym)) : [];
+    const syms = preferred.length > 0 ? preferred : marketDefaultStocks.map((i) => i.symbol);
     setItems((prev) => {
       const newItems: WatchlistItem[] = syms.map((sym) => {
         const existing = prev.find((p) => p.symbol === sym);
         if (existing) return existing;
-        const stock = MY_STOCKS.find((s) => s.symbol === sym);
+        const stock = marketStocks.find((s) => s.symbol === sym);
         return {
           symbol: sym,
           name: stock?.name ?? sym,
@@ -119,7 +120,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
       });
       return newItems;
     });
-  }, [favSymbols]);
+  }, [favSymbols, marketDefaultStocks, marketStocks]);
 
   const [viewMode, setViewMode] = useState<ViewMode>("favs");
   const [sectorFilter, setSectorFilter] = useState<string>("ALL");
@@ -141,9 +142,13 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
       setBursaResults([]);
       return;
     }
+    if (region !== "MY") {
+      setBursaResults([]);
+      return;
+    }
     // Check if local results already cover it
     const q = searchQuery.toLowerCase();
-    const localHits = MY_STOCKS.filter(
+    const localHits = marketStocks.filter(
       (s) => s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q),
     );
     if (localHits.length > 0) {
@@ -174,7 +179,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
       setBursaSearching(false);
     }, 600);
     return () => { if (bursaTimer.current) clearTimeout(bursaTimer.current); };
-  }, [searchQuery]);
+  }, [searchQuery, region, marketStocks]);
 
   // Build quick lookup: symbol → color
   const colorMap = new Map(colorLabels.map((l) => [l.symbol, l.color]));
@@ -197,7 +202,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
   const allVisibleSymbols = (() => {
     const base = items.map((w) => w.symbol);
     if (viewMode === "all" || searchQuery) {
-      const extra = MY_STOCKS.map((s) => s.symbol).filter((s) => !base.includes(s));
+      const extra = marketStocks.map((s) => s.symbol).filter((s) => !base.includes(s));
       return [...base, ...extra];
     }
     return base;
@@ -263,7 +268,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
     const q = searchQuery.toLowerCase();
     let list: WatchlistItem[] = [];
     if (q) {
-      list = MY_STOCKS.filter((s) =>
+      list = marketStocks.filter((s) =>
         s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
       ).map((s) => {
         const qt = quotes[s.symbol];
@@ -279,7 +284,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
       });
     } else if (colorFilter) {
       const coloredSymbols = new Set(colorLabels.filter((l) => l.color === colorFilter).map((l) => l.symbol));
-      list = MY_STOCKS.filter((s) => {
+      list = marketStocks.filter((s) => {
         if (!coloredSymbols.has(s.symbol)) return false;
         if (sectorFilter !== "ALL" && s.sector !== sectorFilter) return false;
         return true;
@@ -301,7 +306,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
         return qt ? { ...i, price: qt.price, change_pct: qt.change_pct } : i;
       });
     } else {
-      list = MY_STOCKS.filter((s) => {
+      list = marketStocks.filter((s) => {
         if (sectorFilter !== "ALL" && s.sector !== sectorFilter) return false;
         return true;
       }).map((s) => {
@@ -329,7 +334,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
   })();
 
   const sectorCount = sectorFilter !== "ALL"
-    ? MY_STOCKS.filter((s) => s.sector === sectorFilter).length
+    ? marketStocks.filter((s) => s.sector === sectorFilter).length
     : 0;
 
   // ── Scanner state ──
@@ -344,12 +349,12 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
     setAthScanning(true);
     setAthResults([]);
     try {
-      const res = await fetchNearATH(30, "MY");
+      const res = await fetchNearATH(30, region);
       setAthResults(res.stocks);
       setAthScanned(res.scanned);
     } catch { /* ignore */ }
     setAthScanning(false);
-  }, []);
+  }, [region]);
 
   // ── Vol Breakout scanner ──
   const [vbDialogOpen, setVbDialogOpen] = useState(false);
@@ -362,12 +367,12 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
     setVbScanning(true);
     setVbResults([]);
     try {
-      const res = await fetchVolBreakout(30, "MY");
+      const res = await fetchVolBreakout(30, region);
       setVbResults(res.stocks);
       setVbScanned(res.scanned);
     } catch { /* ignore */ }
     setVbScanning(false);
-  }, []);
+  }, [region]);
 
   // ── Opportunity (Strategy) Scanner ──
   const [oppDialogOpen, setOppDialogOpen] = useState(false);
@@ -394,12 +399,13 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
     setOppScanning(true);
     setOppResults([]);
     try {
-      const res = await fetchOpportunities(oppStrategy, "6mo", 5000);
+      const symbols = region === "US" ? marketStocks.map((s) => s.symbol) : undefined;
+      const res = await fetchOpportunities(oppStrategy, "6mo", 5000, symbols);
       setOppResults(res.results);
       setOppScanned(res.total_scanned);
     } catch { /* ignore */ }
     setOppScanning(false);
-  }, [oppStrategy]);
+  }, [oppStrategy, region, marketStocks]);
 
   // ── Position Alert Scanner (tagged stocks only) ──
   const [posDialogOpen, setPosDialogOpen] = useState(false);
@@ -413,8 +419,10 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
     setPosResults([]);
 
     try {
+      const marketSymbolSet = new Set(marketStocks.map((s) => s.symbol));
       const tagsBySymbol = new Map<string, string[]>();
       for (const tag of stockTags) {
+        if (!marketSymbolSet.has(tag.symbol)) continue;
         if (!tagsBySymbol.has(tag.symbol)) tagsBySymbol.set(tag.symbol, []);
         const strategies = tagsBySymbol.get(tag.symbol)!;
         if (!strategies.includes(tag.strategy_type)) strategies.push(tag.strategy_type);
@@ -476,7 +484,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
         const usedStrategy = strategyBySymbol.get(symbol) ?? taggedStrategies[0] ?? "—";
         const found = hitBySymbol.get(symbol);
         const hit = found?.hit ?? null;
-        const stockMeta = MY_STOCKS.find((s) => s.symbol === symbol);
+        const stockMeta = marketStocks.find((s) => s.symbol === symbol);
         const marketPrice = quotes[symbol]?.price ?? 0;
 
         if (hit) {
@@ -535,7 +543,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
     } finally {
       setPosScanning(false);
     }
-  }, [stockTags, quotes]);
+  }, [stockTags, quotes, marketStocks]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/60">
@@ -671,7 +679,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search Bursa symbol or name…"
+            placeholder={region === "MY" ? "Search Bursa symbol or name…" : "Search US symbol or name…"}
             className="flex-1 bg-transparent text-[10px] text-slate-200 placeholder-slate-500 outline-none min-w-0"
           />
           {searchQuery && (
@@ -738,10 +746,10 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                   }`}
                 >
                   <span>All Sectors</span>
-                  <span className="text-[9px] text-slate-600">{viewMode === "favs" ? items.length : MY_STOCKS.length}</span>
+                  <span className="text-[9px] text-slate-600">{viewMode === "favs" ? items.length : marketStocks.length}</span>
                 </button>
-                {MY_SECTORS.map((s) => {
-                  const count = MY_STOCKS.filter((st) => st.sector === s).length;
+                {marketSectors.map((s) => {
+                  const count = marketStocks.filter((st) => st.sector === s).length;
                   if (count === 0) return null;
                   return (
                     <button
@@ -877,18 +885,18 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                   <span className={`text-[11px] font-bold leading-tight truncate ${active ? "text-cyan-300" : "text-slate-100"}`}>
                     {item.name}
                   </span>
-                  {MY_STOCK_STRATEGY[item.symbol] && (
+                  {marketStockStrategy[item.symbol] && (
                     <span className={`text-[6px] px-1 py-[1px] rounded font-bold uppercase tracking-wider ${
-                      MY_STOCK_STRATEGY[item.symbol] === "tpc"
+                      marketStockStrategy[item.symbol] === "tpc"
                         ? "bg-cyan-500/20 text-cyan-400"
-                        : MY_STOCK_STRATEGY[item.symbol] === "momentum_guard"
+                        : marketStockStrategy[item.symbol] === "momentum_guard"
                           ? "bg-cyan-500/20 text-cyan-300"
-                        : MY_STOCK_STRATEGY[item.symbol] === "vpb3"
+                        : marketStockStrategy[item.symbol] === "vpb3"
                           ? "bg-emerald-500/20 text-emerald-400"
                           : "bg-amber-500/20 text-amber-400"
                     }`}
                     >
-                      {MY_STOCK_STRATEGY[item.symbol]}
+                      {marketStockStrategy[item.symbol]}
                     </span>
                   )}
                   {viewMode === "all" && sectorFilter === "ALL" && (
@@ -928,7 +936,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
 
               <div className="text-right w-16 shrink-0">
                 <span className={`text-[10px] font-bold tabular-nums ${item.price === 0 ? "text-slate-700" : "text-slate-100"}`}>
-                  {item.price === 0 ? "—" : `RM${item.price.toFixed(2)}`}
+                  {item.price === 0 ? "—" : `${currencyPrefix}${item.price.toFixed(2)}`}
                 </span>
               </div>
 
@@ -956,7 +964,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
-            <span className="text-[10px] text-slate-400">Searching Bursa…</span>
+            <span className="text-[10px] text-slate-400">Searching {region === "MY" ? "Bursa" : "symbols"}…</span>
           </div>
         )}
 
@@ -995,7 +1003,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
 
                   <div className="text-right w-16 shrink-0">
                     <span className={`text-[10px] font-bold tabular-nums ${item.price === 0 ? "text-slate-700" : "text-slate-100"}`}>
-                      {item.price === 0 ? "—" : `RM${item.price.toFixed(2)}`}
+                      {item.price === 0 ? "—" : `${currencyPrefix}${item.price.toFixed(2)}`}
                     </span>
                   </div>
 
@@ -1084,7 +1092,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
               {athScanning ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-3">
                   <svg className="w-8 h-8 text-amber-400 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-                  <p className="text-[11px] text-slate-400">Scanning {MY_STOCKS.length} stocks for ATH proximity…</p>
+                  <p className="text-[11px] text-slate-400">Scanning {marketStocks.length} stocks for ATH proximity…</p>
                   <p className="text-[9px] text-slate-600">This may take a minute</p>
                 </div>
               ) : athResults.length === 0 ? (
@@ -1110,7 +1118,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                         <tr
                           key={s.symbol}
                           onClick={() => {
-                            const stock = MY_STOCKS.find(st => st.symbol === s.symbol);
+                            const stock = marketStocks.find(st => st.symbol === s.symbol);
                             if (stock) onSelectSymbol(stock.symbol, stock.name);
                             setAthDialogOpen(false);
                           }}
@@ -1185,7 +1193,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
               {vbScanning ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-3">
                   <svg className="w-8 h-8 text-violet-400 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-                  <p className="text-[11px] text-slate-400">Scanning {MY_STOCKS.length} stocks for volume breakouts…</p>
+                  <p className="text-[11px] text-slate-400">Scanning {marketStocks.length} stocks for volume breakouts…</p>
                   <p className="text-[9px] text-slate-600">This may take a minute</p>
                 </div>
               ) : vbResults.length === 0 ? (
@@ -1220,7 +1228,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                         <tr
                           key={s.symbol}
                           onClick={() => {
-                            const stock = MY_STOCKS.find(st => st.symbol === s.symbol);
+                            const stock = marketStocks.find(st => st.symbol === s.symbol);
                             if (stock) onSelectSymbol(stock.symbol, stock.name);
                             setVbDialogOpen(false);
                           }}
@@ -1323,7 +1331,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                         <tr
                           key={s.symbol}
                           onClick={() => {
-                            const stock = MY_STOCKS.find(st => st.symbol === s.symbol);
+                            const stock = marketStocks.find(st => st.symbol === s.symbol);
                             if (stock) onSelectSymbol(stock.symbol, stock.name);
                             setOppDialogOpen(false);
                           }}
@@ -1455,7 +1463,7 @@ export default function MYWatchlist({ activeSymbol, onSelectSymbol, stockTags = 
                         <tr
                           key={`${row.symbol}-${row.strategy_type}`}
                           onClick={() => {
-                            const stock = MY_STOCKS.find((st) => st.symbol === row.symbol);
+                            const stock = marketStocks.find((st) => st.symbol === row.symbol);
                             if (stock) onSelectSymbol(stock.symbol, stock.name);
                             setPosDialogOpen(false);
                           }}

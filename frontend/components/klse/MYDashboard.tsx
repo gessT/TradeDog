@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState, useMemo } from "react";
 import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, fetchSMPBacktest, fetchPSniperBacktest, fetchSMA520CrossBacktest, fetchGessupBacktest, fetchCMMACDBacktest, fetchMomentumGuardBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, fetchBestStrategy, type US1HBacktestResponse, type US1HTrade, type StrategyGradeResult } from "../../services/api";
-import { MY_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
+import { MY_STOCKS, MY_DEFAULT_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
+import { US_STOCKS, US_DEFAULT_STOCKS } from "../../constants/usStocks";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
 import MYStrategySection, { type StrategyType, STRATEGY_DEFAULTS } from "./MYStrategySection";
@@ -25,6 +26,7 @@ const API_BASE = RAW_API_BASE
 
 type Mode = "Live" | "Backtest" | "Replay";
 type MobilePanel = "chart" | "watchlist" | "strategy";
+type RegionType = "MY" | "US";
 
 export interface MYLayoutState {
   watchlist: boolean;
@@ -52,10 +54,25 @@ interface MYDashboardProps {
 
 const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYDashboard({ onLayoutChange, layout, onStockChange }, ref) {
   // ── Core state
+  const [region, setRegion] = useState<RegionType>("MY");
   const [selectedSymbol, setSelectedSymbol] = useState("5347.KL");
   const [selectedName, setSelectedName] = useState("Tenaga Nasional");
   const [mode, setMode] = useState<Mode>("Backtest");
   const [tradingActive, setTradingActive] = useState(false);
+
+  const marketStocks = region === "US" ? US_STOCKS : MY_STOCKS;
+
+  useEffect(() => {
+    const defaultStock = (region === "US" ? US_DEFAULT_STOCKS[0] : MY_DEFAULT_STOCKS[0]) ?? marketStocks[0];
+    if (!defaultStock) return;
+    setSelectedSymbol(defaultStock.symbol);
+    setSelectedName(defaultStock.name);
+    setPrice(0);
+    setChange(0);
+    setChangePct(0);
+    setBtData(null);
+    setSelectedTrade(null);
+  }, [region, marketStocks]);
 
   // ── Mobile panel toggle
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chart");
@@ -198,13 +215,13 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   const [favSymbols, setFavSymbols] = useState<string[]>([]);
   const fetchFavs = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/stock/starred?market=MY`);
+      const res = await fetch(`${API_BASE}/stock/starred?market=${region}`);
       if (res.ok) {
         const data: { symbol: string }[] = await res.json();
         setFavSymbols(data.map((d) => d.symbol));
       }
     } catch { /* offline */ }
-  }, []);
+  }, [region]);
   useEffect(() => { fetchFavs(); }, [fetchFavs]);
 
   const toggleFav = useCallback(async (symbol: string, name: string) => {
@@ -218,12 +235,12 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
         await fetch(`${API_BASE}/stock/starred`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ symbol, name, market: "MY" }),
+          body: JSON.stringify({ symbol, name, market: region }),
         });
         setFavSymbols((prev) => [...prev, symbol]);
       } catch { /* offline */ }
     }
-  }, [favSymbols]);
+  }, [favSymbols, region]);
 
   // ── Stock tags (MY)
   const [stockTags, setStockTags] = useState<StockTag[]>([]);
@@ -249,10 +266,10 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   const [colorLabels, setColorLabels] = useState<ColorLabel[]>([]);
   const fetchColorLabels = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/stock/color-labels?market=MY`);
+      const res = await fetch(`${API_BASE}/stock/color-labels?market=${region}`);
       if (res.ok) setColorLabels(await res.json());
     } catch { /* offline */ }
-  }, []);
+  }, [region]);
   useEffect(() => { fetchColorLabels(); }, [fetchColorLabels]);
 
   const setColorLabel = useCallback(async (symbol: string, color: string) => {
@@ -260,18 +277,18 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
       await fetch(`${API_BASE}/stock/color-labels`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, color, market: "MY" }),
+        body: JSON.stringify({ symbol, color, market: region }),
       });
       fetchColorLabels();
     } catch { /* offline */ }
-  }, [fetchColorLabels]);
+  }, [fetchColorLabels, region]);
 
   const removeColorLabel = useCallback(async (symbol: string) => {
     try {
-      await fetch(`${API_BASE}/stock/color-labels?symbol=${encodeURIComponent(symbol)}&market=MY`, { method: "DELETE" });
+      await fetch(`${API_BASE}/stock/color-labels?symbol=${encodeURIComponent(symbol)}&market=${region}`, { method: "DELETE" });
       fetchColorLabels();
     } catch { /* offline */ }
-  }, [fetchColorLabels]);
+  }, [fetchColorLabels, region]);
 
   // ── Run All
   const [runAllScope, setRunAllScope] = useState<string>("watchlist");
@@ -368,10 +385,10 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
 
     return [
       { value: "watchlist", label: "Watchlist", count: favSymbols.length },
-      { value: "all", label: "All Stocks", count: MY_STOCKS.length },
+      { value: "all", label: "All Stocks", count: marketStocks.length },
       ...colorOptions,
     ];
-  }, [favSymbols, colorLabels]);
+  }, [favSymbols, colorLabels, marketStocks]);
 
   const selectedRunAllOption = useMemo(
     () => runAllScopeOptions.find((o) => o.value === runAllScope) ?? runAllScopeOptions[0],
@@ -380,12 +397,12 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
 
   const resolveRunAllUniverse = useCallback((scope: string): { label: string; symbols: string[] } => {
     if (scope === "all") {
-      return { label: "All Stocks", symbols: MY_STOCKS.map((s) => s.symbol) };
+      return { label: "All Stocks", symbols: marketStocks.map((s) => s.symbol) };
     }
     if (scope.startsWith("color:")) {
       const color = scope.slice("color:".length);
       const coloredSymbols = new Set(colorLabels.filter((l) => l.color === color).map((l) => l.symbol));
-      const ordered = MY_STOCKS.map((s) => s.symbol).filter((sym) => coloredSymbols.has(sym));
+      const ordered = marketStocks.map((s) => s.symbol).filter((sym) => coloredSymbols.has(sym));
       const extras = Array.from(coloredSymbols).filter((sym) => !ordered.includes(sym));
       return {
         label: `Color: ${color.charAt(0).toUpperCase()}${color.slice(1)}`,
@@ -393,7 +410,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
       };
     }
     return { label: "Watchlist", symbols: [...favSymbols] };
-  }, [favSymbols, colorLabels]);
+  }, [favSymbols, colorLabels, marketStocks]);
 
   useEffect(() => {
     if (!runAllScopeOptions.some((o) => o.value === runAllScope)) {
@@ -427,7 +444,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
 
     const strat = activeStrategyRef.current;
     const initial: RunAllRow[] = targetSymbols.map((sym) => {
-      const stock = MY_STOCKS.find((s) => s.symbol === sym);
+      const stock = marketStocks.find((s) => s.symbol === sym);
       return { symbol: sym, name: stock?.name ?? sym.replace(".KL", ""), win_rate: 0, total_trades: 0, return_pct: 0, profit_factor: 0, max_dd: 0, sharpe: 0, status: "pending" as const };
     });
     setRunAllRows(initial);
@@ -486,7 +503,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     });
     await Promise.all(promises);
     if (!ac.signal.aborted) setRunAllRunning(false);
-  }, [backtestPeriod, atrSlMult, tp1RMult, tp2RMult, capital, disabledConditions]);
+  }, [backtestPeriod, atrSlMult, tp1RMult, tp2RMult, capital, disabledConditions, marketStocks]);
 
   const runAllFavs = useCallback(async () => {
     const universe = resolveRunAllUniverse(runAllScope);
@@ -809,12 +826,12 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     setBtData(null);
     setHasRun(true);
     // Auto-switch to stock's preferred strategy if marked
-    const stockStrategy = MY_STOCK_STRATEGY[sym];
+    const stockStrategy = region === "MY" ? MY_STOCK_STRATEGY[sym] : undefined;
     if (stockStrategy && stockStrategy !== activeStrategyRef.current) {
       setActiveStrategy(stockStrategy);
       activeStrategyRef.current = stockStrategy;
     }
-  }, []);
+  }, [region]);
 
   const handleTradeClick = useCallback((t: US1HTrade) => {
     const ts = Math.floor(new Date(t.entry_time).getTime() / 1000);
@@ -855,24 +872,28 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
         } lg:flex lg:w-[20%] shrink-0 flex-col overflow-hidden border-r border-slate-800/60`}>
           {/* ── Stock info header ── */}
           <div className="shrink-0 px-3 py-2 border-b border-slate-800/60 bg-slate-950/90">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[14px] font-black text-white tracking-tight">{selectedSymbol.replace(".KL", "")}</span>
-              <span className="text-[10px] text-slate-500 font-medium truncate">{selectedName}</span>
-            </div>
-            <div className="flex items-center gap-2 mt-1">
-              <span className={`text-[15px] font-bold tabular-nums ${change >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                RM{price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-              <span className={`text-[10px] font-semibold tabular-nums px-1 py-px rounded ${
-                change >= 0 ? "text-emerald-400 bg-emerald-500/10" : "text-rose-400 bg-rose-500/10"
-              }`}>
-                {change >= 0 ? "+" : ""}{changePct.toFixed(2)}%
-              </span>
-              <span className="text-[9px] tabular-nums text-slate-600">
-                Vol {(btData?.candles?.length ? btData.candles[btData.candles.length - 1].volume : 0) > 0
-                  ? ((btData?.candles?.length ? btData.candles[btData.candles.length - 1].volume : 0) / 1e6).toFixed(1) + "M"
-                  : "—"}
-              </span>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[9px] text-slate-500 uppercase tracking-widest font-bold">Region</span>
+              <div className="inline-flex items-center rounded-md border border-slate-700/70 overflow-hidden bg-slate-900/80">
+                <button
+                  type="button"
+                  onClick={() => setRegion("MY")}
+                  className={`px-2 py-1 text-[9px] font-bold transition ${
+                    region === "MY" ? "bg-cyan-500/20 text-cyan-300" : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  Malaysia
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRegion("US")}
+                  className={`px-2 py-1 text-[9px] font-bold transition ${
+                    region === "US" ? "bg-cyan-500/20 text-cyan-300" : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  美股
+                </button>
+              </div>
             </div>
             {/* Period + Mode row
             <div className="flex items-center gap-1.5 mt-1.5">
@@ -907,6 +928,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           </div>
 
           <MYWatchlist
+            region={region}
             activeSymbol={selectedSymbol}
             onSelectSymbol={(sym, name) => {
               handleSymbolChange(sym, name);

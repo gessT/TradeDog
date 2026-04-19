@@ -412,10 +412,7 @@ export default function MYStrategySection({
 
   const hasTagSelectionChanges = useMemo(() => {
     if (checkedTaggedSymbols.size !== initialTaggedSymbols.size) return true;
-    for (const sym of checkedTaggedSymbols) {
-      if (!initialTaggedSymbols.has(sym)) return true;
-    }
-    return false;
+    return Array.from(checkedTaggedSymbols).some((sym) => !initialTaggedSymbols.has(sym));
   }, [checkedTaggedSymbols, initialTaggedSymbols]);
 
   const openTaggedStrategyDialog = useCallback(() => {
@@ -451,7 +448,7 @@ export default function MYStrategySection({
     setTagUpdateStatus("updating");
     try {
       await onUpdateTaggedStrategyStocks(activeStrategy, Array.from(checkedTaggedSymbols));
-      setInitialTaggedSymbols(new Set(checkedTaggedSymbols));
+      setInitialTaggedSymbols(new Set(Array.from(checkedTaggedSymbols)));
       setTagUpdateStatus("updated");
       setTimeout(() => setTagUpdateStatus("idle"), 1500);
     } catch {
