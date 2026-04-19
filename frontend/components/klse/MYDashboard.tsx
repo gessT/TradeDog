@@ -399,9 +399,8 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     setRunAllRows((prev) => prev.map((r) => r.status === "pending" || r.status === "running" ? { ...r, status: "error" as const } : r));
   }, []);
 
-  const runAllFavs = useCallback(async () => {
-    const universe = resolveRunAllUniverse(runAllScope);
-    const targetSymbols = Array.from(new Set(universe.symbols));
+  const runAllWithSymbols = useCallback(async (symbols: string[], universeLabel: string) => {
+    const targetSymbols = Array.from(new Set(symbols.filter((sym) => typeof sym === "string" && sym.length > 0)));
     if (targetSymbols.length === 0) return;
     const disabledArr = Array.from(disabledConditions);
 
@@ -411,7 +410,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     runAllAbort.current = ac;
     setRunAllOpen(true);
     setRunAllRunning(true);
-    setRunAllUniverseLabel(universe.label);
+    setRunAllUniverseLabel(universeLabel);
     setRunAllUniverseCount(targetSymbols.length);
 
     const strat = activeStrategyRef.current;
@@ -475,7 +474,34 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     });
     await Promise.all(promises);
     if (!ac.signal.aborted) setRunAllRunning(false);
-  }, [resolveRunAllUniverse, runAllScope, backtestPeriod, atrSlMult, tp1RMult, tp2RMult, capital, disabledConditions]);
+  }, [backtestPeriod, atrSlMult, tp1RMult, tp2RMult, capital, disabledConditions]);
+
+  const runAllFavs = useCallback(async () => {
+    const universe = resolveRunAllUniverse(runAllScope);
+    await runAllWithSymbols(universe.symbols, universe.label);
+  }, [resolveRunAllUniverse, runAllScope, runAllWithSymbols]);
+
+  const runTaggedStrategySymbols = useCallback(async (symbols: string[], label?: string) => {
+    const fallbackLabel = `${activeStrategyRef.current.toUpperCase()} Tagged`;
+    await runAllWithSymbols(symbols, label ?? fallbackLabel);
+  }, [runAllWithSymbols]);
+
+  const updateTaggedStrategySymbols = useCallback(async (strategyType: string, symbols: string[]) => {
+    const keepSymbols = new Set(symbols);
+    const tagsToDelete = stockTags.filter((t) => t.strategy_type === strategyType && !keepSymbols.has(t.symbol));
+    if (tagsToDelete.length === 0) return;
+
+    const results = await Promise.allSettled(tagsToDelete.map(async (tag) => {
+      const res = await fetch(`${API_BASE}/stock/my-stock-tags/${tag.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`Delete failed for tag ${tag.id}`);
+    }));
+
+    await fetchTags();
+
+    if (results.some((r) => r.status === "rejected")) {
+      throw new Error("Some tag updates failed");
+    }
+  }, [stockTags, fetchTags]);
 
   const saveRunAllTag = useCallback(async (row: RunAllRow) => {
     const strat = activeStrategyRef.current;
@@ -926,6 +952,12 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
             runAllScopeOptions={runAllScopeOptions}
             runAllRunning={runAllRunning}
             runAllCount={selectedRunAllOption?.count ?? 0}
+            onRunTaggedStrategyStocks={runTaggedStrategySymbols}
+            onUpdateTaggedStrategyStocks={updateTaggedStrategySymbols}
+            onSelectTaggedStock={(sym, name) => {
+              handleSymbolChange(sym, name);
+              setMobilePanel("chart");
+            }}
             loading={btLoading}
             activeStrategy={activeStrategy}
             onStrategyChange={handleStrategyChange}

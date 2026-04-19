@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type US1HBacktestResponse } from "../../services/api";
+import { MY_SYMBOL_MAP } from "../../constants/myStocks";
 
 // ═══════════════════════════════════════════════════════════
 // MY Strategy Section — multi-strategy with dropdown
@@ -251,6 +252,14 @@ type RunAllScopeOption = {
   count: number;
 };
 
+type StockTag = {
+  id: number;
+  symbol: string;
+  strategy_type: string;
+  win_rate: number | null;
+  return_pct: number | null;
+};
+
 type Props = {
   disabledConditions: Set<string>;
   onToggleCondition: (key: string) => void;
@@ -271,6 +280,9 @@ type Props = {
   runAllScopeOptions?: RunAllScopeOption[];
   runAllRunning?: boolean;
   runAllCount?: number;
+  onRunTaggedStrategyStocks?: (symbols: string[], label?: string) => void | Promise<void>;
+  onUpdateTaggedStrategyStocks?: (strategyType: string, symbols: string[]) => void | Promise<void>;
+  onSelectTaggedStock?: (symbol: string, name: string) => void;
   loading: boolean;
   symbol?: string;
   symbolName?: string;
@@ -278,7 +290,7 @@ type Props = {
   onStrategyChange: (s: StrategyType) => void;
   btData?: US1HBacktestResponse | null;
   livePrice?: number;
-  stockTags?: { id: number; symbol: string; strategy_type: string; win_rate: number | null; return_pct: number | null }[];
+  stockTags?: StockTag[];
   onTagStrategy?: () => void;
   onUntagStrategy?: (strategyType: string) => void;
 };
@@ -325,6 +337,9 @@ export default function MYStrategySection({
   runAllScopeOptions = [],
   runAllRunning = false,
   runAllCount = 0,
+  onRunTaggedStrategyStocks,
+  onUpdateTaggedStrategyStocks,
+  onSelectTaggedStock,
   loading,
   symbol,
   symbolName,
@@ -339,6 +354,10 @@ export default function MYStrategySection({
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [taggedDialogOpen, setTaggedDialogOpen] = useState(false);
+  const [checkedTaggedSymbols, setCheckedTaggedSymbols] = useState<Set<string>>(new Set());
+  const [initialTaggedSymbols, setInitialTaggedSymbols] = useState<Set<string>>(new Set());
+  const [tagUpdateStatus, setTagUpdateStatus] = useState<"idle" | "updating" | "updated" | "error">("idle");
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const handleConfirmReset = useCallback(() => {
@@ -369,6 +388,80 @@ export default function MYStrategySection({
   const strat = STRATEGIES.find(s => s.key === activeStrategy) ?? STRATEGIES[0];
   const selectedRunAllOption = runAllScopeOptions.find((o) => o.value === runAllScope) ?? null;
   const effectiveRunAllCount = selectedRunAllOption?.count ?? runAllCount;
+
+  const strategyTaggedStocks = useMemo(() => {
+    if (!stockTags) return [];
+    const latestBySymbol = new Map<string, StockTag>();
+    for (const tag of stockTags) {
+      if (tag.strategy_type !== activeStrategy) continue;
+      if (!latestBySymbol.has(tag.symbol)) latestBySymbol.set(tag.symbol, tag);
+    }
+    return Array.from(latestBySymbol.values()).sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }, [stockTags, activeStrategy]);
+
+  const checkedTaggedCount = checkedTaggedSymbols.size;
+
+  const hasTagSelectionChanges = useMemo(() => {
+    if (checkedTaggedSymbols.size !== initialTaggedSymbols.size) return true;
+    for (const sym of checkedTaggedSymbols) {
+      if (!initialTaggedSymbols.has(sym)) return true;
+    }
+    return false;
+  }, [checkedTaggedSymbols, initialTaggedSymbols]);
+
+  const openTaggedStrategyDialog = useCallback(() => {
+    const symbols = new Set(strategyTaggedStocks.map((t) => t.symbol));
+    setCheckedTaggedSymbols(symbols);
+    setInitialTaggedSymbols(symbols);
+    setTagUpdateStatus("idle");
+    setTaggedDialogOpen(true);
+  }, [strategyTaggedStocks]);
+
+  const toggleTaggedSymbol = useCallback((targetSymbol: string) => {
+    setTagUpdateStatus("idle");
+    setCheckedTaggedSymbols((prev) => {
+      const next = new Set(prev);
+      if (next.has(targetSymbol)) next.delete(targetSymbol);
+      else next.add(targetSymbol);
+      return next;
+    });
+  }, []);
+
+  const selectAllTaggedSymbols = useCallback(() => {
+    setTagUpdateStatus("idle");
+    setCheckedTaggedSymbols(new Set(strategyTaggedStocks.map((t) => t.symbol)));
+  }, [strategyTaggedStocks]);
+
+  const clearTaggedSymbols = useCallback(() => {
+    setTagUpdateStatus("idle");
+    setCheckedTaggedSymbols(new Set());
+  }, []);
+
+  const handleUpdateTaggedSymbols = useCallback(async () => {
+    if (!onUpdateTaggedStrategyStocks || runAllRunning || !hasTagSelectionChanges || tagUpdateStatus === "updating") return;
+    setTagUpdateStatus("updating");
+    try {
+      await onUpdateTaggedStrategyStocks(activeStrategy, Array.from(checkedTaggedSymbols));
+      setInitialTaggedSymbols(new Set(checkedTaggedSymbols));
+      setTagUpdateStatus("updated");
+      setTimeout(() => setTagUpdateStatus("idle"), 1500);
+    } catch {
+      setTagUpdateStatus("error");
+    }
+  }, [onUpdateTaggedStrategyStocks, runAllRunning, hasTagSelectionChanges, tagUpdateStatus, activeStrategy, checkedTaggedSymbols]);
+
+  const handleRunTaggedSymbols = useCallback(() => {
+    if (!onRunTaggedStrategyStocks || runAllRunning || checkedTaggedCount === 0) return;
+    onRunTaggedStrategyStocks(Array.from(checkedTaggedSymbols), `${strat.label} Tagged`);
+    setTaggedDialogOpen(false);
+  }, [onRunTaggedStrategyStocks, runAllRunning, checkedTaggedCount, checkedTaggedSymbols, strat.label]);
+
+  const handleSelectTaggedStock = useCallback((targetSymbol: string) => {
+    if (!onSelectTaggedStock) return;
+    const targetName = MY_SYMBOL_MAP[targetSymbol] ?? targetSymbol.replace(".KL", "");
+    onSelectTaggedStock(targetSymbol, targetName);
+    setTaggedDialogOpen(false);
+  }, [onSelectTaggedStock]);
 
   // Build a set of tagged strategy types for the current symbol
   const taggedStrategies = new Map<string, { win_rate: number | null; return_pct: number | null }>();
@@ -813,6 +906,20 @@ export default function MYStrategySection({
                   {runAllRunning ? "Running…" : "Run All"}
                 </button>
               </div>
+
+              <div className="flex items-center justify-between gap-1.5">
+                <button
+                  onClick={openTaggedStrategyDialog}
+                  disabled={runAllRunning || strategyTaggedStocks.length === 0}
+                  className="flex-1 h-7 rounded-lg text-[9px] font-bold border transition flex items-center justify-center gap-1 border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 disabled:opacity-40"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 17h5l-1.405-1.405M19.595 15.595A7.951 7.951 0 0120 13a8 8 0 10-8 8c1.37 0 2.663-.344 3.795-.95M15 11a3 3 0 11-6 0 3 3 0 016 0zm6 7a2 2 0 11-4 0 2 2 0 014 0z" />
+                  </svg>
+                  Check all stock with strategy
+                </button>
+                <span className="text-[8px] tabular-nums text-violet-300/80 min-w-[54px] text-right">{strategyTaggedStocks.length} tagged</span>
+              </div>
             </div>
           )}
 
@@ -873,6 +980,113 @@ export default function MYStrategySection({
       </div>
 
       {/* ═══ Confirm Reset Dialog ═══ */}
+      {taggedDialogOpen && (
+        <div className="fixed inset-0 z-[998] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setTaggedDialogOpen(false)}>
+          <div className="bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/50 w-[360px] max-w-[92vw] max-h-[78vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-slate-800/60">
+              <div>
+                <h3 className="text-[12px] font-bold text-slate-100">{strat.label} Tagged Stocks</h3>
+                <p className="text-[9px] text-slate-500">Choose stocks and rerun this strategy.</p>
+              </div>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 font-semibold tabular-nums">
+                {checkedTaggedCount}/{strategyTaggedStocks.length}
+              </span>
+            </div>
+
+            <div className="px-3.5 py-2 border-b border-slate-800/40 flex items-center gap-1.5">
+              <button onClick={selectAllTaggedSymbols} className="px-2 py-1 rounded text-[9px] font-bold text-cyan-300 bg-cyan-500/10 border border-cyan-500/25 hover:bg-cyan-500/20 transition">
+                Select All
+              </button>
+              <button onClick={clearTaggedSymbols} className="px-2 py-1 rounded text-[9px] font-bold text-slate-300 bg-slate-800/70 border border-slate-700/50 hover:bg-slate-700/70 transition">
+                Clear
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
+              {strategyTaggedStocks.length === 0 ? (
+                <div className="h-full min-h-[96px] flex items-center justify-center text-[10px] text-slate-500">
+                  No tagged stocks for this strategy.
+                </div>
+              ) : (
+                strategyTaggedStocks.map((tag) => {
+                  const checked = checkedTaggedSymbols.has(tag.symbol);
+                  const stockName = MY_SYMBOL_MAP[tag.symbol] ?? tag.symbol.replace(".KL", "");
+                  return (
+                    <label
+                      key={tag.symbol}
+                      className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer transition ${
+                        checked
+                          ? "bg-violet-500/10 border-violet-500/35"
+                          : "bg-slate-800/30 border-slate-800/40 hover:border-slate-700/60"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleTaggedSymbol(tag.symbol)}
+                        className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-900 text-violet-500 focus:ring-violet-500/50"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleSelectTaggedStock(tag.symbol);
+                          }}
+                          className="text-[10px] font-semibold text-cyan-300 hover:text-cyan-200 text-left"
+                        >
+                          {stockName}
+                        </button>
+                        <div className="text-[8px] text-slate-500 tabular-nums">{tag.symbol.replace(".KL", "")}</div>
+                        <div className="text-[8px] text-slate-500 tabular-nums">
+                          WR {tag.win_rate != null ? `${tag.win_rate.toFixed(1)}%` : "—"} · Return {tag.return_pct != null ? `${tag.return_pct >= 0 ? "+" : ""}${tag.return_pct.toFixed(1)}%` : "—"}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="px-3.5 py-2.5 border-t border-slate-800/50 flex items-center gap-2">
+              <button
+                onClick={() => setTaggedDialogOpen(false)}
+                className="flex-1 py-1.5 rounded-lg text-[10px] font-bold text-slate-400 border border-slate-700/50 hover:bg-slate-800/50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUpdateTaggedSymbols}
+                disabled={runAllRunning || !onUpdateTaggedStrategyStocks || !hasTagSelectionChanges || tagUpdateStatus === "updating"}
+                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold border transition disabled:opacity-40 ${
+                  tagUpdateStatus === "updated"
+                    ? "border-emerald-500/35 bg-emerald-500/15 text-emerald-300"
+                    : tagUpdateStatus === "error"
+                    ? "border-rose-500/35 bg-rose-500/15 text-rose-300"
+                    : "border-cyan-500/35 bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25"
+                }`}
+              >
+                {tagUpdateStatus === "updating"
+                  ? "Updating…"
+                  : tagUpdateStatus === "updated"
+                  ? "Updated"
+                  : tagUpdateStatus === "error"
+                  ? "Retry Update"
+                  : "Update Tags"}
+              </button>
+              <button
+                onClick={handleRunTaggedSymbols}
+                disabled={runAllRunning || checkedTaggedCount === 0}
+                className="flex-1 py-1.5 rounded-lg text-[10px] font-bold border border-violet-500/35 bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 transition disabled:opacity-40"
+              >
+                Rerun Checked ({checkedTaggedCount})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {confirmResetOpen && (
         <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setConfirmResetOpen(false)}>
           <div className="bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/50 p-5 w-72 max-w-[90vw]" onClick={e => e.stopPropagation()}>
