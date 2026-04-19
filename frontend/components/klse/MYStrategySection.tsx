@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchPineScripts, type US1HBacktestResponse } from "../../services/api";
+import { type US1HBacktestResponse } from "../../services/api";
 
 // ═══════════════════════════════════════════════════════════
 // MY Strategy Section — multi-strategy with dropdown
@@ -229,54 +229,6 @@ const STRATEGIES: StrategyDef[] = [
   },
 ];
 
-type PineScriptOption = {
-  fileName: string;
-  rawStrategyKey: string;
-  backendStrategy: string;
-  strategyKey: StrategyType | null;
-  icon: string;
-  subtitle: string;
-  runnable: boolean;
-};
-
-const PINE_LINKED_STRATEGIES = new Set<StrategyType>(["psniper", "sma5_20_cross", "gessup"]);
-const CORE_DROPDOWN_STRATEGIES: StrategyDef[] = STRATEGIES.filter((s) => !PINE_LINKED_STRATEGIES.has(s.key));
-const STRATEGY_KEY_SET = new Set<StrategyType>(STRATEGIES.map((s) => s.key));
-
-const DEFAULT_PINE_SCRIPT_OPTIONS: PineScriptOption[] = [
-  {
-    fileName: "psniper.pine",
-    rawStrategyKey: "psniper",
-    backendStrategy: "psniper",
-    strategyKey: "psniper",
-    icon: "📜",
-    subtitle: "Precision Sniper backtest with buy/sell trades",
-    runnable: true,
-  },
-  {
-    fileName: "sma5_20_cross.pine",
-    rawStrategyKey: "sma5_20_cross",
-    backendStrategy: "sma5_20_cross",
-    strategyKey: "sma5_20_cross",
-    icon: "📜",
-    subtitle: "Simple SMA crossover buy/sell test",
-    runnable: true,
-  },
-  {
-    fileName: "gessup.pine",
-    rawStrategyKey: "gessup",
-    backendStrategy: "gessup",
-    strategyKey: "gessup",
-    icon: "📜",
-    subtitle: "Weekly ST + HalfTrend confluence",
-    runnable: true,
-  },
-];
-
-function toStrategyType(value: string): StrategyType | null {
-  return STRATEGY_KEY_SET.has(value as StrategyType) ? (value as StrategyType) : null;
-}
-
 // Default parameter values per strategy (the single source of truth)
 export const STRATEGY_DEFAULTS: Record<StrategyType, {
   sl: number; tp1: number; tp2: number; capital: number;
@@ -387,7 +339,6 @@ export default function MYStrategySection({
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
-  const [pineScriptOptions, setPineScriptOptions] = useState<PineScriptOption[]>(DEFAULT_PINE_SCRIPT_OPTIONS);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const handleConfirmReset = useCallback(() => {
@@ -413,46 +364,6 @@ export default function MYStrategySection({
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-    fetchPineScripts()
-      .then((scripts) => {
-        if (!alive) return;
-        if (scripts.length === 0) return;
-
-        const mapped = scripts.map((s): PineScriptOption => {
-          const rawStrategyKey = (s.strategy_key || "").trim().toLowerCase();
-          const backendStrategy = ((s.backend_strategy && s.backend_strategy.trim()) ? s.backend_strategy : rawStrategyKey).trim().toLowerCase();
-          const strategyKey = toStrategyType(backendStrategy);
-          const linked = strategyKey ? STRATEGIES.find((st) => st.key === strategyKey) : null;
-          const runnable = Boolean(s.runnable) && strategyKey !== null;
-
-          return {
-            fileName: s.file_name,
-            rawStrategyKey,
-            backendStrategy,
-            strategyKey,
-            icon: "📜",
-            subtitle: linked
-              ? `${linked.label} backtest with buy/sell trades`
-              : runnable
-                ? `Mapped to ${backendStrategy}`
-                : "Add // backend_strategy: <existing_strategy_key> to run",
-            runnable,
-          };
-        });
-
-        setPineScriptOptions(mapped);
-      })
-      .catch(() => {
-        // Keep fallback scripts when endpoint is unavailable.
-      });
-
-    return () => {
-      alive = false;
-    };
   }, []);
 
   const strat = STRATEGIES.find(s => s.key === activeStrategy) ?? STRATEGIES[0];
@@ -511,7 +422,7 @@ export default function MYStrategySection({
 
           {dropdownOpen && (
             <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700/60 rounded-lg shadow-xl shadow-black/30 overflow-hidden">
-              {CORE_DROPDOWN_STRATEGIES.map((s) => {
+              {STRATEGIES.map((s) => {
                 const isActive = activeStrategy === s.key;
                 return (
                   <div
@@ -560,75 +471,6 @@ export default function MYStrategySection({
                           : "border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
                       }`}
                       title={`Run backtest: ${s.label}`}
-                    >
-                      Run
-                    </button>
-                  </div>
-                );
-              })}
-
-              <div className="mx-2 my-1 border-t border-slate-700/60" />
-              <div className="px-3 py-1 text-[8px] uppercase tracking-widest text-slate-500 font-bold">Pine Script</div>
-
-              {pineScriptOptions.map((p) => {
-                const isActive = p.strategyKey !== null && activeStrategy === p.strategyKey;
-                const canSelect = p.strategyKey !== null;
-                const canRun = p.runnable && p.strategyKey !== null;
-
-                return (
-                  <div
-                    key={p.fileName}
-                    className={`w-full flex items-stretch gap-1 px-2 py-1 border-l-2 ${
-                      isActive
-                        ? "bg-rose-500/10 border-rose-400"
-                        : "border-transparent"
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      disabled={!canSelect}
-                      onClick={() => {
-                        if (!p.strategyKey) return;
-                        onStrategyChange(p.strategyKey);
-                      }}
-                      className={`flex-1 flex items-center gap-2 px-2 py-1.5 text-left rounded transition ${
-                        canSelect ? "hover:bg-slate-800/60" : "opacity-55 cursor-not-allowed"
-                      }`}
-                      title={canSelect ? `Select strategy: ${p.backendStrategy}` : `Not selectable: backend strategy '${p.backendStrategy || p.rawStrategyKey}' is not mapped`}
-                    >
-                      <span className="text-sm">{p.icon}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className={`text-[10px] font-semibold ${isActive ? "text-rose-400" : canRun ? "text-slate-200" : "text-slate-500"} flex items-center gap-1.5`}>
-                          {p.fileName}
-                          {p.strategyKey && taggedStrategies.has(p.strategyKey) && (
-                            <span className="inline-flex items-center gap-0.5 px-1 py-px rounded-full bg-amber-500/20 text-amber-400 text-[7px] font-semibold">
-                              ★ {taggedStrategies.get(p.strategyKey)!.win_rate != null ? `${taggedStrategies.get(p.strategyKey)!.win_rate!.toFixed(0)}%` : "Tagged"}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[8px] text-slate-500">{p.subtitle}</div>
-                        <div className="text-[7px] text-slate-600 mt-0.5">backend: {p.backendStrategy || p.rawStrategyKey}</div>
-                      </div>
-                      {isActive && (
-                        <svg className="w-3 h-3 text-rose-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-                      )}
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={!canRun}
-                      onClick={() => {
-                        if (!p.strategyKey) return;
-                        onStrategyChange(p.strategyKey);
-                        onRunBacktest();
-                        setDropdownOpen(false);
-                      }}
-                      className={`shrink-0 px-2 py-1.5 rounded text-[8px] font-bold uppercase tracking-wide border transition ${
-                        canRun
-                          ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
-                          : "border-slate-700/40 bg-slate-800/50 text-slate-500 cursor-not-allowed"
-                      }`}
-                      title={canRun ? `Run backtest via ${p.backendStrategy}` : `Not runnable: backend strategy '${p.backendStrategy || p.rawStrategyKey}' is not mapped`}
                     >
                       Run
                     </button>

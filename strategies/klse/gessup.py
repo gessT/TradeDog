@@ -1,7 +1,7 @@
 """
 gessup.py - KLSE Stock Up [Gess] strategy backend.
 
-Concept parity with pine_scripts/gessup.pine:
+Concept:
 - Weekly SuperTrend defines macro bullish regime.
 - HalfTrend flip up is entry timing trigger.
 - Exit on HalfTrend flip down or Weekly SuperTrend flip down.

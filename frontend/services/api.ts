@@ -2188,20 +2188,6 @@ export async function saveKLSEStrategyConfig(config: KLSEStrategyConfig, strateg
   });
 }
 
-export type PineScriptInfo = {
-  file_name: string;
-  strategy_key: string;
-  backend_strategy?: string;
-  runnable?: boolean;
-};
-
-export async function fetchPineScripts(): Promise<PineScriptInfo[]> {
-  const response = await fetch(`${API_BASE}/stock/pine_scripts`, { cache: "no-store" });
-  if (!response.ok) return [];
-  const data = (await response.json()) as { scripts?: PineScriptInfo[] };
-  return Array.isArray(data.scripts) ? data.scripts : [];
-}
-
 
 // ── Scan Best Strategy ──────────────────────────────────────────────
 

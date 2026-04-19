@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import logging
-from pathlib import Path
-import re
 
 SGT = timezone(timedelta(hours=8))
 
@@ -666,70 +664,6 @@ def save_klse_strategy_config(
             {"sym": sym, "cfg": config},
         )
     return {"status": "ok"}
-
-
-@router.get("/pine_scripts")
-def list_pine_scripts() -> dict[str, list[dict[str, object]]]:
-    """List Pine Script files from ./pine_scripts.
-
-    File name stem is treated as strategy key by default
-    (for example, psniper.pine -> psniper).
-
-    Optional metadata in Pine file:
-      // backend_strategy: <strategy_key>
-    """
-
-    runnable_keys = {
-        "tpc",
-        "hpb",
-        "vpb3",
-        "smp",
-        "psniper",
-        "cm_macd",
-        "momentum_guard",
-        "sma5_20_cross",
-        "gessup",
-    }
-
-    backend_re = re.compile(r"^\s*//\s*backend_strategy\s*:\s*([A-Za-z0-9_\-]+)\s*$")
-
-    def _read_backend_strategy(path: Path) -> str | None:
-        try:
-            with path.open("r", encoding="utf-8", errors="ignore") as fh:
-                for _ in range(120):
-                    line = fh.readline()
-                    if not line:
-                        break
-                    m = backend_re.match(line)
-                    if m:
-                        return m.group(1).strip().lower()
-        except Exception:
-            return None
-        return None
-
-    def _default_backend_from_stem(stem: str) -> str:
-        return stem.strip().lower()
-
-    scripts_dir = Path(__file__).resolve().parents[2] / "pine_scripts"
-    if not scripts_dir.exists() or not scripts_dir.is_dir():
-        return {"scripts": []}
-
-    scripts: list[dict[str, object]] = []
-    for f in sorted(scripts_dir.glob("*.pine")):
-        if not f.is_file():
-            continue
-        strategy_key = f.stem.strip().lower()
-        backend_strategy = _read_backend_strategy(f) or _default_backend_from_stem(strategy_key)
-        scripts.append(
-            {
-                "file_name": f.name,
-                "strategy_key": strategy_key,
-                "backend_strategy": backend_strategy,
-                "runnable": backend_strategy in runnable_keys,
-            }
-        )
-
-    return {"scripts": scripts}
 
 
 def _normalize_column_name(column: object) -> str:
@@ -4712,30 +4646,6 @@ async def scan_best_strategy(
         from strategies.futures.data_loader import load_yfinance
 
         results = []
-        pine_backends: set[str] = set()
-        pine_label_map: dict[str, str] = {}
-
-        # Discover runnable Pine scripts and their mapped backend strategy keys.
-        try:
-            pine_payload = list_pine_scripts()
-            scripts = pine_payload.get("scripts", []) if isinstance(pine_payload, dict) else []
-            for item in scripts:
-                if not isinstance(item, dict):
-                    continue
-                if not bool(item.get("runnable", False)):
-                    continue
-
-                backend = str(item.get("backend_strategy") or item.get("strategy_key") or "").strip().lower()
-                if not backend:
-                    continue
-
-                pine_backends.add(backend)
-
-                file_name = str(item.get("file_name") or "").strip()
-                strategy_key = str(item.get("strategy_key") or "").strip()
-                pine_label_map.setdefault(backend, file_name or strategy_key or backend)
-        except Exception as exc:
-            logger.debug("Pine discovery failed in scan_best_strategy: %s", exc)
 
         # --- TPC ---
         try:
@@ -5044,20 +4954,28 @@ async def scan_best_strategy(
             logger.debug("Momentum Guard scan failed for %s: %s", symbol, exc)
             results.append({"strategy": "momentum_guard", "label": "Momentum Guard", "grade": "F", "score": 0, "metrics": None, "error": str(exc)})
 
-        # --- Additional Pine strategies not already covered above ---
+        # --- Additional real strategies not already covered above ---
         existing_keys = {str(r.get("strategy", "")).strip().lower() for r in results}
-        extra_pine_keys = sorted(k for k in pine_backends if k and k not in existing_keys)
+        extra_strategy_defs = [
+            ("sma5_20_cross", "SMA 5/20 Cross"),
+            ("gessup", "GessUp"),
+        ]
+        extra_strategy_defs = [
+            (strategy_key, label)
+            for strategy_key, label in extra_strategy_defs
+            if strategy_key and strategy_key not in existing_keys
+        ]
 
-        for backend in extra_pine_keys:
+        for strategy_key, strategy_label in extra_strategy_defs:
             try:
                 df = load_yfinance(symbol=symbol, interval="1d", period=period)
                 if df.empty or len(df) < 60:
                     raise ValueError("Not enough data")
 
                 df.attrs["symbol"] = symbol
-                raw = _run_strategy_backtest(backend, df, capital)
+                raw = _run_strategy_backtest(strategy_key, df, capital)
                 if raw is None:
-                    raise ValueError(f"Strategy '{backend}' is not supported")
+                    raise ValueError(f"Strategy '{strategy_key}' is not supported")
 
                 wins = [t for t in raw.trades if t.win]
                 losses = [t for t in raw.trades if not t.win]
@@ -5100,20 +5018,18 @@ async def scan_best_strategy(
                 }
 
                 grade, score = _grade_metrics(m)
-                pine_label = pine_label_map.get(backend, backend)
                 results.append({
-                    "strategy": backend,
-                    "label": f"Pine · {pine_label}",
+                    "strategy": strategy_key,
+                    "label": strategy_label,
                     "grade": grade,
                     "score": score,
                     "metrics": m,
                 })
             except Exception as exc:
-                pine_label = pine_label_map.get(backend, backend)
-                logger.debug("Pine strategy scan failed for %s (%s): %s", symbol, backend, exc)
+                logger.debug("Strategy scan failed for %s (%s): %s", symbol, strategy_key, exc)
                 results.append({
-                    "strategy": backend,
-                    "label": f"Pine · {pine_label}",
+                    "strategy": strategy_key,
+                    "label": strategy_label,
                     "grade": "F",
                     "score": 0,
                     "metrics": None,
