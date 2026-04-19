@@ -7,7 +7,7 @@ import { fetchPineScripts, type US1HBacktestResponse } from "../../services/api"
 // MY Strategy Section — multi-strategy with dropdown
 // ═══════════════════════════════════════════════════════════
 
-export type StrategyType = "tpc" | "hpb" | "momentum_guard" | "vpb3" | "smp" | "psniper" | "sma5_20_cross" | "cm_macd";
+export type StrategyType = "tpc" | "hpb" | "momentum_guard" | "vpb3" | "smp" | "psniper" | "sma5_20_cross" | "gessup" | "cm_macd";
 
 type StrategyDef = {
   key: StrategyType;
@@ -189,6 +189,26 @@ const STRATEGIES: StrategyDef[] = [
     },
   },
   {
+    key: "gessup",
+    label: "GessUp",
+    subtitle: "Weekly SuperTrend + HalfTrend confluence",
+    icon: "🧭",
+    color: "cyan",
+    conditions: [
+      { key: "weekly_supertrend", label: "Weekly SuperTrend Bull", icon: "⚡", desc: "Only buy when weekly SuperTrend regime is bullish" },
+      { key: "halftrend_entry", label: "HalfTrend Flip Up", icon: "📈", desc: "Enter when HalfTrend flips from bearish to bullish" },
+    ],
+    exitRules: [
+      { key: "halftrend_exit", icon: "🔻", label: "HalfTrend Flip Down", desc: "Exit when HalfTrend flips bearish" },
+      { key: "weekly_flip_exit", icon: "⚠️", label: "Weekly ST Flip Down", desc: "Hard exit when weekly SuperTrend flips bearish" },
+    ],
+    sliders: {
+      sl: { label: "HT Amplitude", min: 2, max: 20, step: 1 },
+      tp1: { label: "W.ST Factor", min: 1, max: 6, step: 0.1 },
+      tp2: { label: "Max Buys", min: 1, max: 5, step: 1 },
+    },
+  },
+  {
     key: "cm_macd",
     label: "CM MACD",
     subtitle: "MACD(12,26,9) Crossover",
@@ -211,27 +231,45 @@ const STRATEGIES: StrategyDef[] = [
 
 type PineScriptOption = {
   fileName: string;
-  strategyKey: StrategyType;
+  rawStrategyKey: string;
+  backendStrategy: string;
+  strategyKey: StrategyType | null;
   icon: string;
   subtitle: string;
+  runnable: boolean;
 };
 
-const PINE_LINKED_STRATEGIES = new Set<StrategyType>(["psniper", "sma5_20_cross"]);
+const PINE_LINKED_STRATEGIES = new Set<StrategyType>(["psniper", "sma5_20_cross", "gessup"]);
 const CORE_DROPDOWN_STRATEGIES: StrategyDef[] = STRATEGIES.filter((s) => !PINE_LINKED_STRATEGIES.has(s.key));
 const STRATEGY_KEY_SET = new Set<StrategyType>(STRATEGIES.map((s) => s.key));
 
 const DEFAULT_PINE_SCRIPT_OPTIONS: PineScriptOption[] = [
   {
     fileName: "psniper.pine",
+    rawStrategyKey: "psniper",
+    backendStrategy: "psniper",
     strategyKey: "psniper",
     icon: "📜",
     subtitle: "Precision Sniper backtest with buy/sell trades",
+    runnable: true,
   },
   {
     fileName: "sma5_20_cross.pine",
+    rawStrategyKey: "sma5_20_cross",
+    backendStrategy: "sma5_20_cross",
     strategyKey: "sma5_20_cross",
     icon: "📜",
     subtitle: "Simple SMA crossover buy/sell test",
+    runnable: true,
+  },
+  {
+    fileName: "gessup.pine",
+    rawStrategyKey: "gessup",
+    backendStrategy: "gessup",
+    strategyKey: "gessup",
+    icon: "📜",
+    subtitle: "Weekly ST + HalfTrend confluence",
+    runnable: true,
   },
 ];
 
@@ -251,6 +289,7 @@ export const STRATEGY_DEFAULTS: Record<StrategyType, {
   smp:  { sl: 4,   tp1: 2.0, tp2: 2.0, capital: 5000, disabledConditions: [] },
   psniper: { sl: 3.5,  tp1: 1.2, tp2: 6,   capital: 5000, disabledConditions: [] },
   sma5_20_cross: { sl: 1, tp1: 1, tp2: 1, capital: 5000, disabledConditions: [] },
+  gessup: { sl: 5, tp1: 3.0, tp2: 2, capital: 5000, disabledConditions: [] },
   cm_macd: { sl: 2.0,  tp1: 3.0, tp2: 3.0, capital: 5000, disabledConditions: [] },
 };
 
@@ -381,21 +420,31 @@ export default function MYStrategySection({
     fetchPineScripts()
       .then((scripts) => {
         if (!alive) return;
-        const mapped = scripts
-          .map((s): PineScriptOption | null => {
-            const strategyKey = toStrategyType(s.strategy_key);
-            if (!strategyKey) return null;
-            const linked = STRATEGIES.find((st) => st.key === strategyKey);
-            return {
-              fileName: s.file_name,
-              strategyKey,
-              icon: "📜",
-              subtitle: linked ? `${linked.label} backtest with buy/sell trades` : "Pine Script strategy",
-            };
-          })
-          .filter((s): s is PineScriptOption => s !== null);
+        if (scripts.length === 0) return;
 
-        if (mapped.length > 0) setPineScriptOptions(mapped);
+        const mapped = scripts.map((s): PineScriptOption => {
+          const rawStrategyKey = (s.strategy_key || "").trim().toLowerCase();
+          const backendStrategy = ((s.backend_strategy && s.backend_strategy.trim()) ? s.backend_strategy : rawStrategyKey).trim().toLowerCase();
+          const strategyKey = toStrategyType(backendStrategy);
+          const linked = strategyKey ? STRATEGIES.find((st) => st.key === strategyKey) : null;
+          const runnable = Boolean(s.runnable) && strategyKey !== null;
+
+          return {
+            fileName: s.file_name,
+            rawStrategyKey,
+            backendStrategy,
+            strategyKey,
+            icon: "📜",
+            subtitle: linked
+              ? `${linked.label} backtest with buy/sell trades`
+              : runnable
+                ? `Mapped to ${backendStrategy}`
+                : "Add // backend_strategy: <existing_strategy_key> to run",
+            runnable,
+          };
+        });
+
+        setPineScriptOptions(mapped);
       })
       .catch(() => {
         // Keep fallback scripts when endpoint is unavailable.
@@ -492,37 +541,68 @@ export default function MYStrategySection({
               <div className="px-3 py-1 text-[8px] uppercase tracking-widest text-slate-500 font-bold">Pine Script</div>
 
               {pineScriptOptions.map((p) => {
-                const linkedStrategy = STRATEGIES.find((s) => s.key === p.strategyKey);
-                if (!linkedStrategy) return null;
+                const isActive = p.strategyKey !== null && activeStrategy === p.strategyKey;
+                const canSelect = p.strategyKey !== null;
+                const canRun = p.runnable && p.strategyKey !== null;
 
                 return (
-                  <button
+                  <div
                     key={p.fileName}
-                    onClick={() => {
-                      onStrategyChange(p.strategyKey);
-                      setDropdownOpen(false);
-                      onRunBacktest();
-                    }}
-                    className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition hover:bg-slate-800/60 ${
-                      activeStrategy === p.strategyKey ? "bg-rose-500/10 border-l-2 border-rose-400" : "border-l-2 border-transparent"
+                    className={`w-full flex items-stretch gap-1 px-2 py-1 border-l-2 ${
+                      isActive
+                        ? "bg-rose-500/10 border-rose-400"
+                        : "border-transparent"
                     }`}
                   >
-                    <span className="text-sm">{p.icon}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className={`text-[10px] font-semibold ${activeStrategy === p.strategyKey ? "text-rose-400" : "text-slate-200"} flex items-center gap-1.5`}>
-                        {p.fileName}
-                        {taggedStrategies.has(p.strategyKey) && (
-                          <span className="inline-flex items-center gap-0.5 px-1 py-px rounded-full bg-amber-500/20 text-amber-400 text-[7px] font-semibold">
-                            ★ {taggedStrategies.get(p.strategyKey)!.win_rate != null ? `${taggedStrategies.get(p.strategyKey)!.win_rate!.toFixed(0)}%` : "Tagged"}
-                          </span>
-                        )}
+                    <button
+                      type="button"
+                      disabled={!canSelect}
+                      onClick={() => {
+                        if (!p.strategyKey) return;
+                        onStrategyChange(p.strategyKey);
+                      }}
+                      className={`flex-1 flex items-center gap-2 px-2 py-1.5 text-left rounded transition ${
+                        canSelect ? "hover:bg-slate-800/60" : "opacity-55 cursor-not-allowed"
+                      }`}
+                      title={canSelect ? `Select strategy: ${p.backendStrategy}` : `Not selectable: backend strategy '${p.backendStrategy || p.rawStrategyKey}' is not mapped`}
+                    >
+                      <span className="text-sm">{p.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-[10px] font-semibold ${isActive ? "text-rose-400" : canRun ? "text-slate-200" : "text-slate-500"} flex items-center gap-1.5`}>
+                          {p.fileName}
+                          {p.strategyKey && taggedStrategies.has(p.strategyKey) && (
+                            <span className="inline-flex items-center gap-0.5 px-1 py-px rounded-full bg-amber-500/20 text-amber-400 text-[7px] font-semibold">
+                              ★ {taggedStrategies.get(p.strategyKey)!.win_rate != null ? `${taggedStrategies.get(p.strategyKey)!.win_rate!.toFixed(0)}%` : "Tagged"}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[8px] text-slate-500">{p.subtitle}</div>
+                        <div className="text-[7px] text-slate-600 mt-0.5">backend: {p.backendStrategy || p.rawStrategyKey}</div>
                       </div>
-                      <div className="text-[8px] text-slate-500">{p.subtitle}</div>
-                    </div>
-                    {activeStrategy === p.strategyKey && (
-                      <svg className="w-3 h-3 text-rose-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-                    )}
-                  </button>
+                      {isActive && (
+                        <svg className="w-3 h-3 text-rose-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={!canRun}
+                      onClick={() => {
+                        if (!p.strategyKey) return;
+                        onStrategyChange(p.strategyKey);
+                        onRunBacktest();
+                        setDropdownOpen(false);
+                      }}
+                      className={`shrink-0 px-2 py-1.5 rounded text-[8px] font-bold uppercase tracking-wide border transition ${
+                        canRun
+                          ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
+                          : "border-slate-700/40 bg-slate-800/50 text-slate-500 cursor-not-allowed"
+                      }`}
+                      title={canRun ? `Run backtest via ${p.backendStrategy}` : `Not runnable: backend strategy '${p.backendStrategy || p.rawStrategyKey}' is not mapped`}
+                    >
+                      Run
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -576,7 +656,7 @@ export default function MYStrategySection({
         const rsiUpper = activeStrategy === "momentum_guard" ? 65 : 72;
         const rsiOk = last.rsi != null && last.rsi > 40 && last.rsi < rsiUpper;
 
-        if (activeStrategy === "tpc") {
+        if (activeStrategy === "tpc" || activeStrategy === "gessup") {
           signalBias = stBull && htBull ? "BUY" : stBull || htBull ? "WAIT" : "AVOID";
         } else {
           signalBias = emaUp && rsiOk ? "BUY" : emaUp ? "WAIT" : "AVOID";
@@ -699,7 +779,7 @@ export default function MYStrategySection({
 
                 {/* ── Indicator pills ── */}
                 <div className="flex flex-wrap gap-1">
-                  {activeStrategy === "tpc" && (
+                  {(activeStrategy === "tpc" || activeStrategy === "gessup") && (
                     <>
                       <span className={`text-[7px] px-1.5 py-[2px] rounded font-bold border ${stBull ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25" : "bg-rose-500/15 text-rose-400 border-rose-500/25"}`}>
                         ⚡ W.ST {stBull ? "▲" : "▼"}
@@ -930,9 +1010,9 @@ export default function MYStrategySection({
             </div>
             <p className="text-[11px] text-slate-400 mb-1">This will reset <span className="text-amber-400 font-semibold">{strat.label}</span> to default values:</p>
             <ul className="text-[10px] text-slate-500 mb-4 space-y-0.5 pl-4 list-disc">
-              <li>{activeStrategy === "vpb3" ? "SL Lookback" : "SL"}: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].sl.toFixed(1)}</span></li>
-              <li>{activeStrategy === "tpc" ? "TP1" : "TP"}: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].tp1.toFixed(1)}</span></li>
-              {activeStrategy === "tpc" && <li>TP2: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].tp2.toFixed(1)}</span></li>}
+              <li>{strat.sliders.sl.label}: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].sl.toFixed(1)}</span></li>
+              <li>{strat.sliders.tp1.label}: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].tp1.toFixed(1)}</span></li>
+              {strat.sliders.tp2 && <li>{strat.sliders.tp2.label}: <span className="text-slate-300 font-mono">{STRATEGY_DEFAULTS[activeStrategy].tp2.toFixed(1)}</span></li>}
               <li>Capital: <span className="text-slate-300 font-mono">RM{STRATEGY_DEFAULTS[activeStrategy].capital.toLocaleString()}</span></li>
               <li>All conditions: <span className="text-emerald-400 font-semibold">enabled</span></li>
             </ul>

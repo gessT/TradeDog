@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import logging
 from pathlib import Path
+import re
 
 SGT = timezone(timedelta(hours=8))
 
@@ -668,23 +669,66 @@ def save_klse_strategy_config(
 
 
 @router.get("/pine_scripts")
-def list_pine_scripts() -> dict[str, list[dict[str, str]]]:
+def list_pine_scripts() -> dict[str, list[dict[str, object]]]:
     """List Pine Script files from ./pine_scripts.
 
-    File name stem is treated as strategy key (for example, psniper.pine -> psniper).
+    File name stem is treated as strategy key by default
+    (for example, psniper.pine -> psniper).
+
+    Optional metadata in Pine file:
+      // backend_strategy: <strategy_key>
     """
+
+    runnable_keys = {
+        "tpc",
+        "hpb",
+        "vpb3",
+        "smp",
+        "psniper",
+        "cm_macd",
+        "momentum_guard",
+        "sma5_20_cross",
+        "gessup",
+    }
+
+    backend_re = re.compile(r"^\s*//\s*backend_strategy\s*:\s*([A-Za-z0-9_\-]+)\s*$")
+
+    def _read_backend_strategy(path: Path) -> str | None:
+        try:
+            with path.open("r", encoding="utf-8", errors="ignore") as fh:
+                for _ in range(120):
+                    line = fh.readline()
+                    if not line:
+                        break
+                    m = backend_re.match(line)
+                    if m:
+                        return m.group(1).strip().lower()
+        except Exception:
+            return None
+        return None
+
+    def _default_backend_from_stem(stem: str) -> str:
+        return stem.strip().lower()
+
     scripts_dir = Path(__file__).resolve().parents[2] / "pine_scripts"
     if not scripts_dir.exists() or not scripts_dir.is_dir():
         return {"scripts": []}
 
-    scripts = [
-        {
-            "file_name": f.name,
-            "strategy_key": f.stem,
-        }
-        for f in sorted(scripts_dir.glob("*.pine"))
-        if f.is_file()
-    ]
+    scripts: list[dict[str, object]] = []
+    for f in sorted(scripts_dir.glob("*.pine")):
+        if not f.is_file():
+            continue
+        strategy_key = f.stem.strip().lower()
+        backend_strategy = _read_backend_strategy(f) or _default_backend_from_stem(strategy_key)
+        scripts.append(
+            {
+                "file_name": f.name,
+                "strategy_key": strategy_key,
+                "backend_strategy": backend_strategy,
+                "runnable": backend_strategy in runnable_keys,
+            }
+        )
+
     return {"scripts": scripts}
 
 
@@ -4181,6 +4225,140 @@ async def klse_backtest_sma5_20_cross(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# GessUp (Weekly ST + HalfTrend) Backtest
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/backtest_gessup")
+async def klse_backtest_gessup(
+    symbol: _Ann[str, Query()] = "0208.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 5000.0,
+    disabled_conditions: _Ann[_Opt[str], Query()] = None,
+    amplitude: _Ann[_Opt[int], Query(ge=2, le=30)] = None,
+    channel_deviation: _Ann[_Opt[int], Query(ge=1, le=10)] = None,
+    atr_period: _Ann[_Opt[int], Query(ge=2, le=30)] = None,
+    factor: _Ann[_Opt[float], Query(ge=0.5, le=10.0)] = None,
+    max_buys: _Ann[_Opt[int], Query(ge=1, le=10)] = None,
+) -> US1HBacktestResponse:
+    """Run GessUp strategy backtest on KLSE daily bars."""
+
+    from strategies.klse.gessup import VALID_CONDITIONS
+
+    _disabled: set[str] = set()
+    if disabled_conditions:
+        _disabled = {c.strip() for c in disabled_conditions.split(",") if c.strip() in VALID_CONDITIONS}
+
+    def _run():
+        from strategies.futures.data_loader import load_yfinance
+        from strategies.klse.gessup import DEFAULT_PARAMS, build_indicators
+        from strategies.klse.gessup import run_backtest as gessup_backtest
+
+        param_overrides: dict = {}
+        if amplitude is not None:
+            param_overrides["amplitude"] = amplitude
+        if channel_deviation is not None:
+            param_overrides["channel_deviation"] = channel_deviation
+        if atr_period is not None:
+            param_overrides["atr_period"] = atr_period
+        if factor is not None:
+            param_overrides["factor"] = factor
+        if max_buys is not None:
+            param_overrides["max_buys_per_weekly_cycle"] = max_buys
+
+        full_params = {**DEFAULT_PARAMS, **param_overrides}
+
+        df = load_yfinance(symbol=symbol, interval="1d", period=period)
+        min_rows = max(int(full_params["amplitude"]) + 5, 30)
+        if df.empty or len(df) < min_rows:
+            raise ValueError(f"Not enough daily data for {symbol} (need {min_rows}+ bars).")
+
+        result = gessup_backtest(df, params=full_params, capital=capital, disabled_conditions=_disabled or None)
+        df_ind = build_indicators(df.copy(), full_params, _disabled or None)
+
+        candles: list[US1HCandle] = []
+        for ts_val, row in df_ind.iterrows():
+            ht_line = row.get("ht_line")
+            candles.append(
+                US1HCandle(
+                    time=ts_val.isoformat() if hasattr(ts_val, "isoformat") else str(ts_val),
+                    open=round(float(row["open"]), 4),
+                    high=round(float(row["high"]), 4),
+                    low=round(float(row["low"]), 4),
+                    close=round(float(row["close"]), 4),
+                    volume=float(row.get("volume", 0)),
+                    ema_fast=round(float(ht_line), 4) if not _isnan(ht_line) else None,
+                    st_dir=int(row.get("st_dir")) if not _isnan(row.get("st_dir")) else None,
+                    ht_line=round(float(ht_line), 4) if not _isnan(ht_line) else None,
+                    ht_dir=int(row.get("ht_dir")) if not _isnan(row.get("ht_dir")) else None,
+                    signal=int(row.get("signal", 0)),
+                )
+            )
+
+        metrics = US1HMetrics(
+            initial_capital=result.initial_capital,
+            final_equity=result.final_equity,
+            total_return_pct=result.total_return_pct,
+            max_drawdown_pct=result.max_drawdown_pct,
+            sharpe_ratio=result.sharpe_ratio,
+            total_trades=result.total_trades,
+            winners=result.winners,
+            losers=result.losers,
+            win_rate=result.win_rate,
+            avg_win=result.avg_win_pct,
+            avg_loss=result.avg_loss_pct,
+            profit_factor=result.profit_factor,
+            risk_reward_ratio=result.risk_reward,
+        )
+
+        trades_out = [
+            US1HTrade(
+                entry_time=t.entry_date,
+                exit_time=t.exit_date,
+                entry_price=t.entry_price,
+                exit_price=t.exit_price,
+                qty=0,
+                pnl=t.pnl,
+                pnl_pct=t.return_pct,
+                reason=t.exit_reason,
+                signal_type="GESSUP",
+                direction="CALL",
+                sl_price=t.sl_price,
+            )
+            for t in result.trades
+        ]
+
+        out_params = {
+            "amplitude": full_params["amplitude"],
+            "channel_deviation": full_params["channel_deviation"],
+            "atr_period": full_params["atr_period"],
+            "factor": full_params["factor"],
+            "max_buys_per_weekly_cycle": full_params["max_buys_per_weekly_cycle"],
+        }
+
+        return candles, trades_out, result.equity_curve, metrics, out_params
+
+    try:
+        candles, trades, eq_curve, metrics, params_out = await run_in_threadpool(_run)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception("GessUp backtest failed for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return US1HBacktestResponse(
+        symbol=symbol,
+        interval="1d",
+        period=period,
+        candles=candles,
+        trades=trades,
+        equity_curve=eq_curve,
+        metrics=metrics,
+        params=params_out,
+        timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # CM MACD — MACD(12,26,9) Crossover Strategy (KLSE Daily)
 # Entry: MACD line crosses ABOVE signal → long
 # Exit:  MACD line crosses BELOW signal  OR ATR SL/TP
@@ -5143,6 +5321,18 @@ def _run_strategy_backtest(strategy: str, df: pd.DataFrame, capital: float):
         from strategies.klse.sma5_20_cross import DEFAULT_PARAMS as SMA_PARAMS
         from strategies.klse.sma5_20_cross import run_backtest as sma_backtest
         raw = sma_backtest(df, params=SMA_PARAMS, capital=capital)
+        trades = [_NormTrade(
+            entry_date=t.entry_date, exit_date=t.exit_date,
+            entry_price=t.entry_price, exit_price=t.exit_price,
+            sl_price=t.sl_price, tp_price=t.tp_price,
+            pnl=t.pnl, exit_reason=t.exit_reason, win=t.win,
+        ) for t in raw.trades]
+        return _NormResult(trades=trades, win_rate=raw.win_rate,
+                           total_return_pct=raw.total_return_pct, total_trades=raw.total_trades)
+    elif strategy == "gessup":
+        from strategies.klse.gessup import DEFAULT_PARAMS as GESSUP_PARAMS
+        from strategies.klse.gessup import run_backtest as gessup_backtest
+        raw = gessup_backtest(df, params=GESSUP_PARAMS, capital=capital)
         trades = [_NormTrade(
             entry_date=t.entry_date, exit_date=t.exit_date,
             entry_price=t.entry_price, exit_price=t.exit_price,

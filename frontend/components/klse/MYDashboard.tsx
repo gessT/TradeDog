@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState, useMemo } from "react";
-import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, fetchSMPBacktest, fetchPSniperBacktest, fetchSMA520CrossBacktest, fetchCMMACDBacktest, fetchMomentumGuardBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, fetchBestStrategy, type US1HBacktestResponse, type US1HTrade, type StrategyGradeResult } from "../../services/api";
+import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, fetchSMPBacktest, fetchPSniperBacktest, fetchSMA520CrossBacktest, fetchGessupBacktest, fetchCMMACDBacktest, fetchMomentumGuardBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, fetchBestStrategy, type US1HBacktestResponse, type US1HTrade, type StrategyGradeResult } from "../../services/api";
 import { MY_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
 import MYWatchlist from "./MYWatchlist";
 import MYMainChart from "./MYMainChart";
@@ -436,6 +436,18 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           data = await fetchPSniperBacktest(sym, backtestPeriod, undefined, { sl_atr_mult: atrSlMult, tp1_rr: tp1RMult, min_score: Math.round(tp2RMult) }, capital);
         } else if (strat === "sma5_20_cross") {
           data = await fetchSMA520CrossBacktest(sym, backtestPeriod, disabledArr.length > 0 ? disabledArr : undefined, undefined, capital);
+        } else if (strat === "gessup") {
+          data = await fetchGessupBacktest(
+            sym,
+            backtestPeriod,
+            disabledArr.length > 0 ? disabledArr : undefined,
+            {
+              amplitude: Math.round(atrSlMult),
+              factor: tp1RMult,
+              max_buys: Math.round(tp2RMult),
+            },
+            capital,
+          );
         } else if (strat === "cm_macd") {
           data = await fetchCMMACDBacktest(sym, backtestPeriod, undefined, { sl_atr_mult: atrSlMult, tp_r_mult: tp1RMult }, capital);
         } else if (strat === "momentum_guard") {
@@ -535,6 +547,18 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           backtestPeriod,
           disabledArr.length > 0 ? disabledArr : undefined,
           undefined,
+          capital,
+        );
+      } else if (strat === "gessup") {
+        data = await fetchGessupBacktest(
+          selectedSymbol,
+          backtestPeriod,
+          disabledArr.length > 0 ? disabledArr : undefined,
+          {
+            amplitude: Math.round(atrSlMult),
+            factor: tp1RMult,
+            max_buys: Math.round(tp2RMult),
+          },
           capital,
         );
       } else if (strat === "cm_macd") {

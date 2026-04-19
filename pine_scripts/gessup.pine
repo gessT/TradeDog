@@ -1,0 +1,100 @@
+//@version=5
+strategy("Stock Up[Gess]-Day", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10, pyramiding=0)
+// backend_strategy: gessup
+
+// Core concept kept:
+// 1) Big trend filter from Weekly SuperTrend
+// 2) Mini trend timing from HalfTrend flips
+// 3) Long-only entries in bullish weekly regime
+
+// Inputs
+amplitude = input.int(5, title="HalfTrend Amplitude", minval=2)
+channelDeviation = input.int(2, title="HalfTrend Channel Deviation", minval=1)
+atrPeriod = input.int(10, title="Weekly SuperTrend ATR Period", minval=2)
+factor = input.float(3.0, title="Weekly SuperTrend Factor", minval=0.5, step=0.1)
+maxBuysPerWeeklyCycle = input.int(2, title="Max Buys per Weekly Up Cycle", minval=1, maxval=10)
+
+// HalfTrend state
+var int trend = 0
+var int nextTrend = 0
+var float maxLowPrice = na
+var float minHighPrice = na
+var float up = 0.0
+var float down = 0.0
+var int buyCount = 0
+
+if barstate.isfirst
+    maxLowPrice := nz(low[1], low)
+    minHighPrice := nz(high[1], high)
+
+atr2 = ta.atr(100) / 2.0
+dev = channelDeviation * atr2
+
+highPrice = high[math.abs(ta.highestbars(amplitude))]
+lowPrice = low[math.abs(ta.lowestbars(amplitude))]
+highma = ta.sma(high, amplitude)
+lowma = ta.sma(low, amplitude)
+
+prevTrend = trend
+
+if nextTrend == 1
+    maxLowPrice := math.max(lowPrice, maxLowPrice)
+    if highma < maxLowPrice and close < nz(low[1], low)
+        trend := 1
+        nextTrend := 0
+        minHighPrice := highPrice
+else
+    minHighPrice := math.min(highPrice, minHighPrice)
+    if lowma > minHighPrice and close > nz(high[1], high)
+        trend := 0
+        nextTrend := 1
+        maxLowPrice := lowPrice
+
+if trend == 0
+    if not na(trend[1]) and trend[1] != 0
+        up := na(down[1]) ? down : down[1]
+    else
+        up := na(up[1]) ? maxLowPrice : math.max(maxLowPrice, up[1])
+else
+    if not na(trend[1]) and trend[1] != 1
+        down := na(up[1]) ? up : up[1]
+    else
+        down := na(down[1]) ? minHighPrice : math.min(minHighPrice, down[1])
+
+halfTrend = trend == 0 ? up : down
+plot(halfTrend, title="HalfTrend", linewidth=2, color=trend == 0 ? color.blue : color.red)
+
+miniBuySignal = trend == 0 and prevTrend == 1
+miniSellSignal = trend == 1 and prevTrend == 0
+
+f_supertrend(_factor, _period) =>
+    [st, dir] = ta.supertrend(_factor, _period)
+    [st, dir]
+
+[weeklySt, weeklyDir] = request.security(syminfo.tickerid, "W", f_supertrend(factor, atrPeriod), lookahead=barmerge.lookahead_off)
+
+// In ta.supertrend(), -1 is bullish and +1 is bearish
+bigTrendBull = weeklyDir < 0
+bigTrendFlipUp = weeklyDir[1] > 0 and weeklyDir < 0
+bigTrendFlipDown = weeklyDir[1] < 0 and weeklyDir > 0
+
+if bigTrendFlipDown
+    buyCount := 0
+
+canEnter = strategy.position_size <= 0 and bigTrendBull and miniBuySignal and buyCount < maxBuysPerWeeklyCycle
+if canEnter
+    strategy.entry("BUY", strategy.long)
+    buyCount += 1
+
+exitSignal = strategy.position_size > 0 and (miniSellSignal or bigTrendFlipDown)
+if exitSignal
+    strategy.close("BUY", comment=bigTrendFlipDown ? "WEEKLY_FLIP_DOWN" : "HALFTREND_DOWN")
+
+bgcolor(bigTrendBull ? color.new(color.green, 86) : color.new(color.red, 86), title="Weekly SuperTrend Regime")
+plotshape(miniBuySignal and bigTrendBull, title="Mini Buy", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.tiny, text="BUY")
+plotshape(miniSellSignal, title="Mini Sell", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, text="SELL")
+
+alertcondition(bigTrendFlipUp, title="Weekly Trend Up", message="Weekly SuperTrend turned bullish")
+alertcondition(bigTrendFlipDown, title="Weekly Trend Down", message="Weekly SuperTrend turned bearish")
+alertcondition(miniBuySignal and bigTrendBull, title="Entry Signal", message="HalfTrend flipped bullish in weekly bullish regime")
+alertcondition(exitSignal, title="Exit Signal", message="Exit by HalfTrend down or Weekly trend flip down")
