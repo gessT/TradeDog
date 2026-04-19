@@ -75,6 +75,7 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
   const [scanResults, setScanResults] = useState<StrategyGradeResult[]>([]);
   const [scanLoading, setScanLoading] = useState(false);
   const [scanTagged, setScanTagged] = useState<Set<string>>(new Set());
+  const [scanTagBusy, setScanTagBusy] = useState<Set<string>>(new Set());
   const [scanView, setScanView] = useState<"table" | "cards">("table");
 
   // ── TPC strategy conditions & params
@@ -233,6 +234,16 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     } catch { /* offline */ }
   }, []);
   useEffect(() => { fetchTags(); }, [fetchTags]);
+
+  useEffect(() => {
+    if (!scanDialogOpen) return;
+    const taggedForSymbol = new Set(
+      stockTags
+        .filter((t) => t.symbol === selectedSymbol)
+        .map((t) => t.strategy_type),
+    );
+    setScanTagged(taggedForSymbol);
+  }, [scanDialogOpen, stockTags, selectedSymbol]);
 
   // ── Color labels (TradingView-style)
   const [colorLabels, setColorLabels] = useState<ColorLabel[]>([]);
@@ -637,39 +648,40 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     setScanDialogOpen(true);
     setScanLoading(true);
     setScanResults([]);
-    setScanTagged(new Set());
+    setScanTagged(new Set(stockTags.filter((t) => t.symbol === selectedSymbol).map((t) => t.strategy_type)));
+    setScanTagBusy(new Set());
     setScanView("table");
     try {
       const res = await fetchBestStrategy(selectedSymbol, backtestPeriod, capital);
       setScanResults(res.strategies);
     } catch { /* ignore */ }
     setScanLoading(false);
-  }, [selectedSymbol, backtestPeriod, capital]);
+  }, [selectedSymbol, backtestPeriod, capital, stockTags]);
 
   // ── Tag a strategy from scan results
   const handleTagStrategy = useCallback(async (r: StrategyGradeResult) => {
     if (!r.metrics) return;
-    try {
-      await fetch(`${API_BASE}/stock/my-stock-tags`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          symbol: selectedSymbol,
-          strategy_type: r.strategy,
-          strategy_name: r.label,
-          period: backtestPeriod,
-          capital,
-          win_rate: r.metrics.win_rate,
-          return_pct: r.metrics.total_return_pct,
-          profit_factor: r.metrics.profit_factor,
-          max_dd_pct: r.metrics.max_drawdown_pct,
-          sharpe: r.metrics.sharpe_ratio,
-          total_trades: r.metrics.total_trades,
-        }),
-      });
-      setScanTagged((prev) => new Set(prev).add(r.strategy));
-      fetchTags();
-    } catch { /* ignore */ }
+    const res = await fetch(`${API_BASE}/stock/my-stock-tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        symbol: selectedSymbol,
+        strategy_type: r.strategy,
+        strategy_name: r.label,
+        period: backtestPeriod,
+        capital,
+        win_rate: r.metrics.win_rate,
+        return_pct: r.metrics.total_return_pct,
+        profit_factor: r.metrics.profit_factor,
+        max_dd_pct: r.metrics.max_drawdown_pct,
+        sharpe: r.metrics.sharpe_ratio,
+        total_trades: r.metrics.total_trades,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to tag strategy ${r.strategy}`);
+    }
+    await fetchTags();
   }, [selectedSymbol, backtestPeriod, capital, fetchTags]);
 
   // ── Tag current strategy directly (without scan)
@@ -734,6 +746,45 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
     }
     await fetchTags();
   }, [selectedSymbol, stockTags, fetchTags]);
+
+  const handleScanTagToggle = useCallback(async (r: StrategyGradeResult) => {
+    if (!r.metrics) return;
+    if (scanTagBusy.has(r.strategy)) return;
+
+    const wasTagged = scanTagged.has(r.strategy);
+    setScanTagBusy((prev) => {
+      const next = new Set(prev);
+      next.add(r.strategy);
+      return next;
+    });
+    setScanTagged((prev) => {
+      const next = new Set(prev);
+      if (wasTagged) next.delete(r.strategy);
+      else next.add(r.strategy);
+      return next;
+    });
+
+    try {
+      if (wasTagged) {
+        await handleUntagStrategy(r.strategy);
+      } else {
+        await handleTagStrategy(r);
+      }
+    } catch {
+      setScanTagged((prev) => {
+        const next = new Set(prev);
+        if (wasTagged) next.add(r.strategy);
+        else next.delete(r.strategy);
+        return next;
+      });
+    } finally {
+      setScanTagBusy((prev) => {
+        const next = new Set(prev);
+        next.delete(r.strategy);
+        return next;
+      });
+    }
+  }, [scanTagBusy, scanTagged, handleUntagStrategy, handleTagStrategy]);
 
   // Auto-run when symbol changes (clicking a stock loads its chart)
   // Strategy param changes require manual "Run Backtest"
@@ -1128,15 +1179,15 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
                                 <td className="px-3 py-2.5 text-right">
                                   {r.metrics ? (
                                     <button
-                                      onClick={(e) => { e.stopPropagation(); handleTagStrategy(r); }}
-                                      disabled={scanTagged.has(r.strategy)}
+                                      onClick={(e) => { e.stopPropagation(); void handleScanTagToggle(r); }}
+                                      disabled={scanTagBusy.has(r.strategy)}
                                       className={`text-[9px] px-2.5 py-1 rounded-md border font-bold transition inline-flex items-center gap-1 ${
                                         scanTagged.has(r.strategy)
-                                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 cursor-default"
+                                          ? "border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
                                           : "border-cyan-500/40 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20"
                                       }`}
                                     >
-                                      {scanTagged.has(r.strategy) ? "Tagged" : "Tag"}
+                                      {scanTagBusy.has(r.strategy) ? "..." : scanTagged.has(r.strategy) ? "Untag" : "Tag"}
                                     </button>
                                   ) : (
                                     <span className="text-[9px] text-rose-400/70">{r.error ?? "Failed"}</span>
@@ -1219,16 +1270,18 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
                             {r.metrics && (
                               <div className="mt-2 flex justify-end">
                                 <button
-                                  onClick={(e) => { e.stopPropagation(); handleTagStrategy(r); }}
-                                  disabled={scanTagged.has(r.strategy)}
+                                  onClick={(e) => { e.stopPropagation(); void handleScanTagToggle(r); }}
+                                  disabled={scanTagBusy.has(r.strategy)}
                                   className={`text-[9px] px-2.5 py-1 rounded-md border font-bold transition flex items-center gap-1 ${
                                     scanTagged.has(r.strategy)
-                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 cursor-default"
+                                      ? "border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
                                       : "border-cyan-500/40 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20"
                                   }`}
                                 >
-                                  {scanTagged.has(r.strategy) ? (
-                                    <><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> Tagged</>
+                                  {scanTagBusy.has(r.strategy) ? (
+                                    <><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg> Working</>
+                                  ) : scanTagged.has(r.strategy) ? (
+                                    <><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg> Untag {r.label}</>
                                   ) : (
                                     <><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z" /></svg> Tag {r.label}</>
                                   )}
