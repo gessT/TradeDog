@@ -388,6 +388,7 @@ export default function MYWatchlist({ region = "MY", activeSymbol, onSelectSymbo
     { key: "momentum_guard", label: "Momentum Guard", icon: "🛡️", color: "cyan" },
     { key: "vpb3", label: "VPB3", icon: "📊", color: "emerald" },
     { key: "smp", label: "SMP", icon: "🧠", color: "violet" },
+    { key: "bos_long", label: "BoS Long", icon: "⬆️", color: "violet" },
     { key: "psniper", label: "PrecSniper", icon: "🎯", color: "rose" },
     { key: "sma5_20_cross", label: "SMA 5/20 Cross", icon: "📜", color: "emerald" },
     { key: "gessup", label: "GessUp", icon: "🧭", color: "cyan" },

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState, useMemo } from "react";
-import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, fetchSMPBacktest, fetchPSniperBacktest, fetchSMA520CrossBacktest, fetchGessupBacktest, fetchCMMACDBacktest, fetchMomentumGuardBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, fetchBestStrategy, type US1HBacktestResponse, type US1HTrade, type StrategyGradeResult } from "../../services/api";
+import { fetchTPCBacktest, fetchHPBBacktest, fetchVPB3Backtest, fetchSMPBacktest, fetchBOSLongBacktest, fetchPSniperBacktest, fetchSMA520CrossBacktest, fetchGessupBacktest, fetchCMMACDBacktest, fetchMomentumGuardBacktest, loadKLSEStrategyConfig, saveKLSEStrategyConfig, fetchBestStrategy, type US1HBacktestResponse, type US1HTrade, type StrategyGradeResult } from "../../services/api";
 import { MY_STOCKS, MY_DEFAULT_STOCKS, MY_STOCK_STRATEGY } from "../../constants/myStocks";
 import { US_STOCKS, US_DEFAULT_STOCKS } from "../../constants/usStocks";
 import MYWatchlist from "./MYWatchlist";
@@ -460,6 +460,14 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           data = await fetchVPB3Backtest(sym, backtestPeriod, undefined, { sl_lookback: atrSlMult, tp_r_multiple: tp1RMult }, capital);
         } else if (strat === "smp") {
           data = await fetchSMPBacktest(sym, backtestPeriod, undefined, { sl_lookback: atrSlMult, tp_r_multiple: tp1RMult, trailing_atr_mult: tp2RMult }, capital);
+        } else if (strat === "bos_long") {
+          data = await fetchBOSLongBacktest(
+            sym,
+            backtestPeriod,
+            disabledArr.length > 0 ? disabledArr : undefined,
+            { sl_lookback: Math.round(atrSlMult), tp_r_multiple: tp1RMult, min_score: Math.round(tp2RMult) },
+            capital,
+          );
         } else if (strat === "psniper") {
           data = await fetchPSniperBacktest(sym, backtestPeriod, undefined, { sl_atr_mult: atrSlMult, tp1_rr: tp1RMult, min_score: Math.round(tp2RMult) }, capital);
         } else if (strat === "sma5_20_cross") {
@@ -586,6 +594,14 @@ const MYDashboard = forwardRef<MYDashboardHandle, MYDashboardProps>(function MYD
           backtestPeriod,
           disabledArr.length > 0 ? disabledArr : undefined,
           { sl_lookback: atrSlMult, tp_r_multiple: tp1RMult, trailing_atr_mult: tp2RMult },
+          capital,
+        );
+      } else if (strat === "bos_long") {
+        data = await fetchBOSLongBacktest(
+          selectedSymbol,
+          backtestPeriod,
+          disabledArr.length > 0 ? disabledArr : undefined,
+          { sl_lookback: Math.round(atrSlMult), tp_r_multiple: tp1RMult, min_score: Math.round(tp2RMult) },
           capital,
         );
       } else if (strat === "psniper") {

@@ -3788,6 +3788,7 @@ async def klse_backtest_smp(
     tp_r_multiple: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
     sl_lookback: _Ann[_Opt[int], Query(ge=1, le=20)] = None,
     trailing_atr_mult: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    min_score: _Ann[_Opt[int], Query(ge=1, le=7)] = None,
 ) -> US1HBacktestResponse:
     """Run SMP (Smart Money Pivot) backtest — Pivot Points + Order Blocks + FVG."""
 
@@ -3809,6 +3810,8 @@ async def klse_backtest_smp(
             param_overrides["sl_lookback"] = sl_lookback
         if trailing_atr_mult is not None:
             param_overrides["trailing_atr_mult"] = trailing_atr_mult
+        if min_score is not None:
+            param_overrides["min_score"] = int(min_score)
 
         full_params = {**DEFAULT_PARAMS, **param_overrides}
 
@@ -3906,6 +3909,39 @@ async def klse_backtest_smp(
         params=params_out,
         timestamp=datetime.now(SGT).strftime("%d/%m/%Y %H:%M SGT"),
     )
+
+
+@router.get("/backtest_bos_long")
+async def klse_backtest_bos_long(
+    symbol: _Ann[str, Query()] = "0233.KL",
+    period: _Ann[str, Query()] = "2y",
+    capital: _Ann[float, Query()] = 5000.0,
+    disabled_conditions: _Ann[_Opt[str], Query()] = None,
+    tp_r_multiple: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    sl_lookback: _Ann[_Opt[int], Query(ge=1, le=20)] = None,
+    trailing_atr_mult: _Ann[_Opt[float], Query(ge=0.5, le=5.0)] = None,
+    min_score: _Ann[_Opt[int], Query(ge=1, le=7)] = None,
+) -> US1HBacktestResponse:
+    """Run BoS Long preset for KLSE stocks using SMP core engine."""
+
+    resp = await klse_backtest_smp(
+        symbol=symbol,
+        period=period,
+        capital=capital,
+        disabled_conditions=disabled_conditions,
+        tp_r_multiple=tp_r_multiple,
+        sl_lookback=sl_lookback,
+        trailing_atr_mult=trailing_atr_mult,
+        min_score=min_score,
+    )
+
+    for t in resp.trades:
+        t.signal_type = "BOS_LONG"
+
+    if isinstance(resp.params, dict):
+        resp.params["preset"] = "bos_long"
+
+    return resp
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -4959,6 +4995,7 @@ async def scan_best_strategy(
         extra_strategy_defs = [
             ("sma5_20_cross", "SMA 5/20 Cross"),
             ("gessup", "GessUp"),
+            ("bos_long", "BoS Long"),
         ]
         extra_strategy_defs = [
             (strategy_key, label)
@@ -5327,6 +5364,24 @@ def _run_strategy_backtest(strategy: str, df: pd.DataFrame, capital: float):
         from strategies.klse.smp.strategy import DEFAULT_PARAMS
         from strategies.klse.smp.backtest import run_backtest as smp_backtest
         raw = smp_backtest(df, params=DEFAULT_PARAMS, capital=capital)
+        trades = [_NormTrade(
+            entry_date=t.entry_date, exit_date=t.exit_date,
+            entry_price=t.entry_price, exit_price=t.exit_price,
+            sl_price=t.sl_price, tp_price=t.tp_price,
+            pnl=t.pnl, exit_reason=t.exit_reason, win=t.win,
+        ) for t in raw.trades]
+        return _NormResult(trades=trades, win_rate=raw.win_rate,
+                           total_return_pct=raw.total_return_pct, total_trades=raw.total_trades)
+    elif strategy == "bos_long":
+        from strategies.klse.smp.strategy import DEFAULT_PARAMS as SMP_PARAMS
+        from strategies.klse.smp.backtest import run_backtest as smp_backtest
+
+        # Futures-style BoS Long preset built on SMP core:
+        # keep trend/BOS/pivot + RSI, disable OB/FVG/volume scoring.
+        params = {**SMP_PARAMS, "min_score": 2}
+        preset_disabled = {"order_block", "fvg_pullback", "vol_confirm"}
+
+        raw = smp_backtest(df, params=params, capital=capital, disabled_conditions=preset_disabled)
         trades = [_NormTrade(
             entry_date=t.entry_date, exit_date=t.exit_date,
             entry_price=t.entry_price, exit_price=t.exit_price,

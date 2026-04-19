@@ -8,7 +8,7 @@ import { MY_SYMBOL_MAP } from "../../constants/myStocks";
 // MY Strategy Section — multi-strategy with dropdown
 // ═══════════════════════════════════════════════════════════
 
-export type StrategyType = "tpc" | "hpb" | "momentum_guard" | "vpb3" | "smp" | "psniper" | "sma5_20_cross" | "gessup" | "cm_macd";
+export type StrategyType = "tpc" | "hpb" | "momentum_guard" | "vpb3" | "smp" | "bos_long" | "psniper" | "sma5_20_cross" | "gessup" | "cm_macd";
 
 type StrategyDef = {
   key: StrategyType;
@@ -145,6 +145,31 @@ const STRATEGIES: StrategyDef[] = [
     },
   },
   {
+    key: "bos_long",
+    label: "BoS Long",
+    subtitle: "Futures-style BOS breakout (SMP core)",
+    icon: "⬆️",
+    color: "violet",
+    conditions: [
+      { key: "ema_trend", label: "EMA Trend Gate", icon: "📈", desc: "Close > EMA13 > EMA34 (required)" },
+      { key: "bos", label: "Break of Structure", icon: "⚡", desc: "Higher high detected (BOS)" },
+      { key: "pivot_breakout", label: "Pivot Breakout", icon: "🚀", desc: "Close above 10-bar highest high" },
+      { key: "order_block", label: "Order Block", icon: "📦", desc: "Price near bullish demand zone" },
+      { key: "fvg_pullback", label: "Fair Value Gap", icon: "🌀", desc: "Pulled into imbalance zone & bounced" },
+      { key: "vol_confirm", label: "Volume Confirm", icon: "📊", desc: "Vol > 1.2× 20-day avg" },
+      { key: "rsi_filter", label: "RSI Filter", icon: "🎯", desc: "RSI between 40–72" },
+    ],
+    exitRules: [
+      { key: "sl_exit", icon: "🛑", label: "Stop Loss", desc: "Swing low of last N bars" },
+      { key: "tp_exit", icon: "🎯", label: "Take Profit", desc: "R × target above entry" },
+      { key: "trail_exit", icon: "📉", label: "Trailing Stop", desc: "ATR trailing from peak" },
+    ],
+    sliders: {
+      sl: { label: "SL Lookback", min: 1, max: 10, step: 1 },
+      tp1: { label: "TP R ×", min: 0.5, max: 5, step: 0.5 },
+    },
+  },
+  {
     key: "psniper",
     label: "PrecSniper",
     subtitle: "Precision Sniper — EMA Cross + 10pt Confluence",
@@ -240,6 +265,7 @@ export const STRATEGY_DEFAULTS: Record<StrategyType, {
   momentum_guard: { sl: 5, tp1: 10, tp2: 65, capital: 5000, disabledConditions: [] },
   vpb3: { sl: 5,   tp1: 3.0, tp2: 3.0, capital: 5000, disabledConditions: [] },
   smp:  { sl: 4,   tp1: 2.0, tp2: 2.0, capital: 5000, disabledConditions: [] },
+  bos_long: { sl: 5, tp1: 1.5, tp2: 2.0, capital: 5000, disabledConditions: ["order_block", "fvg_pullback", "vol_confirm"] },
   psniper: { sl: 3.5,  tp1: 1.2, tp2: 6,   capital: 5000, disabledConditions: [] },
   sma5_20_cross: { sl: 1, tp1: 1, tp2: 1, capital: 5000, disabledConditions: [] },
   gessup: { sl: 5, tp1: 3.0, tp2: 2, capital: 5000, disabledConditions: [] },
